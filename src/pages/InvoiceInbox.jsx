@@ -113,14 +113,6 @@ export default function InvoiceInbox() {
   const canEdit = profile?.role === 'admin' || profile?.role === 'department_head'
 
   // Which dept records can this user action?
-  function actionableDepts(inv) {
-    const depts = inv.invoice_departments || []
-    if (!depts.length) return []
-    if (profile?.role === 'admin') return depts.filter(d => d.status === 'Pending')
-    if (profile?.role === 'department_head' && profile?.department_id)
-      return depts.filter(d => d.department_id === profile.department_id && d.status === 'Pending')
-    return []
-  }
 
   // ── Open add / edit modal ─────────────────────────────────────────────────
 
@@ -282,6 +274,23 @@ export default function InvoiceInbox() {
     setActionInvoice(null); setActionDeptRecord(null); setActionNotes(''); loadData()
   }
 
+  async function resetDeptRecord(inv, deptRecord) {
+    await supabase.from('invoice_departments').update({
+      status: 'Pending', reviewed_by: null, reviewed_at: null, notes: null,
+    }).eq('id', deptRecord.id)
+
+    // Recalculate overall invoice status — if any dept goes back to Pending, invoice goes back to Pending
+    const { data: allDepts } = await supabase
+      .from('invoice_departments').select('status').eq('invoice_id', inv.id)
+
+    let invoiceStatus = 'Pending'
+    if (allDepts?.every(d => d.status === 'Approved')) invoiceStatus = 'Approved'
+    else if (allDepts?.some(d => d.status === 'Disputed')) invoiceStatus = 'Disputed'
+
+    await supabase.from('invoices').update({ status: invoiceStatus }).eq('id', inv.id)
+    loadData()
+  }
+
   async function markPaid(inv) {
     await supabase.from('invoices').update({ status: 'Paid' }).eq('id', inv.id)
     loadData()
@@ -429,7 +438,6 @@ export default function InvoiceInbox() {
               {filtered.length === 0 ? (
                 <tr><td colSpan={11} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">No invoices found</td></tr>
               ) : filtered.map(inv => {
-                const actDepts = actionableDepts(inv)
                 const attachments = inv.invoice_attachments || []
                 return (
                   <tr key={inv.id} className={S.tableRow}>
@@ -450,16 +458,27 @@ export default function InvoiceInbox() {
                       {inv.invoice_departments?.length ? (
                         <div className="space-y-1.5">
                           {inv.invoice_departments.map(d => {
-                            const canAct = actDepts.some(a => a.id === d.id) && canEdit
+                            const isPending = d.status === 'Pending'
+                            const canAct = canEdit && (
+                              profile?.role === 'admin' ||
+                              (profile?.role === 'department_head' && d.department_id === profile?.department_id)
+                            )
                             return (
                               <div key={d.id} className="flex items-center gap-1.5 flex-wrap">
                                 <DeptBadge name={d.departments?.name} />
                                 <StatusBadge status={d.status} />
-                                {canAct && (
+                                {canAct && isPending && (
                                   <>
                                     <button onClick={() => openDeptAction(inv, d, 'Approve')} className={S.btnSuccess}>✓</button>
                                     <button onClick={() => openDeptAction(inv, d, 'Dispute')} className={S.btnDanger}>✗</button>
                                   </>
+                                )}
+                                {canAct && !isPending && inv.status !== 'Paid' && (
+                                  <button
+                                    onClick={() => resetDeptRecord(inv, d)}
+                                    title="Reset to Pending"
+                                    className="px-2 py-1 text-xs font-medium text-gray-400 dark:text-slate-500 border border-gray-200 dark:border-slate-700 rounded-lg hover:border-amber-400 hover:text-amber-500 dark:hover:text-amber-400 transition-colors"
+                                  >↺</button>
                                 )}
                               </div>
                             )
