@@ -9,6 +9,7 @@ import DeptBadge from '../components/DeptBadge'
 import MultiSelect from '../components/MultiSelect'
 import ComboBox from '../components/ComboBox'
 import { buildDeptOptions } from '../lib/deptUtils'
+import AttachmentsPopover from '../components/AttachmentsPopover'
 
 const emptyForm = {
   invoice_number: '', vendor_id: '', amount: '',
@@ -37,11 +38,6 @@ function excelDateToStr(val) {
   return String(val).split('T')[0]
 }
 
-const CLIP_ICON = (
-  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-  </svg>
-)
 
 // ── Component ──────────────────────────────────────────────────────────────
 
@@ -168,7 +164,7 @@ export default function InvoiceInbox() {
     setNewFiles(prev => prev.filter((_, i) => i !== idx))
   }
 
-  async function removeExistingAttachment(att, invId) {
+  async function removeExistingAttachment(att) {
     await supabase.from('invoice_attachments').delete().eq('id', att.id)
     setExistingAttachments(prev => prev.filter(a => a.id !== att.id))
     loadData()
@@ -474,20 +470,9 @@ export default function InvoiceInbox() {
                       )}
                     </td>
 
-                    {/* Attachments — multiple files */}
-                    <td className={`${S.td} text-center`}>
-                      {attachments.length > 0 ? (
-                        <div className="flex flex-col gap-1 items-center">
-                          {attachments.map((att, i) => (
-                            <a key={att.id} href={att.file_url} target="_blank" rel="noopener noreferrer"
-                              title={att.file_name}
-                              className="text-cyan-500 hover:text-cyan-400 transition-colors inline-flex items-center gap-1 text-xs">
-                              {CLIP_ICON}
-                              {attachments.length > 1 && <span>{i + 1}</span>}
-                            </a>
-                          ))}
-                        </div>
-                      ) : <span className="text-gray-200 dark:text-slate-700">—</span>}
+                    {/* Attachments — popover */}
+                    <td className={S.td}>
+                      <AttachmentsPopover attachments={attachments} />
                     </td>
 
                     <td className={`${S.td} text-gray-400 dark:text-slate-500 text-xs max-w-[120px] truncate`}>{inv.notes || '—'}</td>
@@ -584,10 +569,10 @@ export default function InvoiceInbox() {
                   <div key={att.id} className="flex items-center justify-between px-3 py-2 bg-gray-50 dark:bg-white/5 rounded-xl">
                     <a href={att.file_url} target="_blank" rel="noopener noreferrer"
                       className="flex items-center gap-2 text-sm text-cyan-600 dark:text-cyan-400 hover:underline min-w-0">
-                      <span className="shrink-0">{CLIP_ICON}</span>
+                      <svg className="w-4 h-4 shrink-0 text-cyan-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg>
                       <span className="truncate">{att.file_name}</span>
                     </a>
-                    <button type="button" onClick={() => removeExistingAttachment(att, editInvoice?.id)}
+                    <button type="button" onClick={() => removeExistingAttachment(att)}
                       className="ml-3 shrink-0 text-gray-400 hover:text-red-500 transition-colors">
                       <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" /></svg>
                     </button>
