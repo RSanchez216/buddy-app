@@ -12,7 +12,9 @@ import { buildDeptOptions } from '../lib/deptUtils'
 
 const emptyForm = {
   invoice_number: '', vendor_id: '', amount: '',
-  received_date: '', due_date: '', department_ids: [], notes: '',
+  received_date: '', due_date: '',
+  billing_period_start: '', billing_period_end: '',
+  department_ids: [], notes: '',
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -21,6 +23,12 @@ function isValidDate(val) {
   if (!val) return false
   const d = new Date(val)
   return !isNaN(d.getTime())
+}
+
+function fmtDate(iso) {
+  if (!iso) return ''
+  const [y, m, d] = iso.split('-')
+  return new Date(Number(y), Number(m) - 1, Number(d)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 function excelDateToStr(val) {
@@ -124,6 +132,8 @@ export default function InvoiceInbox() {
       amount: Number(form.amount),
       received_date: form.received_date || null,
       due_date: form.due_date || null,
+      billing_period_start: form.billing_period_start || null,
+      billing_period_end: form.billing_period_end || null,
       department_id: form.department_ids[0],        // backward compat
       department_ids: form.department_ids,
       notes: form.notes || null,
@@ -233,10 +243,10 @@ export default function InvoiceInbox() {
     const wb = XLSX.utils.book_new()
 
     // Sheet 1: Invoices template
-    const headers = ['Invoice Number', 'Vendor Name', 'Amount', 'Received Date', 'Due Date', 'Department(s)', 'Notes', 'Status']
-    const example = ['INV-001', vendors[0]?.name || 'Penske', '9800', '2026-04-01', '2026-04-10', departments[0]?.name || 'Fleet', 'Contract rental fee', 'Pending']
+    const headers = ['Invoice Number', 'Vendor Name', 'Amount', 'Received Date', 'Due Date', 'Billing Period Start', 'Billing Period End', 'Department(s)', 'Notes', 'Status']
+    const example = ['INV-001', vendors[0]?.name || 'Penske', '9800', '2026-04-01', '2026-04-10', '2026-03-30', '2026-04-05', departments[0]?.name || 'Fleet', 'Contract rental fee', 'Pending']
     const ws = XLSX.utils.aoa_to_sheet([headers, example])
-    ws['!cols'] = [15, 22, 10, 14, 14, 22, 30, 10].map(wch => ({ wch }))
+    ws['!cols'] = [15, 22, 10, 14, 14, 18, 16, 22, 30, 10].map(wch => ({ wch }))
     XLSX.utils.book_append_sheet(wb, ws, 'Invoices')
 
     // Sheet 2: Reference data
@@ -313,6 +323,8 @@ export default function InvoiceInbox() {
           department_ids: dept ? [dept.id] : [],
           department_id: dept?.id || null,
           department_name: deptName,
+          billing_period_start: excelDateToStr(r['Billing Period Start']) || null,
+          billing_period_end: excelDateToStr(r['Billing Period End']) || null,
           notes: r['Notes'] || '',
           status: 'Pending',
           source: 'excel_import',
@@ -405,7 +417,7 @@ export default function InvoiceInbox() {
           <table className="w-full text-sm">
             <thead className={S.tableHead}>
               <tr>
-                {['Invoice #', 'Vendor', 'Amount', 'Received', 'Due', 'Status', 'Department(s)', 'Attach', 'Notes', canEdit && 'Actions'].filter(Boolean).map(h => (
+                {['Invoice #', 'Vendor', 'Amount', 'Billing Period', 'Received', 'Due', 'Status', 'Department(s)', 'Attach', 'Notes', canEdit && 'Actions'].filter(Boolean).map(h => (
                   <th key={h} className={`${S.th} ${h === 'Amount' ? 'text-right' : ''}`}>{h}</th>
                 ))}
               </tr>
@@ -418,6 +430,12 @@ export default function InvoiceInbox() {
                   <td className={`${S.td} font-mono text-xs text-gray-400 dark:text-slate-400`}>{inv.invoice_number || '—'}</td>
                   <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>{inv.vendors?.name || '—'}</td>
                   <td className={`${S.td} text-right font-semibold text-gray-900 dark:text-slate-200`}>${Number(inv.amount).toLocaleString()}</td>
+                  <td className={`${S.td} text-gray-400 dark:text-slate-400 text-xs whitespace-nowrap`}>
+                    {inv.billing_period_start && inv.billing_period_end
+                      ? `${fmtDate(inv.billing_period_start)} – ${fmtDate(inv.billing_period_end)}`
+                      : inv.billing_period_start ? fmtDate(inv.billing_period_start)
+                      : '—'}
+                  </td>
                   <td className={`${S.td} text-gray-400 dark:text-slate-400 text-xs`}>{inv.received_date || '—'}</td>
                   <td className={`${S.td} text-gray-400 dark:text-slate-400 text-xs`}>{inv.due_date || '—'}</td>
                   <td className={`${S.td} text-center`}><StatusBadge status={inv.status} /></td>
@@ -519,6 +537,15 @@ export default function InvoiceInbox() {
             <div>
               <label className={S.label}>Due Date</label>
               <input type="date" value={form.due_date} onChange={e => setForm(f => ({ ...f, due_date: e.target.value }))} className={S.input} />
+            </div>
+          </div>
+
+          <div>
+            <label className={S.label}>Billing Period</label>
+            <div className="flex items-center gap-2">
+              <input type="date" value={form.billing_period_start} onChange={e => setForm(f => ({ ...f, billing_period_start: e.target.value }))} className={S.input} />
+              <span className="text-gray-400 dark:text-slate-500 text-sm shrink-0">to</span>
+              <input type="date" value={form.billing_period_end} onChange={e => setForm(f => ({ ...f, billing_period_end: e.target.value }))} className={S.input} />
             </div>
           </div>
 
