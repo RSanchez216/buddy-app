@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useTheme } from '../contexts/ThemeContext'
+import { BuddyLogoSmall } from '../components/BuddyLogo'
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: (
@@ -78,7 +79,7 @@ export default function Layout() {
         {/* Brand */}
         <div className="p-5 border-b border-gray-100 dark:border-white/5">
           <div className="flex items-center gap-3">
-            <img src="/buddy-logo.png" alt="BUDDY" className="w-9 h-9 object-contain" />
+            <BuddyLogoSmall className="w-9 h-9" />
             <div>
               <div className="font-bold text-gray-900 dark:text-white text-base leading-tight tracking-tight">BUDDY</div>
               <div className="text-xs text-gray-400 dark:text-slate-500">Manas Express</div>
@@ -159,7 +160,7 @@ export default function Layout() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6h16M4 12h16M4 18h16" />
             </svg>
           </button>
-          <img src="/buddy-logo.png" alt="BUDDY" className="w-6 h-6 object-contain" />
+          <BuddyLogoSmall className="w-6 h-6" />
           <span className="font-semibold text-gray-900 dark:text-white text-sm">BUDDY</span>
         </header>
 

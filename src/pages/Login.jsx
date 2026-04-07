@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useTheme } from '../contexts/ThemeContext'
+import BuddyLogo from '../components/BuddyLogo'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -48,9 +49,9 @@ export default function Login() {
         {/* Logo */}
         <div className="text-center mb-10">
           <div className="flex justify-center mb-5">
-            <img src="/buddy-logo.png" alt="BUDDY" className="w-28 h-28 object-contain dark:drop-shadow-[0_0_20px_rgba(34,211,238,0.4)]" />
+            <BuddyLogo className="w-28 h-28" />
           </div>
-          <p className="text-gray-500 dark:text-slate-400 text-sm">Accounts Payable Control System</p>
+          <p className="text-gray-500 dark:text-slate-400 text-sm">Operations Control System</p>
           <p className="text-cyan-600 dark:text-cyan-400 text-xs font-medium mt-1 tracking-wide">Manas Express</p>
         </div>
 
