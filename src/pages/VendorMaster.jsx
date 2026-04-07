@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
+import { S } from '../lib/styles'
 import Modal from '../components/Modal'
 import StatusBadge from '../components/StatusBadge'
 import DeptBadge from '../components/DeptBadge'
@@ -9,7 +10,6 @@ import DeptBadge from '../components/DeptBadge'
 const CATEGORIES = ['Fuel', 'Insurance', 'Equipment Rental', 'Tolls', 'Pre-Pass', 'Fuel Cards', 'Tires & Parts', 'Other']
 const FREQUENCIES = ['Weekly', 'Monthly', 'One-Time']
 const PAYMENT_METHODS = ['ACH', 'Credit Card', 'Check']
-
 const emptyForm = { name: '', category: 'Fuel', frequency: 'Monthly', payment_method: 'ACH', department_id: '', expected_amount: '', is_active: true }
 
 export default function VendorMaster() {
@@ -24,10 +24,8 @@ export default function VendorMaster() {
   const [form, setForm] = useState(emptyForm)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  // Import state
   const [showImport, setShowImport] = useState(false)
   const [importRows, setImportRows] = useState([])
-  const [importErrors, setImportErrors] = useState([])
   const fileRef = useRef()
 
   useEffect(() => { loadData() }, [])
@@ -44,36 +42,24 @@ export default function VendorMaster() {
 
   const filtered = vendors.filter(v => {
     const matchSearch = !search || v.name.toLowerCase().includes(search.toLowerCase()) || v.category.toLowerCase().includes(search.toLowerCase())
-    const matchDept = !filterDept || v.department_id === filterDept
-    return matchSearch && matchDept
+    return matchSearch && (!filterDept || v.department_id === filterDept)
   })
 
-  function openAdd() {
-    setEditVendor(null)
-    setForm(emptyForm)
-    setError('')
-    setShowModal(true)
-  }
-
+  function openAdd() { setEditVendor(null); setForm(emptyForm); setError(''); setShowModal(true) }
   function openEdit(v) {
     setEditVendor(v)
     setForm({ name: v.name, category: v.category, frequency: v.frequency, payment_method: v.payment_method, department_id: v.department_id, expected_amount: v.expected_amount, is_active: v.is_active })
-    setError('')
-    setShowModal(true)
+    setError(''); setShowModal(true)
   }
 
   async function handleSave() {
     if (!form.name.trim()) return setError('Vendor name is required')
     if (!form.department_id) return setError('Department is required')
-    setSaving(true)
-    setError('')
+    setSaving(true); setError('')
     const payload = { ...form, expected_amount: Number(form.expected_amount) || 0 }
-    let res
-    if (editVendor) {
-      res = await supabase.from('vendors').update(payload).eq('id', editVendor.id)
-    } else {
-      res = await supabase.from('vendors').insert(payload)
-    }
+    const res = editVendor
+      ? await supabase.from('vendors').update(payload).eq('id', editVendor.id)
+      : await supabase.from('vendors').insert(payload)
     if (res.error) setError(res.error.message)
     else { setShowModal(false); loadData() }
     setSaving(false)
@@ -84,73 +70,60 @@ export default function VendorMaster() {
     loadData()
   }
 
-  // Excel Import
   function handleFileChange(e) {
-    const file = e.target.files[0]
-    if (!file) return
+    const file = e.target.files[0]; if (!file) return
     const reader = new FileReader()
     reader.onload = (evt) => {
-      const wb = XLSX.read(evt.target.result, { type: 'binary' })
-      const ws = wb.Sheets[wb.SheetNames[0]]
-      const rows = XLSX.utils.sheet_to_json(ws)
-      const mapped = rows.map((r, i) => {
+      const wb = XLSX.read(evt.target.result, { type: 'array' })
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]])
+      setImportRows(rows.map((r, i) => {
         const deptName = r['Department'] || r['department'] || ''
         const dept = departments.find(d => d.name.toLowerCase() === deptName.toLowerCase())
         return {
           _row: i + 2,
-          name: r['Vendor Name'] || r['vendor_name'] || r['Name'] || '',
-          category: r['Category'] || r['category'] || 'Other',
-          frequency: r['Frequency'] || r['frequency'] || 'Monthly',
-          payment_method: r['Payment Method'] || r['payment_method'] || 'ACH',
+          name: r['Vendor Name'] || r['Name'] || '',
+          category: r['Category'] || 'Other',
+          frequency: r['Frequency'] || 'Monthly',
+          payment_method: r['Payment Method'] || 'ACH',
           department_id: dept?.id || null,
           department_name: deptName,
-          expected_amount: Number(r['Expected Amount'] || r['expected_amount'] || 0),
+          expected_amount: Number(r['Expected Amount'] || 0),
           is_active: true,
-          _error: !dept ? `Department "${deptName}" not found` : (!r['Vendor Name'] && !r['Name'] ? 'Missing vendor name' : null),
+          _error: !dept ? `Dept "${deptName}" not found` : null,
         }
-      })
-      setImportRows(mapped)
-      setImportErrors(mapped.filter(r => r._error))
+      }))
       setShowImport(true)
     }
-    reader.readAsBinaryString(file)
-    e.target.value = ''
+    reader.readAsArrayBuffer(file); e.target.value = ''
   }
 
   async function confirmImport() {
     const valid = importRows.filter(r => !r._error)
     if (!valid.length) return
-    const payload = valid.map(({ _row, _error, department_name, ...rest }) => rest)
-    const res = await supabase.from('vendors').insert(payload)
+    const res = await supabase.from('vendors').insert(valid.map(({ _row, _error, department_name, ...rest }) => rest))
     if (res.error) alert('Import error: ' + res.error.message)
-    else {
-      alert(`Successfully imported ${valid.length} vendors${importErrors.length ? `, ${importErrors.length} rows skipped.` : '.'}`)
-      setShowImport(false)
-      loadData()
-    }
+    else { alert(`Imported ${valid.length} vendors.`); setShowImport(false); loadData() }
   }
 
-  const isAdmin = profile?.role === 'admin'
-  const isDeptHead = profile?.role === 'department_head'
-  const canEdit = isAdmin || isDeptHead
+  const canEdit = profile?.role === 'admin' || profile?.role === 'department_head'
 
-  if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500" /></div>
+  if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-cyan-400" /></div>
 
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Vendor Master</h1>
-          <p className="text-sm text-gray-500 mt-0.5">{vendors.filter(v=>v.is_active).length} active vendors</p>
+          <h1 className="text-2xl font-bold text-white">Vendor Master</h1>
+          <p className="text-sm text-slate-500 mt-0.5">{vendors.filter(v=>v.is_active).length} active vendors</p>
         </div>
         {canEdit && (
           <div className="flex gap-2">
             <input type="file" accept=".xlsx" ref={fileRef} onChange={handleFileChange} className="hidden" />
-            <button onClick={() => fileRef.current.click()} className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-700 transition-colors">
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+            <button onClick={() => fileRef.current.click()} className={S.btnSecondary}>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
               Import Excel
             </button>
-            <button onClick={openAdd} className="flex items-center gap-2 px-3 py-2 text-sm bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors">
+            <button onClick={openAdd} className={S.btnPrimary}>
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
               Add Vendor
             </button>
@@ -158,55 +131,44 @@ export default function VendorMaster() {
         )}
       </div>
 
-      {/* Filters */}
       <div className="flex gap-3 flex-wrap">
-        <input
-          type="text" placeholder="Search by name or category..."
-          value={search} onChange={e => setSearch(e.target.value)}
-          className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 w-64"
-        />
-        <select value={filterDept} onChange={e => setFilterDept(e.target.value)}
-          className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500">
+        <input type="text" placeholder="Search by name or category…" value={search} onChange={e => setSearch(e.target.value)}
+          className={`${S.input} w-64`} />
+        <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className={S.select}>
           <option value="">All Departments</option>
           {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
         </select>
       </div>
 
-      {/* Table */}
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div className={`${S.card} overflow-hidden`}>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-gray-50 border-b border-gray-200">
-                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Name</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Category</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Frequency</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Payment</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Department</th>
-                <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Expected</th>
-                <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
-                {canEdit && <th className="px-4 py-3"></th>}
+            <thead className={S.tableHead}>
+              <tr>
+                {['Name','Category','Frequency','Payment','Department','Expected','Status', canEdit && ''].filter(Boolean).map(h => (
+                  <th key={h} className={`${S.th} ${h === 'Expected' ? 'text-right' : ''}`}>{h}</th>
+                ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={8} className="px-4 py-12 text-center text-gray-400 text-sm">No vendors found</td></tr>
+                <tr><td colSpan={8} className="px-4 py-12 text-center text-slate-600 text-sm">No vendors found</td></tr>
               ) : filtered.map(v => (
-                <tr key={v.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3 font-medium text-gray-900">{v.name}</td>
-                  <td className="px-4 py-3 text-gray-600">{v.category}</td>
-                  <td className="px-4 py-3 text-gray-600">{v.frequency}</td>
-                  <td className="px-4 py-3 text-gray-600">{v.payment_method}</td>
-                  <td className="px-4 py-3"><DeptBadge name={v.departments?.name} /></td>
-                  <td className="px-4 py-3 text-right text-gray-700">${Number(v.expected_amount).toLocaleString()}</td>
-                  <td className="px-4 py-3 text-center"><StatusBadge status={v.is_active ? 'Active' : 'Inactive'} /></td>
+                <tr key={v.id} className={S.tableRow}>
+                  <td className={`${S.td} font-medium text-slate-200`}>{v.name}</td>
+                  <td className={`${S.td} text-slate-400`}>{v.category}</td>
+                  <td className={`${S.td} text-slate-400`}>{v.frequency}</td>
+                  <td className={`${S.td} text-slate-400`}>{v.payment_method}</td>
+                  <td className={S.td}><DeptBadge name={v.departments?.name} /></td>
+                  <td className={`${S.td} text-right text-slate-300`}>${Number(v.expected_amount).toLocaleString()}</td>
+                  <td className={`${S.td} text-center`}><StatusBadge status={v.is_active ? 'Active' : 'Inactive'} /></td>
                   {canEdit && (
-                    <td className="px-4 py-3 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <button onClick={() => openEdit(v)} className="text-gray-400 hover:text-blue-600 transition-colors">
-                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                    <td className={`${S.td} text-right`}>
+                      <div className="flex items-center justify-end gap-3">
+                        <button onClick={() => openEdit(v)} className="text-slate-600 hover:text-cyan-400 transition-colors">
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
                         </button>
-                        <button onClick={() => toggleActive(v)} className={`text-gray-400 hover:${v.is_active ? 'text-red-500' : 'text-green-500'} transition-colors text-xs font-medium`}>
+                        <button onClick={() => toggleActive(v)} className={`text-xs font-medium transition-colors ${v.is_active ? 'text-slate-600 hover:text-red-400' : 'text-slate-600 hover:text-emerald-400'}`}>
                           {v.is_active ? 'Deactivate' : 'Activate'}
                         </button>
                       </div>
@@ -219,104 +181,85 @@ export default function VendorMaster() {
         </div>
       </div>
 
-      {/* Add/Edit Modal */}
       <Modal open={showModal} onClose={() => setShowModal(false)} title={editVendor ? 'Edit Vendor' : 'Add Vendor'}>
-        <div className="p-5 space-y-4">
-          {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{error}</div>}
+        <div className={S.modalBody}>
+          {error && <div className={S.errorBox}>{error}</div>}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Vendor Name *</label>
-            <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500" />
+            <label className={S.label}>Vendor Name *</label>
+            <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} className={S.input} />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
-              <select value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500">
+              <label className={S.label}>Category</label>
+              <select value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} className={`${S.select} w-full`}>
                 {CATEGORIES.map(c => <option key={c}>{c}</option>)}
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Frequency</label>
-              <select value={form.frequency} onChange={e => setForm(f => ({ ...f, frequency: e.target.value }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500">
+              <label className={S.label}>Frequency</label>
+              <select value={form.frequency} onChange={e => setForm(f => ({ ...f, frequency: e.target.value }))} className={`${S.select} w-full`}>
                 {FREQUENCIES.map(f => <option key={f}>{f}</option>)}
               </select>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Payment Method</label>
-              <select value={form.payment_method} onChange={e => setForm(f => ({ ...f, payment_method: e.target.value }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500">
+              <label className={S.label}>Payment Method</label>
+              <select value={form.payment_method} onChange={e => setForm(f => ({ ...f, payment_method: e.target.value }))} className={`${S.select} w-full`}>
                 {PAYMENT_METHODS.map(m => <option key={m}>{m}</option>)}
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Department *</label>
-              <select value={form.department_id} onChange={e => setForm(f => ({ ...f, department_id: e.target.value }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500">
-                <option value="">Select...</option>
+              <label className={S.label}>Department *</label>
+              <select value={form.department_id} onChange={e => setForm(f => ({ ...f, department_id: e.target.value }))} className={`${S.select} w-full`}>
+                <option value="">Select…</option>
                 {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
               </select>
             </div>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Expected Amount ($)</label>
-            <input type="number" value={form.expected_amount} onChange={e => setForm(f => ({ ...f, expected_amount: e.target.value }))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500" />
+            <label className={S.label}>Expected Amount ($)</label>
+            <input type="number" value={form.expected_amount} onChange={e => setForm(f => ({ ...f, expected_amount: e.target.value }))} className={S.input} />
           </div>
-          <div className="flex justify-end gap-3 pt-2">
-            <button onClick={() => setShowModal(false)} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">Cancel</button>
-            <button onClick={handleSave} disabled={saving}
-              className="px-4 py-2 text-sm bg-orange-500 text-white rounded-lg hover:bg-orange-600 disabled:bg-orange-300 transition-colors">
-              {saving ? 'Saving...' : (editVendor ? 'Update' : 'Add Vendor')}
+          <div className={S.modalFooter}>
+            <button onClick={() => setShowModal(false)} className={S.btnCancel}>Cancel</button>
+            <button onClick={handleSave} disabled={saving} className={S.btnSave}>
+              {saving ? 'Saving…' : editVendor ? 'Update Vendor' : 'Add Vendor'}
             </button>
           </div>
         </div>
       </Modal>
 
-      {/* Import Preview Modal */}
       <Modal open={showImport} onClose={() => setShowImport(false)} title="Import Vendors — Preview" size="xl">
         <div className="p-5">
-          <div className="flex gap-4 mb-4">
-            <div className="text-sm"><span className="font-semibold text-green-600">{importRows.filter(r=>!r._error).length}</span> rows ready</div>
-            {importErrors.length > 0 && <div className="text-sm"><span className="font-semibold text-red-600">{importErrors.length}</span> rows with errors (will be skipped)</div>}
+          <div className="flex gap-4 mb-4 text-sm">
+            <span className="text-emerald-400 font-semibold">{importRows.filter(r=>!r._error).length} ready</span>
+            {importRows.filter(r=>r._error).length > 0 && <span className="text-red-400 font-semibold">{importRows.filter(r=>r._error).length} errors (skipped)</span>}
           </div>
-          <div className="overflow-x-auto max-h-96 overflow-y-auto border border-gray-200 rounded-lg">
+          <div className="overflow-x-auto max-h-96 border border-white/5 rounded-xl overflow-y-auto">
             <table className="w-full text-xs">
-              <thead className="bg-gray-50 sticky top-0">
-                <tr>
-                  <th className="px-3 py-2 text-left text-gray-500">Row</th>
-                  <th className="px-3 py-2 text-left text-gray-500">Name</th>
-                  <th className="px-3 py-2 text-left text-gray-500">Category</th>
-                  <th className="px-3 py-2 text-left text-gray-500">Frequency</th>
-                  <th className="px-3 py-2 text-left text-gray-500">Payment</th>
-                  <th className="px-3 py-2 text-left text-gray-500">Department</th>
-                  <th className="px-3 py-2 text-right text-gray-500">Expected</th>
-                  <th className="px-3 py-2 text-left text-gray-500">Status</th>
-                </tr>
+              <thead className="bg-[#09091a] sticky top-0">
+                <tr>{['Row','Name','Category','Frequency','Payment','Department','Expected','Status'].map(h=><th key={h} className="px-3 py-2 text-left text-slate-500">{h}</th>)}</tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
+              <tbody>
                 {importRows.map(r => (
-                  <tr key={r._row} className={r._error ? 'bg-red-50' : ''}>
-                    <td className="px-3 py-2 text-gray-500">{r._row}</td>
-                    <td className="px-3 py-2 font-medium">{r.name}</td>
-                    <td className="px-3 py-2">{r.category}</td>
-                    <td className="px-3 py-2">{r.frequency}</td>
-                    <td className="px-3 py-2">{r.payment_method}</td>
-                    <td className="px-3 py-2">{r.department_name}</td>
-                    <td className="px-3 py-2 text-right">${r.expected_amount}</td>
-                    <td className="px-3 py-2">{r._error ? <span className="text-red-600">{r._error}</span> : <span className="text-green-600">OK</span>}</td>
+                  <tr key={r._row} className={`border-b border-white/[0.03] ${r._error ? 'bg-red-500/5' : ''}`}>
+                    <td className="px-3 py-2 text-slate-600">{r._row}</td>
+                    <td className="px-3 py-2 text-slate-200">{r.name}</td>
+                    <td className="px-3 py-2 text-slate-400">{r.category}</td>
+                    <td className="px-3 py-2 text-slate-400">{r.frequency}</td>
+                    <td className="px-3 py-2 text-slate-400">{r.payment_method}</td>
+                    <td className="px-3 py-2 text-slate-400">{r.department_name}</td>
+                    <td className="px-3 py-2 text-slate-400">${r.expected_amount}</td>
+                    <td className="px-3 py-2">{r._error ? <span className="text-red-400">{r._error}</span> : <span className="text-emerald-400">OK</span>}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          <div className="flex justify-end gap-3 mt-4">
-            <button onClick={() => setShowImport(false)} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
-            <button onClick={confirmImport} disabled={importRows.filter(r=>!r._error).length === 0}
-              className="px-4 py-2 text-sm bg-orange-500 text-white rounded-lg hover:bg-orange-600 disabled:bg-orange-300">
+          <div className={`${S.modalFooter} mt-4`}>
+            <button onClick={() => setShowImport(false)} className={S.btnCancel}>Cancel</button>
+            <button onClick={confirmImport} disabled={!importRows.filter(r=>!r._error).length} className={S.btnSave}>
               Import {importRows.filter(r=>!r._error).length} Vendors
             </button>
           </div>
