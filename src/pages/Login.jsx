@@ -24,9 +24,23 @@ export default function Login() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-[#09091a] flex items-center justify-center px-4 relative overflow-hidden transition-colors duration-300">
-      {/* Glow — only visible in dark */}
-      <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[600px] h-[400px] bg-cyan-500/10 rounded-full blur-[120px] pointer-events-none dark:block hidden" />
-      <div className="absolute bottom-1/4 left-1/3 w-[300px] h-[300px] bg-fuchsia-500/10 rounded-full blur-[100px] pointer-events-none dark:block hidden" />
+
+      {/* Dark mode ambient glows */}
+      <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[700px] h-[400px] bg-cyan-500/10 rounded-full blur-[130px] pointer-events-none hidden dark:block" />
+      <div className="absolute bottom-1/3 left-1/4 w-[350px] h-[350px] bg-fuchsia-500/10 rounded-full blur-[110px] pointer-events-none hidden dark:block" />
+
+      {/* Ghost "BUDDY" watermark behind everything */}
+      <div
+        className="absolute inset-0 flex items-center justify-center pointer-events-none select-none"
+        aria-hidden="true"
+      >
+        <span
+          className="text-[22vw] font-black tracking-tighter leading-none
+            text-gray-900/[0.025] dark:text-white/[0.025]"
+        >
+          BUDDY
+        </span>
+      </div>
 
       {/* Theme toggle */}
       <button
@@ -46,18 +60,42 @@ export default function Login() {
       </button>
 
       <div className="relative max-w-sm w-full">
-        {/* Logo */}
-        <div className="text-center mb-10">
-          <div className="flex justify-center mb-5">
-            <BuddyLogo className="w-28 h-28" />
+
+        {/* Brand block */}
+        <div className="text-center mb-8">
+          {/* Logo + wordmark row */}
+          <div className="flex items-center justify-center gap-4 mb-3">
+            <BuddyLogo className="w-16 h-16" />
+            <div className="text-left">
+              <h1 className="text-5xl font-black tracking-tighter leading-none
+                text-transparent bg-clip-text
+                bg-gradient-to-r from-cyan-500 via-cyan-400 to-fuchsia-500
+                dark:from-cyan-300 dark:via-cyan-400 dark:to-fuchsia-400">
+                BUDDY
+              </h1>
+              <div className="flex items-center gap-2 mt-0.5">
+                <span className="w-4 h-px bg-cyan-500/50" />
+                <span className="text-[10px] font-semibold tracking-[0.2em] uppercase text-gray-400 dark:text-slate-500">
+                  by Manas Express
+                </span>
+              </div>
+            </div>
           </div>
-          <p className="text-gray-500 dark:text-slate-400 text-sm">Operations Control System</p>
-          <p className="text-cyan-600 dark:text-cyan-400 text-xs font-medium mt-1 tracking-wide">Manas Express</p>
+
+          {/* Pill tag */}
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full
+            bg-cyan-500/10 border border-cyan-500/20
+            text-cyan-600 dark:text-cyan-400 text-xs font-medium tracking-wide">
+            <span className="w-1.5 h-1.5 rounded-full bg-cyan-500 animate-pulse" />
+            Operations Control System
+          </span>
         </div>
 
         {/* Card */}
         <div className="bg-white dark:bg-white/5 dark:backdrop-blur-xl border border-gray-200 dark:border-white/10 rounded-2xl p-8 shadow-xl dark:shadow-black/50">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-6">Sign in to your account</h2>
+          <h2 className="text-base font-semibold text-gray-900 dark:text-white mb-6">
+            Sign in to your account
+          </h2>
 
           {error && (
             <div className="mb-4 p-3 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 rounded-xl text-red-600 dark:text-red-400 text-sm">
@@ -84,7 +122,7 @@ export default function Login() {
             </div>
             <button
               type="submit" disabled={loading}
-              className="w-full mt-2 py-3 px-4 rounded-xl text-sm font-semibold text-slate-900 bg-cyan-500 hover:bg-cyan-400 disabled:bg-cyan-300 dark:disabled:bg-cyan-800 transition-all shadow-lg shadow-cyan-500/20"
+              className="w-full mt-2 py-3 px-4 rounded-xl text-sm font-semibold text-slate-900 bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 transition-all shadow-lg shadow-cyan-500/20 hover:shadow-cyan-400/30"
             >
               {loading ? 'Signing in…' : 'Sign in'}
             </button>
