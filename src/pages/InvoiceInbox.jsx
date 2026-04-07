@@ -6,6 +6,7 @@ import { S } from '../lib/styles'
 import Modal from '../components/Modal'
 import StatusBadge from '../components/StatusBadge'
 import DeptBadge from '../components/DeptBadge'
+import { buildDeptOptions } from '../lib/deptUtils'
 
 const emptyForm = { invoice_number: '', vendor_id: '', amount: '', received_date: '', due_date: '', department_id: '', notes: '' }
 
@@ -150,7 +151,7 @@ export default function InvoiceInbox() {
         ))}
         <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className={`${S.select} ml-auto`}>
           <option value="">All Departments</option>
-          {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+          {buildDeptOptions(departments).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
         </select>
       </div>
 
@@ -226,7 +227,7 @@ export default function InvoiceInbox() {
               <label className={S.label}>Department *</label>
               <select value={form.department_id} onChange={e => setForm(f => ({ ...f, department_id: e.target.value }))} className={`${S.select} w-full`}>
                 <option value="">Select…</option>
-                {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                {buildDeptOptions(departments).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
               </select>
             </div>
           </div>

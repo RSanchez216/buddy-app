@@ -5,6 +5,7 @@ import { S } from '../lib/styles'
 import Modal from '../components/Modal'
 import StatusBadge from '../components/StatusBadge'
 import DeptBadge from '../components/DeptBadge'
+import { buildDeptOptions } from '../lib/deptUtils'
 
 export default function TransactionFeed() {
   const { profile } = useAuth()
@@ -205,7 +206,7 @@ export default function TransactionFeed() {
         ))}
         <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className={`${S.select} ml-auto`}>
           <option value="">All Departments</option>
-          {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+          {buildDeptOptions(departments).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
         </select>
       </div>
 
