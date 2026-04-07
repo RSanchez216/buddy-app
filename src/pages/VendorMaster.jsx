@@ -7,6 +7,7 @@ import Modal from '../components/Modal'
 import StatusBadge from '../components/StatusBadge'
 import DeptBadge from '../components/DeptBadge'
 import { buildDeptOptions, pmLabel } from '../lib/deptUtils'
+import Select from '../components/Select'
 
 const FREQUENCIES = ['Weekly', 'Bi-Weekly', 'Monthly', 'Yearly', 'One-Time']
 
@@ -215,14 +216,14 @@ export default function VendorMaster() {
       <div className="flex gap-3 flex-wrap">
         <input type="text" placeholder="Search by name or category…" value={search} onChange={e => setSearch(e.target.value)}
           className={`${S.input} w-56`} />
-        <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className={S.select}>
+        <Select value={filterDept} onChange={e => setFilterDept(e.target.value)}>
           <option value="">All Departments</option>
           {deptOptions.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
-        </select>
-        <select value={filterCat} onChange={e => setFilterCat(e.target.value)} className={S.select}>
+        </Select>
+        <Select value={filterCat} onChange={e => setFilterCat(e.target.value)}>
           <option value="">All Categories</option>
           {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
+        </Select>
       </div>
 
       {/* Table */}
@@ -280,32 +281,32 @@ export default function VendorMaster() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className={S.label}>Category</label>
-              <select value={form.category_id} onChange={e => setForm(f => ({ ...f, category_id: e.target.value }))} className={`${S.select} w-full`}>
+              <Select value={form.category_id} onChange={e => setForm(f => ({ ...f, category_id: e.target.value }))}>
                 <option value="">Select…</option>
                 {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              </Select>
             </div>
             <div>
               <label className={S.label}>Frequency</label>
-              <select value={form.frequency} onChange={e => setForm(f => ({ ...f, frequency: e.target.value }))} className={`${S.select} w-full`}>
+              <Select value={form.frequency} onChange={e => setForm(f => ({ ...f, frequency: e.target.value }))}>
                 {FREQUENCIES.map(f => <option key={f}>{f}</option>)}
-              </select>
+              </Select>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className={S.label}>Payment Method</label>
-              <select value={form.payment_method_id} onChange={e => setForm(f => ({ ...f, payment_method_id: e.target.value }))} className={`${S.select} w-full`}>
+              <Select value={form.payment_method_id} onChange={e => setForm(f => ({ ...f, payment_method_id: e.target.value }))}>
                 <option value="">Select…</option>
                 {paymentMethods.map(p => <option key={p.id} value={p.id}>{pmLabel(p)}</option>)}
-              </select>
+              </Select>
             </div>
             <div>
               <label className={S.label}>Department *</label>
-              <select value={form.department_id} onChange={e => setForm(f => ({ ...f, department_id: e.target.value }))} className={`${S.select} w-full`}>
+              <Select value={form.department_id} onChange={e => setForm(f => ({ ...f, department_id: e.target.value }))}>
                 <option value="">Select…</option>
                 {deptOptions.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
-              </select>
+              </Select>
             </div>
           </div>
           <div>

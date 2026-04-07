@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabase'
 import { S } from '../../lib/styles'
 import Modal from '../../components/Modal'
 import { buildDeptOptions } from '../../lib/deptUtils'
+import Select from '../../components/Select'
 
 const emptyForm = { name: '', parent_id: '' }
 
@@ -132,11 +133,10 @@ export default function SettingsDepartments() {
           </div>
           <div>
             <label className={S.label}>Parent Department (optional)</label>
-            <select value={form.parent_id} onChange={e => setForm(f => ({ ...f, parent_id: e.target.value }))}
-              className={`${S.select} w-full`}>
+            <Select value={form.parent_id} onChange={e => setForm(f => ({ ...f, parent_id: e.target.value }))}>
               <option value="">None (top-level)</option>
               {parentOptions.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
-            </select>
+            </Select>
             <p className="text-xs text-gray-400 dark:text-slate-600 mt-1">Sub-departments appear indented in all dropdowns</p>
           </div>
           <div className={S.modalFooter}>

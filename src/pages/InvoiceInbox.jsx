@@ -7,6 +7,7 @@ import Modal from '../components/Modal'
 import StatusBadge from '../components/StatusBadge'
 import DeptBadge from '../components/DeptBadge'
 import { buildDeptOptions } from '../lib/deptUtils'
+import Select from '../components/Select'
 
 const emptyForm = { invoice_number: '', vendor_id: '', amount: '', received_date: '', due_date: '', department_id: '', notes: '' }
 
@@ -149,10 +150,10 @@ export default function InvoiceInbox() {
             {s || 'All'}
           </button>
         ))}
-        <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className={`${S.select} ml-auto`}>
+        <Select value={filterDept} onChange={e => setFilterDept(e.target.value)} className="ml-auto">
           <option value="">All Departments</option>
           {buildDeptOptions(departments).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
-        </select>
+        </Select>
       </div>
 
       <div className={`${S.card} overflow-hidden`}>
@@ -209,13 +210,13 @@ export default function InvoiceInbox() {
             </div>
             <div>
               <label className={S.label}>Vendor *</label>
-              <select value={form.vendor_id} onChange={e => {
+              <Select value={form.vendor_id} onChange={e => {
                 const v = vendors.find(v => v.id === e.target.value)
                 setForm(f => ({ ...f, vendor_id: e.target.value, department_id: v?.department_id || f.department_id }))
-              }} className={`${S.select} w-full`}>
+              }}>
                 <option value="">Select vendor…</option>
                 {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-              </select>
+              </Select>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
@@ -225,10 +226,10 @@ export default function InvoiceInbox() {
             </div>
             <div>
               <label className={S.label}>Department *</label>
-              <select value={form.department_id} onChange={e => setForm(f => ({ ...f, department_id: e.target.value }))} className={`${S.select} w-full`}>
+              <Select value={form.department_id} onChange={e => setForm(f => ({ ...f, department_id: e.target.value }))}>
                 <option value="">Select…</option>
                 {buildDeptOptions(departments).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
-              </select>
+              </Select>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
