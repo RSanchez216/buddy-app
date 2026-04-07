@@ -25,7 +25,7 @@ export default function TransactionFeed() {
 
   async function loadData() {
     const [txnRes, vendRes, deptRes] = await Promise.all([
-      supabase.from('transactions').select('*, vendors(name), departments(name)').order('transaction_date', { ascending: false }),
+      supabase.from('transactions').select('*, vendors(name, expected_amount_min, expected_amount_max), departments(name)').order('transaction_date', { ascending: false }),
       supabase.from('vendors').select('*, departments(name)').eq('is_active', true),
       supabase.from('departments').select('*').order('name'),
     ])
@@ -233,7 +233,24 @@ export default function TransactionFeed() {
                       <div className="text-xs text-slate-500 mt-0.5">{t.vendor_name_raw}</div>
                     )}
                   </td>
-                  <td className={`${S.td} text-right font-semibold text-slate-200`}>${Number(t.amount).toLocaleString()}</td>
+                  <td className={`${S.td} text-right`}>
+                    <div className="flex items-center justify-end gap-1.5">
+                      {(() => {
+                        const min = Number(t.vendors?.expected_amount_min)
+                        const max = Number(t.vendors?.expected_amount_max)
+                        const amt = Number(t.amount)
+                        const flagged = (min > 0 || max > 0) && (amt < min || (max > 0 && amt > max))
+                        return flagged ? (
+                          <span title={`Outside expected range $${min.toLocaleString()}–$${max.toLocaleString()}`}>
+                            <svg className="w-4 h-4 text-amber-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                            </svg>
+                          </span>
+                        ) : null
+                      })()}
+                      <span className="font-semibold text-slate-200 dark:text-slate-200 text-gray-900">${Number(t.amount).toLocaleString()}</span>
+                    </div>
+                  </td>
                   <td className={`${S.td} text-slate-400`}>{t.payment_method}</td>
                   <td className={S.td}><DeptBadge name={t.departments?.name} /></td>
                   <td className={`${S.td} text-center`}><StatusBadge status={t.status} /></td>

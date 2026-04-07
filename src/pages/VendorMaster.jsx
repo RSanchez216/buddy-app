@@ -6,14 +6,15 @@ import { S } from '../lib/styles'
 import Modal from '../components/Modal'
 import StatusBadge from '../components/StatusBadge'
 import DeptBadge from '../components/DeptBadge'
-import { buildDeptOptions, pmLabel } from '../lib/deptUtils'
 import Select from '../components/Select'
+import MultiSelect from '../components/MultiSelect'
+import { buildDeptOptions, pmLabel } from '../lib/deptUtils'
 
 const FREQUENCIES = ['Weekly', 'Bi-Weekly', 'Monthly', 'Yearly', 'One-Time']
 
 const emptyForm = {
   name: '', category_id: '', frequency: 'Monthly',
-  payment_method_id: '', department_id: '', expected_amount: '', is_active: true,
+  payment_method_id: '', department_ids: [], expected_amount_min: '', expected_amount_max: '', is_active: true,
 }
 
 export default function VendorMaster() {
@@ -54,9 +55,10 @@ export default function VendorMaster() {
   const deptOptions = buildDeptOptions(departments)
 
   const filtered = vendors.filter(v => {
-    const catName = v.vendor_categories?.name || ''
+    const catName = v.vendor_categories?.name || v.category || ''
     const matchSearch = !search || v.name.toLowerCase().includes(search.toLowerCase()) || catName.toLowerCase().includes(search.toLowerCase())
-    const matchDept = !filterDept || v.department_id === filterDept
+    const deptIds = v.department_ids?.length ? v.department_ids : (v.department_id ? [v.department_id] : [])
+    const matchDept = !filterDept || deptIds.includes(filterDept)
     const matchCat = !filterCat || v.category_id === filterCat
     return matchSearch && matchDept && matchCat
   })
@@ -64,24 +66,34 @@ export default function VendorMaster() {
   function openAdd() { setEditVendor(null); setForm(emptyForm); setError(''); setShowModal(true) }
   function openEdit(v) {
     setEditVendor(v)
-    setForm({ name: v.name, category_id: v.category_id || '', frequency: v.frequency, payment_method_id: v.payment_method_id || '', department_id: v.department_id || '', expected_amount: v.expected_amount, is_active: v.is_active })
+    setForm({
+      name: v.name,
+      category_id: v.category_id || '',
+      frequency: v.frequency,
+      payment_method_id: v.payment_method_id || '',
+      department_ids: v.department_ids?.length ? v.department_ids : (v.department_id ? [v.department_id] : []),
+      expected_amount_min: v.expected_amount_min || '',
+      expected_amount_max: v.expected_amount_max || '',
+      is_active: v.is_active,
+    })
     setError(''); setShowModal(true)
   }
 
   async function handleSave() {
     if (!form.name.trim()) return setError('Vendor name is required')
-    if (!form.department_id) return setError('Department is required')
+    if (!form.department_ids.length) return setError('At least one department is required')
     setSaving(true); setError('')
     const payload = {
       name: form.name.trim(),
       category_id: form.category_id || null,
-      // store legacy text fields too for compatibility
       category: categories.find(c => c.id === form.category_id)?.name || null,
       frequency: form.frequency,
       payment_method_id: form.payment_method_id || null,
       payment_method: paymentMethods.find(p => p.id === form.payment_method_id)?.name || null,
-      department_id: form.department_id,
-      expected_amount: Number(form.expected_amount) || 0,
+      department_ids: form.department_ids,
+      department_id: form.department_ids[0] || null, // backward compat
+      expected_amount_min: Number(form.expected_amount_min) || 0,
+      expected_amount_max: Number(form.expected_amount_max) || 0,
       is_active: form.is_active,
     }
     const res = editVendor
@@ -99,19 +111,19 @@ export default function VendorMaster() {
 
   // ── Excel template download ─────────────────────────────────────────────
   function downloadTemplate() {
-    const headers = ['Vendor Name', 'Category', 'Frequency', 'Payment Method', 'Department', 'Expected Amount', 'Active (Yes/No)']
+    const headers = ['Vendor Name', 'Category', 'Frequency', 'Payment Method', 'Department', 'Min Amount', 'Max Amount', 'Active (Yes/No)']
     const example = [
       'Pilot Flying J',
       categories[0]?.name || 'Fuel',
       'Monthly',
       paymentMethods[0]?.name || 'ACH',
       departments[0]?.name || 'Fleet',
-      '5000',
+      '4500',
+      '5500',
       'Yes',
     ]
     const ws = XLSX.utils.aoa_to_sheet([headers, example])
-    // column widths
-    ws['!cols'] = headers.map((_, i) => ({ wch: [20, 20, 12, 18, 15, 16, 14][i] }))
+    ws['!cols'] = headers.map((_, i) => ({ wch: [20, 20, 12, 18, 15, 12, 12, 14][i] }))
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Vendors')
     XLSX.writeFile(wb, 'buddy_vendor_import_template.xlsx')
@@ -130,7 +142,6 @@ export default function VendorMaster() {
 
       if (!rows.length) { alert('The file appears to be empty.'); return }
 
-      // Validate required columns
       const firstRow = Object.keys(rows[0])
       const missing = REQUIRED_COLS.filter(c => !firstRow.includes(c))
       if (missing.length) { alert(`Missing required columns: ${missing.join(', ')}\n\nDownload the template to see the expected format.`); return }
@@ -154,9 +165,11 @@ export default function VendorMaster() {
           frequency: r['Frequency'] || 'Monthly',
           payment_method_id: pm?.id || null,
           payment_method: pmName,
+          department_ids: dept ? [dept.id] : [],
           department_id: dept?.id || null,
           department_name: deptName,
-          expected_amount: Number(String(r['Expected Amount'] || '0').replace(/[$,]/g, '')) || 0,
+          expected_amount_min: Number(String(r['Min Amount'] || '0').replace(/[$,]/g, '')) || 0,
+          expected_amount_max: Number(String(r['Max Amount'] || '0').replace(/[$,]/g, '')) || 0,
           is_active: String(r['Active (Yes/No)'] || 'Yes').toLowerCase() !== 'no',
           _error: errs.length ? errs.join('; ') : null,
         }
@@ -180,6 +193,22 @@ export default function VendorMaster() {
       alert(`Successfully imported ${valid.length} vendor${valid.length > 1 ? 's' : ''}${importRows.filter(r => r._error).length ? `, ${importRows.filter(r => r._error).length} skipped.` : '.'}`)
       setShowImport(false); loadData()
     }
+  }
+
+  // Helper: get dept names for a vendor
+  function vendorDeptNames(v) {
+    const ids = v.department_ids?.length ? v.department_ids : (v.department_id ? [v.department_id] : [])
+    return ids.map(id => departments.find(d => d.id === id)?.name).filter(Boolean)
+  }
+
+  // Helper: format amount range
+  function fmtRange(v) {
+    const min = Number(v.expected_amount_min)
+    const max = Number(v.expected_amount_max)
+    if (!min && !max) return '—'
+    if (!max) return `≥ $${min.toLocaleString()}`
+    if (!min) return `≤ $${max.toLocaleString()}`
+    return `$${min.toLocaleString()} – $${max.toLocaleString()}`
   }
 
   const canEdit = profile?.role === 'admin' || profile?.role === 'department_head'
@@ -232,8 +261,8 @@ export default function VendorMaster() {
           <table className="w-full text-sm">
             <thead className={S.tableHead}>
               <tr>
-                {['Name', 'Category', 'Frequency', 'Payment Method', 'Department', 'Expected', 'Status', canEdit && ''].filter(Boolean).map(h => (
-                  <th key={h} className={`${S.th} ${h === 'Expected' ? 'text-right' : ''}`}>{h}</th>
+                {['Name', 'Category', 'Frequency', 'Payment Method', 'Department(s)', 'Amt Range', 'Status', canEdit && ''].filter(Boolean).map(h => (
+                  <th key={h} className={S.th}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -248,8 +277,16 @@ export default function VendorMaster() {
                   <td className={`${S.td} text-gray-500 dark:text-slate-400`}>
                     {v.payment_methods ? pmLabel(v.payment_methods) : (v.payment_method || '—')}
                   </td>
-                  <td className={S.td}><DeptBadge name={v.departments?.name} /></td>
-                  <td className={`${S.td} text-right text-gray-700 dark:text-slate-300`}>${Number(v.expected_amount).toLocaleString()}</td>
+                  <td className={S.td}>
+                    <div className="flex flex-wrap gap-1">
+                      {vendorDeptNames(v).slice(0, 2).map(name => <DeptBadge key={name} name={name} />)}
+                      {vendorDeptNames(v).length > 2 && (
+                        <span className="text-xs text-gray-400 dark:text-slate-500 self-center">+{vendorDeptNames(v).length - 2}</span>
+                      )}
+                      {vendorDeptNames(v).length === 0 && <span className="text-gray-300 dark:text-slate-600">—</span>}
+                    </div>
+                  </td>
+                  <td className={`${S.td} text-gray-500 dark:text-slate-400 text-xs font-mono whitespace-nowrap`}>{fmtRange(v)}</td>
                   <td className={`${S.td} text-center`}><StatusBadge status={v.is_active ? 'Active' : 'Inactive'} /></td>
                   {canEdit && (
                     <td className={`${S.td} text-right`}>
@@ -293,25 +330,40 @@ export default function VendorMaster() {
               </Select>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className={S.label}>Payment Method</label>
-              <Select value={form.payment_method_id} onChange={e => setForm(f => ({ ...f, payment_method_id: e.target.value }))}>
-                <option value="">Select…</option>
-                {paymentMethods.map(p => <option key={p.id} value={p.id}>{pmLabel(p)}</option>)}
-              </Select>
-            </div>
-            <div>
-              <label className={S.label}>Department *</label>
-              <Select value={form.department_id} onChange={e => setForm(f => ({ ...f, department_id: e.target.value }))}>
-                <option value="">Select…</option>
-                {deptOptions.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
-              </Select>
-            </div>
+          <div>
+            <label className={S.label}>Payment Method</label>
+            <Select value={form.payment_method_id} onChange={e => setForm(f => ({ ...f, payment_method_id: e.target.value }))}>
+              <option value="">Select…</option>
+              {paymentMethods.map(p => <option key={p.id} value={p.id}>{pmLabel(p)}</option>)}
+            </Select>
           </div>
           <div>
-            <label className={S.label}>Expected Amount ($)</label>
-            <input type="number" value={form.expected_amount} onChange={e => setForm(f => ({ ...f, expected_amount: e.target.value }))} className={S.input} />
+            <label className={S.label}>Department(s) *</label>
+            <MultiSelect
+              options={deptOptions}
+              value={form.department_ids}
+              onChange={ids => setForm(f => ({ ...f, department_ids: ids }))}
+              placeholder="Select department(s)…"
+            />
+          </div>
+          <div>
+            <label className={S.label}>Expected Amount Range ($)</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="number" min="0"
+                value={form.expected_amount_min}
+                onChange={e => setForm(f => ({ ...f, expected_amount_min: e.target.value }))}
+                className={S.input} placeholder="Min"
+              />
+              <span className="text-gray-400 dark:text-slate-500 text-sm shrink-0">to</span>
+              <input
+                type="number" min="0"
+                value={form.expected_amount_max}
+                onChange={e => setForm(f => ({ ...f, expected_amount_max: e.target.value }))}
+                className={S.input} placeholder="Max"
+              />
+            </div>
+            <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">Transactions outside this range will be flagged</p>
           </div>
           <div className={S.modalFooter}>
             <button onClick={() => setShowModal(false)} className={S.btnCancel}>Cancel</button>
@@ -334,7 +386,7 @@ export default function VendorMaster() {
           <div className="overflow-x-auto max-h-96 border border-gray-200 dark:border-white/5 rounded-xl overflow-y-auto">
             <table className="w-full text-xs">
               <thead className="bg-gray-50 dark:bg-[#09091a] sticky top-0">
-                <tr>{['Row', 'Name', 'Category', 'Frequency', 'Payment', 'Department', 'Expected', 'Active', 'Status'].map(h => (
+                <tr>{['Row', 'Name', 'Category', 'Frequency', 'Payment', 'Department', 'Min $', 'Max $', 'Active', 'Status'].map(h => (
                   <th key={h} className="px-3 py-2 text-left text-gray-500 dark:text-slate-500 font-medium">{h}</th>
                 ))}</tr>
               </thead>
@@ -347,7 +399,8 @@ export default function VendorMaster() {
                     <td className="px-3 py-2 text-gray-500 dark:text-slate-400">{r.frequency}</td>
                     <td className="px-3 py-2 text-gray-500 dark:text-slate-400">{r.payment_method}</td>
                     <td className="px-3 py-2 text-gray-500 dark:text-slate-400">{r.department_name}</td>
-                    <td className="px-3 py-2 text-gray-500 dark:text-slate-400">${r.expected_amount}</td>
+                    <td className="px-3 py-2 text-gray-500 dark:text-slate-400">${r.expected_amount_min}</td>
+                    <td className="px-3 py-2 text-gray-500 dark:text-slate-400">${r.expected_amount_max}</td>
                     <td className="px-3 py-2 text-gray-500 dark:text-slate-400">{r.is_active ? 'Yes' : 'No'}</td>
                     <td className="px-3 py-2">
                       {r._error ? <span className="text-red-600 dark:text-red-400">{r._error}</span> : <span className="text-emerald-600 dark:text-emerald-400 font-medium">✓ OK</span>}
