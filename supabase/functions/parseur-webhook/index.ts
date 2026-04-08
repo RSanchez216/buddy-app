@@ -278,6 +278,23 @@ Deno.serve(async (req: Request) => {
   // Strip label prefixes from invoice number and unit number
   const invoiceNumber = stripLabel(fInvoiceNum.value) || `PARSEUR-${Date.now()}`
 
+  // Duplicate guard — skip if same invoice_number from parseur already exists (not soft-deleted)
+  const { data: existing } = await supabase
+    .from('invoices')
+    .select('id')
+    .eq('invoice_number', invoiceNumber)
+    .eq('source', 'parseur')
+    .is('deleted_at', null)
+    .maybeSingle()
+
+  if (existing) {
+    console.log('[parseur] duplicate detected, skipping:', invoiceNumber)
+    return new Response(
+      JSON.stringify({ success: true, message: 'duplicate invoice skipped', invoice_id: existing.id }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    )
+  }
+
   const { data: invoice, error: invErr } = await supabase.from('invoices').insert({
     invoice_number:       invoiceNumber,
     vendor_id:            vendorId,
