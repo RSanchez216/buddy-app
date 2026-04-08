@@ -3,15 +3,18 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 // ── Types ──────────────────────────────────────────────────────────────────
 
 interface ParseurPayload {
-  vendor_name?: string
+  vendor_name?:    string
+  contract_type?:  string
   invoice_number?: string
-  invoice_date?: string
-  due_date?: string
-  total_amount?: string | number
-  file_url?: string
-  file_data?: string       // base64-encoded PDF
-  file_name?: string
-  email_subject?: string
+  invoice_date?:   string
+  due_date?:       string
+  total_amount?:   string | number
+  terms?:          string
+  unit_number?:    string
+  file_url?:       string
+  file_data?:      string   // base64-encoded PDF
+  file_name?:      string
+  email_subject?:  string
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -30,6 +33,40 @@ function sanitizeFilename(name: string): string {
 
 function todayISO(): string {
   return new Date().toISOString().split('T')[0]
+}
+
+/**
+ * Given invoice_date (YYYY-MM-DD) and a terms string like "Net 10",
+ * returns the due date as YYYY-MM-DD, or null if unparseable.
+ */
+function calcDueDate(invoiceDate: string | undefined, terms: string | undefined): string | null {
+  if (!invoiceDate || !terms) return null
+  const match = terms.match(/net\s*(\d+)/i)
+  if (!match) return null
+  const days = parseInt(match[1], 10)
+  const base = new Date(invoiceDate)
+  if (isNaN(base.getTime())) return null
+  base.setDate(base.getDate() + days)
+  return base.toISOString().split('T')[0]
+}
+
+/**
+ * Map a contract_type string to a keyword that should appear in the vendor name.
+ * Returns [includeKeyword, excludeKeyword|null].
+ */
+function contractTypeKeyword(contractType: string): [string, string | null] {
+  const ct = contractType.trim().toUpperCase()
+  if (ct.includes('LEASE TO PURCHASE') || ct.includes('LEASE TO BUY')) {
+    return ['Lease to Purchase', null]
+  }
+  if (ct.includes('LEASE')) {
+    // plain Lease — must NOT contain Purchase
+    return ['Lease', 'Purchase']
+  }
+  if (ct.includes('RENTAL') || ct.includes('RENT')) {
+    return ['Rental', null]
+  }
+  return [contractType, null]
 }
 
 // ── Main handler ───────────────────────────────────────────────────────────
@@ -66,11 +103,14 @@ Deno.serve(async (req: Request) => {
     ? `Auto-imported via Parseur — ${payload.email_subject}`
     : 'Auto-imported via Parseur'
 
-  // ── 3. Vendor matching ───────────────────────────────────────────────────
-  const rawVendorName = (payload.vendor_name || '').trim()
+  // ── 3. Smart vendor matching ─────────────────────────────────────────────
+  const rawVendorName   = (payload.vendor_name   || '').trim()
+  const rawContractType = (payload.contract_type || '').trim()
+
   let vendorId: string | null = null
   let deptIds: string[] = []
   let needsVendorMatch = false
+  let notesExtra = ''
 
   if (rawVendorName) {
     const { data: vendors } = await supabase
@@ -79,27 +119,51 @@ Deno.serve(async (req: Request) => {
       .eq('is_active', true)
 
     if (vendors?.length) {
-      // Exact match (case-insensitive)
+      // Step 1 — Exact match (case-insensitive)
       let match = vendors.find(
         v => v.name.toLowerCase() === rawVendorName.toLowerCase()
       )
-      // Partial match
-      if (!match) {
-        match = vendors.find(
-          v =>
-            v.name.toLowerCase().includes(rawVendorName.toLowerCase()) ||
-            rawVendorName.toLowerCase().includes(v.name.toLowerCase())
-        )
-      }
+
       if (match) {
         vendorId = match.id
         deptIds = match.department_ids?.length
           ? match.department_ids
-          : match.department_id
-          ? [match.department_id]
-          : []
+          : match.department_id ? [match.department_id] : []
       } else {
-        needsVendorMatch = true
+        // Step 2 — Combined name + contract_type keyword match
+        const nameLower = rawVendorName.toLowerCase()
+
+        let candidates = vendors.filter(v =>
+          v.name.toLowerCase().includes(nameLower) ||
+          nameLower.includes(v.name.toLowerCase())
+        )
+
+        if (candidates.length > 1 && rawContractType) {
+          const [includeKw, excludeKw] = contractTypeKeyword(rawContractType)
+          const refined = candidates.filter(v => {
+            const vn = v.name.toLowerCase()
+            const hasInclude = vn.includes(includeKw.toLowerCase())
+            const hasExclude = excludeKw ? vn.includes(excludeKw.toLowerCase()) : false
+            return hasInclude && !hasExclude
+          })
+          if (refined.length > 0) candidates = refined
+        }
+
+        if (candidates.length === 1) {
+          // Single match
+          vendorId = candidates[0].id
+          deptIds = candidates[0].department_ids?.length
+            ? candidates[0].department_ids
+            : candidates[0].department_id ? [candidates[0].department_id] : []
+        } else if (candidates.length > 1) {
+          // Step 3 — Multiple matches: flag for manual review
+          needsVendorMatch = true
+          const names = candidates.map(v => v.name).join(', ')
+          notesExtra = ` | Multiple vendor matches: ${names}`
+        } else {
+          // Step 4 — No match
+          needsVendorMatch = true
+        }
       }
     } else {
       needsVendorMatch = true
@@ -108,28 +172,40 @@ Deno.serve(async (req: Request) => {
     needsVendorMatch = true
   }
 
-  // ── 4. Build invoice record ──────────────────────────────────────────────
+  // ── 4. Due date from terms ───────────────────────────────────────────────
+  const invoiceDate = payload.invoice_date || null
+  let dueDate = payload.due_date || null
+
+  if (!dueDate && payload.terms && invoiceDate) {
+    dueDate = calcDueDate(invoiceDate, payload.terms)
+  }
+
+  // ── 5. Build invoice record ──────────────────────────────────────────────
   const invoiceNumber =
     payload.invoice_number?.trim() ||
     `PARSEUR-${Date.now()}`
 
   const invoicePayload = {
-    invoice_number: invoiceNumber,
-    vendor_id:      vendorId,
-    vendor_name_raw: rawVendorName || null,
-    amount:          parseAmount(payload.total_amount),
-    received_date:   todayISO(),
-    due_date:        payload.due_date || null,
-    department_id:   deptIds[0] || null,
-    department_ids:  deptIds,
-    status:          'Pending',
-    source:          'parseur',
+    invoice_number:     invoiceNumber,
+    vendor_id:          vendorId,
+    vendor_name_raw:    rawVendorName || null,
+    amount:             parseAmount(payload.total_amount),
+    received_date:      todayISO(),
+    invoice_date:       invoiceDate,
+    due_date:           dueDate,
+    department_id:      deptIds[0] || null,
+    department_ids:     deptIds,
+    status:             'Pending',
+    source:             'parseur',
     needs_vendor_match: needsVendorMatch,
-    notes:           notes_prefix,
-    attachment_url:  null as string | null,
+    contract_type:      rawContractType || null,
+    payment_terms:      payload.terms || null,
+    unit_number:        payload.unit_number?.trim() || null,
+    notes:              notes_prefix + notesExtra,
+    attachment_url:     null as string | null,
   }
 
-  // ── 5. Insert invoice first to get the ID ────────────────────────────────
+  // ── 6. Insert invoice ────────────────────────────────────────────────────
   const { data: invoice, error: invErr } = await supabase
     .from('invoices')
     .insert(invoicePayload)
@@ -146,7 +222,7 @@ Deno.serve(async (req: Request) => {
 
   const invoiceId = invoice.id
 
-  // ── 6. Download & upload PDF ─────────────────────────────────────────────
+  // ── 7. Download & upload PDF ─────────────────────────────────────────────
   let attachmentUrl: string | null = null
 
   try {
@@ -162,7 +238,6 @@ Deno.serve(async (req: Request) => {
         console.warn('Could not fetch file_url:', payload.file_url, res.status)
       }
     } else if (payload.file_data) {
-      // base64 decode
       const binary = atob(payload.file_data)
       fileBytes = new Uint8Array(binary.length)
       for (let i = 0; i < binary.length; i++) {
@@ -185,14 +260,12 @@ Deno.serve(async (req: Request) => {
           .getPublicUrl(storagePath)
         attachmentUrl = publicUrl
 
-        // Insert into invoice_attachments table
         await supabase.from('invoice_attachments').insert({
           invoice_id: invoiceId,
           file_url:   publicUrl,
           file_name:  fileName,
         })
 
-        // Update invoice with attachment_url
         await supabase
           .from('invoices')
           .update({ attachment_url: publicUrl })
@@ -201,7 +274,7 @@ Deno.serve(async (req: Request) => {
         console.warn('Storage upload failed:', upErr.message)
         await supabase
           .from('invoices')
-          .update({ notes: `${notes_prefix} (attachment upload failed: ${upErr.message})` })
+          .update({ notes: `${notes_prefix}${notesExtra} (attachment upload failed: ${upErr.message})` })
           .eq('id', invoiceId)
       }
     }
@@ -209,7 +282,7 @@ Deno.serve(async (req: Request) => {
     console.warn('File handling error:', err)
   }
 
-  // ── 7. Create invoice_departments records ────────────────────────────────
+  // ── 8. Create invoice_departments records ────────────────────────────────
   if (deptIds.length) {
     await supabase.from('invoice_departments').insert(
       deptIds.map(dept_id => ({
@@ -220,12 +293,13 @@ Deno.serve(async (req: Request) => {
     )
   }
 
-  // ── 8. Respond ───────────────────────────────────────────────────────────
+  // ── 9. Respond ───────────────────────────────────────────────────────────
   return new Response(
     JSON.stringify({
       success:        true,
       invoice_id:     invoiceId,
       vendor_matched: !needsVendorMatch,
+      due_date:       dueDate,
       attachment_url: attachmentUrl,
     }),
     { status: 200, headers: { 'Content-Type': 'application/json' } }

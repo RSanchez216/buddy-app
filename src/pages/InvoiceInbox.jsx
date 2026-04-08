@@ -15,6 +15,7 @@ const emptyForm = {
   invoice_number: '', vendor_id: '', amount: '',
   received_date: '', due_date: '',
   billing_period_start: '', billing_period_end: '',
+  unit_number: '',
   department_ids: [], notes: '',
 }
 
@@ -173,6 +174,7 @@ export default function InvoiceInbox() {
       due_date: inv.due_date || '',
       billing_period_start: inv.billing_period_start || '',
       billing_period_end: inv.billing_period_end || '',
+      unit_number: inv.unit_number || '',
       department_ids: inv.invoice_departments?.map(d => d.department_id) || (inv.department_id ? [inv.department_id] : []),
       notes: inv.notes || '',
     })
@@ -233,6 +235,7 @@ export default function InvoiceInbox() {
       billing_period_end: form.billing_period_end || null,
       department_id: form.department_ids[0],
       department_ids: form.department_ids,
+      unit_number: form.unit_number?.trim() || null,
       notes: form.notes || null,
     }
 
@@ -412,10 +415,10 @@ export default function InvoiceInbox() {
 
   function downloadTemplate() {
     const wb = XLSX.utils.book_new()
-    const headers = ['Invoice Number', 'Vendor Name', 'Amount', 'Received Date', 'Due Date', 'Billing Period Start', 'Billing Period End', 'Department(s)', 'Notes', 'Status']
-    const example = ['INV-001', vendors[0]?.name || 'Penske', '9800', '2026-04-01', '2026-04-10', '2026-03-30', '2026-04-05', departments[0]?.name || 'Fleet', 'Contract rental fee', 'Pending']
+    const headers = ['Invoice Number', 'Vendor Name', 'Amount', 'Received Date', 'Due Date', 'Billing Period Start', 'Billing Period End', 'Department(s)', 'Unit Number', 'Notes', 'Status']
+    const example = ['INV-001', vendors[0]?.name || 'Penske', '9800', '2026-04-01', '2026-04-10', '2026-03-30', '2026-04-05', departments[0]?.name || 'Fleet', 'T-4821', 'Contract rental fee', 'Pending']
     const ws = XLSX.utils.aoa_to_sheet([headers, example])
-    ws['!cols'] = [15, 22, 10, 14, 14, 18, 16, 22, 30, 10].map(wch => ({ wch }))
+    ws['!cols'] = [15, 22, 10, 14, 14, 18, 16, 22, 14, 30, 10].map(wch => ({ wch }))
     XLSX.utils.book_append_sheet(wb, ws, 'Invoices')
     const ref = [
       ['VALID VENDOR NAMES (must match exactly)'], ...vendors.map(v => [v.name]),
@@ -468,6 +471,7 @@ export default function InvoiceInbox() {
           billing_period_start: excelDateToStr(r['Billing Period Start']) || null,
           billing_period_end: excelDateToStr(r['Billing Period End']) || null,
           department_ids: dept ? [dept.id] : [], department_id: dept?.id || null, department_name: deptName,
+          unit_number: r['Unit Number'] || null,
           notes: r['Notes'] || '', status: 'Pending', source: 'excel_import',
         }
       }))
@@ -600,7 +604,7 @@ export default function InvoiceInbox() {
           <table className="w-full text-sm">
             <thead className={S.tableHead}>
               <tr>
-                {['Invoice #', 'Vendor', 'Amount', 'Billing Period', 'Received', 'Due', 'Status', 'Department(s)', 'Files', 'Notes', canEdit && 'Actions'].filter(Boolean).map(h => (
+                {['Invoice #', 'Unit #', 'Vendor', 'Amount', 'Billing Period', 'Received', 'Due', 'Status', 'Department(s)', 'Files', 'Notes', canEdit && 'Actions'].filter(Boolean).map(h => (
                   <th key={h} className={`${S.th} ${h === 'Amount' ? 'text-right' : ''}`}>{h}</th>
                 ))}
               </tr>
@@ -622,6 +626,9 @@ export default function InvoiceInbox() {
                           <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-100 dark:bg-slate-700 text-gray-500 dark:text-slate-400">XLS</span>
                         )}
                       </div>
+                    </td>
+                    <td className={`${S.td} font-mono text-xs text-gray-500 dark:text-slate-400`}>
+                      {inv.unit_number || <span className="text-gray-300 dark:text-slate-700">—</span>}
                     </td>
                     <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>
                       {inv.needs_vendor_match ? (
@@ -779,6 +786,11 @@ export default function InvoiceInbox() {
               <span className="text-gray-400 dark:text-slate-500 text-sm shrink-0">to</span>
               <input type="date" value={form.billing_period_end} onChange={e => setForm(f => ({ ...f, billing_period_end: e.target.value }))} className={S.input} />
             </div>
+          </div>
+
+          <div>
+            <label className={S.label}>Unit # <span className="text-gray-400 dark:text-slate-500 font-normal">(optional)</span></label>
+            <input value={form.unit_number} onChange={e => setForm(f => ({ ...f, unit_number: e.target.value }))} className={S.input} placeholder="e.g. T-4821" />
           </div>
 
           <div>
