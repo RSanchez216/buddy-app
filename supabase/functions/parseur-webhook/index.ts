@@ -2,27 +2,31 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-interface ParseurPayload {
-  vendor_name?:    string
-  contract_type?:  string
-  invoice_number?: string
-  invoice_date?:   string
-  due_date?:       string
-  total_amount?:   string | number
-  terms?:          string
-  unit_number?:    string
-  file_url?:       string
-  file_data?:      string   // base64-encoded PDF
-  file_name?:      string
-  email_subject?:  string
+// Accept any key from Parseur — field names vary per vendor template
+// deno-lint-ignore no-explicit-any
+type ParseurPayload = Record<string, any>
+
+// ── Field resolver ─────────────────────────────────────────────────────────
+
+/**
+ * Returns the value of the first candidate key that is present and non-empty
+ * in the payload, plus the key name that matched (for logging).
+ */
+function getField(payload: ParseurPayload, ...candidates: string[]): { value: string | null; key: string | null } {
+  for (const key of candidates) {
+    const v = payload[key]
+    if (v !== undefined && v !== null && v !== '') {
+      return { value: String(v), key }
+    }
+  }
+  return { value: null, key: null }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-function parseAmount(raw: string | number | undefined): number {
-  if (raw == null) return 0
-  if (typeof raw === 'number') return raw
-  const cleaned = String(raw).replace(/[$,\s]/g, '')
+function parseAmount(raw: string | null | undefined): number {
+  if (!raw) return 0
+  const cleaned = raw.replace(/[$,\s]/g, '')
   const n = parseFloat(cleaned)
   return isNaN(n) ? 0 : n
 }
@@ -39,7 +43,7 @@ function todayISO(): string {
  * Given invoice_date (YYYY-MM-DD) and a terms string like "Net 10",
  * returns the due date as YYYY-MM-DD, or null if unparseable.
  */
-function calcDueDate(invoiceDate: string | undefined, terms: string | undefined): string | null {
+function calcDueDate(invoiceDate: string | null, terms: string | null): string | null {
   if (!invoiceDate || !terms) return null
   const match = terms.match(/net\s*(\d+)/i)
   if (!match) return null
@@ -51,8 +55,8 @@ function calcDueDate(invoiceDate: string | undefined, terms: string | undefined)
 }
 
 /**
- * Map a contract_type string to a keyword that should appear in the vendor name.
- * Returns [includeKeyword, excludeKeyword|null].
+ * Map a contract_type string to [includeKeyword, excludeKeyword|null]
+ * for vendor name disambiguation.
  */
 function contractTypeKeyword(contractType: string): [string, string | null] {
   const ct = contractType.trim().toUpperCase()
@@ -60,7 +64,6 @@ function contractTypeKeyword(contractType: string): [string, string | null] {
     return ['Lease to Purchase', null]
   }
   if (ct.includes('LEASE')) {
-    // plain Lease — must NOT contain Purchase
     return ['Lease', 'Purchase']
   }
   if (ct.includes('RENTAL') || ct.includes('RENT')) {
@@ -94,18 +97,55 @@ Deno.serve(async (req: Request) => {
     })
   }
 
+  // ── 3. Resolve fields (flexible mapping) ─────────────────────────────────
+  const receivedFields = Object.keys(payload)
+  console.log('[parseur] incoming fields:', receivedFields.join(', '))
+
+  const fVendorName   = getField(payload, 'vendor_name', 'supplier_name', 'company_name', 'from_name', 'biller_name', 'remit_to_name')
+  const fContractType = getField(payload, 'contract_type', 'service_type', 'billing_type', 'agreement_type', 'type', 'description_type')
+  const fInvoiceNum   = getField(payload, 'invoice_number', 'invoice_no', 'inv_number', 'inv_no', 'invoice_num', 'document_number', 'doc_no', 'reference')
+  const fInvoiceDate  = getField(payload, 'received_date', 'invoice_date', 'date', 'bill_date', 'invoice_dt', 'billing_date', 'service_date', 'doc_date')
+  const fDueDate      = getField(payload, 'due_date', 'payment_due', 'due', 'payment_date', 'date_due', 'pay_by', 'expiry_date')
+  const fAmount       = getField(payload, 'total_due_this_invoice', 'total_amount', 'amount', 'total', 'invoice_total', 'amount_due', 'balance_due', 'total_due', 'grand_total', 'net_amount')
+  const fTerms        = getField(payload, 'terms', 'payment_terms', 'net_terms', 'payment_conditions', 'conditions')
+  const fUnitNumber   = getField(payload, 'unit_number', 'unit_no', 'unit', 'asset_number', 'equipment_number', 'truck_number', 'vehicle_number')
+  const fFileName     = getField(payload, 'file_name')
+  const fFileUrl      = getField(payload, 'file_url')
+  const fFileData     = getField(payload, 'file_data')
+  const fEmailSubject = getField(payload, 'email_subject')
+
+  // Log resolved field sources
+  console.log('[parseur] resolved fields:', JSON.stringify({
+    vendor_name:    fVendorName.key,
+    contract_type:  fContractType.key,
+    invoice_number: fInvoiceNum.key,
+    invoice_date:   fInvoiceDate.key,
+    due_date:       fDueDate.key,
+    amount:         fAmount.key,
+    terms:          fTerms.key,
+    unit_number:    fUnitNumber.key,
+  }))
+
+  // Warn on missing required fields
+  if (!fAmount.value) {
+    console.error('[parseur] MISSING amount — payload keys were:', receivedFields.join(', '))
+  }
+  if (!fInvoiceDate.value) {
+    console.error('[parseur] MISSING invoice_date — payload keys were:', receivedFields.join(', '))
+  }
+
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL')!,
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
   )
 
-  const notes_prefix = payload.email_subject
-    ? `Auto-imported via Parseur — ${payload.email_subject}`
+  const notes_prefix = fEmailSubject.value
+    ? `Auto-imported via Parseur — ${fEmailSubject.value}`
     : 'Auto-imported via Parseur'
 
-  // ── 3. Smart vendor matching ─────────────────────────────────────────────
-  const rawVendorName   = (payload.vendor_name   || '').trim()
-  const rawContractType = (payload.contract_type || '').trim()
+  // ── 4. Smart vendor matching ─────────────────────────────────────────────
+  const rawVendorName   = fVendorName.value?.trim() || ''
+  const rawContractType = fContractType.value?.trim() || ''
 
   let vendorId: string | null = null
   let deptIds: string[] = []
@@ -125,6 +165,7 @@ Deno.serve(async (req: Request) => {
       )
 
       if (match) {
+        console.log('[parseur] vendor exact match:', match.name)
         vendorId = match.id
         deptIds = match.department_ids?.length
           ? match.department_ids
@@ -150,18 +191,18 @@ Deno.serve(async (req: Request) => {
         }
 
         if (candidates.length === 1) {
-          // Single match
+          console.log('[parseur] vendor matched via name+contract_type:', candidates[0].name)
           vendorId = candidates[0].id
           deptIds = candidates[0].department_ids?.length
             ? candidates[0].department_ids
             : candidates[0].department_id ? [candidates[0].department_id] : []
         } else if (candidates.length > 1) {
-          // Step 3 — Multiple matches: flag for manual review
+          console.warn('[parseur] multiple vendor candidates:', candidates.map(v => v.name).join(', '))
           needsVendorMatch = true
           const names = candidates.map(v => v.name).join(', ')
           notesExtra = ` | Multiple vendor matches: ${names}`
         } else {
-          // Step 4 — No match
+          console.warn('[parseur] no vendor match for:', rawVendorName)
           needsVendorMatch = true
         }
       }
@@ -172,24 +213,25 @@ Deno.serve(async (req: Request) => {
     needsVendorMatch = true
   }
 
-  // ── 4. Due date from terms ───────────────────────────────────────────────
-  const invoiceDate = payload.invoice_date || null
-  let dueDate = payload.due_date || null
+  // ── 5. Due date from terms ───────────────────────────────────────────────
+  const invoiceDate = fInvoiceDate.value || null
+  let dueDate = fDueDate.value || null
 
-  if (!dueDate && payload.terms && invoiceDate) {
-    dueDate = calcDueDate(invoiceDate, payload.terms)
+  if (!dueDate && fTerms.value && invoiceDate) {
+    dueDate = calcDueDate(invoiceDate, fTerms.value)
+    if (dueDate) console.log(`[parseur] due_date calculated from "${fTerms.value}": ${dueDate}`)
   }
 
-  // ── 5. Build invoice record ──────────────────────────────────────────────
+  // ── 6. Build invoice record ──────────────────────────────────────────────
   const invoiceNumber =
-    payload.invoice_number?.trim() ||
+    fInvoiceNum.value?.trim() ||
     `PARSEUR-${Date.now()}`
 
   const invoicePayload = {
     invoice_number:     invoiceNumber,
     vendor_id:          vendorId,
     vendor_name_raw:    rawVendorName || null,
-    amount:             parseAmount(payload.total_amount),
+    amount:             parseAmount(fAmount.value),
     received_date:      todayISO(),
     invoice_date:       invoiceDate,
     due_date:           dueDate,
@@ -199,13 +241,14 @@ Deno.serve(async (req: Request) => {
     source:             'parseur',
     needs_vendor_match: needsVendorMatch,
     contract_type:      rawContractType || null,
-    payment_terms:      payload.terms || null,
-    unit_number:        payload.unit_number?.trim() || null,
+    payment_terms:      fTerms.value || null,
+    unit_number:        fUnitNumber.value?.trim() || null,
     notes:              notes_prefix + notesExtra,
+    raw_payload:        payload,
     attachment_url:     null as string | null,
   }
 
-  // ── 6. Insert invoice ────────────────────────────────────────────────────
+  // ── 7. Insert invoice ────────────────────────────────────────────────────
   const { data: invoice, error: invErr } = await supabase
     .from('invoices')
     .insert(invoicePayload)
@@ -213,7 +256,7 @@ Deno.serve(async (req: Request) => {
     .single()
 
   if (invErr || !invoice) {
-    console.error('Invoice insert failed:', invErr)
+    console.error('[parseur] invoice insert failed:', invErr)
     return new Response(
       JSON.stringify({ error: 'Failed to create invoice', detail: invErr?.message }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
@@ -221,24 +264,25 @@ Deno.serve(async (req: Request) => {
   }
 
   const invoiceId = invoice.id
+  console.log('[parseur] invoice created:', invoiceId)
 
-  // ── 7. Download & upload PDF ─────────────────────────────────────────────
+  // ── 8. Download & upload PDF ─────────────────────────────────────────────
   let attachmentUrl: string | null = null
 
   try {
     let fileBytes: Uint8Array | null = null
-    let fileName = sanitizeFilename(payload.file_name || `invoice_${invoiceNumber}.pdf`)
+    let fileName = sanitizeFilename(fFileName.value || `invoice_${invoiceNumber}.pdf`)
 
-    if (payload.file_url) {
-      const res = await fetch(payload.file_url)
+    if (fFileUrl.value) {
+      const res = await fetch(fFileUrl.value)
       if (res.ok) {
         const buf = await res.arrayBuffer()
         fileBytes = new Uint8Array(buf)
       } else {
-        console.warn('Could not fetch file_url:', payload.file_url, res.status)
+        console.warn('[parseur] could not fetch file_url:', fFileUrl.value, res.status)
       }
-    } else if (payload.file_data) {
-      const binary = atob(payload.file_data)
+    } else if (fFileData.value) {
+      const binary = atob(fFileData.value)
       fileBytes = new Uint8Array(binary.length)
       for (let i = 0; i < binary.length; i++) {
         fileBytes[i] = binary.charCodeAt(i)
@@ -270,8 +314,10 @@ Deno.serve(async (req: Request) => {
           .from('invoices')
           .update({ attachment_url: publicUrl })
           .eq('id', invoiceId)
+
+        console.log('[parseur] attachment uploaded:', storagePath)
       } else {
-        console.warn('Storage upload failed:', upErr.message)
+        console.warn('[parseur] storage upload failed:', upErr.message)
         await supabase
           .from('invoices')
           .update({ notes: `${notes_prefix}${notesExtra} (attachment upload failed: ${upErr.message})` })
@@ -279,10 +325,10 @@ Deno.serve(async (req: Request) => {
       }
     }
   } catch (err) {
-    console.warn('File handling error:', err)
+    console.warn('[parseur] file handling error:', err)
   }
 
-  // ── 8. Create invoice_departments records ────────────────────────────────
+  // ── 9. Create invoice_departments records ────────────────────────────────
   if (deptIds.length) {
     await supabase.from('invoice_departments').insert(
       deptIds.map(dept_id => ({
@@ -293,7 +339,7 @@ Deno.serve(async (req: Request) => {
     )
   }
 
-  // ── 9. Respond ───────────────────────────────────────────────────────────
+  // ── 10. Respond ───────────────────────────────────────────────────────────
   return new Response(
     JSON.stringify({
       success:        true,
