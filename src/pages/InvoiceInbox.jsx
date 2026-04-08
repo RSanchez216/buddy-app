@@ -949,9 +949,9 @@ export default function InvoiceInbox() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
                 </svg>
                 <div>
-                  <p className="text-sm font-semibold text-red-700 dark:text-red-400">This action cannot be undone</p>
+                  <p className="text-sm font-semibold text-red-700 dark:text-red-400">This invoice will be moved to Deleted</p>
                   <p className="text-sm text-red-600 dark:text-red-400/80 mt-0.5">
-                    All department records and attachments for this invoice will be permanently deleted.
+                    Admins can restore it at any time from the Deleted tab.
                   </p>
                 </div>
               </div>
