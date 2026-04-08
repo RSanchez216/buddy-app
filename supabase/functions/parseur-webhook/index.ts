@@ -127,6 +127,8 @@ Deno.serve(async (req: Request) => {
   // ── 3. Resolve fields ────────────────────────────────────────────────────
   const receivedFields = Object.keys(payload)
   console.log('[parseur] incoming fields:', receivedFields.join(', '))
+  console.log('[parseur] full payload keys:', JSON.stringify(Object.keys(payload)))
+  console.log('[parseur] attachments field:', JSON.stringify(payload.Attachments || payload.attachments || payload.attachment || 'not found'))
 
   const fVendorName    = getField(payload, 'vendor_name', 'supplier_name', 'company_name', 'from_name', 'biller_name', 'remit_to_name')
   const fContractType  = getField(payload, 'contract_type', 'service_type', 'billing_type', 'agreement_type', 'type', 'description_type')
@@ -138,8 +140,21 @@ Deno.serve(async (req: Request) => {
   const fUnitNumber    = getField(payload, 'unit_number', 'unit_no', 'unit', 'asset_number', 'equipment_number', 'truck_number', 'vehicle_number', 'Unit #')
   const fBillingPeriod = getField(payload, 'billing_period', 'billing_period_range', 'service_period', 'Billing Period:', 'Billing Period')
   const fFileName      = getField(payload, 'file_name')
-  const fFileUrl       = getField(payload, 'file_url', 'document_url', 'attachment_url', 'pdf_url', 'file_link')
   const fFileData      = getField(payload, 'file_data')
+
+  // Resolve file URL — handles string scalar, array of strings, or array of objects with .url
+  const fileUrl: string | null = (() => {
+    const direct = payload.file_url || payload.document_url || payload.attachment_url ||
+                   payload.pdf_url  || payload.file_link    || payload.attachment
+    if (direct && typeof direct === 'string') return direct
+    const arr = payload.Attachments ?? payload.attachments
+    if (Array.isArray(arr) && arr.length > 0) {
+      const first = arr[0]
+      if (typeof first === 'string') return first
+      if (first && typeof first === 'object' && first.url) return String(first.url)
+    }
+    return null
+  })()
   const fEmailSubject  = getField(payload, 'email_subject')
 
   console.log('[parseur] resolved fields:', JSON.stringify({
@@ -147,7 +162,7 @@ Deno.serve(async (req: Request) => {
     invoice_number: fInvoiceNum.key, invoice_date: fInvoiceDate.key,
     due_date: fDueDate.key, amount: fAmount.key, terms: fTerms.key,
     unit_number: fUnitNumber.key, billing_period: fBillingPeriod.key,
-    file_url: fFileUrl.key,
+    file_url: fileUrl ?? null,
   }))
 
   if (!fAmount.value)      console.error('[parseur] MISSING amount — payload keys were:', receivedFields.join(', '))
@@ -299,17 +314,18 @@ Deno.serve(async (req: Request) => {
     let fileBytes: Uint8Array | null = null
     const fileName = sanitizeFilename(fFileName.value || `invoice_${invoiceNumber}.pdf`)
 
-    if (fFileUrl.value) {
-      const res = await fetch(fFileUrl.value)
+    if (fileUrl) {
+      console.log('[parseur] fetching attachment from:', fileUrl)
+      const res = await fetch(fileUrl)
       if (res.ok) fileBytes = new Uint8Array(await res.arrayBuffer())
-      else console.warn('[parseur] could not fetch file_url:', fFileUrl.value, res.status)
+      else console.warn('[parseur] could not fetch file_url:', fileUrl, res.status)
     } else if (fFileData.value) {
       const binary = atob(fFileData.value)
       fileBytes = new Uint8Array(binary.length)
       for (let i = 0; i < binary.length; i++) fileBytes[i] = binary.charCodeAt(i)
     }
 
-    if (!fFileUrl.value && !fFileData.value) {
+    if (!fileUrl && !fFileData.value) {
       console.warn('[parseur] no file_url or file_data in payload — no attachment will be saved')
     }
 
