@@ -188,13 +188,16 @@ Deno.serve(async (req: Request) => {
   // ── 6. Build & insert invoice ────────────────────────────────────────────
   const invoiceNumber = fInvoiceNum.value?.trim() || `PARSEUR-${Date.now()}`
 
+  // Log actual table columns for debugging (remove once confirmed stable)
+  const { data: sampleRow } = await supabase.from('invoices').select('*').limit(1)
+  console.log('[parseur] invoice table columns:', sampleRow?.length ? Object.keys(sampleRow[0]).join(', ') : 'no rows found')
+
   const { data: invoice, error: invErr } = await supabase.from('invoices').insert({
     invoice_number:     invoiceNumber,
     vendor_id:          vendorId,
     vendor_name_raw:    rawVendorName || null,
     amount:             parseAmount(fAmount.value),
-    received_date:      todayISO(),
-    invoice_date:       invoiceDate,
+    received_date:      invoiceDate || todayISO(),   // actual invoice date, fallback to today
     due_date:           dueDate,
     department_id:      deptIds[0] || null,
     department_ids:     deptIds,
