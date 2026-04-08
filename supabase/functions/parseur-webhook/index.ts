@@ -54,6 +54,35 @@ function contractTypeKeyword(contractType: string): [string, string | null] {
   return [contractType, null]
 }
 
+/**
+ * Parse a messy date string into YYYY-MM-DD.
+ * Handles formats like:
+ *   "Invoice Date: Apr 06, 2026"  → "2026-04-06"
+ *   "Apr 06, 2026"                → "2026-04-06"
+ *   "04/06/2026"                  → "2026-04-06"
+ *   "2026-04-06"                  → "2026-04-06"
+ *   "April 6, 2026"               → "2026-04-06"
+ * Returns null if unparseable.
+ */
+function parseDate(raw: string | null): string | null {
+  if (!raw) return null
+  // Strip any label prefix (e.g. "Invoice Date: ", "Due Date: ")
+  const stripped = raw.replace(/^[^:]+:\s*/i, '').trim()
+  // Try JS Date parsing on the cleaned string
+  const d = new Date(stripped)
+  if (!isNaN(d.getTime())) {
+    return d.toISOString().split('T')[0]
+  }
+  // Try MM/DD/YYYY
+  const mdy = stripped.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+  if (mdy) {
+    const d2 = new Date(Number(mdy[3]), Number(mdy[1]) - 1, Number(mdy[2]))
+    if (!isNaN(d2.getTime())) return d2.toISOString().split('T')[0]
+  }
+  console.warn('[parseur] could not parse date:', raw)
+  return null
+}
+
 // ── Main handler ───────────────────────────────────────────────────────────
 
 Deno.serve(async (req: Request) => {
@@ -142,24 +171,39 @@ Deno.serve(async (req: Request) => {
           vendorId = candidates[0].id
           deptIds = candidates[0].department_ids?.length ? candidates[0].department_ids : (candidates[0].department_id ? [candidates[0].department_id] : [])
         } else {
-          // Step 3 — Check vendor_aliases table (handles both 0 and >1 candidates)
-          const { data: aliasRow } = await supabase
+          // Step 3 — Check vendor_aliases table (may return multiple rows for same alias)
+          const { data: aliasRows } = await supabase
             .from('vendor_aliases')
             .select('vendor_id')
             .ilike('alias', rawVendorName)
-            .maybeSingle()
 
-          if (aliasRow) {
-            const aliasVendor = vendors.find(v => v.id === aliasRow.vendor_id)
-            if (aliasVendor) {
-              console.log('[parseur] vendor matched via alias:', aliasVendor.name)
-              vendorId = aliasVendor.id
-              deptIds = aliasVendor.department_ids?.length ? aliasVendor.department_ids : (aliasVendor.department_id ? [aliasVendor.department_id] : [])
+          console.log(`[parseur] alias lookup for "${rawVendorName}":`, aliasRows?.length ?? 0, 'rows')
+
+          if (aliasRows?.length) {
+            // If multiple aliases map to different vendors, use contract_type to narrow
+            let aliasVendors = aliasRows
+              .map(r => vendors.find(v => v.id === r.vendor_id))
+              .filter(Boolean) as typeof vendors
+
+            if (aliasVendors.length > 1 && rawContractType) {
+              const [includeKw, excludeKw] = contractTypeKeyword(rawContractType)
+              const refined = aliasVendors.filter(v => {
+                const vn = v.name.toLowerCase()
+                return vn.includes(includeKw.toLowerCase()) && !(excludeKw ? vn.includes(excludeKw.toLowerCase()) : false)
+              })
+              if (refined.length > 0) aliasVendors = refined
+            }
+
+            if (aliasVendors.length >= 1) {
+              const matched = aliasVendors[0]
+              console.log('[parseur] vendor matched via alias:', matched.name)
+              vendorId = matched.id
+              deptIds = matched.department_ids?.length ? matched.department_ids : (matched.department_id ? [matched.department_id] : [])
             } else {
               needsVendorMatch = true
             }
           } else {
-            // Step 4 — No match
+            // Step 4 — No match at all
             if (candidates.length > 1) {
               console.warn('[parseur] multiple vendor candidates, no alias:', candidates.map(v => v.name).join(', '))
               notesExtra = ` | Multiple vendor matches: ${candidates.map(v => v.name).join(', ')}`
@@ -178,12 +222,13 @@ Deno.serve(async (req: Request) => {
   }
 
   // ── 5. Due date from terms ───────────────────────────────────────────────
-  const invoiceDate = fInvoiceDate.value || null
-  let dueDate = fDueDate.value || null
+  const invoiceDate = parseDate(fInvoiceDate.value)
+  let dueDate = parseDate(fDueDate.value)
   if (!dueDate && fTerms.value && invoiceDate) {
     dueDate = calcDueDate(invoiceDate, fTerms.value)
     if (dueDate) console.log(`[parseur] due_date calculated from "${fTerms.value}": ${dueDate}`)
   }
+  console.log(`[parseur] dates resolved — received_date: ${invoiceDate}, due_date: ${dueDate}`)
 
   // ── 6. Build & insert invoice ────────────────────────────────────────────
   const invoiceNumber = fInvoiceNum.value?.trim() || `PARSEUR-${Date.now()}`
