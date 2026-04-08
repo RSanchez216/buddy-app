@@ -59,6 +59,10 @@ export default function InvoiceInbox() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
+  // Delete confirmation
+  const [deleteInvoice, setDeleteInvoice] = useState(null)
+  const [deleting, setDeleting] = useState(false)
+
   // Per-dept action modal
   const [actionInvoice, setActionInvoice] = useState(null)
   const [actionDeptRecord, setActionDeptRecord] = useState(null) // specific dept row
@@ -291,6 +295,16 @@ export default function InvoiceInbox() {
     loadData()
   }
 
+  async function handleDelete() {
+    if (!deleteInvoice) return
+    setDeleting(true)
+    // Cascade deletes invoice_departments and invoice_attachments via FK ON DELETE CASCADE
+    await supabase.from('invoices').delete().eq('id', deleteInvoice.id)
+    setDeleteInvoice(null)
+    setDeleting(false)
+    loadData()
+  }
+
   async function markPaid(inv) {
     await supabase.from('invoices').update({ status: 'Paid' }).eq('id', inv.id)
     loadData()
@@ -498,14 +512,23 @@ export default function InvoiceInbox() {
 
                     {canEdit && (
                       <td className={S.td}>
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          {/* Edit button */}
+                        <div className="flex items-center gap-1.5">
+                          {/* Edit */}
                           <button onClick={() => openEdit(inv)} title="Edit invoice"
                             className="text-gray-400 dark:text-slate-600 hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors">
                             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                             </svg>
                           </button>
+                          {/* Delete (admin only) */}
+                          {profile?.role === 'admin' && (
+                            <button onClick={() => setDeleteInvoice(inv)} title="Delete invoice"
+                              className="text-gray-400 dark:text-slate-600 hover:text-red-500 dark:hover:text-red-400 transition-colors">
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              </svg>
+                            </button>
+                          )}
                           {/* Mark Paid (admin only, fully approved) */}
                           {inv.status === 'Approved' && profile?.role === 'admin' && (
                             <button onClick={() => markPaid(inv)} className={S.btnBlue}>Mark Paid</button>
@@ -725,6 +748,45 @@ export default function InvoiceInbox() {
             <button onClick={() => setShowImport(false)} className={S.btnCancel}>Cancel</button>
             <button onClick={confirmImport} disabled={!importRows.filter(r => r._status !== 'error').length} className={S.btnSave}>
               Import {importRows.filter(r => r._status !== 'error').length} Invoices
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* ── Delete Confirmation Modal ─────────────────────────────────────── */}
+      <Modal open={!!deleteInvoice} onClose={() => setDeleteInvoice(null)} title="Delete Invoice" size="sm">
+        <div className={S.modalBody}>
+          {deleteInvoice && (
+            <>
+              <div className="flex items-start gap-3 p-3 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-xl">
+                <svg className="w-5 h-5 text-red-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                </svg>
+                <div>
+                  <p className="text-sm font-semibold text-red-700 dark:text-red-400">This action cannot be undone</p>
+                  <p className="text-sm text-red-600 dark:text-red-400/80 mt-0.5">
+                    All department records and attachments for this invoice will be permanently deleted.
+                  </p>
+                </div>
+              </div>
+              <div className="px-3 py-3 bg-gray-50 dark:bg-white/5 rounded-xl space-y-1">
+                <p className="text-xs text-gray-400 dark:text-slate-500 uppercase tracking-wide font-medium">Invoice to delete</p>
+                <p className="text-sm font-semibold text-gray-900 dark:text-slate-100">{deleteInvoice.vendors?.name || '—'}</p>
+                <div className="flex items-center gap-3 text-xs text-gray-500 dark:text-slate-400">
+                  <span>#{deleteInvoice.invoice_number || 'No number'}</span>
+                  <span>·</span>
+                  <span>${Number(deleteInvoice.amount).toLocaleString()}</span>
+                  <span>·</span>
+                  <span>{deleteInvoice.status}</span>
+                </div>
+              </div>
+            </>
+          )}
+          <div className={S.modalFooter}>
+            <button onClick={() => setDeleteInvoice(null)} className={S.btnCancel}>Cancel</button>
+            <button onClick={handleDelete} disabled={deleting}
+              className="px-4 py-2 text-sm font-semibold text-white bg-red-500 hover:bg-red-600 disabled:opacity-50 rounded-xl transition-all">
+              {deleting ? 'Deleting…' : 'Delete Invoice'}
             </button>
           </div>
         </div>
