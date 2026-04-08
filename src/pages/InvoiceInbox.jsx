@@ -69,6 +69,14 @@ export default function InvoiceInbox() {
   const [actionType, setActionType] = useState('')
   const [actionNotes, setActionNotes] = useState('')
 
+  // Assign vendor (Parseur unmatched)
+  const [assignInvoice, setAssignInvoice] = useState(null)
+  const [assignVendorId, setAssignVendorId] = useState('')
+  const [assigning, setAssigning] = useState(false)
+
+  // Source filter
+  const [filterSource, setFilterSource] = useState('')
+
   // Import
   const [showImport, setShowImport] = useState(false)
   const [importRows, setImportRows] = useState([])
@@ -110,7 +118,8 @@ export default function InvoiceInbox() {
   const filtered = visibleInvoices.filter(inv => {
     const matchStatus = !filterStatus || inv.status === filterStatus
     const matchDept = filterDepts.length === 0 || getInvoiceDeptIds(inv).some(id => filterDepts.includes(id))
-    return matchStatus && matchDept
+    const matchSource = !filterSource || inv.source === filterSource
+    return matchStatus && matchDept && matchSource
   })
 
   const pendingCount = visibleInvoices.filter(i => i.status === 'Pending').length
@@ -305,6 +314,35 @@ export default function InvoiceInbox() {
     loadData()
   }
 
+  async function handleAssignVendor() {
+    if (!assignInvoice || !assignVendorId) return
+    setAssigning(true)
+    const vendor = vendors.find(v => v.id === assignVendorId)
+    const deptIds = vendor?.department_ids?.length
+      ? vendor.department_ids
+      : vendor?.department_id ? [vendor.department_id] : []
+
+    await supabase.from('invoices').update({
+      vendor_id: assignVendorId,
+      needs_vendor_match: false,
+      department_id: deptIds[0] || null,
+      department_ids: deptIds,
+    }).eq('id', assignInvoice.id)
+
+    // Add dept records if not already present
+    if (deptIds.length) {
+      const existing = assignInvoice.invoice_departments?.map(d => d.department_id) || []
+      const toAdd = deptIds.filter(id => !existing.includes(id))
+      if (toAdd.length) {
+        await supabase.from('invoice_departments').insert(
+          toAdd.map(dept_id => ({ invoice_id: assignInvoice.id, department_id: dept_id, status: 'Pending' }))
+        )
+      }
+    }
+
+    setAssignInvoice(null); setAssignVendorId(''); setAssigning(false); loadData()
+  }
+
   async function markPaid(inv) {
     await supabase.from('invoices').update({ status: 'Paid' }).eq('id', inv.id)
     loadData()
@@ -432,6 +470,10 @@ export default function InvoiceInbox() {
         {['', 'Pending', 'Approved', 'Disputed', 'Paid'].map(s => (
           <button key={s} onClick={() => setFilterStatus(s)} className={S.filterBtn(filterStatus === s)}>{s || 'All'}</button>
         ))}
+        <div className="w-px h-4 bg-gray-200 dark:bg-slate-700 mx-1" />
+        {[['', 'All Sources'], ['manual', 'Manual'], ['parseur', 'Parseur'], ['excel_import', 'Excel Import']].map(([val, label]) => (
+          <button key={val} onClick={() => setFilterSource(val)} className={S.filterBtn(filterSource === val)}>{label}</button>
+        ))}
         <div className="ml-auto w-56">
           <MultiSelect options={deptOptions} value={filterDepts} onChange={setFilterDepts} placeholder="All Departments" />
         </div>
@@ -455,8 +497,37 @@ export default function InvoiceInbox() {
                 const attachments = inv.invoice_attachments || []
                 return (
                   <tr key={inv.id} className={S.tableRow}>
-                    <td className={`${S.td} font-mono text-xs text-gray-400 dark:text-slate-400`}>{inv.invoice_number || '—'}</td>
-                    <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>{inv.vendors?.name || '—'}</td>
+                    <td className={`${S.td} font-mono text-xs text-gray-400 dark:text-slate-400`}>
+                      <div className="flex items-center gap-1.5">
+                        {inv.invoice_number || '—'}
+                        {inv.source === 'parseur' && (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-100 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400">PARSEUR</span>
+                        )}
+                        {inv.source === 'excel_import' && (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-100 dark:bg-slate-700 text-gray-500 dark:text-slate-400">XLS</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>
+                      {inv.needs_vendor_match ? (
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-amber-500 text-xs font-medium">{inv.vendor_name_raw || 'Unknown vendor'}</span>
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 dark:bg-amber-500/20 text-amber-600 dark:text-amber-400">UNMATCHED</span>
+                          </div>
+                          {canEdit && (
+                            <button
+                              onClick={() => { setAssignInvoice(inv); setAssignVendorId('') }}
+                              className="text-xs text-cyan-600 dark:text-cyan-400 hover:underline"
+                            >
+                              Assign vendor →
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        inv.vendors?.name || '—'
+                      )}
+                    </td>
                     <td className={`${S.td} text-right font-semibold text-gray-900 dark:text-slate-200`}>${Number(inv.amount).toLocaleString()}</td>
                     <td className={`${S.td} text-gray-400 dark:text-slate-400 text-xs whitespace-nowrap`}>
                       {inv.billing_period_start && inv.billing_period_end
@@ -787,6 +858,33 @@ export default function InvoiceInbox() {
             <button onClick={handleDelete} disabled={deleting}
               className="px-4 py-2 text-sm font-semibold text-white bg-red-500 hover:bg-red-600 disabled:opacity-50 rounded-xl transition-all">
               {deleting ? 'Deleting…' : 'Delete Invoice'}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* ── Assign Vendor Modal (Parseur unmatched) ───────────────────────── */}
+      <Modal open={!!assignInvoice} onClose={() => setAssignInvoice(null)} title="Assign Vendor" size="sm">
+        <div className={S.modalBody}>
+          {assignInvoice && (
+            <div className="px-3 py-2.5 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 rounded-xl text-sm">
+              <p className="text-xs text-amber-600 dark:text-amber-400 font-semibold uppercase tracking-wide mb-0.5">Parsed vendor name</p>
+              <p className="text-gray-900 dark:text-slate-100 font-medium">{assignInvoice.vendor_name_raw || 'Unknown'}</p>
+            </div>
+          )}
+          <div>
+            <label className={S.label}>Match to Vendor *</label>
+            <ComboBox
+              options={vendorOptions}
+              value={assignVendorId}
+              onChange={setAssignVendorId}
+              placeholder="Search vendors…"
+            />
+          </div>
+          <div className={S.modalFooter}>
+            <button onClick={() => setAssignInvoice(null)} className={S.btnCancel}>Cancel</button>
+            <button onClick={handleAssignVendor} disabled={assigning || !assignVendorId} className={S.btnSave}>
+              {assigning ? 'Saving…' : 'Assign Vendor'}
             </button>
           </div>
         </div>
