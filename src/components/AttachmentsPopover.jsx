@@ -56,7 +56,7 @@ export default function AttachmentsPopover({ attachments = [] }) {
       </button>
 
       {open && (
-        <div className="absolute z-50 bottom-full mb-1.5 left-0 min-w-[220px] max-w-[300px] bg-white dark:bg-[#0d0d1f] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl overflow-hidden">
+        <div className="absolute z-50 top-full mt-1.5 left-0 min-w-[220px] max-w-[300px] bg-white dark:bg-[#0d0d1f] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl overflow-hidden">
           <div className="px-3 py-2 border-b border-gray-100 dark:border-white/5">
             <p className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">
               {attachments.length} Attachment{attachments.length !== 1 ? 's' : ''}
