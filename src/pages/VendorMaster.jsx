@@ -32,6 +32,9 @@ export default function VendorMaster() {
   const [form, setForm] = useState(emptyForm)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [aliases, setAliases] = useState([])
+  const [newAlias, setNewAlias] = useState('')
+  const [aliasLoading, setAliasLoading] = useState(false)
   const [showImport, setShowImport] = useState(false)
   const [importRows, setImportRows] = useState([])
   const fileRef = useRef()
@@ -76,7 +79,27 @@ export default function VendorMaster() {
       expected_amount_max: v.expected_amount_max || '',
       is_active: v.is_active,
     })
-    setError(''); setShowModal(true)
+    setError(''); setNewAlias(''); loadAliases(v.id); setShowModal(true)
+  }
+
+  async function loadAliases(vendorId) {
+    setAliasLoading(true)
+    const { data } = await supabase.from('vendor_aliases').select('id, alias, created_at').eq('vendor_id', vendorId).order('created_at')
+    setAliases(data || [])
+    setAliasLoading(false)
+  }
+
+  async function addAlias() {
+    const trimmed = newAlias.trim()
+    if (!trimmed || !editVendor) return
+    await supabase.from('vendor_aliases').insert({ vendor_id: editVendor.id, alias: trimmed })
+    setNewAlias('')
+    loadAliases(editVendor.id)
+  }
+
+  async function deleteAlias(id) {
+    await supabase.from('vendor_aliases').delete().eq('id', id)
+    setAliases(prev => prev.filter(a => a.id !== id))
   }
 
   async function handleSave() {
@@ -365,6 +388,60 @@ export default function VendorMaster() {
             </div>
             <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">Transactions outside this range will be flagged</p>
           </div>
+
+          {/* Aliases section — edit mode only */}
+          {editVendor && (
+            <div>
+              <label className={S.label}>Aliases</label>
+              <p className="text-xs text-gray-400 dark:text-slate-500 mb-2">
+                Alternative names used in automated imports (Parseur). Invoices matching these names will auto-assign to this vendor.
+              </p>
+
+              {aliasLoading ? (
+                <p className="text-xs text-gray-400 dark:text-slate-500">Loading…</p>
+              ) : (
+                <>
+                  {aliases.length > 0 && (
+                    <div className="mb-2 space-y-1">
+                      {aliases.map(a => (
+                        <div key={a.id} className="flex items-center justify-between px-3 py-2 bg-gray-50 dark:bg-white/5 rounded-xl">
+                          <span className="text-sm text-gray-700 dark:text-slate-300 font-mono">{a.alias}</span>
+                          <button
+                            type="button"
+                            onClick={() => deleteAlias(a.id)}
+                            className="text-gray-300 dark:text-slate-600 hover:text-red-500 transition-colors ml-2 shrink-0"
+                            title="Remove alias"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <input
+                      value={newAlias}
+                      onChange={e => setNewAlias(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && addAlias()}
+                      className={`${S.input} flex-1`}
+                      placeholder="Add alias (e.g. Vanguard Truck Centers)"
+                    />
+                    <button
+                      type="button"
+                      onClick={addAlias}
+                      disabled={!newAlias.trim()}
+                      className="px-3 py-2 rounded-xl bg-cyan-500 text-white text-sm font-semibold hover:bg-cyan-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shrink-0"
+                    >
+                      Add
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
           <div className={S.modalFooter}>
             <button onClick={() => setShowModal(false)} className={S.btnCancel}>Cancel</button>
             <button onClick={handleSave} disabled={saving} className={S.btnSave}>

@@ -78,6 +78,7 @@ export default function InvoiceInbox() {
   // Assign vendor (Parseur unmatched)
   const [assignInvoice, setAssignInvoice] = useState(null)
   const [assignVendorId, setAssignVendorId] = useState('')
+  const [assignSaveAlias, setAssignSaveAlias] = useState(false)
   const [assigning, setAssigning] = useState(false)
 
   // Source filter
@@ -381,11 +382,20 @@ export default function InvoiceInbox() {
       }
     }
 
+    // Optionally save the raw vendor name as a permanent alias
+    if (assignSaveAlias && assignInvoice.vendor_name_raw) {
+      await supabase.from('vendor_aliases').insert({
+        vendor_id: assignVendorId,
+        alias: assignInvoice.vendor_name_raw.trim(),
+      })
+    }
+
     await writeAudit('assign_vendor', assignInvoice, {
       vendor_id: assignVendorId,
       vendor_name: vendor?.name,
+      alias_saved: assignSaveAlias ? assignInvoice.vendor_name_raw : null,
     })
-    setAssignInvoice(null); setAssignVendorId(''); setAssigning(false); loadData()
+    setAssignInvoice(null); setAssignVendorId(''); setAssignSaveAlias(false); setAssigning(false); loadData()
   }
 
   async function loadDeletedInvoices() {
@@ -991,7 +1001,7 @@ export default function InvoiceInbox() {
       </Modal>
 
       {/* ── Assign Vendor Modal (Parseur unmatched) ───────────────────────── */}
-      <Modal open={!!assignInvoice} onClose={() => setAssignInvoice(null)} title="Assign Vendor" size="sm">
+      <Modal open={!!assignInvoice} onClose={() => { setAssignInvoice(null); setAssignSaveAlias(false) }} title="Assign Vendor" size="sm">
         <div className={S.modalBody}>
           {assignInvoice && (
             <div className="px-3 py-2.5 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 rounded-xl text-sm">
@@ -1008,8 +1018,28 @@ export default function InvoiceInbox() {
               placeholder="Search vendors…"
             />
           </div>
+          {/* Save as alias checkbox */}
+          {assignInvoice?.vendor_name_raw && assignVendorId && (
+            <label className="flex items-start gap-2.5 cursor-pointer group">
+              <input
+                type="checkbox"
+                checked={assignSaveAlias}
+                onChange={e => setAssignSaveAlias(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 dark:border-slate-600 text-cyan-500 focus:ring-cyan-500/30 cursor-pointer"
+              />
+              <div>
+                <p className="text-sm text-gray-700 dark:text-slate-300 font-medium group-hover:text-gray-900 dark:group-hover:text-slate-100 transition-colors">
+                  Save as alias for this vendor
+                </p>
+                <p className="text-xs text-gray-400 dark:text-slate-500 mt-0.5">
+                  Future invoices from <span className="font-medium text-gray-600 dark:text-slate-400">"{assignInvoice.vendor_name_raw}"</span> will match automatically
+                </p>
+              </div>
+            </label>
+          )}
+
           <div className={S.modalFooter}>
-            <button onClick={() => setAssignInvoice(null)} className={S.btnCancel}>Cancel</button>
+            <button onClick={() => { setAssignInvoice(null); setAssignSaveAlias(false) }} className={S.btnCancel}>Cancel</button>
             <button onClick={handleAssignVendor} disabled={assigning || !assignVendorId} className={S.btnSave}>
               {assigning ? 'Saving…' : 'Assign Vendor'}
             </button>
