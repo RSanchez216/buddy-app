@@ -59,6 +59,11 @@ export default function InvoiceInbox() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
+  // Deleted invoices view
+  const [showDeleted, setShowDeleted] = useState(false)
+  const [deletedInvoices, setDeletedInvoices] = useState([])
+  const [restoring, setRestoring] = useState(null)
+
   // Delete confirmation
   const [deleteInvoice, setDeleteInvoice] = useState(null)
   const [deleting, setDeleting] = useState(false)
@@ -90,14 +95,34 @@ export default function InvoiceInbox() {
     const [invRes, vendRes, deptRes] = await Promise.all([
       supabase.from('invoices')
         .select('*, vendors(name, category), departments(name), invoice_departments(id, department_id, status, reviewed_at, departments(name)), invoice_attachments(id, file_url, file_name)')
+        .is('deleted_at', null)   // exclude soft-deleted
         .order('created_at', { ascending: false }),
-      supabase.from('vendors').select('id, name, category, department_id').eq('is_active', true).order('name'),
+      supabase.from('vendors').select('id, name, category, department_id, department_ids').eq('is_active', true).order('name'),
       supabase.from('departments').select('*').eq('is_active', true).order('name'),
     ])
     setInvoices(invRes.data || [])
     setVendors(vendRes.data || [])
     setDepartments(deptRes.data || [])
     setLoading(false)
+  }
+
+  // ── Audit helper ──────────────────────────────────────────────────────────
+
+  async function writeAudit(action, inv, extra = {}) {
+    await supabase.from('audit_log').insert({
+      table_name: 'invoices',
+      record_id: inv.id,
+      action,
+      performed_by: profile?.id || null,
+      performed_by_email: profile?.email || null,
+      metadata: {
+        invoice_number: inv.invoice_number,
+        vendor: inv.vendors?.name || inv.vendor_name_raw,
+        amount: inv.amount,
+        status: inv.status,
+        ...extra,
+      },
+    })
   }
 
   // ── Derived ───────────────────────────────────────────────────────────────
@@ -228,6 +253,8 @@ export default function InvoiceInbox() {
       // Upload new files
       if (newFiles.length) await uploadFiles(editInvoice.id, newFiles)
 
+      await writeAudit('edit', { ...editInvoice, ...payload, id: editInvoice.id })
+
     } else {
       // ── INSERT ──
       const { data: inv, error: invErr } = await supabase.from('invoices').insert({
@@ -239,6 +266,8 @@ export default function InvoiceInbox() {
         form.department_ids.map(dept_id => ({ invoice_id: inv.id, department_id: dept_id, status: 'Pending' }))
       )
       if (newFiles.length) await uploadFiles(inv.id, newFiles)
+
+      await writeAudit('create', inv)
     }
 
     setShowModal(false); setNewFiles([]); loadData(); setSaving(false)
@@ -284,6 +313,12 @@ export default function InvoiceInbox() {
       }),
     ])
 
+    await writeAudit(newStatus === 'Approved' ? 'approve' : 'dispute', actionInvoice, {
+      dept_id: actionDeptRecord.department_id,
+      dept_name: actionDeptRecord.departments?.name,
+      notes: actionNotes || null,
+    })
+
     setActionInvoice(null); setActionDeptRecord(null); setActionNotes(''); loadData()
   }
 
@@ -307,8 +342,11 @@ export default function InvoiceInbox() {
   async function handleDelete() {
     if (!deleteInvoice) return
     setDeleting(true)
-    // Cascade deletes invoice_departments and invoice_attachments via FK ON DELETE CASCADE
-    await supabase.from('invoices').delete().eq('id', deleteInvoice.id)
+    await supabase.from('invoices').update({
+      deleted_at: new Date().toISOString(),
+      deleted_by: profile?.id || null,
+    }).eq('id', deleteInvoice.id)
+    await writeAudit('delete', deleteInvoice)
     setDeleteInvoice(null)
     setDeleting(false)
     loadData()
@@ -340,11 +378,33 @@ export default function InvoiceInbox() {
       }
     }
 
+    await writeAudit('assign_vendor', assignInvoice, {
+      vendor_id: assignVendorId,
+      vendor_name: vendor?.name,
+    })
     setAssignInvoice(null); setAssignVendorId(''); setAssigning(false); loadData()
+  }
+
+  async function loadDeletedInvoices() {
+    const { data } = await supabase
+      .from('invoices')
+      .select('*, vendors(name), departments(name), invoice_attachments(id, file_url, file_name)')
+      .not('deleted_at', 'is', null)
+      .order('deleted_at', { ascending: false })
+    setDeletedInvoices(data || [])
+  }
+
+  async function handleRestore(inv) {
+    setRestoring(inv.id)
+    await supabase.from('invoices').update({ deleted_at: null, deleted_by: null }).eq('id', inv.id)
+    await writeAudit('restore', inv)
+    await loadDeletedInvoices()
+    setRestoring(null)
   }
 
   async function markPaid(inv) {
     await supabase.from('invoices').update({ status: 'Paid' }).eq('id', inv.id)
+    await writeAudit('mark_paid', inv)
     loadData()
   }
 
@@ -468,19 +528,74 @@ export default function InvoiceInbox() {
       {/* Filters */}
       <div className="flex gap-2 flex-wrap items-center">
         {['', 'Pending', 'Approved', 'Disputed', 'Paid'].map(s => (
-          <button key={s} onClick={() => setFilterStatus(s)} className={S.filterBtn(filterStatus === s)}>{s || 'All'}</button>
+          <button key={s} onClick={() => { setFilterStatus(s); setShowDeleted(false) }} className={S.filterBtn(!showDeleted && filterStatus === s)}>{s || 'All'}</button>
         ))}
         <div className="w-px h-4 bg-gray-200 dark:bg-slate-700 mx-1" />
         {[['', 'All Sources'], ['manual', 'Manual'], ['parseur', 'Parseur'], ['excel_import', 'Excel Import']].map(([val, label]) => (
-          <button key={val} onClick={() => setFilterSource(val)} className={S.filterBtn(filterSource === val)}>{label}</button>
+          <button key={val} onClick={() => { setFilterSource(val); setShowDeleted(false) }} className={S.filterBtn(!showDeleted && filterSource === val)}>{label}</button>
         ))}
+        {profile?.role === 'admin' && (
+          <>
+            <div className="w-px h-4 bg-gray-200 dark:bg-slate-700 mx-1" />
+            <button
+              onClick={() => { setShowDeleted(v => { const next = !v; if (next) loadDeletedInvoices(); return next }) }}
+              className={S.filterBtn(showDeleted)}
+            >
+              Deleted
+            </button>
+          </>
+        )}
         <div className="ml-auto w-56">
           <MultiSelect options={deptOptions} value={filterDepts} onChange={setFilterDepts} placeholder="All Departments" />
         </div>
       </div>
 
-      {/* Table */}
-      <div className={`${S.card} overflow-hidden`}>
+      {/* Deleted Invoices Table */}
+      {showDeleted && (
+        <div className={`${S.card} overflow-hidden`}>
+          <div className="px-5 py-3 border-b border-gray-100 dark:border-white/5 flex items-center gap-2">
+            <svg className="w-4 h-4 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+            <span className="text-sm font-medium text-gray-700 dark:text-slate-300">Deleted Invoices</span>
+            <span className="ml-1 text-xs text-gray-400 dark:text-slate-500">({deletedInvoices.length})</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className={S.tableHead}>
+                <tr>
+                  {['Invoice #', 'Vendor', 'Amount', 'Deleted At', 'Notes', 'Restore'].map(h => (
+                    <th key={h} className={`${S.th} ${h === 'Amount' ? 'text-right' : ''}`}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {deletedInvoices.length === 0 ? (
+                  <tr><td colSpan={6} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">No deleted invoices</td></tr>
+                ) : deletedInvoices.map(inv => (
+                  <tr key={inv.id} className={S.tableRow}>
+                    <td className={`${S.td} font-mono text-xs text-gray-400 dark:text-slate-400`}>{inv.invoice_number || '—'}</td>
+                    <td className={S.td}>{inv.vendors?.name || inv.vendor_name_raw || '—'}</td>
+                    <td className={`${S.td} text-right font-semibold`}>${Number(inv.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
+                    <td className={`${S.td} text-xs text-gray-400 dark:text-slate-500`}>{inv.deleted_at ? new Date(inv.deleted_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</td>
+                    <td className={`${S.td} text-xs text-gray-400 dark:text-slate-500 max-w-[180px] truncate`}>{inv.notes || '—'}</td>
+                    <td className={S.td}>
+                      <button
+                        onClick={() => handleRestore(inv)}
+                        disabled={restoring === inv.id}
+                        className="text-xs font-semibold text-cyan-600 dark:text-cyan-400 hover:underline disabled:opacity-50"
+                      >
+                        {restoring === inv.id ? 'Restoring…' : 'Restore'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Main Table */}
+      {!showDeleted && <div className={`${S.card} overflow-hidden`}>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className={S.tableHead}>
@@ -613,7 +728,7 @@ export default function InvoiceInbox() {
             </tbody>
           </table>
         </div>
-      </div>
+      </div>}
 
       {/* ── Add / Edit Invoice Modal ──────────────────────────────────────── */}
       <Modal open={showModal} onClose={() => setShowModal(false)} title={editInvoice ? 'Edit Invoice' : 'Add Invoice'}>
