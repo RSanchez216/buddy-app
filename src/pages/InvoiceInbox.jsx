@@ -39,6 +39,11 @@ function excelDateToStr(val) {
   return String(val).split('T')[0]
 }
 
+function normInvoiceNum(num) {
+  if (!num) return ''
+  return String(num).replace(/^.*[:#]\s*/i, '').trim().toLowerCase()
+}
+
 
 // ── Component ──────────────────────────────────────────────────────────────
 
@@ -142,7 +147,23 @@ export default function InvoiceInbox() {
     ? invoices.filter(inv => getInvoiceDeptIds(inv).includes(profile.department_id))
     : invoices
 
+  // Detect duplicates: invoices sharing the same normalized invoice number + vendor
+  const duplicateIds = (() => {
+    const groups = {}
+    for (const inv of visibleInvoices) {
+      const num = normInvoiceNum(inv.invoice_number)
+      if (!num || !inv.vendor_id) continue
+      const key = `${num}|${inv.vendor_id}`
+      if (!groups[key]) groups[key] = []
+      groups[key].push(inv.id)
+    }
+    const ids = new Set()
+    Object.values(groups).forEach(arr => { if (arr.length > 1) arr.forEach(id => ids.add(id)) })
+    return ids
+  })()
+
   const filtered = visibleInvoices.filter(inv => {
+    if (filterStatus === '__duplicates__') return duplicateIds.has(inv.id)
     const matchStatus = !filterStatus || inv.status === filterStatus
     const matchDept = filterDepts.length === 0 || getInvoiceDeptIds(inv).some(id => filterDepts.includes(id))
     const matchSource = !filterSource || inv.source === filterSource
@@ -548,6 +569,20 @@ export default function InvoiceInbox() {
         {[['', 'All Sources'], ['manual', 'Manual'], ['parseur', 'Parseur'], ['excel_import', 'Excel Import']].map(([val, label]) => (
           <button key={val} onClick={() => { setFilterSource(val); setShowDeleted(false) }} className={S.filterBtn(!showDeleted && filterSource === val)}>{label}</button>
         ))}
+        {duplicateIds.size > 0 && (
+          <>
+            <div className="w-px h-4 bg-gray-200 dark:bg-slate-700 mx-1" />
+            <button
+              onClick={() => { setFilterStatus('__duplicates__'); setFilterSource(''); setShowDeleted(false) }}
+              className={S.filterBtn(!showDeleted && filterStatus === '__duplicates__')}
+            >
+              Duplicates
+              <span className="ml-1.5 bg-orange-100 dark:bg-orange-500/20 text-orange-600 dark:text-orange-400 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                {duplicateIds.size}
+              </span>
+            </button>
+          </>
+        )}
         {profile?.role === 'admin' && (
           <>
             <div className="w-px h-4 bg-gray-200 dark:bg-slate-700 mx-1" />
@@ -624,8 +659,9 @@ export default function InvoiceInbox() {
                 <tr><td colSpan={11} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">No invoices found</td></tr>
               ) : filtered.map(inv => {
                 const attachments = inv.invoice_attachments || []
+                const isDuplicate = duplicateIds.has(inv.id)
                 return (
-                  <tr key={inv.id} className={S.tableRow}>
+                  <tr key={inv.id} className={`${S.tableRow} ${isDuplicate ? 'bg-orange-50/40 dark:bg-orange-500/[0.04]' : ''}`}>
                     <td className={`${S.td} font-mono text-xs text-gray-400 dark:text-slate-400`}>
                       <div className="flex items-center gap-1.5">
                         {inv.invoice_number || '—'}
@@ -634,6 +670,9 @@ export default function InvoiceInbox() {
                         )}
                         {inv.source === 'excel_import' && (
                           <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-100 dark:bg-slate-700 text-gray-500 dark:text-slate-400">XLS</span>
+                        )}
+                        {isDuplicate && (
+                          <span title="Possible duplicate — same invoice number and vendor already exists" className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-orange-100 dark:bg-orange-500/20 text-orange-600 dark:text-orange-400">DUP</span>
                         )}
                       </div>
                     </td>
