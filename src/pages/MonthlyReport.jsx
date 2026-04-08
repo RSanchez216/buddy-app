@@ -26,7 +26,7 @@ export default function MonthlyReport() {
 
   async function loadData() {
     const [invRes, vendRes] = await Promise.all([
-      supabase.from('invoices').select('*, vendors(name, category), departments(name)'),
+      supabase.from('invoices').select('*, vendors(name, category), departments(name)').is('deleted_at', null),
       supabase.from('vendors').select('*').eq('is_active', true).order('name'),
     ])
     setInvoices(invRes.data || [])

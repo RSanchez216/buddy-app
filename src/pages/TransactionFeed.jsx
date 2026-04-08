@@ -124,7 +124,7 @@ export default function TransactionFeed() {
   }
 
   async function runAutoMatch(txns) {
-    const { data: approved } = await supabase.from('invoices').select('*, vendors(name)').eq('status', 'Approved')
+    const { data: approved } = await supabase.from('invoices').select('*, vendors(name)').eq('status', 'Approved').is('deleted_at', null)
     const updates = txns
       .filter(t => t.vendor_id)
       .map(t => {
@@ -139,7 +139,7 @@ export default function TransactionFeed() {
   }
 
   async function manualMatch(t) {
-    const { data: invoices } = await supabase.from('invoices').select('*').eq('status', 'Approved').eq('vendor_id', t.vendor_id)
+    const { data: invoices } = await supabase.from('invoices').select('*').eq('status', 'Approved').eq('vendor_id', t.vendor_id).is('deleted_at', null)
     if (!invoices?.length) { alert('No approved invoices found for this vendor.'); return }
     await supabase.from('transactions').update({ status: 'Matched', matched_invoice_id: invoices[0].id }).eq('id', t.id)
     loadData()

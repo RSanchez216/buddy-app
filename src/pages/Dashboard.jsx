@@ -42,7 +42,7 @@ export default function Dashboard() {
   async function loadData() {
     const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 7)
     const [invoiceRes, transRes, vendorRes] = await Promise.all([
-      supabase.from('invoices').select('*, vendors(name, category), departments(name)'),
+      supabase.from('invoices').select('*, vendors(name, category), departments(name)').is('deleted_at', null),
       supabase.from('transactions').select('*'),
       supabase.from('vendors').select('id').eq('is_active', true),
     ])
