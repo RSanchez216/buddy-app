@@ -83,6 +83,31 @@ function parseDate(raw: string | null): string | null {
   return null
 }
 
+/**
+ * Parse a billing period string like:
+ *   "Billing Period: Mar 30, 2026 - Apr 05, 2026"
+ * Returns [startISO, endISO] or [null, null].
+ */
+function parseBillingPeriod(raw: string | null): [string | null, string | null] {
+  if (!raw) return [null, null]
+  const stripped = raw.replace(/^billing period[:\s]*/i, '').trim()
+  const parts = stripped.split(/\s+[–\-]\s+/)
+  if (parts.length >= 2) {
+    return [parseDate(parts[0].trim()), parseDate(parts[1].trim())]
+  }
+  return [null, null]
+}
+
+/**
+ * Strip common label prefixes from short values.
+ * "Invoice #: 60058641" → "60058641"
+ * "Unit # RN630092"     → "RN630092"
+ */
+function stripLabel(raw: string | null): string | null {
+  if (!raw) return null
+  return raw.replace(/^.*[:#]\s*/i, '').trim() || null
+}
+
 // ── Main handler ───────────────────────────────────────────────────────────
 
 Deno.serve(async (req: Request) => {
@@ -103,27 +128,30 @@ Deno.serve(async (req: Request) => {
   const receivedFields = Object.keys(payload)
   console.log('[parseur] incoming fields:', receivedFields.join(', '))
 
-  const fVendorName   = getField(payload, 'vendor_name', 'supplier_name', 'company_name', 'from_name', 'biller_name', 'remit_to_name')
-  const fContractType = getField(payload, 'contract_type', 'service_type', 'billing_type', 'agreement_type', 'type', 'description_type')
-  const fInvoiceNum   = getField(payload, 'invoice_number', 'invoice_no', 'inv_number', 'inv_no', 'invoice_num', 'document_number', 'doc_no', 'reference')
-  const fInvoiceDate  = getField(payload, 'received_date', 'invoice_date', 'date', 'bill_date', 'invoice_dt', 'billing_date', 'service_date', 'doc_date')
-  const fDueDate      = getField(payload, 'due_date', 'payment_due', 'due', 'payment_date', 'date_due', 'pay_by', 'expiry_date')
-  const fAmount       = getField(payload, 'total_due_this_invoice', 'total_amount', 'amount', 'total', 'invoice_total', 'amount_due', 'balance_due', 'total_due', 'grand_total', 'net_amount')
-  const fTerms        = getField(payload, 'terms', 'payment_terms', 'net_terms', 'payment_conditions', 'conditions')
-  const fUnitNumber   = getField(payload, 'unit_number', 'unit_no', 'unit', 'asset_number', 'equipment_number', 'truck_number', 'vehicle_number')
-  const fFileName     = getField(payload, 'file_name')
-  const fFileUrl      = getField(payload, 'file_url')
-  const fFileData     = getField(payload, 'file_data')
-  const fEmailSubject = getField(payload, 'email_subject')
+  const fVendorName    = getField(payload, 'vendor_name', 'supplier_name', 'company_name', 'from_name', 'biller_name', 'remit_to_name')
+  const fContractType  = getField(payload, 'contract_type', 'service_type', 'billing_type', 'agreement_type', 'type', 'description_type')
+  const fInvoiceNum    = getField(payload, 'invoice_number', 'invoice_no', 'inv_number', 'inv_no', 'invoice_num', 'document_number', 'doc_no', 'reference')
+  const fInvoiceDate   = getField(payload, 'invoice_date', 'bill_date', 'invoice_dt', 'billing_date', 'service_date', 'doc_date', 'date')
+  const fDueDate       = getField(payload, 'due_date', 'payment_due', 'due', 'payment_date', 'date_due', 'pay_by', 'expiry_date')
+  const fAmount        = getField(payload, 'total_due_this_invoice', 'total_amount', 'amount', 'total', 'invoice_total', 'amount_due', 'balance_due', 'total_due', 'grand_total', 'net_amount')
+  const fTerms         = getField(payload, 'terms', 'payment_terms', 'net_terms', 'payment_conditions', 'conditions')
+  const fUnitNumber    = getField(payload, 'unit_number', 'unit_no', 'unit', 'asset_number', 'equipment_number', 'truck_number', 'vehicle_number', 'Unit #')
+  const fBillingPeriod = getField(payload, 'billing_period', 'billing_period_range', 'service_period', 'Billing Period:', 'Billing Period')
+  const fFileName      = getField(payload, 'file_name')
+  const fFileUrl       = getField(payload, 'file_url', 'document_url', 'attachment_url', 'pdf_url', 'file_link')
+  const fFileData      = getField(payload, 'file_data')
+  const fEmailSubject  = getField(payload, 'email_subject')
 
   console.log('[parseur] resolved fields:', JSON.stringify({
     vendor_name: fVendorName.key, contract_type: fContractType.key,
     invoice_number: fInvoiceNum.key, invoice_date: fInvoiceDate.key,
-    due_date: fDueDate.key, amount: fAmount.key, terms: fTerms.key, unit_number: fUnitNumber.key,
+    due_date: fDueDate.key, amount: fAmount.key, terms: fTerms.key,
+    unit_number: fUnitNumber.key, billing_period: fBillingPeriod.key,
+    file_url: fFileUrl.key,
   }))
 
   if (!fAmount.value)      console.error('[parseur] MISSING amount — payload keys were:', receivedFields.join(', '))
-  if (!fInvoiceDate.value) console.error('[parseur] MISSING invoice_date — payload keys were:', receivedFields.join(', '))
+  if (!fInvoiceDate.value) console.warn('[parseur] no invoice_date found — will use today. payload keys:', receivedFields.join(', '))
 
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   const notes_prefix = fEmailSubject.value ? `Auto-imported via Parseur — ${fEmailSubject.value}` : 'Auto-imported via Parseur'
@@ -221,40 +249,40 @@ Deno.serve(async (req: Request) => {
     needsVendorMatch = true
   }
 
-  // ── 5. Due date from terms ───────────────────────────────────────────────
+  // ── 5. Parse dates & billing period ─────────────────────────────────────
   const invoiceDate = parseDate(fInvoiceDate.value)
   let dueDate = parseDate(fDueDate.value)
   if (!dueDate && fTerms.value && invoiceDate) {
     dueDate = calcDueDate(invoiceDate, fTerms.value)
     if (dueDate) console.log(`[parseur] due_date calculated from "${fTerms.value}": ${dueDate}`)
   }
-  console.log(`[parseur] dates resolved — received_date: ${invoiceDate}, due_date: ${dueDate}`)
+  const [billingStart, billingEnd] = parseBillingPeriod(fBillingPeriod.value)
+  console.log(`[parseur] dates — received_date: ${invoiceDate ?? 'today'}, due_date: ${dueDate}, billing: ${billingStart} – ${billingEnd}`)
 
   // ── 6. Build & insert invoice ────────────────────────────────────────────
-  const invoiceNumber = fInvoiceNum.value?.trim() || `PARSEUR-${Date.now()}`
-
-  // Log actual table columns for debugging (remove once confirmed stable)
-  const { data: sampleRow } = await supabase.from('invoices').select('*').limit(1)
-  console.log('[parseur] invoice table columns:', sampleRow?.length ? Object.keys(sampleRow[0]).join(', ') : 'no rows found')
+  // Strip label prefixes from invoice number and unit number
+  const invoiceNumber = stripLabel(fInvoiceNum.value) || `PARSEUR-${Date.now()}`
 
   const { data: invoice, error: invErr } = await supabase.from('invoices').insert({
-    invoice_number:     invoiceNumber,
-    vendor_id:          vendorId,
-    vendor_name_raw:    rawVendorName || null,
-    amount:             parseAmount(fAmount.value),
-    received_date:      invoiceDate || todayISO(),   // actual invoice date, fallback to today
-    due_date:           dueDate,
-    department_id:      deptIds[0] || null,
-    department_ids:     deptIds,
-    status:             'Pending',
-    source:             'parseur',
-    needs_vendor_match: needsVendorMatch,
-    contract_type:      rawContractType || null,
-    payment_terms:      fTerms.value || null,
-    unit_number:        fUnitNumber.value?.trim() || null,
-    notes:              notes_prefix + notesExtra,
-    raw_payload:        payload,
-    attachment_url:     null as string | null,
+    invoice_number:       invoiceNumber,
+    vendor_id:            vendorId,
+    vendor_name_raw:      rawVendorName || null,
+    amount:               parseAmount(fAmount.value),
+    received_date:        invoiceDate || todayISO(),
+    due_date:             dueDate,
+    billing_period_start: billingStart,
+    billing_period_end:   billingEnd,
+    department_id:        deptIds[0] || null,
+    department_ids:       deptIds,
+    status:               'Pending',
+    source:               'parseur',
+    needs_vendor_match:   needsVendorMatch,
+    contract_type:        rawContractType || null,
+    payment_terms:        fTerms.value || null,
+    unit_number:          stripLabel(fUnitNumber.value),
+    notes:                notes_prefix + notesExtra,
+    raw_payload:          payload,
+    attachment_url:       null as string | null,
   }).select().single()
 
   if (invErr || !invoice) {
@@ -279,6 +307,10 @@ Deno.serve(async (req: Request) => {
       const binary = atob(fFileData.value)
       fileBytes = new Uint8Array(binary.length)
       for (let i = 0; i < binary.length; i++) fileBytes[i] = binary.charCodeAt(i)
+    }
+
+    if (!fFileUrl.value && !fFileData.value) {
+      console.warn('[parseur] no file_url or file_data in payload — no attachment will be saved')
     }
 
     if (fileBytes) {
