@@ -142,20 +142,26 @@ Deno.serve(async (req: Request) => {
   const fFileName      = getField(payload, 'file_name')
   const fFileData      = getField(payload, 'file_data')
 
-  // Collect all candidate URLs — try each until one actually returns PDF bytes.
-  // OriginalDocument is excluded: it's an HTML viewer page (.pdf.html), not a download.
+  // Build URL candidates. For each URL ending in .html we also push a .html-stripped
+  // variant — Parseur viewer URLs end in .pdf.html; removing .html may expose raw PDF.
   const fileUrlCandidates: string[] = []
-  // Parseur Attachments = binary email attachments, no auth (highest priority)
+  function addCandidate(url: string) {
+    fileUrlCandidates.push(url)
+    if (url.endsWith('.html')) fileUrlCandidates.push(url.slice(0, -5))
+  }
+  // Attachments array (may contain viewer URLs — stripped variant tried automatically)
   const att = payload.Attachments ?? payload.attachments
   if (Array.isArray(att) && att.length > 0) {
     const first = att[0]
-    if (typeof first === 'string') fileUrlCandidates.push(first)
-    else if (first?.url) fileUrlCandidates.push(String(first.url))
+    if (typeof first === 'string') addCandidate(first)
+    else if (first?.url) addCandidate(String(first.url))
   }
-  if (payload.PublicDocumentURL && typeof payload.PublicDocumentURL === 'string') fileUrlCandidates.push(payload.PublicDocumentURL)
-  if (payload.SearchablePDF && typeof payload.SearchablePDF === 'string') fileUrlCandidates.push(payload.SearchablePDF)
+  // OriginalDocument now included with .html-strip fallback
+  if (payload.OriginalDocument && typeof payload.OriginalDocument === 'string') addCandidate(payload.OriginalDocument)
+  if (payload.PublicDocumentURL && typeof payload.PublicDocumentURL === 'string') addCandidate(payload.PublicDocumentURL)
+  if (payload.SearchablePDF && typeof payload.SearchablePDF === 'string') addCandidate(payload.SearchablePDF)
   for (const k of ['file_url', 'document_url', 'attachment_url', 'pdf_url', 'file_link', 'attachment']) {
-    if (payload[k] && typeof payload[k] === 'string') fileUrlCandidates.push(payload[k])
+    if (payload[k] && typeof payload[k] === 'string') addCandidate(payload[k])
   }
   console.log('[parseur] file URL candidates:', JSON.stringify(fileUrlCandidates))
   console.log('[parseur] PublicDocumentURL:', payload.PublicDocumentURL ?? 'not set')
@@ -338,7 +344,7 @@ Deno.serve(async (req: Request) => {
 
     // Try each URL candidate until one returns actual PDF bytes
     for (const url of fileUrlCandidates) {
-      console.log('[parseur] trying:', url)
+      console.log('[parseur] trying URL:', url)
       try {
         const res = await fetch(url)
         const contentType = res.headers.get('content-type') || ''
