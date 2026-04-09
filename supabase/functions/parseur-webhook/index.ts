@@ -142,25 +142,24 @@ Deno.serve(async (req: Request) => {
   const fFileName      = getField(payload, 'file_name')
   const fFileData      = getField(payload, 'file_data')
 
-  // Resolve file URL — handles all Parseur metadata formats
-  // Priority: public no-auth URLs first, then authenticated, then attachment arrays
-  const fileUrl: string | null = (() => {
-    // Parseur metadata: PublicDocumentURL, OriginalDocument, SearchablePDF (all no-auth)
-    const publicMeta = payload.PublicDocumentURL || payload.OriginalDocument || payload.SearchablePDF
-    if (publicMeta && typeof publicMeta === 'string') return publicMeta
-    // Custom scalar fields
-    const direct = payload.file_url || payload.document_url || payload.attachment_url ||
-                   payload.pdf_url  || payload.file_link    || payload.attachment
-    if (direct && typeof direct === 'string') return direct
-    // Parseur Attachments metadata array: ["https://..."] or [{url, name}]
-    const arr = payload.Attachments ?? payload.attachments
-    if (Array.isArray(arr) && arr.length > 0) {
-      const first = arr[0]
-      if (typeof first === 'string') return first
-      if (first && typeof first === 'object' && first.url) return String(first.url)
-    }
-    return null
-  })()
+  // Collect all candidate URLs — try each until one actually returns PDF bytes.
+  // OriginalDocument is excluded: it's an HTML viewer page (.pdf.html), not a download.
+  const fileUrlCandidates: string[] = []
+  // Parseur Attachments = binary email attachments, no auth (highest priority)
+  const att = payload.Attachments ?? payload.attachments
+  if (Array.isArray(att) && att.length > 0) {
+    const first = att[0]
+    if (typeof first === 'string') fileUrlCandidates.push(first)
+    else if (first?.url) fileUrlCandidates.push(String(first.url))
+  }
+  if (payload.PublicDocumentURL && typeof payload.PublicDocumentURL === 'string') fileUrlCandidates.push(payload.PublicDocumentURL)
+  if (payload.SearchablePDF && typeof payload.SearchablePDF === 'string') fileUrlCandidates.push(payload.SearchablePDF)
+  for (const k of ['file_url', 'document_url', 'attachment_url', 'pdf_url', 'file_link', 'attachment']) {
+    if (payload[k] && typeof payload[k] === 'string') fileUrlCandidates.push(payload[k])
+  }
+  console.log('[parseur] file URL candidates:', JSON.stringify(fileUrlCandidates))
+  console.log('[parseur] PublicDocumentURL:', payload.PublicDocumentURL ?? 'not set')
+  console.log('[parseur] OriginalDocument:', payload.OriginalDocument ?? 'not set')
   const fEmailSubject  = getField(payload, 'email_subject')
 
   console.log('[parseur] resolved fields:', JSON.stringify({
@@ -168,7 +167,7 @@ Deno.serve(async (req: Request) => {
     invoice_number: fInvoiceNum.key, invoice_date: fInvoiceDate.key,
     due_date: fDueDate.key, amount: fAmount.key, terms: fTerms.key,
     unit_number: fUnitNumber.key, billing_period: fBillingPeriod.key,
-    file_url: fileUrl ?? null,
+    file_candidates: fileUrlCandidates.length,
   }))
 
   if (!fAmount.value)      console.error('[parseur] MISSING amount — payload keys were:', receivedFields.join(', '))
@@ -337,27 +336,33 @@ Deno.serve(async (req: Request) => {
     let fileBytes: Uint8Array | null = null
     const fileName = sanitizeFilename(fFileName.value || `invoice_${invoiceNumber}.pdf`)
 
-    if (fileUrl) {
-      console.log('[parseur] fetching attachment from:', fileUrl)
-      const res = await fetch(fileUrl)
-      const contentType = res.headers.get('content-type') || ''
-      console.log('[parseur] fetch status:', res.status, 'content-type:', contentType)
-      if (res.ok && (contentType.includes('pdf') || contentType.includes('octet-stream') || contentType.includes('binary'))) {
-        fileBytes = new Uint8Array(await res.arrayBuffer())
-        console.log('[parseur] fetched', fileBytes.byteLength, 'bytes')
-      } else if (res.ok) {
-        console.warn('[parseur] fetched non-PDF content-type:', contentType, '— skipping. URL may require Parseur auth.')
-      } else {
-        console.warn('[parseur] could not fetch file_url:', fileUrl, res.status)
+    // Try each URL candidate until one returns actual PDF bytes
+    for (const url of fileUrlCandidates) {
+      console.log('[parseur] trying:', url)
+      try {
+        const res = await fetch(url)
+        const contentType = res.headers.get('content-type') || ''
+        console.log('[parseur] → status:', res.status, 'content-type:', contentType)
+        if (res.ok && (contentType.includes('pdf') || contentType.includes('octet-stream') || contentType.includes('binary'))) {
+          fileBytes = new Uint8Array(await res.arrayBuffer())
+          console.log('[parseur] → success:', fileBytes.byteLength, 'bytes from', url)
+          break
+        } else {
+          console.warn('[parseur] → not PDF (', contentType, '), trying next...')
+        }
+      } catch (fetchErr) {
+        console.warn('[parseur] → fetch error:', fetchErr)
       }
-    } else if (fFileData.value) {
+    }
+
+    if (!fileBytes && fFileData.value) {
       const binary = atob(fFileData.value)
       fileBytes = new Uint8Array(binary.length)
       for (let i = 0; i < binary.length; i++) fileBytes[i] = binary.charCodeAt(i)
     }
 
-    if (!fileUrl && !fFileData.value) {
-      console.warn('[parseur] no file_url or file_data in payload — no attachment will be saved')
+    if (!fileBytes) {
+      console.warn('[parseur] no valid PDF found from', fileUrlCandidates.length, 'candidates — no attachment saved')
     }
 
     if (fileBytes) {
