@@ -142,11 +142,17 @@ Deno.serve(async (req: Request) => {
   const fFileName      = getField(payload, 'file_name')
   const fFileData      = getField(payload, 'file_data')
 
-  // Resolve file URL — handles string scalar, array of strings, or array of objects with .url
+  // Resolve file URL — handles all Parseur metadata formats
+  // Priority: public no-auth URLs first, then authenticated, then attachment arrays
   const fileUrl: string | null = (() => {
+    // Parseur metadata: PublicDocumentURL, OriginalDocument, SearchablePDF (all no-auth)
+    const publicMeta = payload.PublicDocumentURL || payload.OriginalDocument || payload.SearchablePDF
+    if (publicMeta && typeof publicMeta === 'string') return publicMeta
+    // Custom scalar fields
     const direct = payload.file_url || payload.document_url || payload.attachment_url ||
                    payload.pdf_url  || payload.file_link    || payload.attachment
     if (direct && typeof direct === 'string') return direct
+    // Parseur Attachments metadata array: ["https://..."] or [{url, name}]
     const arr = payload.Attachments ?? payload.attachments
     if (Array.isArray(arr) && arr.length > 0) {
       const first = arr[0]
