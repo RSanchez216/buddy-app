@@ -142,12 +142,17 @@ Deno.serve(async (req: Request) => {
   const fFileName      = getField(payload, 'file_name')
   const fFileData      = getField(payload, 'file_data')
 
-  // Build URL candidates. For each URL ending in .html we also push a .html-stripped
-  // variant — Parseur viewer URLs end in .pdf.html; removing .html may expose raw PDF.
+  // Build URL candidates. For each Parseur viewer URL (.../display/...) we also try
+  // the /download/ variant, which may serve raw PDF bytes. We also strip .html suffixes.
   const fileUrlCandidates: string[] = []
   function addCandidate(url: string) {
-    fileUrlCandidates.push(url)
-    if (url.endsWith('.html')) fileUrlCandidates.push(url.slice(0, -5))
+    // Strip .html suffix variant
+    const base = url.endsWith('.html') ? url.slice(0, -5) : url
+    fileUrlCandidates.push(base)
+    // Try /download/ instead of /display/ — Parseur's download endpoint
+    if (base.includes('/display/')) {
+      fileUrlCandidates.push(base.replace('/display/', '/download/'))
+    }
   }
   // Attachments array (may contain viewer URLs — stripped variant tried automatically)
   const att = payload.Attachments ?? payload.attachments
