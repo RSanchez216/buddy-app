@@ -709,10 +709,10 @@ export default function InvoiceInbox() {
                     <td className={`${S.td} text-gray-400 dark:text-slate-400 text-xs`}>{inv.due_date || '—'}</td>
                     <td className={`${S.td} text-center`}><StatusBadge status={inv.status} /></td>
 
-                    {/* Per-dept status + independent action buttons */}
+                    {/* Per-dept status + action buttons */}
                     <td className={S.td}>
                       {inv.invoice_departments?.length ? (
-                        <div className="space-y-1.5">
+                        <div className="space-y-1">
                           {inv.invoice_departments.map(d => {
                             const isPending = d.status === 'Pending'
                             const canAct = canEdit && (
@@ -720,20 +720,28 @@ export default function InvoiceInbox() {
                               (profile?.role === 'department_head' && d.department_id === profile?.department_id)
                             )
                             return (
-                              <div key={d.id} className="flex items-center gap-1.5 flex-wrap">
+                              <div key={d.id} className="flex items-center gap-1.5 whitespace-nowrap">
                                 <DeptBadge name={d.departments?.name} />
                                 <StatusBadge status={d.status} />
                                 {canAct && isPending && (
-                                  <>
-                                    <button onClick={() => openDeptAction(inv, d, 'Approve')} className={S.btnSuccess}>✓</button>
-                                    <button onClick={() => openDeptAction(inv, d, 'Dispute')} className={S.btnDanger}>✗</button>
-                                  </>
+                                  <div className="flex gap-0.5 ml-0.5">
+                                    <button
+                                      onClick={() => openDeptAction(inv, d, 'Approve')}
+                                      title="Approve"
+                                      className="w-5 h-5 flex items-center justify-center rounded text-[11px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 hover:bg-emerald-100 dark:hover:bg-emerald-500/20 border border-emerald-200 dark:border-emerald-500/30 transition-colors"
+                                    >✓</button>
+                                    <button
+                                      onClick={() => openDeptAction(inv, d, 'Dispute')}
+                                      title="Dispute"
+                                      className="w-5 h-5 flex items-center justify-center rounded text-[11px] font-bold text-red-500 dark:text-red-400 bg-red-50 dark:bg-red-500/10 hover:bg-red-100 dark:hover:bg-red-500/20 border border-red-200 dark:border-red-500/30 transition-colors"
+                                    >✗</button>
+                                  </div>
                                 )}
                                 {canAct && !isPending && inv.status !== 'Paid' && (
                                   <button
                                     onClick={() => resetDeptRecord(inv, d)}
                                     title="Reset to Pending"
-                                    className="px-2 py-1 text-xs font-medium text-gray-400 dark:text-slate-500 border border-gray-200 dark:border-slate-700 rounded-lg hover:border-amber-400 hover:text-amber-500 dark:hover:text-amber-400 transition-colors"
+                                    className="ml-0.5 w-5 h-5 flex items-center justify-center rounded text-[11px] text-gray-400 dark:text-slate-500 border border-gray-200 dark:border-slate-700 hover:border-amber-400 hover:text-amber-500 dark:hover:text-amber-400 transition-colors"
                                   >↺</button>
                                 )}
                               </div>
