@@ -340,8 +340,16 @@ Deno.serve(async (req: Request) => {
     if (fileUrl) {
       console.log('[parseur] fetching attachment from:', fileUrl)
       const res = await fetch(fileUrl)
-      if (res.ok) fileBytes = new Uint8Array(await res.arrayBuffer())
-      else console.warn('[parseur] could not fetch file_url:', fileUrl, res.status)
+      const contentType = res.headers.get('content-type') || ''
+      console.log('[parseur] fetch status:', res.status, 'content-type:', contentType)
+      if (res.ok && (contentType.includes('pdf') || contentType.includes('octet-stream') || contentType.includes('binary'))) {
+        fileBytes = new Uint8Array(await res.arrayBuffer())
+        console.log('[parseur] fetched', fileBytes.byteLength, 'bytes')
+      } else if (res.ok) {
+        console.warn('[parseur] fetched non-PDF content-type:', contentType, '— skipping. URL may require Parseur auth.')
+      } else {
+        console.warn('[parseur] could not fetch file_url:', fileUrl, res.status)
+      }
     } else if (fFileData.value) {
       const binary = atob(fFileData.value)
       fileBytes = new Uint8Array(binary.length)
