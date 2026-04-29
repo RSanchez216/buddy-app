@@ -218,12 +218,13 @@ export default function PaymentCalendar() {
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
           Add Income
         </button>
-        <button onClick={() => { setDefaultDate(toISO(new Date())); setShowAddExpense(true) }} className={CF.btnOutline}>
+        <button onClick={() => { setDefaultDate(toISO(new Date())); setShowAddExpense(true) }} className={CF.btnPrimary}>
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
           Add Expense
         </button>
-        <button onClick={() => setShowRecurring(true)} className={CF.link}>Recurring Expenses</button>
-        <button onClick={() => setShowStartingCash(true)} className="text-xs text-gray-500 hover:text-orange-600 dark:hover:text-orange-400">Edit Starting Cash</button>
+        <div className="ml-auto">
+          <KebabMenu onManageRecurring={() => setShowRecurring(true)} />
+        </div>
       </div>
 
       {loading ? (
@@ -280,6 +281,44 @@ export default function PaymentCalendar() {
         onOpenAdjustLoan={(ev) => { setChipDetail(null); setAdjustLoanEvent(ev) }}
         onOpenManageRecurring={() => { setChipDetail(null); setShowRecurring(true) }}
       />
+    </div>
+  )
+}
+
+// Kebab dropdown — overflow actions for the calendar header
+function KebabMenu({ onManageRecurring }) {
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    if (!open) return
+    function onClickAway(e) {
+      if (!e.target.closest?.('[data-kebab-menu]')) setOpen(false)
+    }
+    document.addEventListener('mousedown', onClickAway)
+    return () => document.removeEventListener('mousedown', onClickAway)
+  }, [open])
+
+  return (
+    <div className="relative" data-kebab-menu>
+      <button
+        onClick={() => setOpen(o => !o)}
+        title="More actions"
+        className="w-9 h-9 inline-flex items-center justify-center rounded-xl border border-gray-200 dark:border-white/10 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 hover:text-gray-700 dark:hover:text-slate-200 transition-colors"
+      >
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01" />
+        </svg>
+      </button>
+      {open && (
+        <div className="absolute right-0 mt-1 w-56 rounded-xl bg-white dark:bg-[#0d0d1f] border border-gray-200 dark:border-white/10 shadow-xl py-1 z-20">
+          <button
+            onClick={() => { setOpen(false); onManageRecurring?.() }}
+            className="w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors"
+          >
+            Manage recurring expenses
+          </button>
+        </div>
+      )}
     </div>
   )
 }

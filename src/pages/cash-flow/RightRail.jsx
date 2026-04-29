@@ -22,8 +22,15 @@ export default function RightRail({ weekStart, startingCash, inflowSum, outflowS
           value={startingCash != null ? fmtMoney(startingCash) : '—'}
           mono
           action={
-            <button onClick={onEditCash} className="text-[11px] text-orange-600 dark:text-orange-400 hover:underline">
-              Edit
+            <button
+              onClick={onEditCash}
+              title="Edit starting cash"
+              className="text-gray-400 dark:text-slate-500 hover:text-orange-600 dark:hover:text-orange-400 transition-colors"
+            >
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 20h9" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16.5 3.5a2.121 2.121 0 113 3L7 19l-4 1 1-4 12.5-12.5z" />
+              </svg>
             </button>
           }
         />

@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { S } from '../../lib/styles'
-import { CF, chipPalette, fmtMoney, fmtMoneySigned } from './calendarUtils'
+import { CF, chipPalette, fmtMoney, fmtMoneySigned, toISO } from './calendarUtils'
+import ConvertToInvoiceModal from './ConvertToInvoiceModal'
 
 function fmtDate(d) {
   if (!d) return '—'
@@ -15,6 +16,7 @@ export default function ChipDetailPanel({ event, onClose, onChange, onOpenAdjust
   const [form, setForm] = useState({})
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+  const [showConvert, setShowConvert] = useState(false)
 
   useEffect(() => {
     if (!event) { setDetails(null); return }
@@ -37,7 +39,7 @@ export default function ChipDetailPanel({ event, onClose, onChange, onOpenAdjust
       setDetails({ kind: 'invoice', row: data })
     } else if (reference_type === 'custom' || reference_type === 'recurring') {
       const { data } = await supabase.from('custom_outflows')
-        .select('*, entity:loan_entities(name), template:recurring_expense_templates(id, name, frequency)')
+        .select('*, entity:loan_entities(name), template:recurring_expense_templates(id, name, frequency), converted_invoice:invoices!custom_outflows_converted_to_invoice_id_fkey(id, invoice_number, amount, status, due_date)')
         .eq('id', reference_id).maybeSingle()
       setDetails({ kind: 'custom_outflow', row: data })
     } else if (reference_type === 'loan') {
@@ -128,6 +130,20 @@ export default function ChipDetailPanel({ event, onClose, onChange, onOpenAdjust
     onClose?.()
   }
 
+  async function markPaid() {
+    if (!details || details.kind !== 'custom_outflow') return
+    const today = toISO(new Date())
+    const res = await supabase.from('custom_outflows').update({
+      status: 'paid',
+      paid_date: today,
+      paid_amount: Number(details.row.amount || 0),
+      updated_at: new Date().toISOString(),
+    }).eq('id', details.row.id)
+    if (res.error) { alert(res.error.message); return }
+    onChange?.()
+    onClose?.()
+  }
+
   if (!event) return null
 
   const palette = chipPalette(event)
@@ -143,7 +159,7 @@ export default function ChipDetailPanel({ event, onClose, onChange, onOpenAdjust
               {palette.legend}
             </span>
             <h3 className="text-lg font-bold text-gray-900 dark:text-white mt-2">{event.label || '—'}</h3>
-            <p className={`text-sm font-mono font-bold mt-0.5 ${event.direction === 'in' ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+            <p className={`text-sm font-mono font-bold mt-0.5 ${event.direction === 'inflow' ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
               {fmtMoneySigned(event.amount, event.direction)}
               <span className="text-gray-400 dark:text-slate-500 font-normal ml-2">({fmtMoney(event.amount)})</span>
             </p>
@@ -167,7 +183,7 @@ export default function ChipDetailPanel({ event, onClose, onChange, onOpenAdjust
           ) : details.kind === 'inflow' ? (
             <InflowDetail row={details.row} editing={editing} form={form} setForm={setForm} />
           ) : details.kind === 'custom_outflow' ? (
-            <CustomDetail row={details.row} editing={editing} form={form} setForm={setForm} onOpenManageRecurring={onOpenManageRecurring} />
+            <CustomDetail row={details.row} editing={editing} form={form} setForm={setForm} onOpenManageRecurring={onOpenManageRecurring} onOpenConvert={() => setShowConvert(true)} />
           ) : details.kind === 'invoice' ? (
             <InvoiceDetail row={details.row} editing={editing} form={form} setForm={setForm} />
           ) : details.kind === 'loan_payment' ? (
@@ -191,6 +207,23 @@ export default function ChipDetailPanel({ event, onClose, onChange, onOpenAdjust
                   Cancel event
                 </button>
               )}
+              {details?.kind === 'custom_outflow' && (
+                details.row.converted_to_invoice_id ? (
+                  <Link
+                    to="/invoices"
+                    className="px-3 py-1.5 text-xs font-semibold bg-cyan-50 dark:bg-cyan-500/10 text-cyan-700 dark:text-cyan-400 border border-cyan-200 dark:border-cyan-500/20 rounded-lg hover:bg-cyan-100 dark:hover:bg-cyan-500/20 transition-colors"
+                  >
+                    Pay in AP Control →
+                  </Link>
+                ) : (
+                  <button
+                    onClick={markPaid}
+                    className="px-3 py-1.5 text-xs font-semibold bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20 rounded-lg hover:bg-emerald-100 dark:hover:bg-emerald-500/20 transition-colors"
+                  >
+                    Mark as paid
+                  </button>
+                )
+              )}
               {details && (details.kind !== 'loan_payment') && (
                 <button onClick={startEdit} className={CF.btnSave}>Edit</button>
               )}
@@ -198,6 +231,14 @@ export default function ChipDetailPanel({ event, onClose, onChange, onOpenAdjust
           )}
         </div>
       </div>
+
+      {/* Convert to invoice modal */}
+      <ConvertToInvoiceModal
+        open={showConvert}
+        planned={details?.kind === 'custom_outflow' ? details.row : null}
+        onClose={() => setShowConvert(false)}
+        onConverted={() => { setShowConvert(false); onChange?.(); onClose?.() }}
+      />
     </div>
   )
 }
@@ -228,7 +269,7 @@ function InflowDetail({ row, editing, form, setForm }) {
   )
 }
 
-function CustomDetail({ row, editing, form, setForm, onOpenManageRecurring }) {
+function CustomDetail({ row, editing, form, setForm, onOpenManageRecurring, onOpenConvert }) {
   if (!row) return <p className="text-gray-500 text-sm">Not found.</p>
   if (editing) {
     return (
@@ -242,6 +283,7 @@ function CustomDetail({ row, editing, form, setForm, onOpenManageRecurring }) {
       </div>
     )
   }
+  const inv = row.converted_invoice
   return (
     <div className="space-y-2 text-sm">
       <Row label="Status" value={<StatusPill status={row.status} />} />
@@ -257,6 +299,28 @@ function CustomDetail({ row, editing, form, setForm, onOpenManageRecurring }) {
           <button onClick={onOpenManageRecurring} className={CF.link}>Manage recurring template →</button>
         </div>
       )}
+
+      {/* INVOICE section */}
+      <div className="pt-3 mt-3 border-t border-gray-100 dark:border-white/5">
+        <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500 mb-2">Invoice</p>
+        {row.converted_to_invoice_id && inv ? (
+          <div className="space-y-1.5">
+            <Row label="Invoice #" value={inv.invoice_number || '—'} mono />
+            <Row label="Amount" value={fmtMoney(inv.amount)} mono />
+            <Row label="Status" value={<StatusPill status={inv.status} />} />
+            <Row label="Due" value={fmtDate(inv.due_date)} />
+            <Link to="/invoices" className={`${CF.link} pt-1 inline-block`}>View in AP Control →</Link>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-xs text-gray-500 dark:text-slate-500">No invoice attached yet.</p>
+            <button onClick={onOpenConvert} className={CF.btnOutline}>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+              Convert to invoice
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
