@@ -10,7 +10,7 @@ function fmtDate(d) {
   return new Date(`${d}T00:00:00`).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
-export default function ChipDetailPanel({ event, onClose, onChange, onOpenAdjustLoan, onOpenManageRecurring }) {
+export default function ChipDetailPanel({ event, onClose, onChange, onOpenAdjustLoan, onOpenManageRecurring, onSuccess }) {
   const [details, setDetails] = useState(null)
   const [editing, setEditing] = useState(false)
   const [form, setForm] = useState({})
@@ -237,7 +237,12 @@ export default function ChipDetailPanel({ event, onClose, onChange, onOpenAdjust
         open={showConvert}
         planned={details?.kind === 'custom_outflow' ? details.row : null}
         onClose={() => setShowConvert(false)}
-        onConverted={() => { setShowConvert(false); onChange?.(); onClose?.() }}
+        onConverted={() => {
+          setShowConvert(false)
+          onSuccess?.('Converted to invoice. View it in AP Control →')
+          onChange?.()
+          onClose?.()
+        }}
       />
     </div>
   )

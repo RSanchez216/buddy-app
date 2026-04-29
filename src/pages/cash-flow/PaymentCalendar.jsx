@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { S } from '../../lib/styles'
 import Select from '../../components/Select'
@@ -35,6 +36,12 @@ export default function PaymentCalendar() {
   const [adjustLoanEvent, setAdjustLoanEvent] = useState(null) // event obj
   const [chipDetail, setChipDetail] = useState(null)
   const [defaultDate, setDefaultDate] = useState('')
+  const [toast, setToast] = useState(null) // { message, link? }
+
+  function showToast(message) {
+    setToast({ message })
+    setTimeout(() => setToast(null), 5000)
+  }
 
   const weekStart = useMemo(() => startOfWeek(anchor), [anchor])
 
@@ -280,7 +287,31 @@ export default function PaymentCalendar() {
         onChange={loadData}
         onOpenAdjustLoan={(ev) => { setChipDetail(null); setAdjustLoanEvent(ev) }}
         onOpenManageRecurring={() => { setChipDetail(null); setShowRecurring(true) }}
+        onSuccess={showToast}
       />
+
+      {/* Toast */}
+      {toast && (
+        <div className="fixed bottom-6 right-6 z-[110] max-w-sm bg-white dark:bg-[#0d0d1f] border border-emerald-200 dark:border-emerald-500/30 rounded-2xl shadow-2xl px-4 py-3 flex items-start gap-3">
+          <div className="w-2 h-2 rounded-full bg-emerald-500 mt-1.5 shrink-0" />
+          <div className="flex-1 text-sm text-gray-700 dark:text-slate-300">
+            <span>{toast.message.replace(/\s*View it in AP Control →\s*$/, '')}</span>
+            {toast.message.includes('AP Control') && (
+              <>
+                {' '}
+                <Link to="/invoices" className="text-orange-600 dark:text-orange-400 hover:underline font-semibold">
+                  View it in AP Control →
+                </Link>
+              </>
+            )}
+          </div>
+          <button onClick={() => setToast(null)} className="text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 shrink-0">
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
     </div>
   )
 }
