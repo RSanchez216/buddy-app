@@ -12,6 +12,11 @@ import MonthlyReport from './pages/MonthlyReport'
 import SettingsDepartments from './pages/settings/Departments'
 import SettingsVendorCategories from './pages/settings/VendorCategories'
 import SettingsPaymentMethods from './pages/settings/PaymentMethods'
+import SettingsLoanEntities from './pages/settings/LoanEntities'
+import SettingsLoanLenders from './pages/settings/LoanLenders'
+import SettingsFundingAccounts from './pages/settings/FundingAccounts'
+import DebtSchedule from './pages/financial-controls/DebtSchedule'
+import LoanDetail from './pages/financial-controls/LoanDetail'
 
 export default function App() {
   return (
@@ -30,10 +35,16 @@ export default function App() {
               <Route path="invoices" element={<InvoiceInbox />} />
               <Route path="transactions" element={<TransactionFeed />} />
               <Route path="reports" element={<MonthlyReport />} />
+              {/* Financial Controls */}
+              <Route path="financial-controls/debt-schedule" element={<DebtSchedule />} />
+              <Route path="financial-controls/debt-schedule/:loanId" element={<LoanDetail />} />
               {/* Settings */}
               <Route path="settings/departments" element={<SettingsDepartments />} />
               <Route path="settings/vendor-categories" element={<SettingsVendorCategories />} />
               <Route path="settings/payment-methods" element={<SettingsPaymentMethods />} />
+              <Route path="settings/loan-entities" element={<SettingsLoanEntities />} />
+              <Route path="settings/loan-lenders" element={<SettingsLoanLenders />} />
+              <Route path="settings/funding-accounts" element={<SettingsFundingAccounts />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
