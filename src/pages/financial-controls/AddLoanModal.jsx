@@ -25,6 +25,7 @@ export default function AddLoanModal({ open, onClose, onCreated }) {
   const [entities, setEntities] = useState([])
   const [lenders, setLenders] = useState([])
   const [accounts, setAccounts] = useState([])
+  const [equipmentTypes, setEquipmentTypes] = useState([])
   const [form, setForm] = useState(emptyForm)
   const [equipmentRows, setEquipmentRows] = useState([emptyEquipment()])
   const [saving, setSaving] = useState(false)
@@ -37,10 +38,12 @@ export default function AddLoanModal({ open, onClose, onCreated }) {
       supabase.from('loan_entities').select('id,name').eq('is_active', true).order('name'),
       supabase.from('loan_lenders').select('id,name').eq('is_active', true).order('name'),
       supabase.from('funding_accounts').select('id,name,bank_name,last_four').eq('is_active', true).order('name'),
-    ]).then(([e, l, a]) => {
+      supabase.from('equipment_types').select('id, name, display_label, sort_order').eq('is_active', true).order('sort_order').order('display_label'),
+    ]).then(([e, l, a, t]) => {
       setEntities(e.data || [])
       setLenders(l.data || [])
       setAccounts(a.data || [])
+      setEquipmentTypes(t.data || [])
     })
   }, [open])
 
@@ -222,7 +225,10 @@ export default function AddLoanModal({ open, onClose, onCreated }) {
                 <div className="grid grid-cols-3 gap-2">
                   <input className={S.input} placeholder="Unit #" value={r.unit_number} onChange={e => updateEquipment(i, 'unit_number', e.target.value)} />
                   <input className={S.input} placeholder="VIN" value={r.vin} onChange={e => updateEquipment(i, 'vin', e.target.value)} />
-                  <input className={S.input} placeholder="Type (truck/trailer)" value={r.equipment_type} onChange={e => updateEquipment(i, 'equipment_type', e.target.value)} />
+                  <Select value={r.equipment_type} onChange={e => updateEquipment(i, 'equipment_type', e.target.value)}>
+                    <option value="">Type…</option>
+                    {equipmentTypes.map(t => <option key={t.id} value={t.name}>{t.display_label || t.name}</option>)}
+                  </Select>
                   <input className={S.input} placeholder="Make" value={r.make} onChange={e => updateEquipment(i, 'make', e.target.value)} />
                   <input className={S.input} placeholder="Model" value={r.model} onChange={e => updateEquipment(i, 'model', e.target.value)} />
                   <input className={S.input} type="number" placeholder="Year" value={r.year} onChange={e => updateEquipment(i, 'year', e.target.value)} />

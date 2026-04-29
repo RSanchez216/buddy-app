@@ -30,6 +30,21 @@ function KpiCard({ label, value, accent = 'orange' }) {
   )
 }
 
+// Sortable column header — null direction = unsorted
+function SortHeader({ label, columnKey, sortKey, sortDir, onSort, align = 'left' }) {
+  const active = sortKey === columnKey
+  return (
+    <th className={`${S.th} cursor-pointer select-none hover:text-gray-700 dark:hover:text-slate-300`} onClick={() => onSort(columnKey)}>
+      <span className={`inline-flex items-center gap-1 ${align === 'right' ? 'flex-row-reverse' : ''}`}>
+        {label}
+        <span className={`text-[9px] leading-none ${active ? 'text-orange-500' : 'text-gray-300 dark:text-slate-700'}`}>
+          {active ? (sortDir === 'asc' ? '▲' : '▼') : '⇅'}
+        </span>
+      </span>
+    </th>
+  )
+}
+
 export default function DebtSchedule() {
   const { profile } = useAuth()
   const canEdit = profile?.role === 'admin' || profile?.role === 'department_head'
@@ -38,6 +53,8 @@ export default function DebtSchedule() {
   const [equipmentByLoan, setEquipmentByLoan] = useState({})
   const [entities, setEntities] = useState([])
   const [lenders, setLenders] = useState([])
+  const [equipmentTypes, setEquipmentTypes] = useState([])
+  const [pastDueAmount, setPastDueAmount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
 
@@ -49,15 +66,25 @@ export default function DebtSchedule() {
   const [pastDueOnly, setPastDueOnly] = useState(false)
   const [groupByEntity, setGroupByEntity] = useState(false)
 
+  // null = default order (entity, then loan_id)
+  const [sortKey, setSortKey] = useState(null)
+  const [sortDir, setSortDir] = useState('asc')
+
   useEffect(() => { loadData() }, [])
 
   async function loadData() {
     setLoading(true)
-    const [loanRes, eqRes, entRes, lndRes] = await Promise.all([
+    const today = new Date().toISOString().slice(0, 10)
+    const [loanRes, eqRes, entRes, lndRes, etRes, pastDueRes] = await Promise.all([
       supabase.from('v_loans_summary').select('*').order('next_due_date', { ascending: true, nullsFirst: false }),
       supabase.from('loan_equipment').select('id, loan_id, unit_number, vin, equipment_type, make, model, year'),
       supabase.from('loan_entities').select('id, name').eq('is_active', true).order('name'),
       supabase.from('loan_lenders').select('id, name').eq('is_active', true).order('name'),
+      supabase.from('equipment_types').select('id, name, display_label, sort_order').eq('is_active', true).order('sort_order').order('display_label'),
+      supabase.from('loan_payments')
+        .select('scheduled_amount, paid_amount')
+        .in('status', ['pending', 'partial'])
+        .lt('due_date', today),
     ])
     setLoans(loanRes.data || [])
     const grouped = {}
@@ -68,14 +95,14 @@ export default function DebtSchedule() {
     setEquipmentByLoan(grouped)
     setEntities(entRes.data || [])
     setLenders(lndRes.data || [])
+    setEquipmentTypes(etRes.data || [])
+
+    const total = (pastDueRes.data || []).reduce(
+      (s, r) => s + (Number(r.scheduled_amount || 0) - Number(r.paid_amount || 0)), 0
+    )
+    setPastDueAmount(total)
     setLoading(false)
   }
-
-  const equipmentTypes = useMemo(() => {
-    const set = new Set()
-    Object.values(equipmentByLoan).forEach(arr => arr.forEach(e => e.equipment_type && set.add(e.equipment_type)))
-    return [...set].sort()
-  }, [equipmentByLoan])
 
   // Apply filters + global search; tag each loan with searchHit info
   const filtered = useMemo(() => {
@@ -114,6 +141,38 @@ export default function DebtSchedule() {
       .filter(Boolean)
   }, [loans, equipmentByLoan, search, filterEntity, filterLender, filterStatus, filterEquipType, pastDueOnly])
 
+  // Apply column sort (client-side, after filters)
+  const sorted = useMemo(() => {
+    if (!sortKey) return filtered
+    const dir = sortDir === 'asc' ? 1 : -1
+    const get = (l, key) => {
+      switch (key) {
+        case 'next_due':       return l.next_due_date || ''
+        case 'days_behind':    return Number(l.days_behind || 0)
+        case 'monthly_pmt':    return Number(l.monthly_payment || 0)
+        case 'balance':        return Number(l.current_balance || 0)
+        case 'loan_id':        return (l.loan_id_external || '').toLowerCase()
+        case 'entity':         return (l.entity_name || '').toLowerCase()
+        case 'lender':         return (l.lender_name || '').toLowerCase()
+        default:               return ''
+      }
+    }
+    return [...filtered].sort((a, b) => {
+      const av = get(a, sortKey)
+      const bv = get(b, sortKey)
+      if (av < bv) return -1 * dir
+      if (av > bv) return  1 * dir
+      return 0
+    })
+  }, [filtered, sortKey, sortDir])
+
+  // Three-state column sort: asc -> desc -> off
+  function onSort(key) {
+    if (sortKey !== key) { setSortKey(key); setSortDir('asc'); return }
+    if (sortDir === 'asc') { setSortDir('desc'); return }
+    setSortKey(null); setSortDir('asc')
+  }
+
   // KPIs
   const kpis = useMemo(() => {
     const yearStart = new Date(); yearStart.setMonth(0, 1); yearStart.setHours(0, 0, 0, 0)
@@ -130,13 +189,13 @@ export default function DebtSchedule() {
   const grouped = useMemo(() => {
     if (!groupByEntity) return null
     const map = {}
-    for (const l of filtered) {
+    for (const l of sorted) {
       const key = l.entity_name || 'Unassigned'
       if (!map[key]) map[key] = []
       map[key].push(l)
     }
     return Object.entries(map).sort(([a], [b]) => a.localeCompare(b))
-  }, [filtered, groupByEntity])
+  }, [sorted, groupByEntity])
 
   if (loading) {
     return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500" /></div>
@@ -162,12 +221,13 @@ export default function DebtSchedule() {
         )}
       </div>
 
-      {/* KPI strip */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+      {/* KPI strip — 6 tiles, responsive */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <KpiCard label="Total Active Debt" value={fmtMoneyCompact(kpis.activeDebt)} accent="orange" />
         <KpiCard label="Monthly Debt Service" value={fmtMoneyCompact(kpis.monthlyService)} accent="cyan" />
         <KpiCard label="# Active Loans" value={kpis.activeLoans} accent="green" />
         <KpiCard label="# Past Due" value={kpis.pastDue} accent="red" />
+        <KpiCard label="Past Due Amount" value={fmtMoneyCompact(pastDueAmount)} accent="red" />
         <KpiCard label="Paid Off YTD" value={kpis.paidOffYTD} accent="gray" />
       </div>
 
@@ -194,7 +254,7 @@ export default function DebtSchedule() {
         </Select>
         <Select value={filterEquipType} onChange={e => setFilterEquipType(e.target.value)}>
           <option value="">All Equipment Types</option>
-          {equipmentTypes.map(t => <option key={t} value={t}>{t}</option>)}
+          {equipmentTypes.map(t => <option key={t.id} value={t.name}>{t.display_label || t.name}</option>)}
         </Select>
         <button
           onClick={() => setPastDueOnly(v => !v)}
@@ -216,9 +276,15 @@ export default function DebtSchedule() {
           <table className="w-full text-sm">
             <thead className={S.tableHead}>
               <tr>
-                {['Loan ID', 'Entity', 'Lender', 'Equipment', 'Monthly Pmt', 'Balance', 'Next Due', 'Days Behind', 'Status'].map(h => (
-                  <th key={h} className={S.th}>{h}</th>
-                ))}
+                <SortHeader label="Loan ID"     columnKey="loan_id"     sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                <SortHeader label="Entity"      columnKey="entity"      sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                <SortHeader label="Lender"      columnKey="lender"      sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                <th className={S.th}>Equipment</th>
+                <SortHeader label="Monthly Pmt" columnKey="monthly_pmt" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                <SortHeader label="Balance"     columnKey="balance"     sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                <SortHeader label="Next Due"    columnKey="next_due"    sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                <SortHeader label="Days Behind" columnKey="days_behind" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                <th className={S.th}>Status</th>
               </tr>
             </thead>
             {grouped ? (
@@ -232,9 +298,9 @@ export default function DebtSchedule() {
               ))
             ) : (
               <tbody>
-                {filtered.length === 0 ? (
+                {sorted.length === 0 ? (
                   <tr><td colSpan={9} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">No loans found</td></tr>
-                ) : filtered.map(l => (
+                ) : sorted.map(l => (
                   <LoanRow key={l.id} loan={l} equipment={equipmentByLoan[l.id] || []} />
                 ))}
               </tbody>

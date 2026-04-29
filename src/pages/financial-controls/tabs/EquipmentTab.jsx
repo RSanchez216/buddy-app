@@ -12,6 +12,7 @@ const empty = {
 
 export default function EquipmentTab({ loanId, canEdit }) {
   const [rows, setRows] = useState([])
+  const [equipmentTypes, setEquipmentTypes] = useState([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
   const [editItem, setEditItem] = useState(null)
@@ -23,8 +24,12 @@ export default function EquipmentTab({ loanId, canEdit }) {
 
   async function load() {
     setLoading(true)
-    const { data } = await supabase.from('loan_equipment').select('*').eq('loan_id', loanId).order('unit_number', { ascending: true })
-    setRows(data || [])
+    const [eqRes, typeRes] = await Promise.all([
+      supabase.from('loan_equipment').select('*').eq('loan_id', loanId).order('unit_number', { ascending: true }),
+      supabase.from('equipment_types').select('id, name, display_label, sort_order').eq('is_active', true).order('sort_order').order('display_label'),
+    ])
+    setRows(eqRes.data || [])
+    setEquipmentTypes(typeRes.data || [])
     setLoading(false)
   }
 
@@ -167,7 +172,14 @@ export default function EquipmentTab({ loanId, canEdit }) {
               <input className={S.input} value={form.vin} onChange={e => setForm(f => ({ ...f, vin: e.target.value }))} />
             </Field>
             <Field label="Type">
-              <input className={S.input} placeholder="truck / trailer / etc." value={form.equipment_type} onChange={e => setForm(f => ({ ...f, equipment_type: e.target.value }))} />
+              <Select value={form.equipment_type} onChange={e => setForm(f => ({ ...f, equipment_type: e.target.value }))}>
+                <option value="">Select…</option>
+                {equipmentTypes.map(t => <option key={t.id} value={t.name}>{t.display_label || t.name}</option>)}
+                {/* Preserve legacy/free-text value if it's not in the active list */}
+                {form.equipment_type && !equipmentTypes.some(t => t.name === form.equipment_type) && (
+                  <option value={form.equipment_type}>{form.equipment_type} (legacy)</option>
+                )}
+              </Select>
             </Field>
             <Field label="Year">
               <input className={S.input} type="number" value={form.year} onChange={e => setForm(f => ({ ...f, year: e.target.value }))} />

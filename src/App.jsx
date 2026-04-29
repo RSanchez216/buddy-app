@@ -15,6 +15,7 @@ import SettingsPaymentMethods from './pages/settings/PaymentMethods'
 import SettingsLoanEntities from './pages/settings/LoanEntities'
 import SettingsLoanLenders from './pages/settings/LoanLenders'
 import SettingsFundingAccounts from './pages/settings/FundingAccounts'
+import SettingsEquipmentTypes from './pages/settings/EquipmentTypes'
 import DebtSchedule from './pages/financial-controls/DebtSchedule'
 import LoanDetail from './pages/financial-controls/LoanDetail'
 
@@ -45,6 +46,7 @@ export default function App() {
               <Route path="settings/loan-entities" element={<SettingsLoanEntities />} />
               <Route path="settings/loan-lenders" element={<SettingsLoanLenders />} />
               <Route path="settings/funding-accounts" element={<SettingsFundingAccounts />} />
+              <Route path="settings/equipment-types" element={<SettingsEquipmentTypes />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

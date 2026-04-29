@@ -23,6 +23,24 @@ const TABS = [
   { id: 'notes', label: 'Notes' },
 ]
 
+// Tab badge — small pill next to tab labels
+function TabBadge({ count, tone = 'gray' }) {
+  if (count == null || count <= 0) return null
+  const tones = {
+    gray: 'bg-gray-100 dark:bg-slate-700/50 text-gray-600 dark:text-slate-400',
+    red:  'bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400',
+  }
+  return (
+    <span className={`inline-flex items-center text-xs font-semibold px-1.5 py-0.5 rounded-full ml-1.5 ${tones[tone]}`}>
+      {count}
+    </span>
+  )
+}
+
+function NotesDot() {
+  return <span className="inline-block w-1.5 h-1.5 rounded-full bg-orange-500 ml-1.5 align-middle" />
+}
+
 export default function LoanDetail() {
   const { loanId } = useParams()
   const navigate = useNavigate()
@@ -34,17 +52,45 @@ export default function LoanDetail() {
   const [activeTab, setActiveTab] = useState('overview')
   const [statusSaving, setStatusSaving] = useState(false)
 
+  // Tab badge counts — fetched once per loan load
+  const [counts, setCounts] = useState({
+    equipment: 0,
+    paymentsPastDue: 0,
+    documents: 0,
+    events: 0,
+    hasNotes: false,
+  })
+
   useEffect(() => { loadLoan() /* eslint-disable-line */ }, [loanId])
 
   async function loadLoan() {
     setLoading(true)
-    const { data, error } = await supabase
+    const today = new Date().toISOString().slice(0, 10)
+    const { data: loanData, error } = await supabase
       .from('v_loans_summary')
       .select('*')
       .eq('id', loanId)
       .maybeSingle()
-    if (error || !data) { setLoading(false); return }
-    setLoan(data)
+
+    if (error || !loanData) { setLoading(false); return }
+
+    // Fetch all badge counts in parallel
+    const [eqRes, pastDueRes, docsRes, evRes] = await Promise.all([
+      supabase.from('loan_equipment').select('id', { count: 'exact', head: true }).eq('loan_id', loanId),
+      supabase.from('loan_payments').select('id', { count: 'exact', head: true })
+        .eq('loan_id', loanId).in('status', ['pending', 'partial']).lt('due_date', today),
+      supabase.from('loan_documents').select('id', { count: 'exact', head: true }).eq('loan_id', loanId),
+      supabase.from('loan_events').select('id', { count: 'exact', head: true }).eq('loan_id', loanId),
+    ])
+
+    setLoan(loanData)
+    setCounts({
+      equipment: eqRes.count || 0,
+      paymentsPastDue: pastDueRes.count || 0,
+      documents: docsRes.count || 0,
+      events: evRes.count || 0,
+      hasNotes: !!(loanData.description?.trim()) || !!loanData.cfo_flag,
+    })
     setLoading(false)
   }
 
@@ -67,6 +113,17 @@ export default function LoanDetail() {
         <Link to="/financial-controls/debt-schedule" className="text-orange-600 dark:text-orange-400 text-sm mt-2 inline-block">Back to Debt Schedule</Link>
       </div>
     )
+  }
+
+  function renderBadge(tabId) {
+    switch (tabId) {
+      case 'equipment': return <TabBadge count={counts.equipment} tone="gray" />
+      case 'payments':  return counts.paymentsPastDue > 0 ? <TabBadge count={counts.paymentsPastDue} tone="red" /> : null
+      case 'documents': return <TabBadge count={counts.documents} tone="gray" />
+      case 'events':    return <TabBadge count={counts.events} tone="gray" />
+      case 'notes':     return counts.hasNotes ? <NotesDot /> : null
+      default:          return null
+    }
   }
 
   return (
@@ -112,12 +169,13 @@ export default function LoanDetail() {
         <nav className="flex gap-1 -mb-px overflow-x-auto">
           {TABS.map(t => (
             <button key={t.id} onClick={() => setActiveTab(t.id)}
-              className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
+              className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap inline-flex items-center ${
                 activeTab === t.id
                   ? 'border-orange-500 text-orange-600 dark:text-orange-400'
                   : 'border-transparent text-gray-500 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-300'
               }`}>
               {t.label}
+              {renderBadge(t.id)}
             </button>
           ))}
         </nav>
@@ -126,10 +184,10 @@ export default function LoanDetail() {
       {/* Tab content */}
       <div>
         {activeTab === 'overview' && <OverviewTab loan={loan} canEdit={canEdit} onChange={loadLoan} />}
-        {activeTab === 'equipment' && <EquipmentTab loanId={loanId} canEdit={canEdit} />}
-        {activeTab === 'payments' && <PaymentScheduleTab loanId={loanId} canEdit={canEdit} />}
-        {activeTab === 'documents' && <DocumentsTab loanId={loanId} canEdit={canEdit} userRole={profile?.role} />}
-        {activeTab === 'events' && <EventsTab loanId={loanId} canEdit={canEdit} />}
+        {activeTab === 'equipment' && <EquipmentTab loanId={loanId} canEdit={canEdit} onChange={loadLoan} />}
+        {activeTab === 'payments' && <PaymentScheduleTab loanId={loanId} canEdit={canEdit} onChange={loadLoan} />}
+        {activeTab === 'documents' && <DocumentsTab loanId={loanId} canEdit={canEdit} userRole={profile?.role} onChange={loadLoan} />}
+        {activeTab === 'events' && <EventsTab loanId={loanId} canEdit={canEdit} onChange={loadLoan} />}
         {activeTab === 'notes' && <NotesTab loan={loan} canEdit={canEdit} onChange={loadLoan} />}
       </div>
     </div>

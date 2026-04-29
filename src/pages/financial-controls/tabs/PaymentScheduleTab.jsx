@@ -11,6 +11,14 @@ export default function PaymentScheduleTab({ loanId, canEdit }) {
   const [form, setForm] = useState({})
   const [saving, setSaving] = useState(false)
 
+  // Sort: 'asc' (oldest first, default) or 'desc' (newest first)
+  const [sortDir, setSortDir] = useState('asc')
+  // Quick filter: 'all' | 'past_due' | 'pending' | 'paid'
+  const [quickFilter, setQuickFilter] = useState('all')
+
+  // Reset per-loan visit
+  useEffect(() => { setSortDir('asc'); setQuickFilter('all') }, [loanId])
+
   useEffect(() => { load() /* eslint-disable-line */ }, [loanId])
 
   async function load() {
@@ -104,6 +112,37 @@ export default function PaymentScheduleTab({ loanId, canEdit }) {
     return { paidYTD, skippedYTD, remaining }
   }, [rows])
 
+  // Apply quick filter + sort
+  const visibleRows = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10)
+    let out = rows
+    if (quickFilter === 'past_due') {
+      out = out.filter(r => (r.status === 'pending' || r.status === 'partial') && r.due_date && r.due_date < today)
+    } else if (quickFilter === 'pending') {
+      out = out.filter(r => r.status === 'pending' || r.status === 'partial')
+    } else if (quickFilter === 'paid') {
+      out = out.filter(r => r.status === 'paid')
+    }
+    const dir = sortDir === 'asc' ? 1 : -1
+    return [...out].sort((a, b) => {
+      const ad = a.due_date || ''
+      const bd = b.due_date || ''
+      if (ad < bd) return -1 * dir
+      if (ad > bd) return  1 * dir
+      return 0
+    })
+  }, [rows, quickFilter, sortDir])
+
+  const filterCounts = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10)
+    return {
+      all: rows.length,
+      past_due: rows.filter(r => (r.status === 'pending' || r.status === 'partial') && r.due_date && r.due_date < today).length,
+      pending: rows.filter(r => r.status === 'pending' || r.status === 'partial').length,
+      paid: rows.filter(r => r.status === 'paid').length,
+    }
+  }, [rows])
+
   if (loading) return <div className="flex items-center justify-center h-32"><div className="animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500" /></div>
 
   return (
@@ -113,6 +152,22 @@ export default function PaymentScheduleTab({ loanId, canEdit }) {
         <Stat label="Paid YTD" value={fmtMoney(totals.paidYTD)} accent="green" />
         <Stat label="Skipped YTD" value={fmtMoney(totals.skippedYTD)} accent="red" />
         <Stat label="Remaining" value={fmtMoney(totals.remaining)} accent="orange" />
+      </div>
+
+      {/* Quick filter pills + sort toggle */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex gap-2 flex-wrap">
+          <FilterPill active={quickFilter === 'all'}      onClick={() => setQuickFilter('all')}      label="All months"      count={filterCounts.all} />
+          <FilterPill active={quickFilter === 'past_due'} onClick={() => setQuickFilter('past_due')} label="Past due only"   count={filterCounts.past_due} tone="red" />
+          <FilterPill active={quickFilter === 'pending'}  onClick={() => setQuickFilter('pending')}  label="Pending only"    count={filterCounts.pending} />
+          <FilterPill active={quickFilter === 'paid'}     onClick={() => setQuickFilter('paid')}     label="Paid only"       count={filterCounts.paid} tone="green" />
+        </div>
+        <button
+          onClick={() => setSortDir(d => d === 'asc' ? 'desc' : 'asc')}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-xl border border-gray-200 dark:border-slate-700/50 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors"
+        >
+          {sortDir === 'asc' ? 'Sort: Oldest first ↓' : 'Sort: Newest first ↑'}
+        </button>
       </div>
 
       {canEdit && (
@@ -135,9 +190,9 @@ export default function PaymentScheduleTab({ loanId, canEdit }) {
               </tr>
             </thead>
             <tbody>
-              {rows.length === 0 ? (
-                <tr><td colSpan={8} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">No payments scheduled</td></tr>
-              ) : rows.map(r => (
+              {visibleRows.length === 0 ? (
+                <tr><td colSpan={8} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">{rows.length === 0 ? 'No payments scheduled' : 'No payments match this filter'}</td></tr>
+              ) : visibleRows.map(r => (
                 <tr key={r.id} className={S.tableRow}>
                   <td className={`${S.td} text-gray-700 dark:text-slate-300 font-medium whitespace-nowrap`}>
                     {r.due_month ? new Date(`${r.due_month}T00:00:00`).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : '—'}
@@ -248,5 +303,29 @@ function Field({ label, children }) {
       <label className={S.label}>{label}</label>
       {children}
     </div>
+  )
+}
+
+function FilterPill({ active, onClick, label, count, tone = 'gray' }) {
+  const tones = {
+    gray:  active ? 'bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-400 border-orange-300 dark:border-orange-500/30'
+                  : 'border-gray-200 dark:border-slate-700/50 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 hover:text-gray-900 dark:hover:text-slate-200',
+    red:   active ? 'bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400 border-red-300 dark:border-red-500/30'
+                  : 'border-gray-200 dark:border-slate-700/50 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 hover:text-gray-900 dark:hover:text-slate-200',
+    green: active ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-500/30'
+                  : 'border-gray-200 dark:border-slate-700/50 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 hover:text-gray-900 dark:hover:text-slate-200',
+  }
+  return (
+    <button
+      onClick={onClick}
+      className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-xl border transition-colors ${tones[tone]}`}
+    >
+      {label}
+      {count != null && (
+        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
+          active ? 'bg-white/40 dark:bg-black/20' : 'bg-gray-100 dark:bg-slate-700/50'
+        }`}>{count}</span>
+      )}
+    </button>
   )
 }
