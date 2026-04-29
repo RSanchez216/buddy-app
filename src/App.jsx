@@ -18,6 +18,7 @@ import SettingsFundingAccounts from './pages/settings/FundingAccounts'
 import SettingsEquipmentTypes from './pages/settings/EquipmentTypes'
 import DebtSchedule from './pages/financial-controls/DebtSchedule'
 import LoanDetail from './pages/financial-controls/LoanDetail'
+import PaymentCalendar from './pages/cash-flow/PaymentCalendar'
 
 export default function App() {
   return (
@@ -39,6 +40,8 @@ export default function App() {
               {/* Financial Controls */}
               <Route path="financial-controls/debt-schedule" element={<DebtSchedule />} />
               <Route path="financial-controls/debt-schedule/:loanId" element={<LoanDetail />} />
+              {/* Cash Flow */}
+              <Route path="cash-flow/payment-calendar" element={<PaymentCalendar />} />
               {/* Settings */}
               <Route path="settings/departments" element={<SettingsDepartments />} />
               <Route path="settings/vendor-categories" element={<SettingsVendorCategories />} />
