@@ -1,7 +1,9 @@
 import { fmtMoney } from './calendarUtils'
 import { CF } from './calendarUtils'
 
-export default function RightRail({ weekStart, startingCash, inflowSum, outflowSum, onEditCash }) {
+export default function RightRail({ weekStart, startingCash, inflowSum, outflowSum, paidOutSum, receivedInSum, showPaid, onEditCash }) {
+  // Net + projected always reflect *forward-looking* cash only — paid/received items
+  // already moved through the bank account, so they don't affect the projection.
   const net = (inflowSum || 0) - (outflowSum || 0)
   const projected = (Number(startingCash) || 0) + net
   const positive = net >= 0
@@ -37,6 +39,13 @@ export default function RightRail({ weekStart, startingCash, inflowSum, outflowS
 
         <Row label="▲ Inflow expected" value={fmtMoney(inflowSum)} mono color="text-emerald-600 dark:text-emerald-400" />
         <Row label="▼ Outflow scheduled" value={fmtMoney(outflowSum)} mono color="text-red-600 dark:text-red-400" />
+
+        {showPaid && (
+          <div className="border-t border-gray-100 dark:border-white/5 pt-3 space-y-2">
+            <Row label="✓ Paid this week"     value={fmtMoney(paidOutSum)}    mono color="text-emerald-600 dark:text-emerald-400" />
+            <Row label="✓ Received this week" value={fmtMoney(receivedInSum)} mono color="text-emerald-600 dark:text-emerald-400" />
+          </div>
+        )}
 
         <div className="border-t border-gray-100 dark:border-white/5 pt-3">
           <Row

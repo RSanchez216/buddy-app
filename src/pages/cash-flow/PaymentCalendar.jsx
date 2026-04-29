@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { S } from '../../lib/styles'
 import Select from '../../components/Select'
 import {
-  CF, addDays, endOfMonthGrid, fmtRange, startOfMonthGrid, startOfWeek, toISO,
+  CF, addDays, endOfMonthGrid, fmtRange, startOfMonthGrid, startOfWeek, toISO, isPaidStatus,
 } from './calendarUtils'
 import WeekView from './WeekView'
 import MonthView from './MonthView'
@@ -17,12 +17,26 @@ import AdjustLoanDateModal from './AdjustLoanDateModal'
 import StartingCashModal from './StartingCashModal'
 import ChipDetailPanel from './ChipDetailPanel'
 
+const SHOW_PAID_KEY = 'cf-show-paid'
+
 export default function PaymentCalendar() {
   const today = new Date()
   const [view, setView] = useState('week') // 'week' | 'month'
   const [anchor, setAnchor] = useState(today)         // any date inside the visible week (week view) or month (month view)
   const [entityFilter, setEntityFilter] = useState('') // '' = all
   const [entities, setEntities] = useState([])
+
+  // "Show paid / received" toggle — persists in localStorage
+  const [showPaid, setShowPaid] = useState(() => {
+    try { return localStorage.getItem(SHOW_PAID_KEY) === 'true' } catch { return false }
+  })
+  useEffect(() => {
+    try { localStorage.setItem(SHOW_PAID_KEY, String(showPaid)) } catch (e) { /* noop */ }
+  }, [showPaid])
+
+  // Quick filter when toggle is ON: 'all' | 'pending' | 'paid'
+  const [paidFilter, setPaidFilter] = useState('all')
+  useEffect(() => { if (!showPaid) setPaidFilter('all') }, [showPaid])
 
   const [events, setEvents] = useState([])
   const [startingCashByWeek, setStartingCashByWeek] = useState({}) // iso(monday) -> number
@@ -91,46 +105,75 @@ export default function PaymentCalendar() {
     setLoading(false)
   }
 
-  // Group events by ISO date
+  // Visible events after the Show-paid toggle and quick-filter pill.
+  // - Toggle OFF: drops paid/received entirely
+  // - Toggle ON + filter='paid':    only paid/received
+  // - Toggle ON + filter='pending': only not-yet-settled
+  // - Toggle ON + filter='all':     everything
+  const visibleEvents = useMemo(() => {
+    return events.filter(ev => {
+      const settled = isPaidStatus(ev.status)
+      if (!showPaid) return !settled
+      if (paidFilter === 'paid')    return settled
+      if (paidFilter === 'pending') return !settled
+      return true
+    })
+  }, [events, showPaid, paidFilter])
+
+  // Group visible events by ISO date
   const eventsByDate = useMemo(() => {
     const map = {}
-    for (const ev of events) {
+    for (const ev of visibleEvents) {
       const k = ev.event_date
       if (!map[k]) map[k] = []
       map[k].push(ev)
     }
     return map
-  }, [events])
+  }, [visibleEvents])
 
-  // Current-week sums (for right rail)
+  // Current-week sums for the right rail.
+  // Pending and settled are split — pending feeds the forward-looking Net /
+  // projected end-of-week, settled feeds the new "Paid this week" lines.
   const weekSums = useMemo(() => {
     const wsISO = toISO(weekStart)
     const weISO = toISO(addDays(weekStart, 6))
-    let inSum = 0, outSum = 0
+    let inPending = 0, outPending = 0, inPaid = 0, outPaid = 0
     for (const ev of events) {
-      if (ev.event_date >= wsISO && ev.event_date <= weISO) {
-        if (ev.direction === 'inflow') inSum += Number(ev.amount || 0)
-        else outSum += Number(ev.amount || 0)
+      if (ev.event_date < wsISO || ev.event_date > weISO) continue
+      const settled = isPaidStatus(ev.status)
+      const amt = Number(ev.amount || 0)
+      if (ev.direction === 'inflow') {
+        if (settled) inPaid += amt
+        else inPending += amt
+      } else {
+        if (settled) outPaid += amt
+        else outPending += amt
       }
     }
-    return { inSum, outSum }
+    return { inPending, outPending, inPaid, outPaid }
   }, [events, weekStart])
 
-  // 4-week outlook
+  // 4-week outlook — same split (pending vs paid) per week
   const outlookWeeks = useMemo(() => {
     const out = []
     for (let i = 0; i < 4; i++) {
       const ws = addDays(weekStart, i * 7)
       const we = addDays(ws, 6)
       const wsISO = toISO(ws), weISO = toISO(we)
-      let inflow = 0, outflow = 0
+      let inflow = 0, outflow = 0, paidOut = 0, receivedIn = 0
       for (const ev of events) {
-        if (ev.event_date >= wsISO && ev.event_date <= weISO) {
-          if (ev.direction === 'inflow') inflow += Number(ev.amount || 0)
-          else outflow += Number(ev.amount || 0)
+        if (ev.event_date < wsISO || ev.event_date > weISO) continue
+        const settled = isPaidStatus(ev.status)
+        const amt = Number(ev.amount || 0)
+        if (ev.direction === 'inflow') {
+          if (settled) receivedIn += amt
+          else inflow += amt
+        } else {
+          if (settled) paidOut += amt
+          else outflow += amt
         }
       }
-      out.push({ weekStart: ws, inflow, outflow })
+      out.push({ weekStart: ws, inflow, outflow, paidOut, receivedIn })
     }
     return out
   }, [events, weekStart])
@@ -204,6 +247,19 @@ export default function PaymentCalendar() {
             </button>
           </div>
 
+          {/* Show paid toggle */}
+          <label className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border cursor-pointer transition-colors text-sm ${
+            showPaid
+              ? 'bg-emerald-50 dark:bg-emerald-500/10 border-emerald-300 dark:border-emerald-500/30 text-emerald-700 dark:text-emerald-400'
+              : 'bg-white dark:bg-[#0d0d1f] border-gray-200 dark:border-white/5 text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200'
+          }`}>
+            <input type="checkbox" checked={showPaid} onChange={e => setShowPaid(e.target.checked)} className="rounded" />
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.25}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+            Show paid
+          </label>
+
           {/* Date nav */}
           <div className="flex items-center gap-1 bg-white dark:bg-[#0d0d1f] border border-gray-200 dark:border-white/5 rounded-xl">
             <button onClick={() => nav(-1)} className="px-2 py-1.5 text-gray-500 hover:text-orange-600 dark:hover:text-orange-400" title={view === 'week' ? 'Previous week' : 'Previous month'}>‹</button>
@@ -234,6 +290,30 @@ export default function PaymentCalendar() {
         </div>
       </div>
 
+      {/* Quick filter pills — only visible when toggle is on */}
+      {showPaid && (
+        <div className="flex items-center gap-2 flex-wrap -mt-2">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500 mr-1">View</span>
+          {[
+            { id: 'all', label: 'All' },
+            { id: 'pending', label: 'Pending only' },
+            { id: 'paid', label: 'Paid only' },
+          ].map(f => (
+            <button
+              key={f.id}
+              onClick={() => setPaidFilter(f.id)}
+              className={`px-3 py-1 text-xs font-medium rounded-full border transition-colors ${
+                paidFilter === f.id
+                  ? 'bg-orange-50 dark:bg-orange-500/10 border-orange-300 dark:border-orange-500/30 text-orange-700 dark:text-orange-400'
+                  : 'border-gray-200 dark:border-slate-700/50 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5'
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {loading ? (
         <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500" /></div>
       ) : view === 'week' ? (
@@ -249,8 +329,11 @@ export default function PaymentCalendar() {
             <RightRail
               weekStart={weekStart}
               startingCash={startingCashByWeek[toISO(weekStart)]}
-              inflowSum={weekSums.inSum}
-              outflowSum={weekSums.outSum}
+              inflowSum={weekSums.inPending}
+              outflowSum={weekSums.outPending}
+              paidOutSum={weekSums.outPaid}
+              receivedInSum={weekSums.inPaid}
+              showPaid={showPaid}
               onEditCash={() => setShowStartingCash(true)}
             />
           </div>
@@ -261,6 +344,7 @@ export default function PaymentCalendar() {
             <FourWeekOutlook
               baseWeekStart={weekStart}
               weeks={outlookWeeks}
+              showPaid={showPaid}
               onJumpToWeek={(ws) => setAnchor(ws)}
             />
           </div>
@@ -269,6 +353,7 @@ export default function PaymentCalendar() {
         <MonthView
           monthAnchor={anchor}
           eventsByDate={eventsByDate}
+          showPaid={showPaid}
           onDayClick={(d) => { setView('week'); setAnchor(d) }}
         />
       )}

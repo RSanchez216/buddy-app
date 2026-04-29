@@ -1,6 +1,6 @@
 import { addDays, fmtMoneyShort, isSameDay, startOfWeek } from './calendarUtils'
 
-export default function FourWeekOutlook({ baseWeekStart, weeks, onJumpToWeek }) {
+export default function FourWeekOutlook({ baseWeekStart, weeks, showPaid, onJumpToWeek }) {
   const today = startOfWeek(new Date())
 
   return (
@@ -34,6 +34,12 @@ export default function FourWeekOutlook({ baseWeekStart, weeks, onJumpToWeek }) 
                 <span className="text-gray-500 dark:text-slate-400">▼ Out</span>
                 <span className="font-semibold font-mono text-red-600 dark:text-red-400">{fmtMoneyShort(w.outflow)}</span>
               </div>
+              {showPaid && (
+                <div className="flex items-baseline justify-between text-xs pt-1 border-t border-gray-100 dark:border-white/5">
+                  <span className="text-gray-400 dark:text-slate-500">✓ Paid</span>
+                  <span className="font-medium font-mono text-emerald-600 dark:text-emerald-400 opacity-80">{fmtMoneyShort(w.paidOut)}</span>
+                </div>
+              )}
             </div>
             <div className={`mt-3 rounded-lg p-2 ${
               positive

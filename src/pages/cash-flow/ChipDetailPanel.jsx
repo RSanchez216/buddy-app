@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { S } from '../../lib/styles'
-import { CF, chipPalette, fmtMoney, fmtMoneySigned, toISO } from './calendarUtils'
+import { CF, chipPalette, fmtMoney, fmtMoneySigned, toISO, isPaidStatus } from './calendarUtils'
 import ConvertToInvoiceModal from './ConvertToInvoiceModal'
 
 function fmtDate(d) {
@@ -17,10 +17,14 @@ export default function ChipDetailPanel({ event, onClose, onChange, onOpenAdjust
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
   const [showConvert, setShowConvert] = useState(false)
+  // Inline "Mark as received" form for inflow chips
+  const [receivingMode, setReceivingMode] = useState('idle') // 'idle' | 'form'
+  const [receivedAmount, setReceivedAmount] = useState('')
+  const [receivedDate, setReceivedDate] = useState('')
 
   useEffect(() => {
     if (!event) { setDetails(null); return }
-    setError(''); setEditing(false); loadDetails()
+    setError(''); setEditing(false); setReceivingMode('idle'); loadDetails()
     /* eslint-disable-next-line */
   }, [event?.event_id])
 
@@ -144,6 +148,32 @@ export default function ChipDetailPanel({ event, onClose, onChange, onOpenAdjust
     onClose?.()
   }
 
+  function startMarkReceived() {
+    if (!details || details.kind !== 'inflow') return
+    setReceivedAmount(details.row.amount ?? '')
+    setReceivedDate(toISO(new Date()))
+    setReceivingMode('form')
+  }
+
+  async function confirmMarkReceived() {
+    if (!details || details.kind !== 'inflow') return
+    const amt = Number(receivedAmount)
+    if (!amt || amt <= 0) { setError('Received amount is required'); return }
+    if (!receivedDate)    { setError('Received date is required'); return }
+    setSaving(true); setError('')
+    const res = await supabase.from('expected_inflows').update({
+      status: 'received',
+      received_amount: amt,
+      received_date: receivedDate,
+      updated_at: new Date().toISOString(),
+    }).eq('id', details.row.id)
+    setSaving(false)
+    if (res.error) { setError(res.error.message); return }
+    setReceivingMode('idle')
+    onChange?.()
+    onClose?.()
+  }
+
   if (!event) return null
 
   const palette = chipPalette(event)
@@ -181,7 +211,22 @@ export default function ChipDetailPanel({ event, onClose, onChange, onOpenAdjust
           {!details ? (
             <div className="flex items-center justify-center h-32"><div className="animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500" /></div>
           ) : details.kind === 'inflow' ? (
-            <InflowDetail row={details.row} editing={editing} form={form} setForm={setForm} />
+            <>
+              <InflowDetail row={details.row} editing={editing} form={form} setForm={setForm} />
+              {receivingMode === 'form' && (
+                <div className="mt-4 p-3 rounded-xl bg-emerald-50/60 dark:bg-emerald-500/5 border border-emerald-200 dark:border-emerald-500/20 space-y-3">
+                  <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 uppercase tracking-wide">Mark as received</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="Received amount ($)">
+                      <input type="number" step="0.01" className={S.input} value={receivedAmount} onChange={e => setReceivedAmount(e.target.value)} />
+                    </Field>
+                    <Field label="Received date">
+                      <input type="date" className={S.input} value={receivedDate} onChange={e => setReceivedDate(e.target.value)} />
+                    </Field>
+                  </div>
+                </div>
+              )}
+            </>
           ) : details.kind === 'custom_outflow' ? (
             <CustomDetail row={details.row} editing={editing} form={form} setForm={setForm} onOpenManageRecurring={onOpenManageRecurring} onOpenConvert={() => setShowConvert(true)} />
           ) : details.kind === 'invoice' ? (
@@ -200,14 +245,29 @@ export default function ChipDetailPanel({ event, onClose, onChange, onOpenAdjust
               <button onClick={() => { setEditing(false); setError('') }} className={S.btnCancel}>Cancel</button>
               <button onClick={saveEdit} disabled={saving} className={CF.btnSave}>{saving ? 'Saving…' : 'Save'}</button>
             </>
+          ) : receivingMode === 'form' ? (
+            <>
+              <button onClick={() => { setReceivingMode('idle'); setError('') }} className={S.btnCancel}>Cancel</button>
+              <button onClick={confirmMarkReceived} disabled={saving} className={CF.btnSave}>
+                {saving ? 'Saving…' : 'Save received'}
+              </button>
+            </>
           ) : (
             <>
-              {(details?.kind === 'inflow' || details?.kind === 'custom_outflow') && (
+              {(details?.kind === 'inflow' || details?.kind === 'custom_outflow') && !isPaidStatus(details.row.status) && (
                 <button onClick={softCancel} className="px-3 py-1.5 text-xs font-medium bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-500/20 rounded-lg hover:bg-red-100 dark:hover:bg-red-500/20 transition-colors">
                   Cancel event
                 </button>
               )}
-              {details?.kind === 'custom_outflow' && (
+              {details?.kind === 'inflow' && !isPaidStatus(details.row.status) && (
+                <button
+                  onClick={startMarkReceived}
+                  className="px-3 py-1.5 text-xs font-semibold bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20 rounded-lg hover:bg-emerald-100 dark:hover:bg-emerald-500/20 transition-colors"
+                >
+                  Mark as received
+                </button>
+              )}
+              {details?.kind === 'custom_outflow' && !isPaidStatus(details.row.status) && (
                 details.row.converted_to_invoice_id ? (
                   <Link
                     to="/invoices"

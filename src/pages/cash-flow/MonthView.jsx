@@ -1,11 +1,11 @@
 import {
   startOfMonth, endOfMonth, startOfMonthGrid, endOfMonthGrid,
-  addDays, isToday, isSameDay, toISO, fmtMoneyShort,
+  addDays, isToday, toISO, fmtMoneyShort, isPaidStatus,
 } from './calendarUtils'
 
 const WEEK_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
-export default function MonthView({ monthAnchor, eventsByDate, onDayClick }) {
+export default function MonthView({ monthAnchor, eventsByDate, showPaid, onDayClick }) {
   const monthStart = startOfMonth(monthAnchor)
   const monthEnd = endOfMonth(monthAnchor)
   const gridStart = startOfMonthGrid(monthAnchor)
@@ -31,11 +31,23 @@ export default function MonthView({ monthAnchor, eventsByDate, onDayClick }) {
         {days.map(day => {
           const iso = toISO(day)
           const events = eventsByDate?.[iso] || []
-          const inSum = events.filter(e => e.direction === 'inflow').reduce((s, e) => s + Number(e.amount || 0), 0)
-          const outSum = events.filter(e => e.direction === 'outflow').reduce((s, e) => s + Number(e.amount || 0), 0)
-          const net = inSum - outSum
+
+          // Split paid vs pending so the day cell can show them separately
+          let inPending = 0, outPending = 0, paidIn = 0, paidOut = 0
+          for (const e of events) {
+            const amt = Number(e.amount || 0)
+            const settled = isPaidStatus(e.status)
+            if (e.direction === 'inflow') {
+              if (settled) paidIn += amt; else inPending += amt
+            } else {
+              if (settled) paidOut += amt; else outPending += amt
+            }
+          }
+          const net = inPending - outPending
           const inMonth = day >= monthStart && day <= monthEnd
           const today = isToday(day)
+          const settledTotal = paidIn + paidOut
+
           return (
             <button
               key={iso}
@@ -52,15 +64,25 @@ export default function MonthView({ monthAnchor, eventsByDate, onDayClick }) {
               {events.length > 0 && (
                 <div className="mt-1 space-y-0.5 w-full">
                   <div className="text-[10px] text-gray-500 dark:text-slate-500">{events.length} event{events.length === 1 ? '' : 's'}</div>
-                  {inSum > 0 && (
-                    <div className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">+ {fmtMoneyShort(inSum)}</div>
+                  {inPending > 0 && (
+                    <div className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">+ {fmtMoneyShort(inPending)}</div>
                   )}
-                  {outSum > 0 && (
-                    <div className="text-[11px] font-semibold text-red-600 dark:text-red-400">− {fmtMoneyShort(outSum)}</div>
+                  {outPending > 0 && (
+                    <div className="text-[11px] font-semibold text-red-600 dark:text-red-400">− {fmtMoneyShort(outPending)}</div>
                   )}
-                  <div className={`text-[10px] font-medium ${net >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}`}>
-                    Net {net >= 0 ? '+' : '−'} {fmtMoneyShort(Math.abs(net))}
-                  </div>
+                  {(inPending > 0 || outPending > 0) && (
+                    <div className={`text-[10px] font-medium ${net >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}`}>
+                      Net {net >= 0 ? '+' : '−'} {fmtMoneyShort(Math.abs(net))}
+                    </div>
+                  )}
+                  {showPaid && settledTotal > 0 && (
+                    <div className="text-[10px] text-emerald-600/80 dark:text-emerald-400/80 opacity-80 flex items-center gap-1">
+                      <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.25}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                      {fmtMoneyShort(settledTotal)} settled
+                    </div>
+                  )}
                 </div>
               )}
             </button>

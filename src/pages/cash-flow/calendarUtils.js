@@ -10,6 +10,14 @@ export const CF = {
 export const FREQUENCIES = ['weekly', 'biweekly', 'semimonthly', 'monthly', 'quarterly', 'annually']
 export const EXPENSE_CATEGORIES = ['payroll', 'insurance', 'rent', 'utilities', 'fuel', 'taxes', 'maintenance', 'other']
 
+// True when the event's status indicates it has already settled (paid/received).
+// Treats statuses case-insensitively (invoices store Pascal-case 'Paid'; others lowercase).
+export function isPaidStatus(status) {
+  if (!status) return false
+  const s = String(status).toLowerCase()
+  return s === 'paid' || s === 'received'
+}
+
 // ── Date helpers ───────────────────────────────────────────────────────────
 function pad(n) { return String(n).padStart(2, '0') }
 
