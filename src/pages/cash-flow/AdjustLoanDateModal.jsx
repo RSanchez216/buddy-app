@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { supabase } from '../../lib/supabase'
 import { S } from '../../lib/styles'
-import Modal from '../../components/Modal'
 import { CF, fmtMoney } from './calendarUtils'
 
 export default function AdjustLoanDateModal({ open, onClose, event, onSaved }) {
@@ -25,6 +25,15 @@ export default function AdjustLoanDateModal({ open, onClose, event, onSaved }) {
         setPlannedDate(data?.planned_pay_date || '')
       })
   }, [open, event])
+
+  // Lock body scroll while open (mirrors Modal behavior, but we render
+  // ourselves via portal so the drawer behind us doesn't intercept clicks)
+  useEffect(() => {
+    if (!open) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = prev }
+  }, [open])
 
   async function save() {
     if (!details) return
@@ -52,45 +61,66 @@ export default function AdjustLoanDateModal({ open, onClose, event, onSaved }) {
     onClose()
   }
 
-  return (
-    <Modal open={open} onClose={onClose} title="Adjust planned pay date" size="md">
-      <div className={S.modalBody}>
-        {error && <div className={S.errorBox}>{error}</div>}
-        {!details ? (
-          <div className="flex items-center justify-center h-32"><div className="animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500" /></div>
-        ) : (
-          <>
-            <div className={`${S.card} p-4 space-y-2`}>
-              <Row label="Lender" value={details.loan?.lender?.name || '—'} />
-              <Row label="Loan ID" value={details.loan?.loan_id_external || '—'} mono />
-              <Row label="Contract #" value={details.loan?.contract_number || '—'} mono />
-              <Row label="Scheduled amount" value={fmtMoney(details.scheduled_amount)} mono bold />
-              <Row label="Original due date" value={details.due_date || '—'} />
-              <Row label="Current planned pay date" value={details.planned_pay_date || 'Same as due date'} muted={!details.planned_pay_date} />
-            </div>
+  if (!open) return null
 
-            <div>
-              <label className={S.label}>New planned pay date</label>
-              <input type="date" className={S.input} value={plannedDate} onChange={e => setPlannedDate(e.target.value)} />
-              <button onClick={reset} className="mt-2 text-xs text-gray-500 hover:text-orange-600 dark:hover:text-orange-400">
-                Reset to due date ({details.due_date})
-              </button>
-            </div>
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4"
+      onClick={e => e.stopPropagation()}
+      onMouseDown={e => e.stopPropagation()}
+    >
+      <div className="absolute inset-0 bg-black/60 dark:bg-black/75 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative bg-white dark:bg-[#0d0d1f] border border-gray-200 dark:border-white/10 rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-white/5 flex-shrink-0">
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Adjust planned pay date</h3>
+          <button onClick={onClose} className="text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-200 transition-colors">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
 
-            <div className="rounded-xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 p-3 text-xs text-amber-700 dark:text-amber-400">
-              ⚠ This does not change the contractual due date. The lender still expects payment on <span className="font-semibold">{details.due_date}</span>.
-            </div>
+        <div className="overflow-y-auto flex-1">
+          <div className={S.modalBody}>
+            {error && <div className={S.errorBox}>{error}</div>}
+            {!details ? (
+              <div className="flex items-center justify-center h-32"><div className="animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500" /></div>
+            ) : (
+              <>
+                <div className={`${S.card} p-4 space-y-2`}>
+                  <Row label="Lender" value={details.loan?.lender?.name || '—'} />
+                  <Row label="Loan ID" value={details.loan?.loan_id_external || '—'} mono />
+                  <Row label="Contract #" value={details.loan?.contract_number || '—'} mono />
+                  <Row label="Scheduled amount" value={fmtMoney(details.scheduled_amount)} mono bold />
+                  <Row label="Original due date" value={details.due_date || '—'} />
+                  <Row label="Current planned pay date" value={details.planned_pay_date || 'Same as due date'} muted={!details.planned_pay_date} />
+                </div>
 
-            <div className={S.modalFooter}>
-              <button onClick={onClose} className={S.btnCancel}>Cancel</button>
-              <button onClick={save} disabled={saving} className={CF.btnSave}>
-                {saving ? 'Saving…' : 'Save planned date'}
-              </button>
-            </div>
-          </>
-        )}
+                <div>
+                  <label className={S.label}>New planned pay date</label>
+                  <input type="date" className={S.input} value={plannedDate} onChange={e => setPlannedDate(e.target.value)} />
+                  <button onClick={reset} className="mt-2 text-xs text-gray-500 hover:text-orange-600 dark:hover:text-orange-400">
+                    Reset to due date ({details.due_date})
+                  </button>
+                </div>
+
+                <div className="rounded-xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 p-3 text-xs text-amber-700 dark:text-amber-400">
+                  ⚠ This does not change the contractual due date. The lender still expects payment on <span className="font-semibold">{details.due_date}</span>.
+                </div>
+
+                <div className={S.modalFooter}>
+                  <button onClick={onClose} className={S.btnCancel}>Cancel</button>
+                  <button onClick={save} disabled={saving} className={CF.btnSave}>
+                    {saving ? 'Saving…' : 'Save planned date'}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
       </div>
-    </Modal>
+    </div>,
+    document.body
   )
 }
 

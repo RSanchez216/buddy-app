@@ -196,12 +196,10 @@ export default function PaymentCalendar() {
   }
 
   // ── Chip click router ──────────────────────────────────────────────────
+  // All chips route through the side panel. Loan chips can still open the
+  // Adjust Planned Date modal from inside the panel via the footer button.
   function handleChipClick(event) {
-    if (event.reference_type === 'loan') {
-      setAdjustLoanEvent(event)
-    } else {
-      setChipDetail(event)
-    }
+    setChipDetail(event)
   }
 
   // ── Date nav ───────────────────────────────────────────────────────────

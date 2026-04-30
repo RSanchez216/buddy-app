@@ -235,7 +235,7 @@ export default function ChipDetailPanel({ event, onClose, onChange, onOpenAdjust
           ) : details.kind === 'invoice' ? (
             <InvoiceDetail row={details.row} editing={editing} form={form} setForm={setForm} />
           ) : details.kind === 'loan_payment' ? (
-            <LoanPaymentDetail row={details.row} onOpenAdjustLoan={() => onOpenAdjustLoan?.(event)} />
+            <LoanPaymentDetail row={details.row} />
           ) : null}
         </div>
 
@@ -472,7 +472,7 @@ function InvoiceDetail({ row, editing, form, setForm }) {
   )
 }
 
-function LoanPaymentDetail({ row, onOpenAdjustLoan }) {
+function LoanPaymentDetail({ row }) {
   if (!row) return <p className="text-gray-500 text-sm">Not found.</p>
   return (
     <div className="space-y-2 text-sm">
@@ -483,6 +483,19 @@ function LoanPaymentDetail({ row, onOpenAdjustLoan }) {
       <Row label="Scheduled amount" value={fmtMoney(row.scheduled_amount)} mono bold />
       <Row label="Original due date" value={fmtDate(row.due_date)} />
       <Row label="Planned pay date" value={row.planned_pay_date ? fmtDate(row.planned_pay_date) : 'Same as due date'} muted={!row.planned_pay_date} />
+      {row.paid_date && (
+        <Row label="Paid date" value={fmtDate(row.paid_date)} />
+      )}
+      {row.paid_amount != null && (
+        <Row label="Paid amount" value={fmtMoney(row.paid_amount)} mono />
+      )}
+      {row.payment_method && (
+        <Row label="Payment method" value={row.payment_method} />
+      )}
+      {row.reference_number && (
+        <Row label="Reference #" value={row.reference_number} mono />
+      )}
+      <Row label="Notes" value={row.notes || '—'} muted={!row.notes} />
       <div className="pt-2">
         <Link to={`/financial-controls/debt-schedule`} className={CF.link}>Open in Debt Schedule →</Link>
       </div>
