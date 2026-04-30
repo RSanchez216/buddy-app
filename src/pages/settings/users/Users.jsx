@@ -18,9 +18,6 @@ export default function Users() {
   const [openMenuId, setOpenMenuId] = useState(null)
   const [toast, setToast] = useState(null)
 
-  // Admin gate — viewers and managers shouldn't see this page even by URL
-  if (!authLoading && !isAdmin) return <Navigate to="/" replace />
-
   useEffect(() => { load() }, [])
 
   // Click-away handler for kebab menus
@@ -33,6 +30,11 @@ export default function Users() {
     return () => document.removeEventListener('mousedown', onClickAway)
   }, [openMenuId])
 
+  // Admin gate — viewers and managers shouldn't see this page even by URL.
+  // Must be evaluated AFTER all hooks above so the hook count stays stable
+  // across renders (otherwise React error #300).
+  if (!authLoading && !isAdmin) return <Navigate to="/" replace />
+
   function showToast(message) {
     setToast({ message })
     setTimeout(() => setToast(null), 4000)
@@ -40,19 +42,28 @@ export default function Users() {
 
   async function load() {
     setLoading(true)
-    // Self-join via FK alias to fetch the inviter's name
+    // Plain select — the embedded self-join via users!users_invited_by_fkey
+    // returns 400 from PostgREST on self-referential relationships, so we
+    // resolve the inviter's name client-side from the same fetched list.
     const { data, error } = await supabase
       .from('users')
-      .select('id, full_name, email, role, status, invited_at, last_sign_in_at, deactivated_at, created_at, invited_by, inviter:users!users_invited_by_fkey(full_name, email)')
+      .select('id, full_name, email, role, status, invited_at, last_sign_in_at, deactivated_at, created_at, invited_by')
       .order('created_at', { ascending: false })
 
-    if (!error) {
-      const flat = (data || []).map(u => ({
-        ...u,
-        invited_by_name: u.inviter?.full_name || u.inviter?.email || null,
-      }))
-      setUsers(flat)
+    if (error) {
+      console.error('[Users] load failed:', error)
+      setUsers([])
+      setLoading(false)
+      return
     }
+
+    const rows = data || []
+    const byId = new Map(rows.map(u => [u.id, u]))
+    const flat = rows.map(u => {
+      const inv = u.invited_by ? byId.get(u.invited_by) : null
+      return { ...u, invited_by_name: inv?.full_name || inv?.email || null }
+    })
+    setUsers(flat)
     setLoading(false)
   }
 
