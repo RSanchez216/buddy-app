@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { S } from '../../lib/styles'
 import { CF, chipPalette, fmtMoney, fmtMoneySigned, toISO, isPaidStatus } from './calendarUtils'
 import ConvertToInvoiceModal from './ConvertToInvoiceModal'
+import MarkPaidModal from './MarkPaidModal'
 
 function fmtDate(d) {
   if (!d) return '—'
@@ -17,6 +18,8 @@ export default function ChipDetailPanel({ event, onClose, onChange, onOpenAdjust
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
   const [showConvert, setShowConvert] = useState(false)
+  // { kind: 'loan' | 'invoice', mode: 'paid' | 'partial' } when open
+  const [markPaidConfig, setMarkPaidConfig] = useState(null)
   // Inline "Mark as received" form for inflow chips
   const [receivingMode, setReceivingMode] = useState('idle') // 'idle' | 'form'
   const [receivedAmount, setReceivedAmount] = useState('')
@@ -237,9 +240,27 @@ export default function ChipDetailPanel({ event, onClose, onChange, onOpenAdjust
         </div>
 
         {/* Footer actions */}
-        <div className="sticky bottom-0 bg-white dark:bg-[#0d0d1f] p-4 border-t border-gray-100 dark:border-white/5 flex items-center justify-end gap-2">
+        <div className="sticky bottom-0 bg-white dark:bg-[#0d0d1f] p-4 border-t border-gray-100 dark:border-white/5 flex items-center justify-end gap-2 flex-wrap">
           {details?.kind === 'loan_payment' ? (
-            <button onClick={() => onOpenAdjustLoan?.(event)} className={CF.btnSave}>Adjust planned date</button>
+            <>
+              <button onClick={() => onOpenAdjustLoan?.(event)} className={S.btnCancel}>Adjust planned date</button>
+              {!isPaidStatus(details.row.status) && (
+                <>
+                  <button
+                    onClick={() => setMarkPaidConfig({ kind: 'loan', mode: 'partial' })}
+                    className={CF.btnOutline}
+                  >
+                    Mark as partial
+                  </button>
+                  <button
+                    onClick={() => setMarkPaidConfig({ kind: 'loan', mode: 'paid' })}
+                    className={CF.btnSave}
+                  >
+                    Mark as paid
+                  </button>
+                </>
+              )}
+            </>
           ) : editing ? (
             <>
               <button onClick={() => { setEditing(false); setError('') }} className={S.btnCancel}>Cancel</button>
@@ -284,6 +305,14 @@ export default function ChipDetailPanel({ event, onClose, onChange, onOpenAdjust
                   </button>
                 )
               )}
+              {details?.kind === 'invoice' && !isPaidStatus(details.row.status) && (
+                <button
+                  onClick={() => setMarkPaidConfig({ kind: 'invoice', mode: 'paid' })}
+                  className={CF.btnSave}
+                >
+                  Mark as paid
+                </button>
+              )}
               {details && (details.kind !== 'loan_payment') && (
                 <button onClick={startEdit} className={CF.btnSave}>Edit</button>
               )}
@@ -300,6 +329,35 @@ export default function ChipDetailPanel({ event, onClose, onChange, onOpenAdjust
         onConverted={() => {
           setShowConvert(false)
           onSuccess?.('Converted to invoice. View it in AP Control →')
+          onChange?.()
+          onClose?.()
+        }}
+      />
+
+      {/* Mark as paid / partial modal — for loan_payments and invoices */}
+      <MarkPaidModal
+        open={!!markPaidConfig}
+        kind={markPaidConfig?.kind}
+        mode={markPaidConfig?.mode}
+        record={
+          markPaidConfig?.kind === 'loan' && details?.kind === 'loan_payment'
+            ? details.row
+            : markPaidConfig?.kind === 'invoice' && details?.kind === 'invoice'
+              ? details.row
+              : null
+        }
+        headerSubtitle={
+          markPaidConfig?.kind === 'loan' && details?.kind === 'loan_payment'
+            ? `${details.row.loan?.lender?.name || 'Loan'} · ${details.row.loan?.loan_id_external || ''}`
+            : markPaidConfig?.kind === 'invoice' && details?.kind === 'invoice'
+              ? `${details.row.vendor?.name || 'Vendor'} · ${details.row.invoice_number || 'no #'}`
+              : undefined
+        }
+        onClose={() => setMarkPaidConfig(null)}
+        onSaved={() => {
+          const wasPartial = markPaidConfig?.mode === 'partial'
+          setMarkPaidConfig(null)
+          onSuccess?.(wasPartial ? 'Marked as partial' : 'Marked as paid')
           onChange?.()
           onClose?.()
         }}
