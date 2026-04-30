@@ -28,15 +28,17 @@ const Icons = {
 }
 
 // ── Nav item ───────────────────────────────────────────────────────────────
+// Always reserves a 2px left border so the active orange marker doesn't
+// shift the chip's width when it appears.
 function NavItem({ to, label, icon, end = false, onClick }) {
   return (
     <NavLink
       to={to} end={end} onClick={onClick}
       className={({ isActive }) =>
-        `flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium transition-all duration-150 ${
+        `flex items-center gap-2.5 pl-2.5 pr-3 py-2 rounded-xl text-sm font-medium transition-all duration-150 border-l-2 ${
           isActive
-            ? 'bg-cyan-50 dark:bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 shadow-[inset_0_0_0_1px_rgba(6,182,212,0.15)]'
-            : 'text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 hover:text-gray-900 dark:hover:text-slate-200'
+            ? 'bg-cyan-50 dark:bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border-orange-500 shadow-[inset_0_0_0_1px_rgba(6,182,212,0.15)]'
+            : 'border-transparent text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 hover:text-gray-900 dark:hover:text-slate-200'
         }`
       }
     >
@@ -47,7 +49,9 @@ function NavItem({ to, label, icon, end = false, onClick }) {
 }
 
 // ── Collapsible section ────────────────────────────────────────────────────
-function NavSection({ id, label, badge, children, defaultOpen = true }) {
+// `withDivider` adds a thin top divider + spacing — set on every section
+// after the first to visually separate groups.
+function NavSection({ id, label, badge, children, defaultOpen = true, withDivider = false }) {
   const [open, setOpen] = useState(() => {
     const stored = localStorage.getItem(`buddy-nav-${id}`)
     return stored !== null ? stored === 'true' : defaultOpen
@@ -60,8 +64,9 @@ function NavSection({ id, label, badge, children, defaultOpen = true }) {
   }
 
   return (
-    <div className="mb-1">
+    <div className={`mb-1 ${withDivider ? 'mt-3 pt-3 border-t border-gray-200 dark:border-white/5' : ''}`}>
       <button
+        type="button"
         onClick={toggle}
         className="w-full flex items-center justify-between px-3 py-1.5 rounded-lg group transition-colors"
       >
@@ -81,7 +86,7 @@ function NavSection({ id, label, badge, children, defaultOpen = true }) {
       </button>
 
       <div className={`overflow-hidden transition-all duration-200 ${open ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'}`}>
-        <div className="space-y-0.5 mt-0.5">
+        <div className="space-y-0.5 mt-0.5 pl-3">
           {children}
         </div>
       </div>
@@ -143,17 +148,17 @@ export default function Layout() {
           </NavSection>
 
           {/* Financial Controls */}
-          <NavSection id="financial-controls" label="Financial Controls">
+          <NavSection id="financial-controls" label="Financial Controls" withDivider>
             <NavItem to="/financial-controls/debt-schedule" label="Debt Schedule" icon={Icons.debt} onClick={close} />
           </NavSection>
 
           {/* Cash Flow */}
-          <NavSection id="cash-flow" label="Cash Flow">
+          <NavSection id="cash-flow" label="Cash Flow" withDivider>
             <NavItem to="/cash-flow/payment-calendar" label="Payment Calendar" icon={Icons.calendar} onClick={close} />
           </NavSection>
 
           {/* Settings */}
-          <NavSection id="settings" label="Settings" defaultOpen={false}>
+          <NavSection id="settings" label="Settings" defaultOpen={false} withDivider>
             <NavItem to="/settings/departments"       label="Departments"       icon={Icons.dept}     onClick={close} />
             <NavItem to="/settings/vendor-categories" label="Vendor Categories" icon={Icons.category} onClick={close} />
             <NavItem to="/settings/payment-methods"   label="Payment Methods"   icon={Icons.payment}  onClick={close} />
