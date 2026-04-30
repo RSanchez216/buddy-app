@@ -1,8 +1,13 @@
-import { Navigate } from 'react-router-dom'
+import { Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 
+// Routes that authenticated users can still hit (e.g. invitees who are
+// signed in via the invite token but haven't set their password yet).
+const PUBLIC_AUTH_ROUTES = ['/auth/set-password', '/auth/forgot-password']
+
 export default function ProtectedRoute({ children }) {
-  const { session, loading } = useAuth()
+  const { session, profile, loading } = useAuth()
+  const location = useLocation()
 
   if (loading) {
     return (
@@ -16,5 +21,14 @@ export default function ProtectedRoute({ children }) {
   }
 
   if (!session) return <Navigate to="/login" replace />
+
+  // Pending users (just clicked an invite link) must set a password before
+  // they can use the rest of the app. The /auth/set-password route is outside
+  // this guard, but if Supabase or the user navigates anywhere else first,
+  // bounce them back here. This survives Supabase's own redirect quirks.
+  if (profile?.status === 'pending' && !PUBLIC_AUTH_ROUTES.includes(location.pathname)) {
+    return <Navigate to="/auth/set-password" replace />
+  }
+
   return children
 }

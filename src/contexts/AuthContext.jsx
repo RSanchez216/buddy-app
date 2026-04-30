@@ -59,6 +59,14 @@ export function AuthProvider({ children }) {
 
   const signOut = () => supabase.auth.signOut()
 
+  // Re-fetch the public.users profile for the current session.
+  // SetPassword calls this after flipping status='pending' → 'active' so
+  // ProtectedRoute sees the new status and lets the user into the dashboard.
+  async function refreshProfile() {
+    const { data: { session: currentSession } } = await supabase.auth.getSession()
+    if (currentSession?.user) await loadProfile(currentSession.user.id)
+  }
+
   // Convenience role flags (computed only when profile is loaded)
   const role = profile?.role || null
   const isAdmin = role === 'admin'
@@ -72,7 +80,7 @@ export function AuthProvider({ children }) {
       session, user, profile, loading,
       role, isAdmin, isManager, isViewer, canEdit,
       accessError, setAccessError,
-      signIn, signOut,
+      signIn, signOut, refreshProfile,
     }}>
       {children}
     </AuthContext.Provider>

@@ -47,7 +47,9 @@ serve(async (req) => {
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!
     const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-    const buddyBaseUrl = Deno.env.get('BUDDY_BASE_URL') || ''
+    // Hardcoded prod fallback so a missing env var can't silently send the
+    // invite to the project's default Site URL (which would skip set-password).
+    const buddyBaseUrl = Deno.env.get('BUDDY_BASE_URL') || 'https://buddy-app-nine.vercel.app'
 
     const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
       auth: { autoRefreshToken: false, persistSession: false },
@@ -89,9 +91,7 @@ serve(async (req) => {
     if (!ALLOWED_ROLES.includes(role)) return jsonResponse({ error: 'Invalid role' }, 400)
 
     // 4) Send invite (creates an auth user in pending state and emails a magic link)
-    const redirectTo = buddyBaseUrl
-      ? `${buddyBaseUrl.replace(/\/$/, '')}/auth/set-password`
-      : undefined
+    const redirectTo = `${buddyBaseUrl.replace(/\/$/, '')}/auth/set-password`
 
     const { data: inviteData, error: inviteError } = await supabaseAdmin.auth.admin.inviteUserByEmail(
       email,

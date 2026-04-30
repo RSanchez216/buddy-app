@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
+import { useAuth } from '../../contexts/AuthContext'
 import BuddyLogo from '../../components/BuddyLogo'
 
 // Reads the recovery/invite tokens that Supabase puts in the URL hash
@@ -36,27 +37,34 @@ const STRENGTH_COLOR = [
 
 export default function SetPassword() {
   const navigate = useNavigate()
+  const { refreshProfile } = useAuth()
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [tokenError, setTokenError] = useState('')
   const [ready, setReady] = useState(false)
+  const [email, setEmail] = useState('')
+  const [success, setSuccess] = useState(false)
 
   useEffect(() => {
     const { access_token, refresh_token, error } = parseHashTokens()
     if (error) { setTokenError(error); setReady(true); return }
 
-    // Supabase v2 may already have set the session via detectSessionInUrl,
-    // but we also handle the explicit case for older flows.
+    // Supabase v2 may have already installed the session via detectSessionInUrl
+    // before this component mounted. We handle both cases.
     async function bootstrap() {
       const { data: { session } } = await supabase.auth.getSession()
-      if (session) { setReady(true); return }
+      if (session) {
+        setEmail(session.user?.email || '')
+        setReady(true); return
+      }
       if (access_token && refresh_token) {
-        const { error: setErr } = await supabase.auth.setSession({ access_token, refresh_token })
-        if (setErr) setTokenError(setErr.message)
+        const { data, error: setErr } = await supabase.auth.setSession({ access_token, refresh_token })
+        if (setErr) { setTokenError(setErr.message); setReady(true); return }
+        setEmail(data?.session?.user?.email || data?.user?.email || '')
       } else {
-        setTokenError('Missing or expired invite link.')
+        setTokenError('Invalid or expired invite link.')
       }
       setReady(true)
     }
@@ -65,9 +73,16 @@ export default function SetPassword() {
 
   const score = useMemo(() => strengthScore(password), [password])
 
+  function validatePassword(pw) {
+    if (pw.length < 8) return 'Password must be at least 8 characters.'
+    if (!/\d/.test(pw)) return 'Password must contain at least one number.'
+    return null
+  }
+
   async function submit(e) {
     e.preventDefault()
-    if (password.length < 8) return setError('Password must be at least 8 characters.')
+    const pwErr = validatePassword(password)
+    if (pwErr) return setError(pwErr)
     if (password !== confirm) return setError('Passwords do not match.')
     setSubmitting(true); setError('')
 
@@ -81,17 +96,22 @@ export default function SetPassword() {
         .from('users')
         .update({ status: 'active' })
         .eq('id', user.id)
-      // Don't fail the flow if the row is missing — sign-in will still work
       if (activateErr) console.warn('[SetPassword] activation update failed:', activateErr)
 
-      // Clear the hash and route to dashboard
+      // Refresh the AuthContext profile so ProtectedRoute sees status='active'
+      // before we navigate. Without this, the next render would bounce back here.
+      await refreshProfile?.()
+
+      // Clear the hash to prevent confusion if the user hits Back
       if (window.history?.replaceState) {
         window.history.replaceState({}, '', window.location.pathname)
       }
-      navigate('/', { replace: true })
+
+      // Brief success splash before redirecting
+      setSuccess(true)
+      setTimeout(() => navigate('/', { replace: true }), 1200)
     } catch (err) {
       setError(err?.message || 'Failed to set password')
-    } finally {
       setSubmitting(false)
     }
   }
@@ -106,7 +126,6 @@ export default function SetPassword() {
               BUDDY
             </h1>
           </div>
-          <p className="text-xs text-gray-500 dark:text-slate-500 mt-1">Set your password to activate your account.</p>
         </div>
 
         <div className="bg-white dark:bg-white/5 dark:backdrop-blur-xl border border-gray-200 dark:border-white/10 rounded-2xl p-8 shadow-xl">
@@ -115,18 +134,36 @@ export default function SetPassword() {
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-cyan-500" />
             </div>
           ) : tokenError ? (
-            <div className="text-center space-y-3">
+            <div className="text-center space-y-4">
+              <h2 className="text-base font-semibold text-gray-900 dark:text-white">Invalid link</h2>
               <p className="text-sm text-red-600 dark:text-red-400">{tokenError}</p>
+              <p className="text-xs text-gray-500 dark:text-slate-500">If your invite expired, ask an admin to resend it.</p>
               <button
                 onClick={() => navigate('/login')}
-                className="text-sm text-cyan-600 dark:text-cyan-400 hover:underline"
+                className="inline-block mt-2 px-4 py-2 text-sm font-semibold text-slate-900 bg-cyan-500 hover:bg-cyan-400 rounded-xl transition-all"
               >
-                Back to sign in
+                Go to sign in
               </button>
+            </div>
+          ) : success ? (
+            <div className="text-center space-y-3 py-4">
+              <div className="mx-auto w-12 h-12 rounded-full bg-emerald-50 dark:bg-emerald-500/10 flex items-center justify-center">
+                <svg className="w-6 h-6 text-emerald-600 dark:text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+              <p className="text-sm font-medium text-gray-900 dark:text-white">Password set! Welcome to BUDDY.</p>
+              <p className="text-xs text-gray-500 dark:text-slate-500">Taking you to the dashboard…</p>
             </div>
           ) : (
             <form onSubmit={submit} className="space-y-4">
-              <h2 className="text-base font-semibold text-gray-900 dark:text-white">Set a new password</h2>
+              <div>
+                <h2 className="text-base font-semibold text-gray-900 dark:text-white">Welcome to BUDDY — set your password</h2>
+                {email && (
+                  <p className="text-xs text-gray-500 dark:text-slate-500 mt-1">Signed in as <span className="font-mono text-gray-700 dark:text-slate-300">{email}</span></p>
+                )}
+              </div>
+
               {error && (
                 <div className="p-3 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 rounded-xl text-red-600 dark:text-red-400 text-sm">{error}</div>
               )}
@@ -154,6 +191,7 @@ export default function SetPassword() {
                     </p>
                   </div>
                 )}
+                <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1.5">Minimum 8 characters and at least one number.</p>
               </div>
 
               <div>
