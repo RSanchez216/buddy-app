@@ -95,16 +95,16 @@ function NavSection({ id, label, badge, children, defaultOpen = true, withDivide
 }
 
 // ── Role config ────────────────────────────────────────────────────────────
-const roleLabel = { admin: 'Admin', department_head: 'Dept Head', viewer: 'Viewer' }
+const roleLabel = { admin: 'Admin', manager: 'Manager', viewer: 'Viewer' }
 const roleColor = {
-  admin: 'bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/20',
-  department_head: 'bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400 border border-fuchsia-500/20',
+  admin: 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20',
+  manager: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20',
   viewer: 'bg-gray-100 dark:bg-slate-700/50 text-gray-500 dark:text-slate-400 border border-gray-200 dark:border-slate-600/20',
 }
 
 // ── Layout ─────────────────────────────────────────────────────────────────
 export default function Layout() {
-  const { profile, signOut } = useAuth()
+  const { profile, signOut, isAdmin } = useAuth()
   const { theme, toggleTheme } = useTheme()
   const navigate = useNavigate()
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -166,11 +166,9 @@ export default function Layout() {
             <NavItem to="/settings/loan-lenders"      label="Loan Lenders"      icon={Icons.lender}   onClick={close} />
             <NavItem to="/settings/funding-accounts"  label="Funding Accounts"  icon={Icons.bank}     onClick={close} />
             <NavItem to="/settings/equipment-types"   label="Equipment Types"   icon={Icons.truck}    onClick={close} />
-            <div className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium text-gray-300 dark:text-slate-700 cursor-not-allowed">
-              {Icons.users}
-              <span>Users</span>
-              <span className="ml-auto text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-slate-600 border border-gray-200 dark:border-slate-700">Soon</span>
-            </div>
+            {isAdmin && (
+              <NavItem to="/settings/users" label="Users" icon={Icons.users} onClick={close} />
+            )}
           </NavSection>
 
           {/* Placeholder for future tools */}

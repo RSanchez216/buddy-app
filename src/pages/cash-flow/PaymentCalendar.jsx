@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
+import { useAuth } from '../../contexts/AuthContext'
 import { S } from '../../lib/styles'
 import Select from '../../components/Select'
 import {
@@ -20,6 +21,7 @@ import ChipDetailPanel from './ChipDetailPanel'
 const SHOW_PAID_KEY = 'cf-show-paid'
 
 export default function PaymentCalendar() {
+  const { canEdit } = useAuth()
   const today = new Date()
   const [view, setView] = useState('week') // 'week' | 'month'
   const [anchor, setAnchor] = useState(today)         // any date inside the visible week (week view) or month (month view)
@@ -180,6 +182,7 @@ export default function PaymentCalendar() {
 
   // ── Drag-to-reschedule handler ─────────────────────────────────────────
   async function handleChipDrop(event, newDateISO) {
+    if (!canEdit) return
     if (!event.is_draggable) return
     const refType = event.reference_type
     const refId = event.reference_id
@@ -275,17 +278,23 @@ export default function PaymentCalendar() {
           <option value="">All entities</option>
           {entities.map(en => <option key={en.id} value={en.id}>{en.name}</option>)}
         </Select>
-        <button onClick={() => { setDefaultDate(toISO(new Date())); setShowAddIncome(true) }} className={CF.btnPrimary}>
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
-          Add Income
-        </button>
-        <button onClick={() => { setDefaultDate(toISO(new Date())); setShowAddExpense(true) }} className={CF.btnPrimary}>
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
-          Add Expense
-        </button>
-        <div className="ml-auto">
-          <KebabMenu onManageRecurring={() => setShowRecurring(true)} />
-        </div>
+        {canEdit && (
+          <>
+            <button onClick={() => { setDefaultDate(toISO(new Date())); setShowAddIncome(true) }} className={CF.btnPrimary}>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+              Add Income
+            </button>
+            <button onClick={() => { setDefaultDate(toISO(new Date())); setShowAddExpense(true) }} className={CF.btnPrimary}>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+              Add Expense
+            </button>
+          </>
+        )}
+        {canEdit && (
+          <div className="ml-auto">
+            <KebabMenu onManageRecurring={() => setShowRecurring(true)} />
+          </div>
+        )}
       </div>
 
       {/* Quick filter pills — only visible when toggle is on */}
@@ -366,6 +375,7 @@ export default function PaymentCalendar() {
       <StartingCashModal open={showStartingCash} onClose={() => setShowStartingCash(false)} weekStart={weekStart} onSaved={loadData} />
       <ChipDetailPanel
         event={chipDetail}
+        canEdit={canEdit}
         onClose={() => setChipDetail(null)}
         onChange={loadData}
         onOpenAdjustLoan={(ev) => { setChipDetail(null); setAdjustLoanEvent(ev) }}

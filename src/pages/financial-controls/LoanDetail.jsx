@@ -45,7 +45,7 @@ export default function LoanDetail() {
   const { loanId } = useParams()
   const navigate = useNavigate()
   const { profile } = useAuth()
-  const canEdit = profile?.role === 'admin' || profile?.role === 'department_head'
+  const canEdit = profile?.role === 'admin' || profile?.role === 'manager'
 
   const [loan, setLoan] = useState(null)
   const [loading, setLoading] = useState(true)

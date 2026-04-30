@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { useTheme } from '../contexts/ThemeContext'
 import BuddyLogo from '../components/BuddyLogo'
@@ -9,13 +10,15 @@ export default function Login() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const { signIn } = useAuth()
+  const [showForgot, setShowForgot] = useState(false)
+  const { signIn, accessError, setAccessError } = useAuth()
   const { theme, toggleTheme } = useTheme()
   const navigate = useNavigate()
 
   async function handleSubmit(e) {
     e.preventDefault()
     setError('')
+    setAccessError?.('')
     setLoading(true)
     const { error } = await signIn(email, password)
     if (error) { setError(error.message); setLoading(false) }
@@ -97,9 +100,9 @@ export default function Login() {
             Sign in to your account
           </h2>
 
-          {error && (
+          {(error || accessError) && (
             <div className="mb-4 p-3 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 rounded-xl text-red-600 dark:text-red-400 text-sm">
-              {error}
+              {error || accessError}
             </div>
           )}
 
@@ -113,7 +116,16 @@ export default function Login() {
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1.5 uppercase tracking-wide">Password</label>
+              <div className="flex items-baseline justify-between mb-1.5">
+                <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 uppercase tracking-wide">Password</label>
+                <button
+                  type="button"
+                  onClick={() => setShowForgot(true)}
+                  className="text-xs text-cyan-600 dark:text-cyan-400 hover:underline"
+                >
+                  Forgot password?
+                </button>
+              </div>
               <input
                 type="password" value={password} onChange={e => setPassword(e.target.value)} required
                 className="w-full px-4 py-3 bg-gray-50 dark:bg-slate-800/80 border border-gray-200 dark:border-slate-700/50 rounded-xl text-gray-900 dark:text-slate-100 placeholder-gray-400 dark:placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500/50 transition-all"
@@ -129,9 +141,75 @@ export default function Login() {
           </form>
         </div>
 
+        {showForgot && <ForgotPasswordModal initialEmail={email} onClose={() => setShowForgot(false)} />}
+
         <p className="text-center text-xs text-gray-400 dark:text-slate-600 mt-6">
           Internal use only — Manas Express © 2026
         </p>
+      </div>
+    </div>
+  )
+}
+
+function ForgotPasswordModal({ initialEmail = '', onClose }) {
+  const [email, setEmail] = useState(initialEmail)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState('')
+  const [sent, setSent] = useState(false)
+
+  async function submit(e) {
+    e.preventDefault()
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return setError('Enter a valid email address')
+    setSubmitting(true); setError('')
+    const { error: rpErr } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
+      redirectTo: `${window.location.origin}/auth/set-password`,
+    })
+    setSubmitting(false)
+    if (rpErr) { setError(rpErr.message); return }
+    setSent(true)
+  }
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/60 dark:bg-black/75 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative bg-white dark:bg-[#0d0d1f] border border-gray-200 dark:border-white/10 rounded-2xl shadow-2xl w-full max-w-sm">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-white/5">
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Reset your password</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 dark:hover:text-slate-200">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        {sent ? (
+          <div className="p-5 text-center space-y-3">
+            <div className="mx-auto w-10 h-10 rounded-full bg-emerald-50 dark:bg-emerald-500/10 flex items-center justify-center">
+              <svg className="w-5 h-5 text-emerald-600 dark:text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.25}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <p className="text-sm font-medium text-gray-900 dark:text-white">Check your email</p>
+            <p className="text-xs text-gray-500 dark:text-slate-500">If an account exists for {email}, we sent a reset link.</p>
+            <button onClick={onClose} className="text-sm text-cyan-600 dark:text-cyan-400 hover:underline">Done</button>
+          </div>
+        ) : (
+          <form onSubmit={submit} className="p-5 space-y-4">
+            {error && <div className="p-3 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 rounded-xl text-red-600 dark:text-red-400 text-sm">{error}</div>}
+            <p className="text-xs text-gray-500 dark:text-slate-500">Enter your email and we'll send you a link to set a new password.</p>
+            <input
+              type="email" autoFocus value={email} onChange={e => setEmail(e.target.value)} required
+              className="w-full px-4 py-3 bg-gray-50 dark:bg-slate-800/80 border border-gray-200 dark:border-slate-700/50 rounded-xl text-gray-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+              placeholder="you@manasexpress.com"
+            />
+            <div className="flex justify-end gap-2 pt-1">
+              <button type="button" onClick={onClose} className="px-4 py-2 text-sm border border-gray-300 dark:border-slate-700 text-gray-600 dark:text-slate-300 rounded-xl hover:bg-gray-50 dark:hover:bg-white/5 transition-colors">Cancel</button>
+              <button type="submit" disabled={submitting} className="px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 disabled:opacity-50 text-white rounded-xl transition-all">
+                {submitting ? 'Sending…' : 'Send reset link'}
+              </button>
+            </div>
+          </form>
+        )}
       </div>
     </div>
   )

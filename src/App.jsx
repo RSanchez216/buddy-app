@@ -16,9 +16,11 @@ import SettingsLoanEntities from './pages/settings/LoanEntities'
 import SettingsLoanLenders from './pages/settings/LoanLenders'
 import SettingsFundingAccounts from './pages/settings/FundingAccounts'
 import SettingsEquipmentTypes from './pages/settings/EquipmentTypes'
+import SettingsUsers from './pages/settings/users/Users'
 import DebtSchedule from './pages/financial-controls/DebtSchedule'
 import LoanDetail from './pages/financial-controls/LoanDetail'
 import PaymentCalendar from './pages/cash-flow/PaymentCalendar'
+import SetPassword from './pages/auth/SetPassword'
 
 export default function App() {
   return (
@@ -27,6 +29,7 @@ export default function App() {
         <AuthProvider>
           <Routes>
             <Route path="/login" element={<Login />} />
+            <Route path="/auth/set-password" element={<SetPassword />} />
             <Route path="/" element={
               <ProtectedRoute>
                 <Layout />
@@ -50,6 +53,7 @@ export default function App() {
               <Route path="settings/loan-lenders" element={<SettingsLoanLenders />} />
               <Route path="settings/funding-accounts" element={<SettingsFundingAccounts />} />
               <Route path="settings/equipment-types" element={<SettingsEquipmentTypes />} />
+              <Route path="settings/users" element={<SettingsUsers />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

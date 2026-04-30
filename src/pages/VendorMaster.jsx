@@ -234,7 +234,7 @@ export default function VendorMaster() {
     return `$${min.toLocaleString()} – $${max.toLocaleString()}`
   }
 
-  const canEdit = profile?.role === 'admin' || profile?.role === 'department_head'
+  const canEdit = profile?.role === 'admin' || profile?.role === 'manager'
 
   if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-cyan-500" /></div>
 

@@ -143,7 +143,7 @@ export default function InvoiceInbox() {
     return []
   }
 
-  const visibleInvoices = (profile?.role === 'department_head' && profile?.department_id)
+  const visibleInvoices = (profile?.role === 'manager' && profile?.department_id)
     ? invoices.filter(inv => getInvoiceDeptIds(inv).includes(profile.department_id))
     : invoices
 
@@ -171,7 +171,7 @@ export default function InvoiceInbox() {
   })
 
   const pendingCount = visibleInvoices.filter(i => i.status === 'Pending').length
-  const canEdit = profile?.role === 'admin' || profile?.role === 'department_head'
+  const canEdit = profile?.role === 'admin' || profile?.role === 'manager'
 
   // Which dept records can this user action?
 
@@ -717,7 +717,7 @@ export default function InvoiceInbox() {
                             const isPending = d.status === 'Pending'
                             const canAct = canEdit && (
                               profile?.role === 'admin' ||
-                              (profile?.role === 'department_head' && d.department_id === profile?.department_id)
+                              (profile?.role === 'manager' && d.department_id === profile?.department_id)
                             )
                             return (
                               <div key={d.id} className="flex items-center gap-1.5 whitespace-nowrap">

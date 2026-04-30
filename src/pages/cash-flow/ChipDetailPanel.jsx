@@ -11,7 +11,7 @@ function fmtDate(d) {
   return new Date(`${d}T00:00:00`).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
-export default function ChipDetailPanel({ event, onClose, onChange, onOpenAdjustLoan, onOpenManageRecurring, onSuccess }) {
+export default function ChipDetailPanel({ event, canEdit = true, onClose, onChange, onOpenAdjustLoan, onOpenManageRecurring, onSuccess }) {
   const [details, setDetails] = useState(null)
   const [editing, setEditing] = useState(false)
   const [form, setForm] = useState({})
@@ -242,25 +242,29 @@ export default function ChipDetailPanel({ event, onClose, onChange, onOpenAdjust
         {/* Footer actions */}
         <div className="sticky bottom-0 bg-white dark:bg-[#0d0d1f] p-4 border-t border-gray-100 dark:border-white/5 flex items-center justify-end gap-2 flex-wrap">
           {details?.kind === 'loan_payment' ? (
-            <>
-              <button onClick={() => onOpenAdjustLoan?.(event)} className={S.btnCancel}>Adjust planned date</button>
-              {!isPaidStatus(details.row.status) && (
-                <>
-                  <button
-                    onClick={() => setMarkPaidConfig({ kind: 'loan', mode: 'partial' })}
-                    className={CF.btnOutline}
-                  >
-                    Mark as partial
-                  </button>
-                  <button
-                    onClick={() => setMarkPaidConfig({ kind: 'loan', mode: 'paid' })}
-                    className={CF.btnSave}
-                  >
-                    Mark as paid
-                  </button>
-                </>
-              )}
-            </>
+            canEdit ? (
+              <>
+                <button onClick={() => onOpenAdjustLoan?.(event)} className={S.btnCancel}>Adjust planned date</button>
+                {!isPaidStatus(details.row.status) && (
+                  <>
+                    <button
+                      onClick={() => setMarkPaidConfig({ kind: 'loan', mode: 'partial' })}
+                      className={CF.btnOutline}
+                    >
+                      Mark as partial
+                    </button>
+                    <button
+                      onClick={() => setMarkPaidConfig({ kind: 'loan', mode: 'paid' })}
+                      className={CF.btnSave}
+                    >
+                      Mark as paid
+                    </button>
+                  </>
+                )}
+              </>
+            ) : (
+              <span className="text-xs text-gray-400 dark:text-slate-500 italic">Read-only view</span>
+            )
           ) : editing ? (
             <>
               <button onClick={() => { setEditing(false); setError('') }} className={S.btnCancel}>Cancel</button>
@@ -273,6 +277,8 @@ export default function ChipDetailPanel({ event, onClose, onChange, onOpenAdjust
                 {saving ? 'Saving…' : 'Save received'}
               </button>
             </>
+          ) : !canEdit ? (
+            <span className="text-xs text-gray-400 dark:text-slate-500 italic">Read-only view</span>
           ) : (
             <>
               {(details?.kind === 'inflow' || details?.kind === 'custom_outflow') && !isPaidStatus(details.row.status) && (

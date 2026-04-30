@@ -47,7 +47,7 @@ function SortHeader({ label, columnKey, sortKey, sortDir, onSort, align = 'left'
 
 export default function DebtSchedule() {
   const { profile } = useAuth()
-  const canEdit = profile?.role === 'admin' || profile?.role === 'department_head'
+  const canEdit = profile?.role === 'admin' || profile?.role === 'manager'
 
   const [loans, setLoans] = useState([])
   const [equipmentByLoan, setEquipmentByLoan] = useState({})
