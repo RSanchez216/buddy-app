@@ -49,6 +49,10 @@ export default function AddIncomeModal({
   const [factors, setFactors] = useState([])
   const [form, setForm] = useState(buildEmpty({ expected_date: defaultDate, entity_id: defaultEntityId }))
   const [originalDepositIds, setOriginalDepositIds] = useState(new Set()) // track deletions for diff
+  // Auto-track the first deposit's amount to the target until the user manually
+  // edits any deposit amount. On edit-existing, deposits load from the DB and
+  // we never auto-modify them (touched starts true).
+  const [depositsTouched, setDepositsTouched] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
@@ -96,9 +100,12 @@ export default function AddIncomeModal({
           description: editInflow.description || '',
           deposits: depRows.length ? depRows : [emptyDeposit()],
         })
+        // Edit mode: load deposits as-is and never auto-modify them.
+        setDepositsTouched(true)
       } else {
         setOriginalDepositIds(new Set())
         setForm(buildEmpty({ expected_date: defaultDate, entity_id: defaultEntityId }))
+        setDepositsTouched(false)
       }
       setLoading(false)
     }
@@ -134,37 +141,42 @@ export default function AddIncomeModal({
 
   const allocationDelta = round2(allocated - target)
 
-  // ── Auto-fill the first deposit row whenever target/factor/source changes
-  // and the user hasn't manually edited it yet.
-  // Behavior: when there's exactly one empty/zero deposit row, populate it
-  // with the factor's default deposit account and the full target.
+  // ── Auto-track the first deposit row to the current target (and factor's
+  // default deposit account) until the user manually edits any deposit
+  // amount. After that, the user owns the allocation and we stop overwriting.
+  // Adding a 2nd row leaves it empty — the first row keeps tracking until
+  // the user types an amount somewhere.
   useEffect(() => {
-    if (form.deposits.length !== 1) return
-    const only = form.deposits[0]
-    const noAmount = !only.amount || Number(only.amount) === 0
-    const noAccount = !only.funding_account_id
-    if (noAmount && noAccount && target > 0) {
-      const defaultAcc = form.sourceType === 'factor'
-        ? selectedFactor?.default_deposit_account_id || ''
-        : ''
-      setForm(f => ({
-        ...f,
-        deposits: [{ ...f.deposits[0], funding_account_id: defaultAcc, amount: target.toString() }],
-      }))
-    }
-  // We intentionally exclude form.deposits from deps — we only want to react
-  // when the target / factor changes.
+    if (depositsTouched) return
+    setForm(f => {
+      if (f.deposits.length === 0) return f
+      const first = f.deposits[0]
+      const targetStr = target > 0 ? target.toString() : ''
+      const defaultAcc = f.sourceType === 'factor'
+        ? (selectedFactor?.default_deposit_account_id || first.funding_account_id || '')
+        : first.funding_account_id || ''
+      // No-op if both fields already match the desired auto values
+      if (first.amount === targetStr && first.funding_account_id === defaultAcc) return f
+      const next = [...f.deposits]
+      next[0] = { ...first, amount: targetStr, funding_account_id: defaultAcc }
+      return { ...f, deposits: next }
+    })
   /* eslint-disable-next-line */
-  }, [target, form.sourceType, form.factorId, selectedFactor?.default_deposit_account_id])
+  }, [target, form.sourceType, form.factorId, selectedFactor?.default_deposit_account_id, depositsTouched])
 
   // ── Helpers
   function updateDeposit(i, field, val) {
+    // Only "amount" edits flip the touched flag, per spec. Account picks
+    // shouldn't disable auto-tracking.
+    if (field === 'amount' && !depositsTouched) setDepositsTouched(true)
     setForm(f => ({
       ...f,
       deposits: f.deposits.map((d, idx) => idx === i ? { ...d, [field]: val } : d),
     }))
   }
   function addDeposit() {
+    // Append an empty row. Don't flip touched yet — user is splitting and
+    // hasn't typed an amount on the new row. (They will, which then flips it.)
     setForm(f => ({ ...f, deposits: [...f.deposits, emptyDeposit()] }))
   }
   function removeDeposit(i) {
@@ -174,11 +186,13 @@ export default function AddIncomeModal({
     }))
   }
 
-  // Distribute the unallocated remainder onto the last empty/zero row,
-  // or split evenly if the user clicks "Auto-fill remaining".
+  // Drop the unallocated remainder onto the last row when the user clicks
+  // "Auto-fill remaining". This is an explicit user action on amounts, so
+  // it counts as touching the deposits.
   function fillRemainingOnLast() {
     const remaining = round2(target - allocated)
     if (Math.abs(remaining) < 0.01) return
+    setDepositsTouched(true)
     setForm(f => {
       const deposits = [...f.deposits]
       const lastIdx = deposits.length - 1
