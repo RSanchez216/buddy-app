@@ -24,6 +24,7 @@ import ChipDetailPanel from './ChipDetailPanel'
 
 const SHOW_PAID_KEY = 'cf-show-paid'
 const GROUP_BY_BANK_KEY = 'cf-group-by-bank'
+const RAIL_MODE_KEY = 'cf-rail-mode'
 
 export default function PaymentCalendar() {
   const { canEdit } = useAuth()
@@ -52,6 +53,16 @@ export default function PaymentCalendar() {
   useEffect(() => {
     try { localStorage.setItem(GROUP_BY_BANK_KEY, String(groupByBank)) } catch (e) { /* noop */ }
   }, [groupByBank])
+
+  // Right-rail mode — 'week' (weekly summary) or 'day' (single-day breakdown).
+  // Persisted; selected day itself is NOT persisted.
+  const [railMode, setRailMode] = useState(() => {
+    try { return localStorage.getItem(RAIL_MODE_KEY) === 'day' ? 'day' : 'week' } catch { return 'week' }
+  })
+  useEffect(() => {
+    try { localStorage.setItem(RAIL_MODE_KEY, railMode) } catch (e) { /* noop */ }
+  }, [railMode])
+  const [selectedDay, setSelectedDay] = useState(null) // ISO string or null
 
   const [events, setEvents] = useState([])
   const [accounts, setAccounts] = useState([])
@@ -175,6 +186,20 @@ export default function PaymentCalendar() {
     return map
   }, [visibleEvents])
 
+  // Pick a sensible selectedDay when none is set or it falls outside the
+  // visible week. Prefer today if it lands in this week; otherwise the first
+  // day with events; otherwise the Monday.
+  useEffect(() => {
+    const wsISO = toISO(weekStart)
+    const weISO = toISO(addDays(weekStart, 6))
+    if (selectedDay && selectedDay >= wsISO && selectedDay <= weISO) return
+    const todayISO = toISO(new Date())
+    if (todayISO >= wsISO && todayISO <= weISO) { setSelectedDay(todayISO); return }
+    const firstWithEvents = Array.from({ length: 7 }, (_, i) => toISO(addDays(weekStart, i)))
+      .find(iso => (eventsByDate[iso] || []).length > 0)
+    setSelectedDay(firstWithEvents || wsISO)
+  }, [weekStart, eventsByDate, selectedDay])
+
   // Per-day per-bank totals + running-balance projections.
   // Projections always use the FULL event set (not filtered) so paid events
   // continue to affect future cash flow even when hidden by the toggle.
@@ -229,6 +254,30 @@ export default function PaymentCalendar() {
     const weISO = toISO(addDays(weekStart, 6))
     return worstShortfallInRange(projections.timelines, wsISO, weISO)
   }, [projections, weekStart])
+
+  // ── Day-mode rail data ───────────────────────────────────────────────────
+  // Per-bank EOD balance for the selected day. Accounts without a balance
+  // baseline appear with balance: null (rendered as "balance not set").
+  const dayProjections = useMemo(() => {
+    if (!selectedDay) return []
+    return accounts.map(acc => {
+      const t = projections.timelines[acc.id]
+      const balance = t ? t.byDate[selectedDay] : null
+      return { account: acc, balance: balance == null ? null : balance }
+    })
+  }, [accounts, projections, selectedDay])
+
+  // Worst shortfall on or before the selected day.
+  const dayShortfall = useMemo(() => {
+    if (!selectedDay) return null
+    let worst = null
+    for (const t of Object.values(projections.timelines)) {
+      const bal = t.byDate[selectedDay]
+      if (bal == null || bal >= 0) continue
+      if (!worst || bal < worst.balance) worst = { account: t.account, balance: bal }
+    }
+    return worst
+  }, [projections, selectedDay])
 
   // 4-week outlook — same split (pending vs paid) per week
   const outlookWeeks = useMemo(() => {
@@ -421,10 +470,14 @@ export default function PaymentCalendar() {
               dayBuckets={dayBuckets}
               groupByBank={groupByBank}
               projectionTimelines={projections.timelines}
+              selectedDay={selectedDay}
+              onSelectDay={setSelectedDay}
               onChipClick={handleChipClick}
               onChipDrop={handleChipDrop}
             />
             <RightRail
+              mode={railMode}
+              setMode={setRailMode}
               weekStart={weekStart}
               startingCash={startingCashByWeek[toISO(weekStart)]}
               inflowSum={weekSums.inPending}
@@ -436,6 +489,11 @@ export default function PaymentCalendar() {
               shortfall={weekShortfall}
               accountsMissingBalance={accountsMissingBalance}
               onEditCash={() => setShowStartingCash(true)}
+              selectedDay={selectedDay}
+              setSelectedDay={setSelectedDay}
+              dayBucket={selectedDay ? dayBuckets[selectedDay] : null}
+              dayShortfall={dayShortfall}
+              dayProjections={dayProjections}
             />
           </div>
 

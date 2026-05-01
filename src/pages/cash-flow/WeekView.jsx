@@ -12,6 +12,8 @@ export default function WeekView({
   dayBuckets,                 // { [iso]: { totals, banks } }
   groupByBank,                // bool
   projectionTimelines = {},   // { accountId: { account, byDate, firstShortfall } }
+  selectedDay,                // ISO string — column to highlight (day-mode rail)
+  onSelectDay,                // (iso) => void — day header click
   onChipClick,
   onChipDrop,
 }) {
@@ -53,6 +55,7 @@ export default function WeekView({
         const events = eventsByDate?.[iso] || []
         const today = isToday(day)
         const isDropTarget = dropTarget === iso
+        const isSelected = selectedDay === iso
         const dayBucket = dayBuckets?.[iso]
         const shortfall = worstShortfallOnOrBefore(projectionTimelines, iso)
 
@@ -66,11 +69,20 @@ export default function WeekView({
               today
                 ? 'border-amber-300 dark:border-amber-500/40 bg-amber-50/40 dark:bg-amber-500/5'
                 : 'border-gray-200 dark:border-white/5 bg-white dark:bg-[#0d0d1f]'
-            } ${isDropTarget ? 'ring-2 ring-orange-400 ring-offset-1 dark:ring-offset-transparent' : ''}`}
-            style={{ minHeight: 240 }}
+            } ${isDropTarget ? 'ring-2 ring-orange-400 ring-offset-1 dark:ring-offset-transparent' : ''} ${
+              isSelected && !isDropTarget ? 'ring-1 ring-orange-400/70 dark:ring-orange-500/50' : ''
+            }`}
+            style={{ minHeight: 600, maxHeight: 'calc(100vh - 240px)' }}
           >
-            {/* Day header */}
-            <div className={`px-2 py-1.5 border-b ${today ? 'border-amber-200 dark:border-amber-500/20' : 'border-gray-100 dark:border-white/5'}`}>
+            {/* Day header — click selects this day for the right-rail day mode */}
+            <button
+              type="button"
+              onClick={() => onSelectDay?.(iso)}
+              className={`px-2 py-1.5 border-b text-left transition-colors ${
+                today ? 'border-amber-200 dark:border-amber-500/20' : 'border-gray-100 dark:border-white/5'
+              } ${isSelected ? 'bg-orange-50/60 dark:bg-orange-500/5' : 'hover:bg-gray-50 dark:hover:bg-white/[0.02]'}`}
+              title="Show this day's breakdown in the right rail"
+            >
               <div className="flex items-baseline justify-between">
                 <span className={`text-[10px] font-bold uppercase tracking-wide ${today ? 'text-amber-600 dark:text-amber-400' : 'text-gray-400 dark:text-slate-500'}`}>
                   {WEEK_LABELS[i]}
@@ -79,7 +91,7 @@ export default function WeekView({
                   {day.getDate()}
                 </span>
               </div>
-            </div>
+            </button>
 
             {/* Chips */}
             <div className="flex-1 overflow-y-auto p-1.5 space-y-1">
