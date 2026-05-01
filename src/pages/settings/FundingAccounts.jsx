@@ -4,7 +4,7 @@
 // The page hosts two sections: Bank Accounts and Factoring Companies.
 
 import BankAccountsSection from './funding/BankAccountsSection'
-import FactoringCompaniesSection from './funding/FactoringCompaniesSection'
+import FactorsSection from './funding/FactorsSection'
 
 export default function SettingsFundingAndSources() {
   return (
@@ -17,7 +17,7 @@ export default function SettingsFundingAndSources() {
       </div>
 
       <BankAccountsSection />
-      <FactoringCompaniesSection />
+      <FactorsSection />
     </div>
   )
 }

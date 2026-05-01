@@ -320,7 +320,7 @@ export default function BankAccountsSection() {
   )
 }
 
-// Shared section card layout (reused by FactoringCompaniesSection too —
+// Shared section card layout (also used by FactorsSection —
 // duplicated locally to keep components self-contained).
 function SectionCard({ title, subtitle, headerRight, children }) {
   return (

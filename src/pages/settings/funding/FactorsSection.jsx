@@ -1,6 +1,6 @@
-// Factoring Companies section of the Funding & Sources page.
-// Stores fee_rate as a decimal fraction (1% → 0.0100); the UI works in
-// percent-as-typed and converts on save/load.
+// Factors (factoring companies) section of the Funding & Sources page.
+// Reads/writes the `factors` table. Stores fee_rate as a decimal fraction
+// (1% → 0.0100); the UI works in percent-as-typed and converts on save/load.
 
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../../../lib/supabase'
@@ -27,7 +27,7 @@ function fmtFeePct(decimalRate) {
   return `${trimmed}%`
 }
 
-export default function FactoringCompaniesSection() {
+export default function FactorsSection() {
   const { isAdmin } = useAuth()
   const [items, setItems] = useState([])
   const [accounts, setAccounts] = useState([])
@@ -45,8 +45,11 @@ export default function FactoringCompaniesSection() {
     setLoading(true)
     const [itemsRes, accountsRes] = await Promise.all([
       supabase
-        .from('factoring_companies')
-        .select('*, default_deposit_account:funding_accounts!factoring_companies_default_deposit_account_id_fkey(id, name, bank_name)')
+        // Embed without naming the FK constraint — there's only one FK
+        // between factors and funding_accounts, so PostgREST can resolve it
+        // without us hard-coding the constraint name (which is brittle).
+        .from('factors')
+        .select('*, default_deposit_account:funding_accounts(id, name, bank_name)')
         .order('is_active', { ascending: false })
         .order('name'),
       supabase
@@ -95,21 +98,21 @@ export default function FactoringCompaniesSection() {
     }
 
     const res = editItem
-      ? await supabase.from('factoring_companies').update(payload).eq('id', editItem.id)
-      : await supabase.from('factoring_companies').insert(payload)
+      ? await supabase.from('factors').update(payload).eq('id', editItem.id)
+      : await supabase.from('factors').insert(payload)
     if (res.error) setError(res.error.message)
     else { setShowModal(false); load() }
     setSaving(false)
   }
 
   async function toggleActive(it) {
-    await supabase.from('factoring_companies').update({ is_active: !it.is_active }).eq('id', it.id)
+    await supabase.from('factors').update({ is_active: !it.is_active }).eq('id', it.id)
     load()
   }
 
   async function remove(it) {
     if (!confirm(`Delete "${it.name}"?`)) return
-    const { error: e } = await supabase.from('factoring_companies').delete().eq('id', it.id)
+    const { error: e } = await supabase.from('factors').delete().eq('id', it.id)
     if (e) alert(e.message)
     else load()
   }
