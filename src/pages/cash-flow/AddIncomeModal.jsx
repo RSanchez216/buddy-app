@@ -16,7 +16,7 @@ function fmtAccountOption(a) {
 }
 
 function emptyDeposit() {
-  return { id: null, funding_account_id: '', amount: '' }
+  return { id: null, funding_account_id: '', amount: '', position: null }
 }
 
 function buildEmpty(defaults = {}) {
@@ -76,15 +76,25 @@ export default function AddIncomeModal({
       setFactors(facRes.data || [])
 
       if (editInflow) {
-        const { data: deposits } = await supabase
+        // Use select('*') + order by position so we work with whatever
+        // columns the deployed schema actually has. Surface errors loudly
+        // — silent fallback to an empty row was the bug we're fixing.
+        const { data: deposits, error: depErr } = await supabase
           .from('expected_inflow_deposits')
-          .select('id, funding_account_id, amount, notes')
+          .select('*')
           .eq('expected_inflow_id', editInflow.id)
-          .order('created_at')
+          .order('position', { ascending: true })
+
+        if (depErr) {
+          console.error('[AddIncomeModal] Failed to load deposits for inflow', editInflow.id, depErr)
+          setError(`Couldn't load existing deposits: ${depErr.message}`)
+        }
+
         const depRows = (deposits || []).map(d => ({
           id: d.id,
           funding_account_id: d.funding_account_id,
           amount: d.amount?.toString() ?? '',
+          position: d.position,
         }))
         setOriginalDepositIds(new Set((deposits || []).map(d => d.id)))
         setForm({
@@ -269,8 +279,12 @@ export default function AddIncomeModal({
         inflowId = inserted.id
       }
 
-      // 2) Diff deposits — update kept rows, insert new ones, delete removed
-      const submittedIds = new Set(validDeposits.filter(d => d.id).map(d => d.id))
+      // 2) Diff deposits — update kept rows, insert new ones, delete removed.
+      // `position` is the row's index in the modal's current order so display
+      // order survives a round-trip.
+      const validWithPos = validDeposits.map((d, i) => ({ ...d, _position: i }))
+
+      const submittedIds = new Set(validWithPos.filter(d => d.id).map(d => d.id))
       const toDelete = [...originalDepositIds].filter(id => !submittedIds.has(id))
       if (toDelete.length) {
         const { error: delErr } = await supabase
@@ -280,19 +294,24 @@ export default function AddIncomeModal({
         if (delErr) throw new Error('Deposit delete failed: ' + delErr.message)
       }
 
-      const toUpdate = validDeposits.filter(d => d.id)
+      const toUpdate = validWithPos.filter(d => d.id)
       for (const d of toUpdate) {
         const { error: uErr } = await supabase
           .from('expected_inflow_deposits')
-          .update({ funding_account_id: d.funding_account_id, amount: Number(d.amount) })
+          .update({
+            funding_account_id: d.funding_account_id,
+            amount: Number(d.amount),
+            position: d._position,
+          })
           .eq('id', d.id)
         if (uErr) throw new Error('Deposit update failed: ' + uErr.message)
       }
 
-      const toInsert = validDeposits.filter(d => !d.id).map(d => ({
+      const toInsert = validWithPos.filter(d => !d.id).map(d => ({
         expected_inflow_id: inflowId,
         funding_account_id: d.funding_account_id,
         amount: Number(d.amount),
+        position: d._position,
       }))
       if (toInsert.length) {
         const { error: iErr } = await supabase.from('expected_inflow_deposits').insert(toInsert)
