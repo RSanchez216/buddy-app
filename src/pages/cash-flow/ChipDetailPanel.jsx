@@ -11,7 +11,7 @@ function fmtDate(d) {
   return new Date(`${d}T00:00:00`).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
-export default function ChipDetailPanel({ event, canEdit = true, onClose, onChange, onOpenAdjustLoan, onOpenManageRecurring, onSuccess }) {
+export default function ChipDetailPanel({ event, canEdit = true, onClose, onChange, onOpenAdjustLoan, onOpenManageRecurring, onOpenEditInflow, onSuccess }) {
   const [details, setDetails] = useState(null)
   const [editing, setEditing] = useState(false)
   const [form, setForm] = useState({})
@@ -320,7 +320,13 @@ export default function ChipDetailPanel({ event, canEdit = true, onClose, onChan
                 </button>
               )}
               {details && (details.kind !== 'loan_payment') && (
-                <button onClick={startEdit} className={CF.btnSave}>Edit</button>
+                details.kind === 'inflow' && onOpenEditInflow ? (
+                  // Inflows have a richer modal (factor + deposit allocation)
+                  // — route the Edit button there instead of inline editing.
+                  <button onClick={() => onOpenEditInflow(details.row)} className={CF.btnSave}>Edit</button>
+                ) : (
+                  <button onClick={startEdit} className={CF.btnSave}>Edit</button>
+                )
               )}
             </>
           )}

@@ -12,6 +12,7 @@ const emptyOneTime = (defaults = {}) => ({
   amount: '',
   category: 'other',
   entity_id: defaults.entity_id || '',
+  funding_account_id: '',
 })
 
 const emptyRecurring = (defaults = {}) => ({
@@ -19,6 +20,7 @@ const emptyRecurring = (defaults = {}) => ({
   amount: '',
   category: 'other',
   entity_id: defaults.entity_id || '',
+  funding_account_id: '',
   frequency: 'monthly',
   day_of_week: 1,
   day_of_month: 1,
@@ -28,10 +30,15 @@ const emptyRecurring = (defaults = {}) => ({
   notes: '',
 })
 
+function fmtAccountOption(a) {
+  return a.bank_name ? `${a.name} (${a.bank_name})` : a.name
+}
+
 export default function AddExpenseModal({ open, onClose, onSaved, defaultDate, defaultEntityId }) {
   const { user } = useAuth()
   const [mode, setMode] = useState('one-time') // 'one-time' | 'recurring'
   const [entities, setEntities] = useState([])
+  const [accounts, setAccounts] = useState([])
   const [oneTimeRows, setOneTimeRows] = useState([emptyOneTime({ due_date: defaultDate, entity_id: defaultEntityId })])
   const [recurring, setRecurring] = useState(emptyRecurring({ due_date: defaultDate, entity_id: defaultEntityId }))
   const [saving, setSaving] = useState(false)
@@ -43,8 +50,13 @@ export default function AddExpenseModal({ open, onClose, onSaved, defaultDate, d
     setOneTimeRows([emptyOneTime({ due_date: defaultDate, entity_id: defaultEntityId })])
     setRecurring(emptyRecurring({ due_date: defaultDate, entity_id: defaultEntityId }))
     setError('')
-    supabase.from('loan_entities').select('id, name').eq('is_active', true).order('name')
-      .then(({ data }) => setEntities(data || []))
+    Promise.all([
+      supabase.from('loan_entities').select('id, name').eq('is_active', true).order('name'),
+      supabase.from('funding_accounts').select('id, name, bank_name').eq('is_active', true).order('name'),
+    ]).then(([e, fa]) => {
+      setEntities(e.data || [])
+      setAccounts(fa.data || [])
+    })
   }, [open, defaultDate, defaultEntityId])
 
   function updateRow(i, field, val) {
@@ -57,7 +69,8 @@ export default function AddExpenseModal({ open, onClose, onSaved, defaultDate, d
 
   async function saveOneTime() {
     const valid = oneTimeRows.filter(r => r.due_date && r.description.trim() && Number(r.amount) > 0)
-    if (!valid.length) return setError('Add at least one row with date, description, and amount')
+    if (!valid.length) return setError('Add at least one row with date, description, and amount.')
+    if (valid.some(r => !r.funding_account_id)) return setError('Pick a funding account for every row.')
     setSaving(true); setError('')
     const payload = valid.map(r => ({
       due_date: r.due_date,
@@ -65,6 +78,7 @@ export default function AddExpenseModal({ open, onClose, onSaved, defaultDate, d
       amount: Number(r.amount),
       category: r.category || null,
       entity_id: r.entity_id || null,
+      funding_account_id: r.funding_account_id || null,
       status: 'planned',
       created_by: user?.id || null,
     }))
@@ -79,6 +93,7 @@ export default function AddExpenseModal({ open, onClose, onSaved, defaultDate, d
     if (!recurring.name.trim()) return setError('Name is required')
     if (!Number(recurring.amount)) return setError('Amount is required')
     if (!recurring.start_date) return setError('Start date is required')
+    if (!recurring.funding_account_id) return setError('Pick a funding account.')
 
     setSaving(true); setError('')
     const payload = {
@@ -86,6 +101,7 @@ export default function AddExpenseModal({ open, onClose, onSaved, defaultDate, d
       amount: Number(recurring.amount),
       category: recurring.category || null,
       entity_id: recurring.entity_id || null,
+      funding_account_id: recurring.funding_account_id || null,
       frequency: recurring.frequency,
       day_of_week: ['weekly', 'biweekly'].includes(recurring.frequency) ? Number(recurring.day_of_week) : null,
       day_of_month: ['monthly', 'quarterly', 'annually', 'semimonthly'].includes(recurring.frequency) ? Number(recurring.day_of_month) : null,
@@ -141,18 +157,29 @@ export default function AddExpenseModal({ open, onClose, onSaved, defaultDate, d
           <>
             <div className="space-y-2">
               {oneTimeRows.map((r, i) => (
-                <div key={i} className="grid grid-cols-12 gap-2 items-end p-2 rounded-xl bg-gray-50 dark:bg-white/[0.02]">
+                <div
+                  key={i}
+                  className="grid gap-2 items-end p-2 rounded-xl bg-gray-50 dark:bg-white/[0.02]"
+                  style={{ gridTemplateColumns: 'repeat(14, minmax(0, 1fr))' }}
+                >
                   <div className="col-span-2">
                     {i === 0 && <label className={S.label}>Date *</label>}
                     <input type="date" className={S.input} value={r.due_date} onChange={e => updateRow(i, 'due_date', e.target.value)} />
                   </div>
-                  <div className="col-span-3">
+                  <div className="col-span-2">
                     {i === 0 && <label className={S.label}>Description *</label>}
                     <input className={S.input} placeholder="e.g. Payroll" value={r.description} onChange={e => updateRow(i, 'description', e.target.value)} />
                   </div>
                   <div className="col-span-2">
                     {i === 0 && <label className={S.label}>Amount ($) *</label>}
                     <input type="number" step="0.01" className={S.input} value={r.amount} onChange={e => updateRow(i, 'amount', e.target.value)} />
+                  </div>
+                  <div className="col-span-3">
+                    {i === 0 && <label className={S.label}>Funding account *</label>}
+                    <Select value={r.funding_account_id} onChange={e => updateRow(i, 'funding_account_id', e.target.value)}>
+                      <option value="">— Select account —</option>
+                      {accounts.map(a => <option key={a.id} value={a.id}>{fmtAccountOption(a)}</option>)}
+                    </Select>
                   </div>
                   <div className="col-span-2">
                     {i === 0 && <label className={S.label}>Category</label>}
@@ -212,6 +239,12 @@ export default function AddExpenseModal({ open, onClose, onSaved, defaultDate, d
                 <Select value={recurring.entity_id} onChange={e => setRecurring(r => ({ ...r, entity_id: e.target.value }))}>
                   <option value="">—</option>
                   {entities.map(en => <option key={en.id} value={en.id}>{en.name}</option>)}
+                </Select>
+              </Field>
+              <Field label="Funding account *">
+                <Select value={recurring.funding_account_id} onChange={e => setRecurring(r => ({ ...r, funding_account_id: e.target.value }))}>
+                  <option value="">— Select account —</option>
+                  {accounts.map(a => <option key={a.id} value={a.id}>{fmtAccountOption(a)}</option>)}
                 </Select>
               </Field>
               <Field label="Frequency">

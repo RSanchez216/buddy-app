@@ -10,6 +10,7 @@ const empty = (defaults = {}) => ({
   amount: '',
   category: 'other',
   entity_id: '',
+  funding_account_id: '',
   frequency: 'monthly',
   day_of_week: 1,
   day_of_month: 1,
@@ -21,9 +22,14 @@ const empty = (defaults = {}) => ({
   ...defaults,
 })
 
+function fmtAccountOption(a) {
+  return a.bank_name ? `${a.name} (${a.bank_name})` : a.name
+}
+
 export default function RecurringExpensesModal({ open, onClose, onSaved }) {
   const [items, setItems] = useState([])
   const [entities, setEntities] = useState([])
+  const [accounts, setAccounts] = useState([])
   const [loading, setLoading] = useState(false)
   const [editing, setEditing] = useState(null) // template object | 'new' | null
   const [form, setForm] = useState(empty())
@@ -34,8 +40,13 @@ export default function RecurringExpensesModal({ open, onClose, onSaved }) {
     if (!open) return
     setEditing(null); setError('')
     load()
-    supabase.from('loan_entities').select('id, name').eq('is_active', true).order('name')
-      .then(({ data }) => setEntities(data || []))
+    Promise.all([
+      supabase.from('loan_entities').select('id, name').eq('is_active', true).order('name'),
+      supabase.from('funding_accounts').select('id, name, bank_name').eq('is_active', true).order('name'),
+    ]).then(([e, fa]) => {
+      setEntities(e.data || [])
+      setAccounts(fa.data || [])
+    })
   }, [open])
 
   async function load() {
@@ -53,6 +64,7 @@ export default function RecurringExpensesModal({ open, onClose, onSaved }) {
       amount: it.amount ?? '',
       category: it.category || 'other',
       entity_id: it.entity_id || '',
+      funding_account_id: it.funding_account_id || '',
       frequency: it.frequency || 'monthly',
       day_of_week: it.day_of_week ?? 1,
       day_of_month: it.day_of_month ?? 1,
@@ -83,6 +95,7 @@ export default function RecurringExpensesModal({ open, onClose, onSaved }) {
   async function save() {
     if (!form.name.trim()) return setError('Name is required')
     if (!Number(form.amount)) return setError('Amount is required')
+    if (editing === 'new' && !form.funding_account_id) return setError('Pick a funding account.')
     setSaving(true); setError('')
 
     const payload = {
@@ -90,6 +103,7 @@ export default function RecurringExpensesModal({ open, onClose, onSaved }) {
       amount: Number(form.amount),
       category: form.category || null,
       entity_id: form.entity_id || null,
+      funding_account_id: form.funding_account_id || null,
       frequency: form.frequency,
       day_of_week: ['weekly', 'biweekly'].includes(form.frequency) ? Number(form.day_of_week) : null,
       day_of_month: ['monthly', 'quarterly', 'annually', 'semimonthly'].includes(form.frequency) ? Number(form.day_of_month) : null,
@@ -256,6 +270,17 @@ export default function RecurringExpensesModal({ open, onClose, onSaved }) {
                   <option value="">—</option>
                   {entities.map(en => <option key={en.id} value={en.id}>{en.name}</option>)}
                 </Select>
+              </Field>
+              <Field label={editing === 'new' ? 'Funding account *' : 'Funding account'}>
+                <Select value={form.funding_account_id} onChange={e => setForm(f => ({ ...f, funding_account_id: e.target.value }))}>
+                  <option value="">— Select account —</option>
+                  {accounts.map(a => <option key={a.id} value={a.id}>{fmtAccountOption(a)}</option>)}
+                </Select>
+                {editing !== 'new' && !form.funding_account_id && (
+                  <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">
+                    No funding account assigned — won't appear in bank breakdowns.
+                  </p>
+                )}
               </Field>
               <Field label="Frequency">
                 <Select value={form.frequency} onChange={e => setForm(f => ({ ...f, frequency: e.target.value }))}>

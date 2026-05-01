@@ -46,6 +46,7 @@ export default function PaymentCalendar() {
 
   // Modal state
   const [showAddIncome, setShowAddIncome] = useState(false)
+  const [editInflowRow, setEditInflowRow] = useState(null) // expected_inflows row for edit, null for add
   const [showAddExpense, setShowAddExpense] = useState(false)
   const [showRecurring, setShowRecurring] = useState(false)
   const [showStartingCash, setShowStartingCash] = useState(false)
@@ -366,8 +367,14 @@ export default function PaymentCalendar() {
       )}
 
       {/* Modals */}
-      <AddIncomeModal open={showAddIncome} onClose={() => setShowAddIncome(false)} onSaved={loadData}
-        defaultDate={defaultDateForModals} defaultEntityId={entityFilter || undefined} />
+      <AddIncomeModal
+        open={showAddIncome || !!editInflowRow}
+        editInflow={editInflowRow}
+        onClose={() => { setShowAddIncome(false); setEditInflowRow(null) }}
+        onSaved={loadData}
+        defaultDate={defaultDateForModals}
+        defaultEntityId={entityFilter || undefined}
+      />
       <AddExpenseModal open={showAddExpense} onClose={() => setShowAddExpense(false)} onSaved={loadData}
         defaultDate={defaultDateForModals} defaultEntityId={entityFilter || undefined} />
       <RecurringExpensesModal open={showRecurring} onClose={() => setShowRecurring(false)} onSaved={loadData} />
@@ -380,6 +387,7 @@ export default function PaymentCalendar() {
         onChange={loadData}
         onOpenAdjustLoan={(ev) => { setChipDetail(null); setAdjustLoanEvent(ev) }}
         onOpenManageRecurring={() => { setChipDetail(null); setShowRecurring(true) }}
+        onOpenEditInflow={(row) => { setChipDetail(null); setEditInflowRow(row) }}
         onSuccess={showToast}
       />
 
