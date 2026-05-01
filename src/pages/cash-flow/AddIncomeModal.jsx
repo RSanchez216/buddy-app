@@ -11,12 +11,18 @@ const emptyRow = (defaults = {}) => ({
   source: '',
   amount: '',
   entity_id: defaults.entity_id || '',
+  funding_account_id: '',
   description: '',
 })
+
+function fmtAccountOption(a) {
+  return a.bank_name ? `${a.name} (${a.bank_name})` : a.name
+}
 
 export default function AddIncomeModal({ open, onClose, onSaved, defaultDate, defaultEntityId }) {
   const { user } = useAuth()
   const [entities, setEntities] = useState([])
+  const [accounts, setAccounts] = useState([])
   const [rows, setRows] = useState([emptyRow({ expected_date: defaultDate, entity_id: defaultEntityId })])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -25,8 +31,13 @@ export default function AddIncomeModal({ open, onClose, onSaved, defaultDate, de
     if (!open) return
     setRows([emptyRow({ expected_date: defaultDate, entity_id: defaultEntityId })])
     setError('')
-    supabase.from('loan_entities').select('id, name').eq('is_active', true).order('name')
-      .then(({ data }) => setEntities(data || []))
+    Promise.all([
+      supabase.from('loan_entities').select('id, name').eq('is_active', true).order('name'),
+      supabase.from('funding_accounts').select('id, name, bank_name').eq('is_active', true).order('name'),
+    ]).then(([e, fa]) => {
+      setEntities(e.data || [])
+      setAccounts(fa.data || [])
+    })
   }, [open, defaultDate, defaultEntityId])
 
   function update(i, field, val) {
@@ -40,13 +51,18 @@ export default function AddIncomeModal({ open, onClose, onSaved, defaultDate, de
 
   async function handleSave() {
     const valid = rows.filter(r => r.expected_date && r.source.trim() && Number(r.amount) > 0)
-    if (!valid.length) return setError('Add at least one row with date, source, and amount')
+    if (!valid.length) return setError('Add at least one row with date, source, and amount.')
+    // Funding account is required for new rows.
+    const missingAccount = valid.find(r => !r.funding_account_id)
+    if (missingAccount) return setError('Pick a funding account for every row.')
+
     setSaving(true); setError('')
     const payload = valid.map(r => ({
       expected_date: r.expected_date,
       source: r.source.trim(),
       amount: Number(r.amount),
       entity_id: r.entity_id || null,
+      funding_account_id: r.funding_account_id || null,
       description: r.description.trim() || null,
       status: 'pending',
       created_by: user?.id || null,
@@ -64,18 +80,29 @@ export default function AddIncomeModal({ open, onClose, onSaved, defaultDate, de
         {error && <div className={S.errorBox}>{error}</div>}
         <div className="space-y-2">
           {rows.map((r, i) => (
-            <div key={i} className="grid grid-cols-12 gap-2 items-end p-2 rounded-xl bg-gray-50 dark:bg-white/[0.02]">
+            <div
+              key={i}
+              className="grid gap-2 items-end p-2 rounded-xl bg-gray-50 dark:bg-white/[0.02]"
+              style={{ gridTemplateColumns: 'repeat(14, minmax(0, 1fr))' }}
+            >
               <div className="col-span-2">
                 {i === 0 && <label className={S.label}>Date *</label>}
                 <input type="date" className={S.input} value={r.expected_date} onChange={e => update(i, 'expected_date', e.target.value)} />
               </div>
-              <div className="col-span-3">
+              <div className="col-span-2">
                 {i === 0 && <label className={S.label}>Source *</label>}
                 <input className={S.input} placeholder="e.g. Triumph factoring" value={r.source} onChange={e => update(i, 'source', e.target.value)} />
               </div>
               <div className="col-span-2">
                 {i === 0 && <label className={S.label}>Amount ($) *</label>}
                 <input type="number" step="0.01" className={S.input} value={r.amount} onChange={e => update(i, 'amount', e.target.value)} />
+              </div>
+              <div className="col-span-3">
+                {i === 0 && <label className={S.label}>Funding account *</label>}
+                <Select value={r.funding_account_id} onChange={e => update(i, 'funding_account_id', e.target.value)}>
+                  <option value="">— Select account —</option>
+                  {accounts.map(a => <option key={a.id} value={a.id}>{fmtAccountOption(a)}</option>)}
+                </Select>
               </div>
               <div className="col-span-2">
                 {i === 0 && <label className={S.label}>Entity</label>}

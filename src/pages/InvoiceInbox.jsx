@@ -8,6 +8,7 @@ import StatusBadge from '../components/StatusBadge'
 import DeptBadge from '../components/DeptBadge'
 import MultiSelect from '../components/MultiSelect'
 import ComboBox from '../components/ComboBox'
+import Select from '../components/Select'
 import { buildDeptOptions } from '../lib/deptUtils'
 import AttachmentsPopover from '../components/AttachmentsPopover'
 
@@ -17,6 +18,7 @@ const emptyForm = {
   billing_period_start: '', billing_period_end: '',
   unit_number: '',
   department_ids: [], notes: '',
+  funding_account_id: '',
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -52,6 +54,7 @@ export default function InvoiceInbox() {
   const [invoices, setInvoices] = useState([])
   const [vendors, setVendors] = useState([])
   const [departments, setDepartments] = useState([])
+  const [fundingAccounts, setFundingAccounts] = useState([])
   const [loading, setLoading] = useState(true)
   const [filterStatus, setFilterStatus] = useState('')
   const [filterDepts, setFilterDepts] = useState([])
@@ -99,17 +102,19 @@ export default function InvoiceInbox() {
   useEffect(() => { loadData() }, [])
 
   async function loadData() {
-    const [invRes, vendRes, deptRes] = await Promise.all([
+    const [invRes, vendRes, deptRes, faRes] = await Promise.all([
       supabase.from('invoices')
         .select('*, vendors(name, category), departments(name), invoice_departments(id, department_id, status, reviewed_at, departments(name)), invoice_attachments(id, file_url, file_name)')
         .is('deleted_at', null)   // exclude soft-deleted
         .order('created_at', { ascending: false }),
       supabase.from('vendors').select('id, name, category, department_id, department_ids').eq('is_active', true).order('name'),
       supabase.from('departments').select('*').eq('is_active', true).order('name'),
+      supabase.from('funding_accounts').select('id, name, bank_name').eq('is_active', true).order('name'),
     ])
     setInvoices(invRes.data || [])
     setVendors(vendRes.data || [])
     setDepartments(deptRes.data || [])
+    setFundingAccounts(faRes.data || [])
     setLoading(false)
   }
 
@@ -199,6 +204,7 @@ export default function InvoiceInbox() {
       unit_number: inv.unit_number || '',
       department_ids: inv.invoice_departments?.map(d => d.department_id) || (inv.department_id ? [inv.department_id] : []),
       notes: inv.notes || '',
+      funding_account_id: inv.funding_account_id || '',
     })
     setNewFiles([])
     setExistingAttachments(inv.invoice_attachments || [])
@@ -245,6 +251,8 @@ export default function InvoiceInbox() {
     if (!form.vendor_id) return setError('Vendor is required')
     if (!form.amount || Number(form.amount) <= 0) return setError('Valid amount is required')
     if (!form.department_ids.length) return setError('At least one department is required')
+    // Required for new rows; existing rows can be saved without it (warning shown).
+    if (!editInvoice && !form.funding_account_id) return setError('Pick a funding account.')
     setSaving(true); setError('')
 
     const payload = {
@@ -259,6 +267,7 @@ export default function InvoiceInbox() {
       department_ids: form.department_ids,
       unit_number: form.unit_number?.trim() || null,
       notes: form.notes || null,
+      funding_account_id: form.funding_account_id || null,
     }
 
     if (editInvoice) {
@@ -823,6 +832,23 @@ export default function InvoiceInbox() {
             <MultiSelect options={deptOptions} value={form.department_ids}
               onChange={ids => setForm(f => ({ ...f, department_ids: ids }))}
               placeholder="Select department(s)…" />
+          </div>
+
+          <div>
+            <label className={S.label}>Funding Account {!editInvoice && '*'}</label>
+            <Select value={form.funding_account_id} onChange={e => setForm(f => ({ ...f, funding_account_id: e.target.value }))}>
+              <option value="">— Select account —</option>
+              {fundingAccounts.map(a => (
+                <option key={a.id} value={a.id}>
+                  {a.bank_name ? `${a.name} (${a.bank_name})` : a.name}
+                </option>
+              ))}
+            </Select>
+            {editInvoice && !form.funding_account_id && (
+              <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">
+                No funding account assigned — won't appear in bank breakdowns.
+              </p>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-4">

@@ -7,6 +7,10 @@ import Select from '../../components/Select'
 import {
   CF, addDays, endOfMonthGrid, fmtRange, startOfMonthGrid, startOfWeek, toISO, isPaidStatus,
 } from './calendarUtils'
+import {
+  computeBalanceProjections, bucketByDayAndBank,
+  sumByBankInRange, worstShortfallInRange, worstShortfallOnOrBefore, anyShortfallOnDay,
+} from './balanceCalc'
 import WeekView from './WeekView'
 import MonthView from './MonthView'
 import RightRail from './RightRail'
@@ -19,6 +23,7 @@ import StartingCashModal from './StartingCashModal'
 import ChipDetailPanel from './ChipDetailPanel'
 
 const SHOW_PAID_KEY = 'cf-show-paid'
+const GROUP_BY_BANK_KEY = 'cf-group-by-bank'
 
 export default function PaymentCalendar() {
   const { canEdit } = useAuth()
@@ -40,7 +45,16 @@ export default function PaymentCalendar() {
   const [paidFilter, setPaidFilter] = useState('all')
   useEffect(() => { if (!showPaid) setPaidFilter('all') }, [showPaid])
 
+  // Group-by-bank toggle — persists in localStorage
+  const [groupByBank, setGroupByBank] = useState(() => {
+    try { return localStorage.getItem(GROUP_BY_BANK_KEY) === 'true' } catch { return false }
+  })
+  useEffect(() => {
+    try { localStorage.setItem(GROUP_BY_BANK_KEY, String(groupByBank)) } catch (e) { /* noop */ }
+  }, [groupByBank])
+
   const [events, setEvents] = useState([])
+  const [accounts, setAccounts] = useState([])
   const [startingCashByWeek, setStartingCashByWeek] = useState({}) // iso(monday) -> number
   const [loading, setLoading] = useState(true)
 
@@ -93,12 +107,17 @@ export default function PaymentCalendar() {
       .lte('event_date', endISO)
     if (entityFilter) query = query.eq('entity_id', entityFilter)
 
-    const [evRes, cashRes] = await Promise.all([
+    const [evRes, cashRes, accRes] = await Promise.all([
       query,
       supabase.from('cash_positions').select('week_start_date, starting_cash').gte('week_start_date', startISO).lte('week_start_date', endISO),
+      supabase.from('funding_accounts')
+        .select('id, name, bank_name, last_four, current_balance, balance_as_of_date, is_active')
+        .eq('is_active', true)
+        .order('name'),
     ])
 
     setEvents(evRes.data || [])
+    setAccounts(accRes.data || [])
 
     const cashMap = {}
     for (const c of (cashRes.data || [])) cashMap[c.week_start_date] = Number(c.starting_cash || 0)
@@ -133,6 +152,22 @@ export default function PaymentCalendar() {
     return map
   }, [visibleEvents])
 
+  // Per-day, per-bank totals + running-balance projections.
+  // Projections always use the FULL event set (not filtered) so that paid
+  // events keep contributing to future cash flow even when they're hidden.
+  const dayBuckets = useMemo(() => bucketByDayAndBank(visibleEvents), [visibleEvents])
+
+  const viewEndISO = useMemo(() => toISO(fetchRange.end), [fetchRange.end])
+  const projections = useMemo(
+    () => computeBalanceProjections(accounts, events, viewEndISO),
+    [accounts, events, viewEndISO]
+  )
+
+  const accountsMissingBalance = useMemo(
+    () => accounts.filter(a => a.current_balance == null || !a.balance_as_of_date).length,
+    [accounts]
+  )
+
   // Current-week sums for the right rail.
   // Pending and settled are split — pending feeds the forward-looking Net /
   // projected end-of-week, settled feeds the new "Paid this week" lines.
@@ -154,6 +189,20 @@ export default function PaymentCalendar() {
     }
     return { inPending, outPending, inPaid, outPaid }
   }, [events, weekStart])
+
+  // Per-bank net for the visible week — feeds the right-rail BY BANK section.
+  const weekByBank = useMemo(() => {
+    const wsISO = toISO(weekStart)
+    const weISO = toISO(addDays(weekStart, 6))
+    return sumByBankInRange(visibleEvents, accounts, wsISO, weISO)
+  }, [visibleEvents, accounts, weekStart])
+
+  // Worst-affected account in the visible week (negative balance forecast).
+  const weekShortfall = useMemo(() => {
+    const wsISO = toISO(weekStart)
+    const weISO = toISO(addDays(weekStart, 6))
+    return worstShortfallInRange(projections.timelines, wsISO, weISO)
+  }, [projections, weekStart])
 
   // 4-week outlook — same split (pending vs paid) per week
   const outlookWeeks = useMemo(() => {
@@ -261,6 +310,19 @@ export default function PaymentCalendar() {
             Show paid
           </label>
 
+          {/* Group by bank toggle */}
+          <label className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border cursor-pointer transition-colors text-sm ${
+            groupByBank
+              ? 'bg-orange-50 dark:bg-orange-500/10 border-orange-300 dark:border-orange-500/30 text-orange-700 dark:text-orange-400'
+              : 'bg-white dark:bg-[#0d0d1f] border-gray-200 dark:border-white/5 text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200'
+          }`}>
+            <input type="checkbox" checked={groupByBank} onChange={e => setGroupByBank(e.target.checked)} className="rounded" />
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
+            Group by bank
+          </label>
+
           {/* Date nav */}
           <div className="flex items-center gap-1 bg-white dark:bg-[#0d0d1f] border border-gray-200 dark:border-white/5 rounded-xl">
             <button onClick={() => nav(-1)} className="px-2 py-1.5 text-gray-500 hover:text-orange-600 dark:hover:text-orange-400" title={view === 'week' ? 'Previous week' : 'Previous month'}>‹</button>
@@ -326,10 +388,13 @@ export default function PaymentCalendar() {
       ) : view === 'week' ? (
         <>
           {/* Main grid + right rail */}
-          <div className="grid gap-4" style={{ gridTemplateColumns: '1fr 220px' }}>
+          <div className="grid gap-4" style={{ gridTemplateColumns: '1fr 240px' }}>
             <WeekView
               weekStart={weekStart}
               eventsByDate={eventsByDate}
+              dayBuckets={dayBuckets}
+              groupByBank={groupByBank}
+              projectionTimelines={projections.timelines}
               onChipClick={handleChipClick}
               onChipDrop={handleChipDrop}
             />
@@ -341,6 +406,9 @@ export default function PaymentCalendar() {
               paidOutSum={weekSums.outPaid}
               receivedInSum={weekSums.inPaid}
               showPaid={showPaid}
+              byBank={weekByBank}
+              shortfall={weekShortfall}
+              accountsMissingBalance={accountsMissingBalance}
               onEditCash={() => setShowStartingCash(true)}
             />
           </div>
@@ -360,6 +428,7 @@ export default function PaymentCalendar() {
         <MonthView
           monthAnchor={anchor}
           eventsByDate={eventsByDate}
+          shortfallDays={projections.shortfallDays}
           showPaid={showPaid}
           onDayClick={(d) => { setView('week'); setAnchor(d) }}
         />
