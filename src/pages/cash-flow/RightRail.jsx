@@ -1,7 +1,10 @@
-import { fmtMoney } from './calendarUtils'
-import { CF } from './calendarUtils'
+import { fmtMoney, fmtMoneyShort } from './calendarUtils'
 
-export default function RightRail({ weekStart, startingCash, inflowSum, outflowSum, paidOutSum, receivedInSum, showPaid, onEditCash }) {
+export default function RightRail({
+  weekStart, startingCash, inflowSum, outflowSum, paidOutSum, receivedInSum,
+  showPaid, byBank = [], shortfall, accountsMissingBalance = 0,
+  onEditCash,
+}) {
   // Net + projected always reflect *forward-looking* cash only — paid/received items
   // already moved through the bank account, so they don't affect the projection.
   const net = (inflowSum || 0) - (outflowSum || 0)
@@ -57,6 +60,44 @@ export default function RightRail({ weekStart, startingCash, inflowSum, outflowS
           />
         </div>
 
+        {/* By bank — net per funding account for the visible week */}
+        {byBank.length > 0 && (
+          <div className="border-t border-gray-100 dark:border-white/5 pt-3 space-y-1.5">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500">By bank</p>
+            {byBank.map(b => (
+              <div key={b.accountId || '__unassigned__'} className="flex items-baseline justify-between gap-2 text-xs">
+                <span className="text-gray-500 dark:text-slate-400 truncate">{b.name}</span>
+                <span className={`font-mono font-semibold ${b.net >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                  {b.net >= 0 ? '+' : '−'}{fmtMoneyShort(Math.abs(b.net))}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {shortfall && (
+          <div className="rounded-xl p-3 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 text-xs">
+            <p className="font-semibold text-red-700 dark:text-red-400 flex items-center gap-1.5">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4c-.77-1.33-2.69-1.33-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z" />
+              </svg>
+              Shortfall this week
+            </p>
+            <p className="text-red-700 dark:text-red-400 mt-1">
+              <span className="font-semibold">{shortfall.account.name}</span>{' '}
+              <span className="font-mono">−{fmtMoneyShort(Math.abs(shortfall.lowest))}</span>{' '}
+              <span className="text-red-600/80 dark:text-red-400/80">by {shortDay(shortfall.firstNegDate)}</span>
+            </p>
+          </div>
+        )}
+
+        {accountsMissingBalance > 0 && (
+          <div className="rounded-xl p-2.5 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 text-[11px] text-amber-700 dark:text-amber-400">
+            ℹ {accountsMissingBalance} account{accountsMissingBalance === 1 ? '' : 's'} missing balance — projection partial.
+            Set balances in Settings → Funding & Sources.
+          </div>
+        )}
+
         <div className={`rounded-xl p-3 ${
           projPositive
             ? 'bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20'
@@ -108,4 +149,11 @@ function Legend({ swatchClass, textClass, label }) {
       <span className={`${textClass} font-medium`}>{label}</span>
     </li>
   )
+}
+
+function shortDay(iso) {
+  if (!iso) return ''
+  const d = new Date(`${iso}T00:00:00`)
+  if (Number.isNaN(d.getTime())) return iso
+  return d.toLocaleDateString('en-US', { weekday: 'short' })
 }

@@ -215,7 +215,7 @@ export default function ChipDetailPanel({ event, canEdit = true, onClose, onChan
             <div className="flex items-center justify-center h-32"><div className="animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500" /></div>
           ) : details.kind === 'inflow' ? (
             <>
-              <InflowDetail row={details.row} editing={editing} form={form} setForm={setForm} />
+              <InflowDetail row={details.row} editing={editing} form={form} setForm={setForm} bank={event.funding_account_name} />
               {receivingMode === 'form' && (
                 <div className="mt-4 p-3 rounded-xl bg-emerald-50/60 dark:bg-emerald-500/5 border border-emerald-200 dark:border-emerald-500/20 space-y-3">
                   <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 uppercase tracking-wide">Mark as received</p>
@@ -231,11 +231,11 @@ export default function ChipDetailPanel({ event, canEdit = true, onClose, onChan
               )}
             </>
           ) : details.kind === 'custom_outflow' ? (
-            <CustomDetail row={details.row} editing={editing} form={form} setForm={setForm} onOpenManageRecurring={onOpenManageRecurring} onOpenConvert={() => setShowConvert(true)} />
+            <CustomDetail row={details.row} editing={editing} form={form} setForm={setForm} bank={event.funding_account_name} onOpenManageRecurring={onOpenManageRecurring} onOpenConvert={() => setShowConvert(true)} />
           ) : details.kind === 'invoice' ? (
-            <InvoiceDetail row={details.row} editing={editing} form={form} setForm={setForm} />
+            <InvoiceDetail row={details.row} editing={editing} form={form} setForm={setForm} bank={event.funding_account_name} />
           ) : details.kind === 'loan_payment' ? (
-            <LoanPaymentDetail row={details.row} />
+            <LoanPaymentDetail row={details.row} bank={event.funding_account_name} />
           ) : null}
         </div>
 
@@ -380,7 +380,7 @@ export default function ChipDetailPanel({ event, canEdit = true, onClose, onChan
 
 // ── Sub-detail views ───────────────────────────────────────────────────────
 
-function InflowDetail({ row, editing, form, setForm }) {
+function InflowDetail({ row, editing, form, setForm, bank }) {
   if (!row) return <p className="text-gray-500 text-sm">Not found.</p>
   if (editing) {
     return (
@@ -397,6 +397,7 @@ function InflowDetail({ row, editing, form, setForm }) {
       <Row label="Status" value={<StatusPill status={row.status} />} />
       <Row label="Source" value={row.source || '—'} />
       <Row label="Entity" value={row.entity?.name || '—'} />
+      <Row label="Funding account" value={bank || 'Unassigned'} muted={!bank} />
       <Row label="Description" value={row.description || '—'} />
       {row.received_date && <Row label="Received" value={`${fmtDate(row.received_date)} · ${fmtMoney(row.received_amount)}`} />}
       <Row label="Source ref" value="expected_inflows" mono muted />
@@ -404,7 +405,7 @@ function InflowDetail({ row, editing, form, setForm }) {
   )
 }
 
-function CustomDetail({ row, editing, form, setForm, onOpenManageRecurring, onOpenConvert }) {
+function CustomDetail({ row, editing, form, setForm, bank, onOpenManageRecurring, onOpenConvert }) {
   if (!row) return <p className="text-gray-500 text-sm">Not found.</p>
   if (editing) {
     return (
@@ -425,6 +426,7 @@ function CustomDetail({ row, editing, form, setForm, onOpenManageRecurring, onOp
       <Row label="Description" value={row.description || '—'} />
       <Row label="Category" value={row.category || '—'} />
       <Row label="Entity" value={row.entity?.name || '—'} />
+      <Row label="Funding account" value={bank || 'Unassigned'} muted={!bank} />
       <Row label="Original due" value={fmtDate(row.due_date)} />
       <Row label="Planned pay" value={row.planned_pay_date ? fmtDate(row.planned_pay_date) : 'Same as due'} muted={!row.planned_pay_date} />
       <Row label="Notes" value={row.notes || '—'} />
@@ -460,7 +462,7 @@ function CustomDetail({ row, editing, form, setForm, onOpenManageRecurring, onOp
   )
 }
 
-function InvoiceDetail({ row, editing, form, setForm }) {
+function InvoiceDetail({ row, editing, form, setForm, bank }) {
   if (!row) return <p className="text-gray-500 text-sm">Not found.</p>
   if (editing) {
     return (
@@ -476,6 +478,7 @@ function InvoiceDetail({ row, editing, form, setForm }) {
       <Row label="Status" value={<StatusPill status={row.status} />} />
       <Row label="Invoice #" value={row.invoice_number || '—'} mono />
       <Row label="Vendor" value={row.vendor?.name || '—'} />
+      <Row label="Funding account" value={bank || 'Unassigned'} muted={!bank} />
       <Row label="Original due" value={fmtDate(row.due_date)} />
       <Row label="Planned pay" value={row.planned_pay_date ? fmtDate(row.planned_pay_date) : 'Same as due'} muted={!row.planned_pay_date} />
       <Row label="Notes" value={row.notes || '—'} />
@@ -484,7 +487,7 @@ function InvoiceDetail({ row, editing, form, setForm }) {
   )
 }
 
-function LoanPaymentDetail({ row }) {
+function LoanPaymentDetail({ row, bank }) {
   if (!row) return <p className="text-gray-500 text-sm">Not found.</p>
   return (
     <div className="space-y-2 text-sm">
@@ -492,6 +495,7 @@ function LoanPaymentDetail({ row }) {
       <Row label="Lender" value={row.loan?.lender?.name || '—'} />
       <Row label="Loan ID" value={row.loan?.loan_id_external || '—'} mono />
       <Row label="Contract #" value={row.loan?.contract_number || '—'} mono />
+      <Row label="Funding account" value={bank || 'Unassigned'} muted={!bank} />
       <Row label="Scheduled amount" value={fmtMoney(row.scheduled_amount)} mono bold />
       <Row label="Original due date" value={fmtDate(row.due_date)} />
       <Row label="Planned pay date" value={row.planned_pay_date ? fmtDate(row.planned_pay_date) : 'Same as due date'} muted={!row.planned_pay_date} />

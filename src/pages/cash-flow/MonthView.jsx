@@ -2,10 +2,11 @@ import {
   startOfMonth, endOfMonth, startOfMonthGrid, endOfMonthGrid,
   addDays, isToday, toISO, fmtMoneyShort, isPaidStatus,
 } from './calendarUtils'
+import { anyShortfallOnDay } from './balanceCalc'
 
 const WEEK_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
-export default function MonthView({ monthAnchor, eventsByDate, showPaid, onDayClick }) {
+export default function MonthView({ monthAnchor, eventsByDate, shortfallDays, showPaid, onDayClick }) {
   const monthStart = startOfMonth(monthAnchor)
   const monthEnd = endOfMonth(monthAnchor)
   const gridStart = startOfMonthGrid(monthAnchor)
@@ -48,19 +49,30 @@ export default function MonthView({ monthAnchor, eventsByDate, showPaid, onDayCl
           const today = isToday(day)
           const settledTotal = paidIn + paidOut
 
+          const hasShortfall = inMonth && shortfallDays && anyShortfallOnDay(shortfallDays, iso)
+
           return (
             <button
               key={iso}
               onClick={() => onDayClick?.(day)}
-              className={`flex flex-col items-start text-left rounded-xl border transition-all p-2 ${
+              title={hasShortfall ? 'Projected balance goes negative on this day. Click to view details.' : undefined}
+              className={`relative flex flex-col items-start text-left rounded-xl border transition-all p-2 ${
                 inMonth
                   ? 'bg-white dark:bg-[#0d0d1f] border-gray-200 dark:border-white/5 hover:border-orange-300 dark:hover:border-orange-500/30'
                   : 'bg-gray-50 dark:bg-white/[0.02] border-gray-100 dark:border-white/5 opacity-60'
               } ${today ? 'border-amber-300 dark:border-amber-500/40 bg-amber-50/40 dark:bg-amber-500/5' : ''}`}
             >
-              <span className={`text-sm font-semibold ${today ? 'text-amber-700 dark:text-amber-300' : inMonth ? 'text-gray-700 dark:text-slate-300' : 'text-gray-400 dark:text-slate-600'}`}>
-                {day.getDate()}
-              </span>
+              <div className="w-full flex items-start justify-between">
+                <span className={`text-sm font-semibold ${today ? 'text-amber-700 dark:text-amber-300' : inMonth ? 'text-gray-700 dark:text-slate-300' : 'text-gray-400 dark:text-slate-600'}`}>
+                  {day.getDate()}
+                </span>
+                {hasShortfall && (
+                  <span
+                    className="w-2 h-2 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.5)]"
+                    aria-label="Projected shortfall"
+                  />
+                )}
+              </div>
               {events.length > 0 && (
                 <div className="mt-1 space-y-0.5 w-full">
                   <div className="text-[10px] text-gray-500 dark:text-slate-500">{events.length} event{events.length === 1 ? '' : 's'}</div>
