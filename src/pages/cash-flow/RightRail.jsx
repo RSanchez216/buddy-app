@@ -63,21 +63,6 @@ export default function RightRail({
           />
         )}
       </div>
-
-      {/* Color legend */}
-      <div className="bg-white dark:bg-[#0d0d1f] border border-gray-200 dark:border-white/5 rounded-2xl p-4">
-        <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500 mb-3">Legend</p>
-        <ul className="space-y-2 text-xs">
-          <Legend swatchClass="bg-[#EAF3DE] dark:bg-[#1d2e0e]" textClass="text-[#27500A] dark:text-emerald-300" label="Inflow" />
-          <Legend swatchClass="bg-[#FAEEDA] dark:bg-[#3a2710]" textClass="text-[#633806] dark:text-orange-300" label="Loan payment (locked)" />
-          <Legend swatchClass="bg-[#E6F1FB] dark:bg-[#0f2233]" textClass="text-[#0C447C] dark:text-sky-300" label="AP bill" />
-          <Legend swatchClass="bg-[#FCEBEB] dark:bg-[#371616]" textClass="text-[#791F1F] dark:text-red-300" label="Custom expense" />
-          <li className="flex items-center gap-2 pt-1">
-            <span className="inline-block w-4 h-4 rounded bg-[#FCEBEB] dark:bg-[#371616]" style={{ borderLeft: '2px dashed #E24B4A' }} />
-            <span className="text-gray-600 dark:text-slate-400">Recurring (dashed left)</span>
-          </li>
-        </ul>
-      </div>
     </aside>
   )
 }
@@ -337,15 +322,6 @@ function Row({ label, value, mono, color, bold, action }) {
         {value}
       </span>
     </div>
-  )
-}
-
-function Legend({ swatchClass, textClass, label }) {
-  return (
-    <li className="flex items-center gap-2">
-      <span className={`inline-block w-4 h-4 rounded ${swatchClass}`} />
-      <span className={`${textClass} font-medium`}>{label}</span>
-    </li>
   )
 }
 

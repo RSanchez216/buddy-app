@@ -518,6 +518,8 @@ export default function PaymentCalendar() {
         />
       )}
 
+      {!loading && <CalendarLegend />}
+
       {/* Modals */}
       <AddIncomeModal
         open={showAddIncome || !!editInflowRow}
@@ -566,6 +568,35 @@ export default function PaymentCalendar() {
         </div>
       )}
     </div>
+  )
+}
+
+// Compact horizontal legend rendered below the calendar so it never
+// competes for vertical space with the right rail.
+function CalendarLegend() {
+  return (
+    <div className="bg-white dark:bg-[#0d0d1f] border border-gray-200 dark:border-white/5 rounded-2xl px-4 py-2.5">
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs">
+        <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500">Legend</span>
+        <LegendItem swatchClass="bg-[#EAF3DE] dark:bg-[#1d2e0e]" textClass="text-[#27500A] dark:text-emerald-300" label="Inflow" />
+        <LegendItem swatchClass="bg-[#FAEEDA] dark:bg-[#3a2710]" textClass="text-[#633806] dark:text-orange-300" label="Loan payment (locked)" />
+        <LegendItem swatchClass="bg-[#E6F1FB] dark:bg-[#0f2233]" textClass="text-[#0C447C] dark:text-sky-300" label="AP bill" />
+        <LegendItem swatchClass="bg-[#FCEBEB] dark:bg-[#371616]" textClass="text-[#791F1F] dark:text-red-300" label="Custom expense" />
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block w-3.5 h-3.5 rounded bg-[#FCEBEB] dark:bg-[#371616]" style={{ borderLeft: '2px dashed #E24B4A' }} />
+          <span className="text-gray-600 dark:text-slate-400 font-medium">Recurring (dashed left)</span>
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function LegendItem({ swatchClass, textClass, label }) {
+  return (
+    <span className="flex items-center gap-1.5">
+      <span className={`inline-block w-3.5 h-3.5 rounded ${swatchClass}`} />
+      <span className={`${textClass} font-medium`}>{label}</span>
+    </span>
   )
 }
 
