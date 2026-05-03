@@ -1,9 +1,9 @@
 import { useState } from 'react'
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
-import { useTheme } from '../contexts/ThemeContext'
 import { BuddyLogoSmall } from '../components/BuddyLogo'
 import NotificationBell from './NotificationBell'
+import UserMenu from './UserMenu'
 
 // ── Icons ──────────────────────────────────────────────────────────────────
 const Icons = {
@@ -97,22 +97,13 @@ function NavSection({ id, label, badge, children, defaultOpen = true, withDivide
   )
 }
 
-// ── Role config ────────────────────────────────────────────────────────────
-const roleLabel = { admin: 'Admin', manager: 'Manager', viewer: 'Viewer' }
-const roleColor = {
-  admin: 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20',
-  manager: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20',
-  viewer: 'bg-gray-100 dark:bg-slate-700/50 text-gray-500 dark:text-slate-400 border border-gray-200 dark:border-slate-600/20',
-}
-
 // ── Layout ─────────────────────────────────────────────────────────────────
+// User identity / role / theme / sign-out / notifications were previously
+// pinned to the bottom of the sidebar — they now live in the global header
+// (right side: bell + UserMenu). Sidebar is purely navigation.
 export default function Layout() {
-  const { profile, signOut, isAdmin } = useAuth()
-  const { theme, toggleTheme } = useTheme()
-  const navigate = useNavigate()
+  const { isAdmin } = useAuth()
   const [sidebarOpen, setSidebarOpen] = useState(false)
-
-  async function handleSignOut() { await signOut(); navigate('/login') }
 
   const close = () => setSidebarOpen(false)
 
@@ -189,55 +180,32 @@ export default function Layout() {
           </div>
         </nav>
 
-        <div className="mx-4 border-t border-gray-100 dark:border-white/5" />
-
-        {/* Theme toggle */}
-        <div className="px-3 py-2">
-          <button onClick={toggleTheme}
-            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 hover:text-gray-900 dark:hover:text-slate-200 transition-all">
-            <span className="text-gray-400 dark:text-slate-500">{theme === 'dark' ? Icons.sun : Icons.moon}</span>
-            {theme === 'dark' ? 'Light mode' : 'Dark mode'}
-            <span className="ml-auto">
-              <span className={`inline-flex w-8 h-4 rounded-full transition-colors relative ${theme === 'dark' ? 'bg-cyan-500' : 'bg-gray-300'}`}>
-                <span className={`absolute top-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform ${theme === 'dark' ? 'translate-x-4' : 'translate-x-0.5'}`} />
-              </span>
-            </span>
-          </button>
-        </div>
-
-        {/* User */}
-        <div className="px-4 pb-4">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-cyan-500 to-fuchsia-500 flex items-center justify-center flex-shrink-0 text-white font-bold text-xs">
-              {profile?.full_name?.charAt(0)?.toUpperCase() || '?'}
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-gray-900 dark:text-slate-200 truncate">{profile?.full_name || 'User'}</p>
-              <p className="text-xs text-gray-400 dark:text-slate-500 truncate">{profile?.departments?.name || ''}</p>
-            </div>
-            <NotificationBell />
-          </div>
-          <div className="flex items-center justify-between">
-            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${roleColor[profile?.role] || roleColor.viewer}`}>
-              {roleLabel[profile?.role] || 'Viewer'}
-            </span>
-            <button onClick={handleSignOut} className="text-xs text-gray-400 dark:text-slate-600 hover:text-red-500 dark:hover:text-red-400 transition-colors">
-              Sign out
-            </button>
-          </div>
-        </div>
       </aside>
 
-      {/* Main */}
+      {/* Main column: global header (sticky) + page outlet */}
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="bg-white dark:bg-[#0d0d1f] border-b border-gray-200 dark:border-white/5 px-4 py-3 flex items-center gap-3 lg:hidden">
-          <button onClick={() => setSidebarOpen(true)} className="text-gray-400 dark:text-slate-400 hover:text-gray-700 dark:hover:text-white transition-colors">
+        <header className="sticky top-0 z-20 bg-white/90 dark:bg-[#0d0d1f]/90 backdrop-blur border-b border-gray-200 dark:border-white/5 px-4 h-12 flex items-center gap-3">
+          {/* Mobile: hamburger + brand. Desktop: brand hidden, breadcrumb slot lives here. */}
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="lg:hidden text-gray-400 dark:text-slate-400 hover:text-gray-700 dark:hover:text-white transition-colors"
+            title="Open menu"
+          >
             {Icons.menu}
           </button>
-          <BuddyLogoSmall className="w-6 h-6" />
-          <span className="font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-500 to-fuchsia-500 text-sm">BUDDY</span>
-          <div className="ml-auto">
+          <div className="lg:hidden flex items-center gap-2">
+            <BuddyLogoSmall className="w-6 h-6" />
+            <span className="font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-500 to-fuchsia-500 text-sm">BUDDY</span>
+          </div>
+
+          {/* Left side breadcrumb / page-title slot — empty for now, page
+              components can fill it via a portal in a future PR. */}
+          <div className="flex-1" />
+
+          {/* Right cluster: bell + user menu */}
+          <div className="flex items-center gap-1">
             <NotificationBell />
+            <UserMenu />
           </div>
         </header>
 

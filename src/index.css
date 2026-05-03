@@ -54,3 +54,20 @@ input:-webkit-autofill:focus {
   body { background: white !important; color: black !important; }
   aside { display: none !important; }
 }
+
+/* Tippy "buddy-naked" theme — used by the @-mention popup. The Tiptap
+   suggestion plugin renders MentionList inside a .tippy-box, but we want
+   MentionList to control the entire visual surface (matching the rest
+   of BUDDY's popovers). Strip Tippy's chrome here. */
+.tippy-box[data-theme~='buddy-naked'] {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+}
+.tippy-box[data-theme~='buddy-naked'] > .tippy-content {
+  padding: 0;
+}
+.tippy-box[data-theme~='buddy-naked'] > .tippy-arrow {
+  display: none;
+}

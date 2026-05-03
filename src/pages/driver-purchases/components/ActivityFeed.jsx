@@ -73,38 +73,40 @@ export default function ActivityFeed({ purchaseId, focusCommentId }) {
   }, [focusCommentId, loading, items.length])
 
   return (
-    <div className={`${S.card} p-4 flex flex-col gap-3 lg:max-h-[calc(100vh-1rem)]`}>
-      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500 shrink-0">Activity</p>
-
-      {/* Composer pinned to the top of the activity column */}
-      <div className="shrink-0">
-        <CommentComposer purchaseId={purchaseId} onSubmitted={load} />
+    <div className="flex flex-col gap-3 min-w-0">
+      {/* Composer is its own card and stays sticky at the top of the
+          activity column as the page scrolls. The feed below is just a
+          list of items — no enclosing card — so the column visually
+          ends at the last item instead of stretching as one tall box. */}
+      <div className="sticky top-14 z-10">
+        <div className={`${S.card} p-3 space-y-2`}>
+          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500">Activity</p>
+          <CommentComposer purchaseId={purchaseId} onSubmitted={load} />
+        </div>
       </div>
 
-      {/* Feed */}
-      <div className="flex-1 min-h-0 overflow-y-auto -mx-1 px-1">
-        {loading ? (
-          <p className="text-xs text-gray-400 dark:text-slate-600">Loading…</p>
-        ) : items.length === 0 ? (
-          <p className="text-xs text-gray-400 dark:text-slate-600 italic py-2">No activity yet</p>
-        ) : (
-          <ul className="space-y-3">
-            {items.map(it =>
-              it.activity_type === 'comment' ? (
+      {loading ? (
+        <p className="text-xs text-gray-400 dark:text-slate-600 px-2">Loading…</p>
+      ) : items.length === 0 ? (
+        <p className="text-xs text-gray-400 dark:text-slate-600 italic py-2 px-2">No activity yet</p>
+      ) : (
+        <ul className="space-y-2">
+          {items.map(it =>
+            it.activity_type === 'comment' ? (
+              <li key={`c-${it.id}`} className={`${S.card} p-3`}>
                 <CommentItem
-                  key={`c-${it.id}`}
                   row={it}
                   currentUserId={user?.id}
                   isAdmin={isAdmin}
                   highlight={focusCommentId === it.id}
                 />
-              ) : (
-                <EventRow key={`e-${it.id}`} row={it} />
-              ),
-            )}
-          </ul>
-        )}
-      </div>
+              </li>
+            ) : (
+              <EventRow key={`e-${it.id}`} row={it} />
+            ),
+          )}
+        </ul>
+      )}
     </div>
   )
 }

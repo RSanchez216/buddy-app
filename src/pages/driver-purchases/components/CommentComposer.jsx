@@ -8,7 +8,12 @@ import { useAuth } from '../../../contexts/AuthContext'
 import { S } from '../../../lib/styles'
 import { mentionSuggestion } from '../utils/mentionSuggestion'
 import { extractText, extractMentions, isEmptyDoc } from '../utils/comments'
-import 'tippy.js/dist/tippy.css'
+// NOTE: intentionally NOT importing 'tippy.js/dist/tippy.css'. Its
+// default dark .tippy-box theme bled through behind our MentionList
+// card and made the @ popup look like it came from a different design
+// system. MentionList paints its own full surface (light/dark aware),
+// and tippy is configured with theme:'buddy-naked' below to stay
+// visually transparent. See src/index.css for the override.
 
 const BUCKET = 'comment-attachments'
 

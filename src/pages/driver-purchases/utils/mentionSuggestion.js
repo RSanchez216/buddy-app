@@ -36,6 +36,8 @@ export const mentionSuggestion = {
       onStart: props => {
         component = new ReactRenderer(MentionList, { props, editor: props.editor })
         if (!props.clientRect) return
+        // theme:'buddy-naked' strips tippy's default chrome so MentionList
+        // controls the entire visual surface — see src/index.css.
         popup = tippy('body', {
           getReferenceClientRect: props.clientRect,
           appendTo: () => document.body,
@@ -44,6 +46,10 @@ export const mentionSuggestion = {
           interactive: true,
           trigger: 'manual',
           placement: 'bottom-start',
+          theme: 'buddy-naked',
+          arrow: false,
+          offset: [0, 6],
+          maxWidth: 'none',
         })
       },
       onUpdate(props) {

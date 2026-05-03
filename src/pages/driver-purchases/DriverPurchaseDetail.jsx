@@ -265,8 +265,13 @@ export default function DriverPurchaseDetail() {
           />
         </div>
 
-        {/* ── Right column: sticky activity feed ──────────────────────── */}
-        <aside className="lg:sticky lg:top-2 lg:self-start min-h-0">
+        {/* ── Right column: activity feed.
+            Column itself flows with page height — only the composer
+            inside the feed is sticky (top:3.5rem, just below the
+            12-tall global header). Lets the right column visually
+            match the left column's height instead of stretching as
+            one tall empty box. */}
+        <aside className="min-w-0">
           <ActivityFeed purchaseId={id} focusCommentId={focusCommentId} />
         </aside>
       </div>

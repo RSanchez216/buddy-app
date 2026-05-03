@@ -61,7 +61,7 @@ export default function CommentItem({ row, currentUserId, isAdmin, highlight }) 
   // Soft-deleted: muted placeholder, preserve chronology.
   if (row.is_deleted) {
     return (
-      <li className="flex items-start gap-2.5 opacity-70">
+      <div className="flex items-start gap-2.5 opacity-70">
         <Avatar name="" muted />
         <div className="flex-1 min-w-0">
           <p className="text-xs italic text-gray-400 dark:text-slate-500">
@@ -69,16 +69,16 @@ export default function CommentItem({ row, currentUserId, isAdmin, highlight }) 
             {row.deleted_at && <> · {fmtRelative(row.deleted_at)}</>}
           </p>
         </div>
-      </li>
+      </div>
     )
   }
 
   return (
-    <li
+    <div
       ref={wrapperRef}
       data-comment-id={row.id}
       className={`flex items-start gap-2.5 group transition-all ${
-        highlight ? 'rounded-xl ring-2 ring-orange-400/60 -mx-2 px-2 py-1.5' : ''
+        highlight ? 'rounded-xl ring-2 ring-orange-400/60' : ''
       }`}
     >
       <Avatar name={row.created_by_name || row.created_by_email || '?'} />
@@ -168,7 +168,7 @@ export default function CommentItem({ row, currentUserId, isAdmin, highlight }) 
           )}
         </div>
       )}
-    </li>
+    </div>
   )
 }
 
