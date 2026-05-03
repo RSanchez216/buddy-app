@@ -164,11 +164,6 @@ export default function DriverPurchaseDetail() {
           <Fact label="Internal ID" value={driver?.internal_id} mono />
           <Fact label="Phone" value={driver?.phone} mono />
           <Fact label="Email" value={driver?.email} mono={false} />
-          <Fact label="ID type" value={driver?.id_type ? labelizeIdType(driver.id_type) : null} />
-          <Fact label="ID number" value={driver?.id_number} mono />
-          <Fact label="Issuing authority" value={driver?.id_issuing_authority} />
-          <Fact label="ID expiration" value={fmtDateOrDash(driver?.id_expiration)} />
-          <Fact label="Date of birth" value={fmtDateOrDash(driver?.date_of_birth)} />
         </div>
         {driver?.notes && (
           <div className="text-xs text-gray-600 dark:text-slate-400 pt-2 border-t border-gray-100 dark:border-white/5">
@@ -222,7 +217,6 @@ export default function DriverPurchaseDetail() {
           <Fact label="Purchase date" value={fmtDateOrDash(summary.purchase_date)} />
           <Fact label="Title transferred" value={<YesNo on={summary.title_transferred} />} />
           <Fact label="Contract signed" value={fmtDateOrDash(summary.contract_signed_date)} />
-          <Fact label="QB completed" value={<YesNo on={summary.qb_completed} />} />
           <Fact label="Fully paid date" value={fmtDateOrDash(summary.fully_paid_date)} />
         </div>
       </div>
@@ -335,13 +329,3 @@ function YesNo({ on }) {
 }
 
 function fmtDateOrDash(d) { return d ? fmtDate(d) : null }
-
-function labelizeIdType(t) {
-  return ({
-    driver_license: 'Driver License',
-    cdl: 'CDL',
-    passport: 'Passport',
-    state_id: 'State ID',
-    other: 'Other',
-  })[t] || t
-}

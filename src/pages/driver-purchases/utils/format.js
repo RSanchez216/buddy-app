@@ -44,7 +44,6 @@ export function fmtFreq(f) {
 
 export function purchaseTypeLabel(t) {
   if (t === 'cash') return 'Cash'
-  if (t === 'baikozu') return 'Baikozu'
   if (t === 'driver_bank_loan') return 'Driver Bank Loan'
   return t || ''
 }

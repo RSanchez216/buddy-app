@@ -10,7 +10,6 @@ import { logEvent, diffFields } from '../utils/events'
 
 const PURCHASE_TYPES = [
   { v: 'cash',              l: 'Cash' },
-  { v: 'baikozu',           l: 'Baikozu' },
   { v: 'driver_bank_loan',  l: 'Driver Bank Loan' },
 ]
 const FREQUENCIES = [
@@ -23,7 +22,7 @@ const TRACKED = [
   'driver_id','entity_id','truck_number','vin','equipment_type','equipment_id','underlying_loan_id',
   'purchase_type','status_id','total_value','downpayment','sale_price','current_balance',
   'payment_amount','payment_frequency','purchase_date','contract_signed_date','fully_paid_date',
-  'title_transferred','qb_completed','notes',
+  'title_transferred','notes',
 ]
 
 function emptyForm(defaultStatusId) {
@@ -38,7 +37,7 @@ function emptyForm(defaultStatusId) {
     payment_amount: '', payment_frequency: 'weekly',
     purchase_date: new Date().toISOString().slice(0, 10),
     contract_signed_date: '', fully_paid_date: '',
-    title_transferred: false, qb_completed: false,
+    title_transferred: false,
     notes: '',
   }
 }
@@ -105,7 +104,6 @@ export default function PurchaseFormModal({ open, onClose, purchase, onSaved }) 
           contract_signed_date: purchase.contract_signed_date || '',
           fully_paid_date: purchase.fully_paid_date || '',
           title_transferred: !!purchase.title_transferred,
-          qb_completed: !!purchase.qb_completed,
           notes: purchase.notes || '',
         }
         setForm(next)
@@ -175,7 +173,6 @@ export default function PurchaseFormModal({ open, onClose, purchase, onSaved }) 
       contract_signed_date: form.contract_signed_date || null,
       fully_paid_date: form.fully_paid_date || null,
       title_transferred: !!form.title_transferred,
-      qb_completed: !!form.qb_completed,
       notes: form.notes.trim() || null,
       updated_by: user?.id || null,
     }
@@ -369,10 +366,6 @@ export default function PurchaseFormModal({ open, onClose, purchase, onSaved }) 
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" checked={form.title_transferred} onChange={e => set('title_transferred', e.target.checked)} className="rounded" />
               <span className="text-sm text-gray-700 dark:text-slate-300">Title transferred</span>
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" checked={form.qb_completed} onChange={e => set('qb_completed', e.target.checked)} className="rounded" />
-              <span className="text-sm text-gray-700 dark:text-slate-300">QB completed</span>
             </label>
           </div>
         </Section>

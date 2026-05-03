@@ -3,19 +3,13 @@ import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../contexts/AuthContext'
 import { S } from '../../../lib/styles'
 import Modal from '../../../components/Modal'
-import Select from '../../../components/Select'
 
-const ID_TYPES = [
-  { v: 'driver_license', l: 'Driver License' },
-  { v: 'cdl',            l: 'CDL' },
-  { v: 'passport',       l: 'Passport' },
-  { v: 'state_id',       l: 'State ID' },
-  { v: 'other',          l: 'Other' },
-]
-
+// ID type / number / issuing authority / expiration / DOB are intentionally
+// omitted from this modal (and EditDriverModal). Driver ID info is captured
+// via document uploads (driver_documents) instead. The columns still exist
+// on the drivers table so they can be re-surfaced later without a migration.
 const empty = {
-  full_name: '', internal_id: '', id_type: '', id_number: '', id_issuing_authority: '',
-  id_expiration: '', date_of_birth: '', phone: '', email: '', notes: '',
+  full_name: '', internal_id: '', phone: '', email: '', notes: '',
 }
 
 export default function NewDriverModal({ open, onClose, onCreated, prefillName = '' }) {
@@ -37,11 +31,6 @@ export default function NewDriverModal({ open, onClose, onCreated, prefillName =
     const payload = {
       full_name: form.full_name.trim(),
       internal_id: form.internal_id.trim() || null,
-      id_type: form.id_type || null,
-      id_number: form.id_number.trim() || null,
-      id_issuing_authority: form.id_issuing_authority.trim() || null,
-      id_expiration: form.id_expiration || null,
-      date_of_birth: form.date_of_birth || null,
       phone: form.phone.trim() || null,
       email: form.email.trim() || null,
       notes: form.notes.trim() || null,
@@ -58,33 +47,15 @@ export default function NewDriverModal({ open, onClose, onCreated, prefillName =
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="New Driver" size="lg">
+    <Modal open={open} onClose={onClose} title="New Driver" size="md">
       <div className={S.modalBody}>
         {error && <div className={S.errorBox}>{error}</div>}
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Full name *">
+          <Field label="Full name *" wide>
             <input className={S.input} value={form.full_name} onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))} autoFocus />
           </Field>
           <Field label="Internal ID">
             <input className={S.input} value={form.internal_id} onChange={e => setForm(f => ({ ...f, internal_id: e.target.value }))} placeholder="e.g. 1462" />
-          </Field>
-          <Field label="ID type">
-            <Select value={form.id_type} onChange={e => setForm(f => ({ ...f, id_type: e.target.value }))}>
-              <option value="">—</option>
-              {ID_TYPES.map(t => <option key={t.v} value={t.v}>{t.l}</option>)}
-            </Select>
-          </Field>
-          <Field label="ID number">
-            <input className={S.input} value={form.id_number} onChange={e => setForm(f => ({ ...f, id_number: e.target.value }))} />
-          </Field>
-          <Field label="Issuing authority">
-            <input className={S.input} value={form.id_issuing_authority} onChange={e => setForm(f => ({ ...f, id_issuing_authority: e.target.value }))} placeholder="State or country" />
-          </Field>
-          <Field label="ID expiration">
-            <input className={S.input} type="date" value={form.id_expiration} onChange={e => setForm(f => ({ ...f, id_expiration: e.target.value }))} />
-          </Field>
-          <Field label="Date of birth">
-            <input className={S.input} type="date" value={form.date_of_birth} onChange={e => setForm(f => ({ ...f, date_of_birth: e.target.value }))} />
           </Field>
           <Field label="Phone">
             <input className={S.input} value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} />
