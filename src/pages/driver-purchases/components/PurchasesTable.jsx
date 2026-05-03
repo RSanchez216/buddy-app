@@ -1,3 +1,4 @@
+import { useNavigate } from 'react-router-dom'
 import { S } from '../../../lib/styles'
 import StatusPill from './StatusPill'
 
@@ -15,6 +16,7 @@ function fmtFreq(f) {
 }
 
 export default function PurchasesTable({ rows = [] }) {
+  const navigate = useNavigate()
   if (rows.length === 0) {
     return (
       <div className={`${S.card} overflow-hidden`}>
@@ -56,7 +58,11 @@ export default function PurchasesTable({ rows = [] }) {
         </thead>
         <tbody>
           {rows.map(r => (
-            <tr key={r.id} className={S.tableRow}>
+            <tr
+              key={r.id}
+              onClick={() => navigate(`/financial-controls/driver-purchases/${r.id}`)}
+              className={`${S.tableRow} cursor-pointer`}
+            >
               <td className={S.td}>
                 <div className="font-medium text-gray-900 dark:text-slate-200">{r.driver_name}</div>
                 <div className="text-xs text-gray-500 dark:text-slate-500 font-mono">

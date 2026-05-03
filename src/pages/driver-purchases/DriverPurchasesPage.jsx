@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
+import { useAuth } from '../../contexts/AuthContext'
 import { S } from '../../lib/styles'
 import KpiCards from './components/KpiCards'
 import WarningPanels from './components/WarningPanels'
 import PurchasesTable from './components/PurchasesTable'
+import PurchaseFormModal from './components/PurchaseFormModal'
 
 const FILTERS = [
   { id: 'all',         label: 'All' },
@@ -14,10 +17,15 @@ const FILTERS = [
 ]
 
 export default function DriverPurchasesPage() {
+  const navigate = useNavigate()
+  const { profile } = useAuth()
+  const canEdit = profile?.role === 'admin' || profile?.role === 'manager'
+
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('all')
   const [search, setSearch] = useState('')
+  const [showNew, setShowNew] = useState(false)
 
   useEffect(() => { load() }, [])
 
@@ -88,16 +96,17 @@ export default function DriverPurchasesPage() {
           </p>
         </div>
 
-        <button
-          disabled
-          title="Coming in Phase 2"
-          className="flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-xl text-white bg-orange-500 disabled:bg-orange-300 disabled:cursor-not-allowed transition-all shadow-lg shadow-orange-500/20"
-        >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-          </svg>
-          New purchase
-        </button>
+        {canEdit && (
+          <button
+            onClick={() => setShowNew(true)}
+            className="flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-xl text-white bg-orange-500 hover:bg-orange-400 transition-all shadow-lg shadow-orange-500/20"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            New purchase
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -140,6 +149,15 @@ export default function DriverPurchasesPage() {
           <PurchasesTable rows={visible} />
         </>
       )}
+
+      <PurchaseFormModal
+        open={showNew}
+        onClose={() => setShowNew(false)}
+        onSaved={(newId) => {
+          setShowNew(false)
+          if (newId) navigate(`/financial-controls/driver-purchases/${newId}`)
+        }}
+      />
     </div>
   )
 }
