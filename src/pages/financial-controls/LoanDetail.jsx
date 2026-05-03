@@ -13,6 +13,7 @@ import PaymentScheduleTab from './tabs/PaymentScheduleTab'
 import DocumentsTab from './tabs/DocumentsTab'
 import EventsTab from './tabs/EventsTab'
 import NotesTab from './tabs/NotesTab'
+import MergeLoanModal from './components/MergeLoanModal'
 
 const TABS = [
   { id: 'overview', label: 'Overview' },
@@ -51,6 +52,7 @@ export default function LoanDetail() {
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('overview')
   const [statusSaving, setStatusSaving] = useState(false)
+  const [showMerge, setShowMerge] = useState(false)
 
   // Tab badge counts — fetched once per loan load
   const [counts, setCounts] = useState({
@@ -152,6 +154,18 @@ export default function LoanDetail() {
                 {LOAN_STATUSES.map(s => <option key={s} value={s}>Change to: {STATUS_LABELS[s]}</option>)}
               </select>
             )}
+            {canEdit && (
+              <button
+                onClick={() => setShowMerge(true)}
+                title="Merge this loan with a duplicate"
+                className="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-lg border border-gray-300 dark:border-slate-700/40 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7l4-4m0 0l4 4m-4-4v18m0 0l-4-4m4 4l4-4" transform="rotate(90 12 12)" />
+                </svg>
+                Merge…
+              </button>
+            )}
           </div>
           <p className="text-sm text-gray-500 dark:text-slate-500 mt-1">
             {loan.entity_name || '—'} · {loan.lender_name || '—'}
@@ -190,6 +204,19 @@ export default function LoanDetail() {
         {activeTab === 'events' && <EventsTab loanId={loanId} canEdit={canEdit} onChange={loadLoan} />}
         {activeTab === 'notes' && <NotesTab loan={loan} canEdit={canEdit} onChange={loadLoan} />}
       </div>
+
+      <MergeLoanModal
+        open={showMerge}
+        onClose={() => setShowMerge(false)}
+        loan={loan}
+        onMerged={(survivorId) => {
+          setShowMerge(false)
+          // If the current loan was the absorbed one, jump to the survivor.
+          // Otherwise just refresh in place.
+          if (survivorId && survivorId !== loanId) navigate(`/financial-controls/debt-schedule/${survivorId}`)
+          else loadLoan()
+        }}
+      />
     </div>
   )
 }

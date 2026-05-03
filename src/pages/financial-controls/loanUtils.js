@@ -35,6 +35,7 @@ export const STATUS_LABELS = {
   balance_correction: 'Balance Correction',
   transfer: 'Transfer',
   note: 'Note',
+  loan_merged: 'Loan Merged',
 }
 
 export function loanStatusPill(status) {

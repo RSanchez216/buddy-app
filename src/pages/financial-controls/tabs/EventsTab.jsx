@@ -15,9 +15,28 @@ function eventColor(type) {
     case 'rate_change':        return 'bg-cyan-50 dark:bg-cyan-500/10 text-cyan-700 dark:text-cyan-400'
     case 'balance_correction': return 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400'
     case 'transfer':           return 'bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-400'
+    case 'loan_merged':        return 'bg-fuchsia-50 dark:bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-400'
     case 'note':               return 'bg-gray-100 dark:bg-slate-700/50 text-gray-700 dark:text-slate-300'
     default:                   return 'bg-gray-100 dark:bg-slate-700/50 text-gray-700 dark:text-slate-300'
   }
+}
+
+// Build a one-line summary of moved record counts for a loan_merged event.
+function mergeCountsSummary(meta) {
+  if (!meta) return ''
+  const parts = []
+  const map = [
+    ['merged_equipment_count',       'equipment'],
+    ['merged_payment_count',         'payments'],
+    ['merged_document_count',        'documents'],
+    ['merged_event_count',           'events'],
+    ['merged_driver_purchase_count', 'driver purchases'],
+  ]
+  for (const [k, label] of map) {
+    const n = Number(meta?.[k] ?? 0)
+    if (n > 0) parts.push(`${n} ${label}`)
+  }
+  return parts.join(', ')
 }
 
 export default function EventsTab({ loanId, canEdit }) {
@@ -117,9 +136,15 @@ export default function EventsTab({ loanId, canEdit }) {
                     )}
                   </div>
                   <p className="text-sm text-gray-700 dark:text-slate-300">{ev.description}</p>
+                  {ev.event_type === 'loan_merged' && (() => {
+                    const summary = mergeCountsSummary(ev.metadata)
+                    return summary
+                      ? <p className="text-[11px] text-gray-500 dark:text-slate-500 italic mt-0.5">Moved: {summary}</p>
+                      : null
+                  })()}
                   <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-0.5">{ev.creator?.full_name || ''}</p>
                 </div>
-                {canEdit && (
+                {canEdit && ev.event_type !== 'loan_merged' && (
                   <div className="flex items-center gap-2 shrink-0">
                     <button onClick={() => openEdit(ev)} className="text-gray-400 hover:text-orange-600 dark:hover:text-orange-400" title="Edit">
                       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
