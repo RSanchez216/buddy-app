@@ -143,141 +143,142 @@ export default function DriverPurchaseDetail() {
         )}
       </div>
 
-      {/* Cross-reference card (conditional) */}
-      <UnderlyingLoanCard summary={summary} />
+      {/* Two-column body: main content (left) + sticky activity feed (right).
+          Collapses to single column below lg (1024px). */}
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(280px,1fr)]">
+        {/* ── Left column ─────────────────────────────────────────────── */}
+        <div className="space-y-5 min-w-0">
+          {/* Cross-reference card (conditional) */}
+          <UnderlyingLoanCard summary={summary} />
 
-      {/* Driver info card */}
-      <div className={`${S.card} p-5 space-y-3`}>
-        <div className="flex items-baseline justify-between gap-2">
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Driver</h3>
-          {canEdit && (
-            <button
-              onClick={() => setShowEditDriver(true)}
-              className="text-xs text-cyan-600 dark:text-cyan-400 hover:underline"
-            >
-              Edit driver
-            </button>
-          )}
-        </div>
-        <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
-          <Fact label="Name" value={driver?.full_name} mono={false} />
-          <Fact label="Internal ID" value={driver?.internal_id} mono />
-          <Fact label="Phone" value={driver?.phone} mono />
-          <Fact label="Email" value={driver?.email} mono={false} />
-        </div>
-        {driver?.notes && (
-          <div className="text-xs text-gray-600 dark:text-slate-400 pt-2 border-t border-gray-100 dark:border-white/5">
-            <span className="font-semibold">Notes:</span> {driver.notes}
+          {/* Driver info card */}
+          <div className={`${S.card} p-5 space-y-3`}>
+            <div className="flex items-baseline justify-between gap-2">
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Driver</h3>
+              {canEdit && (
+                <button
+                  onClick={() => setShowEditDriver(true)}
+                  className="text-xs text-cyan-600 dark:text-cyan-400 hover:underline"
+                >
+                  Edit driver
+                </button>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+              <Fact label="Name" value={driver?.full_name} mono={false} />
+              <Fact label="Internal ID" value={driver?.internal_id} mono />
+              <Fact label="Phone" value={driver?.phone} mono />
+              <Fact label="Email" value={driver?.email} mono={false} />
+            </div>
+            {driver?.notes && (
+              <div className="text-xs text-gray-600 dark:text-slate-400 pt-2 border-t border-gray-100 dark:border-white/5">
+                <span className="font-semibold">Notes:</span> {driver.notes}
+              </div>
+            )}
+            {coDrivers.length > 0 && (
+              <div className="pt-3 border-t border-gray-100 dark:border-white/5">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500 mb-1.5">Co-drivers</p>
+                <ul className="space-y-1 text-sm">
+                  {coDrivers.map(co => (
+                    <li key={co.id} className="flex items-baseline gap-2">
+                      <span className="text-gray-900 dark:text-slate-200">{co.full_name}</span>
+                      {co.internal_id && <span className="text-xs text-gray-400 dark:text-slate-500 font-mono">#{co.internal_id}</span>}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
-        )}
-        {coDrivers.length > 0 && (
-          <div className="pt-3 border-t border-gray-100 dark:border-white/5">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500 mb-1.5">Co-drivers</p>
-            <ul className="space-y-1 text-sm">
-              {coDrivers.map(co => (
-                <li key={co.id} className="flex items-baseline gap-2">
-                  <span className="text-gray-900 dark:text-slate-200">{co.full_name}</span>
-                  {co.internal_id && <span className="text-xs text-gray-400 dark:text-slate-500 font-mono">#{co.internal_id}</span>}
-                </li>
-              ))}
-            </ul>
+
+          {/* Contract terms */}
+          <div className={`${S.card} p-5 space-y-4`}>
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Contract terms</h3>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+              <Fact label="Entity" value={summary.entity_name} />
+              <Fact label="Total value" value={fmtMoney(summary.total_value)} mono />
+              <Fact label="Truck number" value={summary.truck_number} mono />
+              <Fact label="Downpayment" value={fmtMoney(summary.downpayment)} mono />
+              <Fact label="VIN" value={summary.vin} mono />
+              <Fact label="Sale price" value={fmtMoney(summary.sale_price)} mono />
+              <Fact label="Equipment type" value={summary.equipment_type} />
+              <Fact label="Current balance" value={fmtMoney(summary.current_balance)} mono />
+              <Fact
+                label="Linked equipment"
+                value={equipment ? (
+                  <Link
+                    to={`/financial-controls/debt-schedule/${equipment.loan_id}`}
+                    className="text-cyan-600 dark:text-cyan-400 hover:underline"
+                  >
+                    {[equipment.year, equipment.make, equipment.model].filter(Boolean).join(' ') || equipment.equipment_type || equipment.unit_number || 'View loan'}
+                  </Link>
+                ) : null}
+              />
+              <Fact
+                label="Payment"
+                value={summary.payment_amount ? `${fmtMoney(summary.payment_amount)} ${fmtFreq(summary.payment_frequency)}` : null}
+                mono
+              />
+              <Fact label="Purchase type" value={purchaseTypeLabel(summary.purchase_type)} />
+              <Fact label="Purchase date" value={fmtDateOrDash(summary.purchase_date)} />
+              <Fact label="Title transferred" value={<YesNo on={summary.title_transferred} />} />
+              <Fact label="Contract signed" value={fmtDateOrDash(summary.contract_signed_date)} />
+              <Fact label="Fully paid date" value={fmtDateOrDash(summary.fully_paid_date)} />
+            </div>
           </div>
-        )}
-      </div>
 
-      {/* Contract terms */}
-      <div className={`${S.card} p-5 space-y-4`}>
-        <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Contract terms</h3>
-        <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
-          <Fact label="Entity" value={summary.entity_name} />
-          <Fact label="Total value" value={fmtMoney(summary.total_value)} mono />
-          <Fact label="Truck number" value={summary.truck_number} mono />
-          <Fact label="Downpayment" value={fmtMoney(summary.downpayment)} mono />
-          <Fact label="VIN" value={summary.vin} mono />
-          <Fact label="Sale price" value={fmtMoney(summary.sale_price)} mono />
-          <Fact label="Equipment type" value={summary.equipment_type} />
-          <Fact label="Current balance" value={fmtMoney(summary.current_balance)} mono />
-          <Fact
-            label="Linked equipment"
-            value={equipment ? (
-              <Link
-                to={`/financial-controls/debt-schedule/${equipment.loan_id}`}
-                className="text-cyan-600 dark:text-cyan-400 hover:underline"
-              >
-                {[equipment.year, equipment.make, equipment.model].filter(Boolean).join(' ') || equipment.equipment_type || equipment.unit_number || 'View loan'}
-              </Link>
-            ) : null}
+          {/* Notes — moved up so it sits with the contract context */}
+          <div className={`${S.card} p-5 space-y-3`}>
+            <div className="flex items-baseline justify-between gap-2">
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Notes</h3>
+              {canEdit && (notesDraft || '') !== (purchase?.notes || '') && (
+                <button
+                  onClick={saveNotes}
+                  disabled={savingNotes}
+                  className="text-xs font-medium text-cyan-600 dark:text-cyan-400 hover:underline disabled:opacity-60"
+                >
+                  {savingNotes ? 'Saving…' : 'Save'}
+                </button>
+              )}
+            </div>
+            <textarea
+              className={S.textarea}
+              rows={4}
+              value={notesDraft}
+              disabled={!canEdit}
+              onChange={e => setNotesDraft(e.target.value)}
+              onBlur={saveNotes}
+              placeholder="Add a note about this contract…"
+            />
+          </div>
+
+          {/* Payment history placeholder */}
+          <div className={`${S.card} p-5 space-y-3`}>
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Payment history</h3>
+            <div className="rounded-xl border border-dashed border-gray-200 dark:border-white/10 px-4 py-8 text-center">
+              <p className="text-sm text-gray-500 dark:text-slate-400">
+                Payment recording ships in Phase 3.
+              </p>
+              <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">
+                The reconciliation grid will let you record actual deductions against expected amounts.
+              </p>
+            </div>
+          </div>
+
+          {/* Contract documents — driver_documents subsection removed; the
+              schema/table stays so we can re-surface it later if needed. */}
+          <DocumentsSection
+            kind="contract"
+            ownerId={id}
+            purchaseId={id}
+            canEdit={canEdit}
+            title="Contract documents"
           />
-          <Fact
-            label="Payment"
-            value={summary.payment_amount ? `${fmtMoney(summary.payment_amount)} ${fmtFreq(summary.payment_frequency)}` : null}
-            mono
-          />
-          <Fact label="Purchase type" value={purchaseTypeLabel(summary.purchase_type)} />
-          <Fact label="Purchase date" value={fmtDateOrDash(summary.purchase_date)} />
-          <Fact label="Title transferred" value={<YesNo on={summary.title_transferred} />} />
-          <Fact label="Contract signed" value={fmtDateOrDash(summary.contract_signed_date)} />
-          <Fact label="Fully paid date" value={fmtDateOrDash(summary.fully_paid_date)} />
         </div>
-      </div>
 
-      {/* Payment history placeholder */}
-      <div className={`${S.card} p-5 space-y-3`}>
-        <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Payment history</h3>
-        <div className="rounded-xl border border-dashed border-gray-200 dark:border-white/10 px-4 py-8 text-center">
-          <p className="text-sm text-gray-500 dark:text-slate-400">
-            Payment recording ships in Phase 3.
-          </p>
-          <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">
-            The reconciliation grid will let you record actual deductions against expected amounts.
-          </p>
-        </div>
-      </div>
-
-      {/* Documents */}
-      <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(2, minmax(0,1fr))' }}>
-        <DocumentsSection
-          kind="driver"
-          ownerId={driver?.id}
-          purchaseId={id}
-          canEdit={canEdit}
-          title="Driver documents"
-        />
-        <DocumentsSection
-          kind="contract"
-          ownerId={id}
-          purchaseId={id}
-          canEdit={canEdit}
-          title="Contract documents"
-        />
-      </div>
-
-      {/* Events log */}
-      <EventsLog purchaseId={id} refreshKey={eventsKey} />
-
-      {/* Notes */}
-      <div className={`${S.card} p-5 space-y-3`}>
-        <div className="flex items-baseline justify-between gap-2">
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Notes</h3>
-          {canEdit && (notesDraft || '') !== (purchase?.notes || '') && (
-            <button
-              onClick={saveNotes}
-              disabled={savingNotes}
-              className="text-xs font-medium text-cyan-600 dark:text-cyan-400 hover:underline disabled:opacity-60"
-            >
-              {savingNotes ? 'Saving…' : 'Save'}
-            </button>
-          )}
-        </div>
-        <textarea
-          className={S.textarea}
-          rows={4}
-          value={notesDraft}
-          disabled={!canEdit}
-          onChange={e => setNotesDraft(e.target.value)}
-          onBlur={saveNotes}
-          placeholder="Add a note about this contract…"
-        />
+        {/* ── Right column: sticky activity feed ──────────────────────── */}
+        <aside className="lg:sticky lg:top-2 lg:self-start lg:max-h-[calc(100vh-1rem)] lg:overflow-y-auto">
+          <EventsLog purchaseId={id} refreshKey={eventsKey} />
+        </aside>
       </div>
 
       {/* Modals */}
