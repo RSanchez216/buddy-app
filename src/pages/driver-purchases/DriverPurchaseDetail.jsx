@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { S } from '../../lib/styles'
 import StatusPill from './components/StatusPill'
 import UnderlyingLoanCard from './components/UnderlyingLoanCard'
 import DocumentsSection from './components/DocumentsSection'
-import EventsLog from './components/EventsLog'
+import ActivityFeed from './components/ActivityFeed'
 import EditDriverModal from './components/EditDriverModal'
 import PurchaseFormModal from './components/PurchaseFormModal'
 import DeletePurchaseModal from './components/DeletePurchaseModal'
@@ -16,6 +16,8 @@ import { fmtDate, fmtMoney, fmtFreq, purchaseTypeLabel } from './utils/format'
 export default function DriverPurchaseDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const focusCommentId = searchParams.get('comment') || null
   const { user, profile } = useAuth()
   const canEdit = profile?.role === 'admin' || profile?.role === 'manager'
 
@@ -25,7 +27,9 @@ export default function DriverPurchaseDetail() {
   const [coDrivers, setCoDrivers] = useState([])
   const [equipment, setEquipment] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [eventsKey, setEventsKey] = useState(0)        // bump to force EventsLog refresh
+  // ActivityFeed has its own Realtime subscription, so we don't need a
+  // refresh-key bump on save. Modals just trigger load() to re-pull the
+  // top-level summary/purchase rows.
 
   const [showEditPurchase, setShowEditPurchase] = useState(false)
   const [showEditDriver,   setShowEditDriver]   = useState(false)
@@ -79,7 +83,6 @@ export default function DriverPurchaseDetail() {
     if (error) { alert('Save failed: ' + error.message); return }
     await logEvent(id, 'updated', 'Updated notes',
       { fields: { notes: { old: before, new: notesDraft } } }, user?.id)
-    setEventsKey(k => k + 1)
     load()
   }
 
@@ -251,19 +254,6 @@ export default function DriverPurchaseDetail() {
             />
           </div>
 
-          {/* Payment history placeholder */}
-          <div className={`${S.card} p-5 space-y-3`}>
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Payment history</h3>
-            <div className="rounded-xl border border-dashed border-gray-200 dark:border-white/10 px-4 py-8 text-center">
-              <p className="text-sm text-gray-500 dark:text-slate-400">
-                Payment recording ships in Phase 3.
-              </p>
-              <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">
-                The reconciliation grid will let you record actual deductions against expected amounts.
-              </p>
-            </div>
-          </div>
-
           {/* Contract documents — driver_documents subsection removed; the
               schema/table stays so we can re-surface it later if needed. */}
           <DocumentsSection
@@ -276,9 +266,23 @@ export default function DriverPurchaseDetail() {
         </div>
 
         {/* ── Right column: sticky activity feed ──────────────────────── */}
-        <aside className="lg:sticky lg:top-2 lg:self-start lg:max-h-[calc(100vh-1rem)] lg:overflow-y-auto">
-          <EventsLog purchaseId={id} refreshKey={eventsKey} />
+        <aside className="lg:sticky lg:top-2 lg:self-start min-h-0">
+          <ActivityFeed purchaseId={id} focusCommentId={focusCommentId} />
         </aside>
+      </div>
+
+      {/* Payment history — full-width, breaks out below the 2-col grid.
+          Phase 3 fills this with the reconciliation grid. */}
+      <div className={`${S.card} p-5 space-y-3`}>
+        <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Payment history</h3>
+        <div className="rounded-xl border border-dashed border-gray-200 dark:border-white/10 px-4 py-12 text-center">
+          <p className="text-sm text-gray-500 dark:text-slate-400">
+            Payment recording ships in Phase 3.
+          </p>
+          <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">
+            The reconciliation grid will let you record actual deductions against expected amounts.
+          </p>
+        </div>
       </div>
 
       {/* Modals */}
@@ -286,14 +290,14 @@ export default function DriverPurchaseDetail() {
         open={showEditPurchase}
         onClose={() => setShowEditPurchase(false)}
         purchase={purchase}
-        onSaved={() => { setShowEditPurchase(false); setEventsKey(k => k + 1); load() }}
+        onSaved={() => { setShowEditPurchase(false); load() }}
       />
       <EditDriverModal
         open={showEditDriver}
         onClose={() => setShowEditDriver(false)}
         driver={driver}
         purchaseId={id}
-        onSaved={() => { setShowEditDriver(false); setEventsKey(k => k + 1); load() }}
+        onSaved={() => { setShowEditDriver(false); load() }}
       />
       <DeletePurchaseModal
         open={showDelete}

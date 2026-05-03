@@ -22,6 +22,7 @@ import LoanDetail from './pages/financial-controls/LoanDetail'
 import DriverPurchasesPage from './pages/driver-purchases/DriverPurchasesPage'
 import DriverPurchaseDetail from './pages/driver-purchases/DriverPurchaseDetail'
 import SettingsDriverPurchaseStatuses from './pages/settings/DriverPurchaseStatusesSettings'
+import NotificationsPage from './pages/Notifications'
 import PaymentCalendar from './pages/cash-flow/PaymentCalendar'
 import SetPassword from './pages/auth/SetPassword'
 
@@ -48,6 +49,7 @@ export default function App() {
               <Route path="financial-controls/debt-schedule/:loanId" element={<LoanDetail />} />
               <Route path="financial-controls/driver-purchases" element={<DriverPurchasesPage />} />
               <Route path="financial-controls/driver-purchases/:id" element={<DriverPurchaseDetail />} />
+              <Route path="notifications" element={<NotificationsPage />} />
               {/* Cash Flow */}
               <Route path="cash-flow/payment-calendar" element={<PaymentCalendar />} />
               {/* Settings */}

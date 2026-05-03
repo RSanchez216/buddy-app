@@ -3,6 +3,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useTheme } from '../contexts/ThemeContext'
 import { BuddyLogoSmall } from '../components/BuddyLogo'
+import NotificationBell from './NotificationBell'
 
 // ── Icons ──────────────────────────────────────────────────────────────────
 const Icons = {
@@ -214,6 +215,7 @@ export default function Layout() {
               <p className="text-sm font-medium text-gray-900 dark:text-slate-200 truncate">{profile?.full_name || 'User'}</p>
               <p className="text-xs text-gray-400 dark:text-slate-500 truncate">{profile?.departments?.name || ''}</p>
             </div>
+            <NotificationBell />
           </div>
           <div className="flex items-center justify-between">
             <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${roleColor[profile?.role] || roleColor.viewer}`}>
@@ -234,6 +236,9 @@ export default function Layout() {
           </button>
           <BuddyLogoSmall className="w-6 h-6" />
           <span className="font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-500 to-fuchsia-500 text-sm">BUDDY</span>
+          <div className="ml-auto">
+            <NotificationBell />
+          </div>
         </header>
 
         <main className="flex-1 p-6 overflow-auto">

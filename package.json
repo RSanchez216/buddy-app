@@ -12,6 +12,12 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.101.1",
     "@tailwindcss/vite": "^4.2.2",
+    "@tiptap/extension-link": "^3.22.5",
+    "@tiptap/extension-mention": "^3.22.5",
+    "@tiptap/pm": "^3.22.5",
+    "@tiptap/react": "^3.22.5",
+    "@tiptap/starter-kit": "^3.22.5",
+    "@tiptap/suggestion": "^3.22.5",
     "chart.js": "^4.5.1",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
@@ -20,6 +26,7 @@
     "react-dom": "^19.2.4",
     "react-router-dom": "^7.14.0",
     "tailwindcss": "^4.2.2",
+    "tippy.js": "^6.3.7",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
