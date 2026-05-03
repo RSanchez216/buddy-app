@@ -4,6 +4,7 @@ import { S } from '../../../lib/styles'
 import Modal from '../../../components/Modal'
 import Select from '../../../components/Select'
 import { FC, EQUIPMENT_STATUSES, STATUS_LABELS, equipmentStatusPill, fmtMoney, fmtDate } from '../loanUtils'
+import SoldToDriverSection from '../components/SoldToDriverSection'
 
 const empty = {
   unit_number: '', vin: '', equipment_type: '', make: '', model: '', year: '',
@@ -160,6 +161,10 @@ export default function EquipmentTab({ loanId, canEdit }) {
           </table>
         </div>
       </div>
+
+      {/* Cross-reference: driver purchases that resold this loan's equipment.
+          Self-hides when no rows match. */}
+      <SoldToDriverSection loanId={loanId} />
 
       <Modal open={showModal} onClose={() => setShowModal(false)} title={editItem ? 'Edit Equipment' : 'Add Equipment'} size="lg">
         <div className={S.modalBody}>

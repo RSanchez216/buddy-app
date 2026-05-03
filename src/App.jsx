@@ -19,6 +19,8 @@ import SettingsEquipmentTypes from './pages/settings/EquipmentTypes'
 import SettingsUsers from './pages/settings/users/Users'
 import DebtSchedule from './pages/financial-controls/DebtSchedule'
 import LoanDetail from './pages/financial-controls/LoanDetail'
+import DriverPurchasesPage from './pages/driver-purchases/DriverPurchasesPage'
+import SettingsDriverPurchaseStatuses from './pages/settings/DriverPurchaseStatusesSettings'
 import PaymentCalendar from './pages/cash-flow/PaymentCalendar'
 import SetPassword from './pages/auth/SetPassword'
 
@@ -43,6 +45,7 @@ export default function App() {
               {/* Financial Controls */}
               <Route path="financial-controls/debt-schedule" element={<DebtSchedule />} />
               <Route path="financial-controls/debt-schedule/:loanId" element={<LoanDetail />} />
+              <Route path="financial-controls/driver-purchases" element={<DriverPurchasesPage />} />
               {/* Cash Flow */}
               <Route path="cash-flow/payment-calendar" element={<PaymentCalendar />} />
               {/* Settings */}
@@ -53,6 +56,7 @@ export default function App() {
               <Route path="settings/loan-lenders" element={<SettingsLoanLenders />} />
               <Route path="settings/funding-accounts" element={<SettingsFundingAccounts />} />
               <Route path="settings/equipment-types" element={<SettingsEquipmentTypes />} />
+              <Route path="settings/driver-purchase-statuses" element={<SettingsDriverPurchaseStatuses />} />
               <Route path="settings/users" element={<SettingsUsers />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
