@@ -67,11 +67,13 @@ export default function MergeLoanModal({ open, onClose, loan, onMerged }) {
   async function continueToPreview() {
     if (!pickedId) return
     setBusy(true); setError('')
-    // Fetch full rows + counts in parallel for both loans
-    const [aRes, bRes, counts] = await Promise.all([
+    // Fetch full rows + counts + payment-month sets in parallel for both loans
+    const [aRes, bRes, counts, paymonthsA, paymonthsB] = await Promise.all([
       supabase.from('v_loans_summary').select('*').eq('id', loan.id).maybeSingle(),
       supabase.from('v_loans_summary').select('*').eq('id', pickedId).maybeSingle(),
       Promise.all([loan.id, pickedId].map(id => fetchCounts(id))),
+      fetchDueMonths(loan.id),
+      fetchDueMonths(pickedId),
     ])
     setBusy(false)
     if (aRes.error || bRes.error || !aRes.data || !bRes.data) {
@@ -79,7 +81,12 @@ export default function MergeLoanModal({ open, onClose, loan, onMerged }) {
     }
     setLoanA(aRes.data); setLoanB(bRes.data)
     setSurvivorId(loan.id); setAbsorbedId(pickedId)
-    setCounts({ A: counts[0], B: counts[1] })
+    // Stash the due_month sets so the preview can compute conflicts as
+    // the user toggles survivor/absorbed.
+    setCounts({
+      A: { ...counts[0], due_months: paymonthsA },
+      B: { ...counts[1], due_months: paymonthsB },
+    })
     // Default per-field pick: survivor wins, but if survivor has no value
     // and absorbed has one, default to absorbed (don't lose info).
     const initial = {}
@@ -116,6 +123,17 @@ export default function MergeLoanModal({ open, onClose, loan, onMerged }) {
     }
   }
 
+  // Pulls every due_month for a loan as an ISO-string Set so we can
+  // intersect survivor vs. absorbed and report how many absorbed
+  // payments will be skipped as duplicates by merge_loan().
+  async function fetchDueMonths(id) {
+    const { data } = await supabase
+      .from('loan_payments')
+      .select('due_month')
+      .eq('loan_id', id)
+    return new Set((data || []).map(r => r.due_month))
+  }
+
   // The slot ('A' or 'B') that currently plays the role of survivor/absorbed
   const survivorSlot = survivorId === loanA?.id ? 'A' : 'B'
   const absorbedSlot = survivorSlot === 'A' ? 'B' : 'A'
@@ -123,6 +141,18 @@ export default function MergeLoanModal({ open, onClose, loan, onMerged }) {
   const absorbed = absorbedSlot === 'A' ? loanA : loanB
   const survivorCounts = counts[survivorSlot]
   const absorbedCounts = counts[absorbedSlot]
+
+  // How many absorbed payment rows merge_loan() will drop because their
+  // due_month already exists on the survivor. Computed from the cached
+  // due_month sets so it updates instantly when the user swaps roles.
+  const skippedPayments = useMemo(() => {
+    const surv = survivorCounts?.due_months
+    const abs  = absorbedCounts?.due_months
+    if (!surv || !abs) return 0
+    let n = 0
+    for (const m of abs) if (surv.has(m)) n++
+    return n
+  }, [survivorCounts, absorbedCounts])
 
   // The override jsonb to send to merge_loan: only include keys where
   // the user picked the absorbed slot's value (otherwise the survivor's
@@ -175,6 +205,7 @@ export default function MergeLoanModal({ open, onClose, loan, onMerged }) {
             survivorSlot={survivorSlot}
             picks={picks} setPicks={setPicks}
             onSwap={swapSurvivor}
+            skippedPayments={skippedPayments}
           />
         )}
 
@@ -182,6 +213,7 @@ export default function MergeLoanModal({ open, onClose, loan, onMerged }) {
           <ConfirmStep
             survivor={survivor} absorbed={absorbed}
             absorbedCounts={absorbedCounts}
+            skippedPayments={skippedPayments}
             confirmed={confirmed} setConfirmed={setConfirmed}
             fieldOverrides={fieldOverrides}
           />
@@ -275,7 +307,7 @@ function PickStep({ loan, query, setQuery, results, searching, pickedId, setPick
 }
 
 // ── Step 2: Preview / reconcile ─────────────────────────────────────────
-function PreviewStep({ survivor, absorbed, survivorCounts, absorbedCounts, survivorSlot, picks, setPicks, onSwap }) {
+function PreviewStep({ survivor, absorbed, survivorCounts, absorbedCounts, survivorSlot, picks, setPicks, onSwap, skippedPayments = 0 }) {
   return (
     <>
       <p className="text-xs text-gray-500 dark:text-slate-500">
@@ -351,7 +383,14 @@ function PreviewStep({ survivor, absorbed, survivorCounts, absorbedCounts, survi
       <div className="rounded-xl bg-gray-50 dark:bg-white/[0.02] border border-gray-200 dark:border-white/10 p-3 text-xs space-y-0.5">
         <p className="font-semibold text-gray-700 dark:text-slate-300 mb-1">Will move from absorbed to survivor:</p>
         <p className="text-gray-600 dark:text-slate-400">• <span className="font-mono">{absorbedCounts?.eq ?? 0}</span> equipment row{absorbedCounts?.eq === 1 ? '' : 's'} (currently <span className="font-mono">{survivorCounts?.eq ?? 0}</span> on survivor → <span className="font-mono">{(survivorCounts?.eq ?? 0) + (absorbedCounts?.eq ?? 0)}</span> total)</p>
-        <p className="text-gray-600 dark:text-slate-400">• <span className="font-mono">{absorbedCounts?.pay ?? 0}</span> payment record{absorbedCounts?.pay === 1 ? '' : 's'}</p>
+        <p className="text-gray-600 dark:text-slate-400">
+          • <span className="font-mono">{Math.max(0, (absorbedCounts?.pay ?? 0) - skippedPayments)}</span> payment record{((absorbedCounts?.pay ?? 0) - skippedPayments) === 1 ? '' : 's'}
+          {skippedPayments > 0 && (
+            <span className="ml-1 text-gray-500 dark:text-slate-500">
+              ({absorbedCounts?.pay} absorbed; <span className="font-mono">{skippedPayments}</span> will be skipped as duplicates)
+            </span>
+          )}
+        </p>
         <p className="text-gray-600 dark:text-slate-400">• <span className="font-mono">{absorbedCounts?.doc ?? 0}</span> document{absorbedCounts?.doc === 1 ? '' : 's'}</p>
         <p className="text-gray-600 dark:text-slate-400">• <span className="font-mono">{absorbedCounts?.ev ?? 0}</span> event{absorbedCounts?.ev === 1 ? '' : 's'}</p>
         <p className="text-gray-600 dark:text-slate-400">• <span className="font-mono">{absorbedCounts?.dp ?? 0}</span> driver purchase{absorbedCounts?.dp === 1 ? '' : 's'} referencing this loan</p>
@@ -393,8 +432,9 @@ function SurvivorCard({ isSurvivor, onClick, loan, counts, title }) {
 }
 
 // ── Step 3: Confirm ─────────────────────────────────────────────────────
-function ConfirmStep({ survivor, absorbed, absorbedCounts, confirmed, setConfirmed, fieldOverrides }) {
-  const total = (absorbedCounts?.eq ?? 0) + (absorbedCounts?.pay ?? 0) + (absorbedCounts?.doc ?? 0) + (absorbedCounts?.ev ?? 0) + (absorbedCounts?.dp ?? 0)
+function ConfirmStep({ survivor, absorbed, absorbedCounts, skippedPayments = 0, confirmed, setConfirmed, fieldOverrides }) {
+  const movedPayments = Math.max(0, (absorbedCounts?.pay ?? 0) - skippedPayments)
+  const total = (absorbedCounts?.eq ?? 0) + movedPayments + (absorbedCounts?.doc ?? 0) + (absorbedCounts?.ev ?? 0) + (absorbedCounts?.dp ?? 0)
   const overrideCount = Object.keys(fieldOverrides || {}).length
   return (
     <>
@@ -408,6 +448,11 @@ function ConfirmStep({ survivor, absorbed, absorbedCounts, confirmed, setConfirm
         <p>
           <span className="font-mono">{total}</span> related record{total === 1 ? '' : 's'} will be moved to the survivor.
         </p>
+        {skippedPayments > 0 && (
+          <p>
+            <span className="font-mono">{skippedPayments}</span> duplicate payment record{skippedPayments === 1 ? '' : 's'} will be discarded (same due-month already exists on survivor).
+          </p>
+        )}
         {overrideCount > 0 && (
           <p>
             <span className="font-mono">{overrideCount}</span> field value{overrideCount === 1 ? '' : 's'} will be replaced with the absorbed loan's value.

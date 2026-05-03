@@ -21,7 +21,8 @@ function eventColor(type) {
   }
 }
 
-// Build a one-line summary of moved record counts for a loan_merged event.
+// Build a one-line summary of moved record counts for a loan_merged event,
+// plus a parenthetical for any rows skipped as duplicates of survivor rows.
 function mergeCountsSummary(meta) {
   if (!meta) return ''
   const parts = []
@@ -36,7 +37,10 @@ function mergeCountsSummary(meta) {
     const n = Number(meta?.[k] ?? 0)
     if (n > 0) parts.push(`${n} ${label}`)
   }
-  return parts.join(', ')
+  let s = parts.join(', ')
+  const skip = Number(meta?.skipped_duplicate_payments ?? 0)
+  if (skip > 0) s += ` · ${skip} duplicate payment${skip === 1 ? '' : 's'} discarded`
+  return s
 }
 
 export default function EventsTab({ loanId, canEdit }) {
