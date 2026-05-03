@@ -27,3 +27,6 @@ dist-ssr
 .env
 .env.local
 .env.production
+
+# Phase 2B import staging
+.phase2b-tmp/
