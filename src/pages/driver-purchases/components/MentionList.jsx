@@ -38,31 +38,43 @@ const MentionList = forwardRef((props, ref) => {
     )
   }
 
+  // hoverIndex tracks mouse hover; null when mouse is outside the list.
+  // Active item = mouse takes precedence over keyboard. When the mouse
+  // leaves, the keyboard cursor's item gets the tint back. Both states
+  // share the same neutral background — no saturated blue — matching
+  // the rest of BUDDY's dropdowns.
+  const [hoverIndex, setHoverIndex] = useState(null)
+
   return (
-    <div className="rounded-xl bg-white dark:bg-[#0d0d1f] border border-gray-200 dark:border-white/10 shadow-xl overflow-hidden max-h-72 overflow-y-auto min-w-[14rem]">
-      {props.items.map((item, idx) => (
-        <button
-          key={item.id}
-          onClick={() => selectItem(idx)}
-          className={`w-full flex items-center gap-2 px-3 py-1.5 text-left transition-colors ${
-            idx === selectedIndex
-              ? 'bg-cyan-50 dark:bg-cyan-500/10'
-              : 'hover:bg-gray-50 dark:hover:bg-white/5'
-          }`}
-        >
-          <span className="w-6 h-6 rounded-full bg-gradient-to-br from-cyan-500 to-fuchsia-500 flex items-center justify-center text-[10px] font-bold text-white shrink-0">
-            {(item.full_name || item.email || '?').charAt(0).toUpperCase()}
-          </span>
-          <div className="min-w-0">
-            <div className="text-sm font-medium text-gray-900 dark:text-slate-200 truncate">
-              {item.full_name || item.email}
+    <div
+      className="rounded-xl bg-white dark:bg-[#0d0d1f] border border-gray-200 dark:border-white/10 shadow-xl overflow-hidden max-h-72 overflow-y-auto min-w-[14rem]"
+      onMouseLeave={() => setHoverIndex(null)}
+    >
+      {props.items.map((item, idx) => {
+        const isActive = hoverIndex !== null ? hoverIndex === idx : selectedIndex === idx
+        return (
+          <button
+            key={item.id}
+            onClick={() => selectItem(idx)}
+            onMouseEnter={() => setHoverIndex(idx)}
+            className={`w-full flex items-center gap-2 px-3 py-1.5 text-left transition-colors ${
+              isActive ? 'bg-gray-100 dark:bg-white/5' : ''
+            }`}
+          >
+            <span className="w-6 h-6 rounded-full bg-gradient-to-br from-cyan-500 to-fuchsia-500 flex items-center justify-center text-[10px] font-bold text-white shrink-0">
+              {(item.full_name || item.email || '?').charAt(0).toUpperCase()}
+            </span>
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-gray-900 dark:text-slate-200 truncate">
+                {item.full_name || item.email}
+              </div>
+              {item.full_name && item.email && (
+                <div className="text-[11px] text-gray-400 dark:text-slate-500 truncate">{item.email}</div>
+              )}
             </div>
-            {item.full_name && item.email && (
-              <div className="text-[11px] text-gray-400 dark:text-slate-500 truncate">{item.email}</div>
-            )}
-          </div>
-        </button>
-      ))}
+          </button>
+        )
+      })}
     </div>
   )
 })

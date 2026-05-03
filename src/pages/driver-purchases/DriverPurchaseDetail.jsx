@@ -148,7 +148,11 @@ export default function DriverPurchaseDetail() {
 
       {/* Two-column body: main content (left) + sticky activity feed (right).
           Collapses to single column below lg (1024px). */}
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(280px,1fr)]">
+      {/* Bumped right column min to 320px (per spec) and align-items: start
+          so the right column ends at its content. Otherwise CSS Grid's
+          default `stretch` alignment makes the activity column match the
+          left column's height — that's the empty-white-box problem. */}
+      <div className="grid gap-6 items-start lg:grid-cols-[minmax(0,1.6fr)_minmax(320px,1fr)]">
         {/* ── Left column ─────────────────────────────────────────────── */}
         <div className="space-y-5 min-w-0">
           {/* Cross-reference card (conditional) */}

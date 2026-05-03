@@ -77,8 +77,11 @@ export default function ActivityFeed({ purchaseId, focusCommentId }) {
       {/* Composer is its own card and stays sticky at the top of the
           activity column as the page scrolls. The feed below is just a
           list of items — no enclosing card — so the column visually
-          ends at the last item instead of stretching as one tall box. */}
-      <div className="sticky top-14 z-10">
+          ends at the last item instead of stretching as one tall box.
+          The sticky scroll context is <main> (which has overflow-auto);
+          the global header sits outside main and doesn't overlap, so
+          top-2 just adds a small breathing room. */}
+      <div className="sticky top-2 z-10">
         <div className={`${S.card} p-3 space-y-2`}>
           <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500">Activity</p>
           <CommentComposer purchaseId={purchaseId} onSubmitted={load} />
