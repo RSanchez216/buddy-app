@@ -33,11 +33,13 @@ export default function NotificationsPage() {
 
   useEffect(() => { load() }, [load])
 
-  // Subscribe so the page updates as new notifications arrive
+  // Subscribe so the page updates as new notifications arrive.
+  // Per-mount nonce — see NotificationBell for the rationale.
   useEffect(() => {
     if (!userId) return
+    const nonce = Math.random().toString(36).slice(2, 10)
     const ch = supabase
-      .channel(`notifications-page-${userId}`)
+      .channel(`notifications-page-${userId}-${nonce}`)
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'notifications', filter: `recipient_user_id=eq.${userId}` },
         () => load())

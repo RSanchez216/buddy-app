@@ -45,10 +45,14 @@ export default function ActivityFeed({ purchaseId, focusCommentId }) {
   useEffect(() => { load() }, [load])
 
   // Realtime: refresh whenever a comment or event lands for this purchase.
+  // Per-mount nonce on the channel name avoids supabase-js's name-based
+  // channel cache, which otherwise raises "cannot add postgres_changes
+  // callbacks after subscribe()" on remount.
   useEffect(() => {
     if (!purchaseId) return
+    const nonce = Math.random().toString(36).slice(2, 10)
     const ch = supabase
-      .channel(`activity-${purchaseId}`)
+      .channel(`activity-${purchaseId}-${nonce}`)
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'driver_purchase_comments', filter: `driver_purchase_id=eq.${purchaseId}` },
         () => load())

@@ -29,11 +29,16 @@ export default function NotificationBell() {
 
   useEffect(() => { load() }, [load])
 
-  // Realtime subscription
+  // Realtime subscription. Channel name carries a per-mount nonce because
+  // supabase-js caches channels by name internally; reusing a name across
+  // remounts triggers "cannot add postgres_changes callbacks after
+  // subscribe()" when the second mount tries to chain .on() on the cached
+  // (already-subscribed) channel.
   useEffect(() => {
     if (!userId) return
+    const nonce = Math.random().toString(36).slice(2, 10)
     const ch = supabase
-      .channel(`notifications-${userId}`)
+      .channel(`notifications-${userId}-${nonce}`)
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'notifications', filter: `recipient_user_id=eq.${userId}` },
         () => load())
