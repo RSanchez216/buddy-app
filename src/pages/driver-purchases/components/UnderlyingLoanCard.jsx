@@ -16,7 +16,7 @@ export default function UnderlyingLoanCard({ summary }) {
   const gapPhrase = underwater
     ? `gap ${fmtMoney(Math.abs(gap))}`
     : `fully covered · gap ${fmtMoney(0)}`
-  const detail = `Driver owes ${fmtMoney(driverBal)} · Monas owes bank ${fmtMoney(bankBal)}`
+  const detail = `Driver owes ${fmtMoney(driverBal)} · Manas Express owes bank ${fmtMoney(bankBal)}`
 
   const item = {
     primary: summary.underlying_lender_name || 'Bank loan',

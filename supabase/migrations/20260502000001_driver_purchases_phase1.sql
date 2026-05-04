@@ -68,7 +68,7 @@ INSERT INTO driver_purchase_statuses (name, color_hex, is_active_state, is_termi
   ('Weekly Payments',       '#1D9E75', true,  false, 30, 'Active, deducted weekly from payroll'),
   ('Monthly Payment',       '#7F77DD', true,  false, 40, 'Active, deducted monthly from payroll'),
   ('Fully Paid',            '#5F5E5A', false, true,  50, 'Contract complete, awaiting title transfer'),
-  ('Contract Broken',       '#A32D2D', false, true,  60, 'Contract terminated by Monas'),
+  ('Contract Broken',       '#A32D2D', false, true,  60, 'Contract terminated by Manas Express'),
   ('Driver Left',           '#A32D2D', false, true,  70, 'Driver left company'),
   ('Owner Left',            '#A32D2D', false, true,  80, 'Owner-operator separated')
 ON CONFLICT (name) DO NOTHING;
