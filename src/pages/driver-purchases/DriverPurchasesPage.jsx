@@ -54,7 +54,8 @@ export default function DriverPurchasesPage() {
       r.status_name === 'Owner Left'
     ).length
     // Behind needs Phase 3 reconciliation data — always 0 in Phase 1
-    return { all: rows.length, active, behind: 0, fully_paid: fullyPaid, cancelled }
+    const behind = rows.filter(r => r.is_behind).length
+    return { all: rows.length, active, behind, fully_paid: fullyPaid, cancelled }
   }, [rows])
 
   const visible = useMemo(() => {
@@ -66,7 +67,7 @@ export default function DriverPurchasesPage() {
       r.status_name === 'Driver Left' ||
       r.status_name === 'Owner Left'
     )
-    else if (filter === 'behind') list = []  // Phase 3
+    else if (filter === 'behind') list = list.filter(r => r.is_behind)
 
     const q = search.trim().toLowerCase()
     if (q) {
@@ -80,6 +81,24 @@ export default function DriverPurchasesPage() {
   }, [rows, filter, search])
 
   const underwaterRows = useMemo(() => rows.filter(r => r.is_underwater), [rows])
+
+  // Behind = view's is_behind flag, sorted by amount_behind desc so the
+  // most severe contracts surface first. Each row carries amount_behind
+  // and periods_behind so the warning panel can render a meaningful
+  // secondary metric ("3 wks · $3,000").
+  const behindRows = useMemo(() => {
+    return rows
+      .filter(r => r.is_behind)
+      .map(r => ({
+        ...r,
+        // Friendly secondary string consumed by WarningPanels via its
+        // existing { primary, secondary } shape — but we now also pass
+        // the raw amount/periods through so the panel can format.
+        periods_behind: Number(r.periods_behind || 0),
+        amount_behind: Number(r.amount_behind || 0),
+      }))
+      .sort((a, b) => b.amount_behind - a.amount_behind)
+  }, [rows])
 
   return (
     <div className="space-y-5">
@@ -117,7 +136,7 @@ export default function DriverPurchasesPage() {
         <>
           <KpiCards rows={rows} />
 
-          <WarningPanels behindRows={[]} underwaterRows={underwaterRows} />
+          <WarningPanels behindRows={behindRows} underwaterRows={underwaterRows} />
 
           {/* Filter chips + search */}
           <div className="flex items-center justify-between flex-wrap gap-3">

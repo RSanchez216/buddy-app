@@ -4,6 +4,16 @@ function fmt(n) {
   return Number(n || 0).toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
 }
 
+// "3 wks · $3,000" for weekly/biweekly contracts; "2 mo · $5,108" for monthly.
+// Falls back to just the dollar amount if periods_behind is unknown.
+function behindSecondary(r) {
+  const amt = fmt(r.amount_behind || 0)
+  const n = Number(r.periods_behind || 0)
+  if (n <= 0) return amt
+  const unit = r.payment_frequency === 'monthly' ? (n === 1 ? 'mo' : 'mo') : (n === 1 ? 'wk' : 'wks')
+  return `${n} ${unit} · ${amt}`
+}
+
 export default function WarningPanels({ behindRows = [], underwaterRows = [] }) {
   // Phase 1: no reconciliation data → behind is always empty.
   // Underwater can populate from the view as soon as records exist.
@@ -21,7 +31,7 @@ export default function WarningPanels({ behindRows = [], underwaterRows = [] }) 
           rows={behindRows.slice(0, 5).map(r => ({
             id: r.id,
             primary: `${r.driver_name}${r.truck_number ? ' · ' + r.truck_number : ''}`,
-            secondary: 'Behind',
+            secondary: behindSecondary(r),
           }))}
           rest={Math.max(0, behindRows.length - 5)}
         />

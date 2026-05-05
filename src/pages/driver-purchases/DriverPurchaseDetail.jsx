@@ -7,6 +7,7 @@ import StatusPill from './components/StatusPill'
 import UnderlyingLoanCard from './components/UnderlyingLoanCard'
 import DocumentsSection from './components/DocumentsSection'
 import ActivityFeed from './components/ActivityFeed'
+import PaymentHistorySection from './components/PaymentHistorySection'
 import NotesField from '../../components/NotesField'
 import EditDriverModal from './components/EditDriverModal'
 import PurchaseFormModal from './components/PurchaseFormModal'
@@ -259,18 +260,12 @@ export default function DriverPurchaseDetail() {
       </div>
 
       {/* Payment history — full-width, breaks out below the 2-col grid.
-          Phase 3 fills this with the reconciliation grid. */}
-      <div className={`${S.card} p-5 space-y-3`}>
-        <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Payment history</h3>
-        <div className="rounded-xl border border-dashed border-gray-200 dark:border-white/10 px-4 py-12 text-center">
-          <p className="text-sm text-gray-500 dark:text-slate-400">
-            Payment recording ships in Phase 3.
-          </p>
-          <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">
-            The reconciliation grid will let you record actual deductions against expected amounts.
-          </p>
-        </div>
-      </div>
+          Phase 3A: real reconciliation table. */}
+      <PaymentHistorySection
+        purchase={purchase}
+        canEdit={canEdit}
+        onChange={load}
+      />
 
       {/* Modals */}
       <PurchaseFormModal
