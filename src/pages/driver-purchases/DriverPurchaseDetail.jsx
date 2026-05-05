@@ -7,6 +7,7 @@ import StatusPill from './components/StatusPill'
 import UnderlyingLoanCard from './components/UnderlyingLoanCard'
 import DocumentsSection from './components/DocumentsSection'
 import ActivityFeed from './components/ActivityFeed'
+import NotesField from '../../components/NotesField'
 import EditDriverModal from './components/EditDriverModal'
 import PurchaseFormModal from './components/PurchaseFormModal'
 import DeletePurchaseModal from './components/DeletePurchaseModal'
@@ -36,7 +37,6 @@ export default function DriverPurchaseDetail() {
   const [showDelete,       setShowDelete]       = useState(false)
 
   const [savingNotes, setSavingNotes] = useState(false)
-  const [notesDraft, setNotesDraft] = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -64,25 +64,26 @@ export default function DriverPurchaseDetail() {
     setDriver(drvRes.data || null)
     setEquipment(eqRes.data || null)
     setCoDrivers(coRes.data || [])
-    setNotesDraft(purchaseRow.notes || '')
     setLoading(false)
   }, [id])
 
   useEffect(() => { load() }, [load])
 
-  async function saveNotes() {
+  // Receives the trimmed next value from NotesField (or null if cleared).
+  // Equality check happens inside NotesField, so anything we get here is a
+  // real change.
+  async function saveNotes(next) {
     if (!canEdit || !purchase) return
-    if ((notesDraft || '') === (purchase.notes || '')) return
     setSavingNotes(true)
     const before = purchase.notes || ''
     const { error } = await supabase
       .from('driver_purchases')
-      .update({ notes: notesDraft.trim() || null, updated_by: user?.id || null })
+      .update({ notes: next, updated_by: user?.id || null })
       .eq('id', id)
     setSavingNotes(false)
     if (error) { alert('Save failed: ' + error.message); return }
     await logEvent(id, 'updated', 'Updated notes',
-      { fields: { notes: { old: before, new: notesDraft } } }, user?.id)
+      { fields: { notes: { old: before, new: next || '' } } }, user?.id)
     load()
   }
 
@@ -233,27 +234,22 @@ export default function DriverPurchaseDetail() {
             </div>
           </div>
 
-          {/* Notes — moved up so it sits with the contract context */}
+          {/* Notes — read mode renders as plain pre-wrap text inside the
+              card (no scrollbar, height grows with content); click to
+              edit switches to an auto-sized textarea that also grows
+              with input. */}
           <div className={`${S.card} p-5 space-y-3`}>
             <div className="flex items-baseline justify-between gap-2">
               <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Notes</h3>
-              {canEdit && (notesDraft || '') !== (purchase?.notes || '') && (
-                <button
-                  onClick={saveNotes}
-                  disabled={savingNotes}
-                  className="text-xs font-medium text-cyan-600 dark:text-cyan-400 hover:underline disabled:opacity-60"
-                >
-                  {savingNotes ? 'Saving…' : 'Save'}
-                </button>
+              {savingNotes && (
+                <span className="text-xs text-gray-400 dark:text-slate-500">Saving…</span>
               )}
             </div>
-            <textarea
-              className={S.textarea}
-              rows={4}
-              value={notesDraft}
-              disabled={!canEdit}
-              onChange={e => setNotesDraft(e.target.value)}
-              onBlur={saveNotes}
+            <NotesField
+              value={purchase?.notes || ''}
+              onSave={saveNotes}
+              canEdit={canEdit}
+              saving={savingNotes}
               placeholder="Add a note about this contract…"
             />
           </div>
