@@ -25,7 +25,6 @@ export default function DriverPurchaseDetail() {
   const [summary, setSummary] = useState(null)        // v_driver_purchase_summary row
   const [purchase, setPurchase] = useState(null)      // raw driver_purchases row (for edit form)
   const [driver, setDriver] = useState(null)
-  const [coDrivers, setCoDrivers] = useState([])
   const [equipment, setEquipment] = useState(null)
   const [loading, setLoading] = useState(true)
   // ActivityFeed has its own Realtime subscription, so we don't need a
@@ -53,17 +52,13 @@ export default function DriverPurchaseDetail() {
           .select('id, unit_number, vin, year, make, model, equipment_type, loan_id')
           .eq('id', purchaseRow.equipment_id).maybeSingle()
       : Promise.resolve({ data: null })
-    const coPromise = (purchaseRow.co_driver_ids?.length)
-      ? supabase.from('drivers').select('id, full_name, internal_id').in('id', purchaseRow.co_driver_ids)
-      : Promise.resolve({ data: [] })
 
-    const [drvRes, eqRes, coRes] = await Promise.all([driverPromise, equipPromise, coPromise])
+    const [drvRes, eqRes] = await Promise.all([driverPromise, equipPromise])
 
     setSummary(sumRes.data)
     setPurchase(purchaseRow)
     setDriver(drvRes.data || null)
     setEquipment(eqRes.data || null)
-    setCoDrivers(coRes.data || [])
     setLoading(false)
   }, [id])
 
@@ -181,19 +176,6 @@ export default function DriverPurchaseDetail() {
             {driver?.notes && (
               <div className="text-xs text-gray-600 dark:text-slate-400 pt-2 border-t border-gray-100 dark:border-white/5">
                 <span className="font-semibold">Notes:</span> {driver.notes}
-              </div>
-            )}
-            {coDrivers.length > 0 && (
-              <div className="pt-3 border-t border-gray-100 dark:border-white/5">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500 mb-1.5">Co-drivers</p>
-                <ul className="space-y-1 text-sm">
-                  {coDrivers.map(co => (
-                    <li key={co.id} className="flex items-baseline gap-2">
-                      <span className="text-gray-900 dark:text-slate-200">{co.full_name}</span>
-                      {co.internal_id && <span className="text-xs text-gray-400 dark:text-slate-500 font-mono">#{co.internal_id}</span>}
-                    </li>
-                  ))}
-                </ul>
               </div>
             )}
           </div>
