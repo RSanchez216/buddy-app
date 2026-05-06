@@ -37,6 +37,8 @@ export default function DriverPurchaseDetail() {
   const [showDelete,       setShowDelete]       = useState(false)
 
   const [savingNotes, setSavingNotes] = useState(false)
+  const [markingTitle, setMarkingTitle] = useState(false)
+  const [titleToast, setTitleToast] = useState(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -80,6 +82,41 @@ export default function DriverPurchaseDetail() {
     if (error) { alert('Save failed: ' + error.message); return }
     await logEvent(id, 'updated', 'Updated notes',
       { fields: { notes: { old: before, new: next || '' } } }, user?.id)
+    load()
+  }
+
+  // Mark title as transferred — optimistic flip + persist + log event.
+  // On error: revert local state, surface a toast, do NOT log the event.
+  async function markTitleTransferred() {
+    if (!canEdit || !purchase || markingTitle) return
+    if (purchase.title_transferred) return
+    setMarkingTitle(true)
+    // Optimistic: keep showing the new state while the request is in
+    // flight. summary is the source of truth for read; we just patch
+    // the local copy so the UI re-renders immediately.
+    setSummary(s => s ? { ...s, title_transferred: true, title_release_pending: false } : s)
+    setPurchase(p => p ? { ...p, title_transferred: true } : p)
+
+    const { error } = await supabase
+      .from('driver_purchases')
+      .update({ title_transferred: true, updated_by: user?.id || null })
+      .eq('id', id)
+
+    if (error) {
+      // Revert
+      setSummary(s => s ? { ...s, title_transferred: false, title_release_pending: true } : s)
+      setPurchase(p => p ? { ...p, title_transferred: false } : p)
+      setMarkingTitle(false)
+      setTitleToast({ kind: 'error', text: 'Could not mark title transferred: ' + error.message })
+      setTimeout(() => setTitleToast(null), 4000)
+      return
+    }
+
+    const userName = profile?.full_name || profile?.email || 'a user'
+    await logEvent(id, 'title_released', `Title marked as transferred by ${userName}`, {}, user?.id)
+    setMarkingTitle(false)
+    setTitleToast({ kind: 'success', text: 'Title marked as transferred' })
+    setTimeout(() => setTitleToast(null), 3000)
     load()
   }
 
@@ -211,7 +248,29 @@ export default function DriverPurchaseDetail() {
               />
               <Fact label="Purchase type" value={purchaseTypeLabel(summary.purchase_type)} />
               <Fact label="Purchase date" value={fmtDateOrDash(summary.purchase_date)} />
-              <Fact label="Title transferred" value={<YesNo on={summary.title_transferred} />} />
+              <Fact
+                label="Title transferred"
+                value={
+                  <span className="flex items-center gap-2 flex-wrap justify-end">
+                    <YesNo on={summary.title_transferred} />
+                    {canEdit && summary.status_name === 'Fully Paid' && !summary.title_transferred && (
+                      <button
+                        onClick={markTitleTransferred}
+                        disabled={markingTitle}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-amber-300 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 text-amber-800 dark:text-amber-300 text-[11px] font-medium hover:bg-amber-100 dark:hover:bg-amber-500/15 disabled:opacity-60 transition-colors whitespace-nowrap"
+                        title="Mark physical title as handed over to the driver"
+                      >
+                        <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.25} strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="7.5" cy="15.5" r="5.5" />
+                          <path d="m21 2-9.6 9.6" />
+                          <path d="m15.5 7.5 3 3L22 7l-3-3" />
+                        </svg>
+                        {markingTitle ? 'Saving…' : 'Mark transferred'}
+                      </button>
+                    )}
+                  </span>
+                }
+              />
               <Fact label="Contract signed" value={fmtDateOrDash(summary.contract_signed_date)} />
               <Fact label="Fully paid date" value={fmtDateOrDash(summary.fully_paid_date)} />
             </div>
@@ -287,6 +346,25 @@ export default function DriverPurchaseDetail() {
         purchase={purchase}
         onDeleted={() => { setShowDelete(false); navigate('/financial-controls/driver-purchases') }}
       />
+
+      {/* Title-transfer toast */}
+      {titleToast && (
+        <div
+          role="status"
+          className="fixed bottom-6 right-6 z-[110] max-w-sm bg-white dark:bg-[#0d0d1f] border rounded-2xl shadow-2xl px-4 py-3 flex items-start gap-3"
+          style={{
+            borderColor: titleToast.kind === 'success' ? 'rgb(110 231 183 / 0.4)' : 'rgb(252 165 165 / 0.6)',
+          }}
+        >
+          <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${titleToast.kind === 'success' ? 'bg-emerald-500' : 'bg-red-500'}`} />
+          <div className="flex-1 text-sm text-gray-700 dark:text-slate-300">{titleToast.text}</div>
+          <button onClick={() => setTitleToast(null)} className="text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 shrink-0">
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
     </div>
   )
 }

@@ -55,6 +55,18 @@ input:-webkit-autofill:focus {
   aside { display: none !important; }
 }
 
+/* Soft pulse — refined alternative to Tailwind's animate-pulse (which
+   dips to 50% opacity, too aggressive). 0.6 → 1.0 → 0.6 over 1.5s.
+   Used by the "Awaiting Title Release" KeyRound icon and any future
+   gentle attention-getter that shouldn't feel alarmist. */
+@keyframes soft-pulse {
+  0%, 100% { opacity: 0.6 }
+  50%      { opacity: 1 }
+}
+.animate-soft-pulse {
+  animation: soft-pulse 1.5s ease-in-out infinite;
+}
+
 /* Tippy "buddy-naked" theme — used by the @-mention popup. The Tiptap
    suggestion plugin renders MentionList inside a .tippy-box, but we want
    MentionList to control the entire visual surface (matching the rest

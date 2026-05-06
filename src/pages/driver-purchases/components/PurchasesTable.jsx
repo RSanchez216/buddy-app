@@ -71,7 +71,10 @@ export default function PurchasesTable({ rows = [] }) {
                 </div>
               </td>
               <td className={S.td}>
-                <StatusPill name={r.status_name} colorHex={r.status_color} />
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <StatusPill name={r.status_name} colorHex={r.status_color} />
+                  {r.title_release_pending && <TitlePendingBadge />}
+                </div>
               </td>
               <td className={`${S.td} font-mono text-gray-700 dark:text-slate-300`}>
                 {r.payment_amount ? fmtMoney(r.payment_amount) : '—'}
@@ -98,5 +101,25 @@ export default function PurchasesTable({ rows = [] }) {
         </tbody>
       </table>
     </div>
+  )
+}
+
+// Compact amber pill — KeyRound icon + "Title pending" — shown next to
+// the StatusPill on rows where the driver is paid off but the physical
+// title hand-off hasn't been recorded yet. Spottable while scrolling
+// without needing to filter.
+function TitlePendingBadge() {
+  return (
+    <span
+      title="Driver fully paid — title not yet handed over"
+      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-50 dark:bg-amber-500/10 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-500/20 whitespace-nowrap"
+    >
+      <svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.25} strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="7.5" cy="15.5" r="5.5" />
+        <path d="m21 2-9.6 9.6" />
+        <path d="m15.5 7.5 3 3L22 7l-3-3" />
+      </svg>
+      Title pending
+    </span>
   )
 }

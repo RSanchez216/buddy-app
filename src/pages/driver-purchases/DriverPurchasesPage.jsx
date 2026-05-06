@@ -9,11 +9,12 @@ import PurchasesTable from './components/PurchasesTable'
 import PurchaseFormModal from './components/PurchaseFormModal'
 
 const FILTERS = [
-  { id: 'all',         label: 'All' },
-  { id: 'active',      label: 'Active' },
-  { id: 'behind',      label: 'Behind' },
-  { id: 'fully_paid',  label: 'Fully paid' },
-  { id: 'cancelled',   label: 'Cancelled' },
+  { id: 'all',            label: 'All' },
+  { id: 'active',         label: 'Active' },
+  { id: 'behind',         label: 'Behind' },
+  { id: 'fully_paid',     label: 'Fully paid' },
+  { id: 'title_pending',  label: 'Title pending', tone: 'amber' },
+  { id: 'cancelled',      label: 'Cancelled' },
 ]
 
 export default function DriverPurchasesPage() {
@@ -53,9 +54,12 @@ export default function DriverPurchasesPage() {
       r.status_name === 'Driver Left' ||
       r.status_name === 'Owner Left'
     ).length
-    // Behind needs Phase 3 reconciliation data — always 0 in Phase 1
     const behind = rows.filter(r => r.is_behind).length
-    return { all: rows.length, active, behind, fully_paid: fullyPaid, cancelled }
+    const titlePending = rows.filter(r => r.title_release_pending).length
+    return {
+      all: rows.length, active, behind,
+      fully_paid: fullyPaid, title_pending: titlePending, cancelled,
+    }
   }, [rows])
 
   const visible = useMemo(() => {
@@ -68,6 +72,7 @@ export default function DriverPurchasesPage() {
       r.status_name === 'Owner Left'
     )
     else if (filter === 'behind') list = list.filter(r => r.is_behind)
+    else if (filter === 'title_pending') list = list.filter(r => r.title_release_pending)
 
     const q = search.trim().toLowerCase()
     if (q) {
@@ -81,6 +86,18 @@ export default function DriverPurchasesPage() {
   }, [rows, filter, search])
 
   const underwaterRows = useMemo(() => rows.filter(r => r.is_underwater), [rows])
+
+  // Fully paid + title not yet handed to driver. Sorted oldest-first so
+  // the longest-overdue hand-offs surface at the top of the panel.
+  const titlePendingRows = useMemo(() => {
+    return rows
+      .filter(r => r.title_release_pending)
+      .sort((a, b) => {
+        const da = a.fully_paid_date || a.updated_at || ''
+        const db = b.fully_paid_date || b.updated_at || ''
+        return da.localeCompare(db)
+      })
+  }, [rows])
 
   // Behind = view's is_behind flag, sorted by amount_behind desc so the
   // most severe contracts surface first. Each row carries amount_behind
@@ -136,21 +153,34 @@ export default function DriverPurchasesPage() {
         <>
           <KpiCards rows={rows} />
 
-          <WarningPanels behindRows={behindRows} underwaterRows={underwaterRows} />
+          <WarningPanels
+            behindRows={behindRows}
+            underwaterRows={underwaterRows}
+            titlePendingRows={titlePendingRows}
+          />
 
           {/* Filter chips + search */}
           <div className="flex items-center justify-between flex-wrap gap-3">
             <div className="flex items-center gap-2 flex-wrap">
-              {FILTERS.map(f => (
-                <button
-                  key={f.id}
-                  onClick={() => setFilter(f.id)}
-                  className={S.filterBtn(filter === f.id)}
-                >
-                  {f.label}
-                  <span className="ml-1.5 text-xs opacity-70">{counts[f.id] ?? 0}</span>
-                </button>
-              ))}
+              {FILTERS.map(f => {
+                const isActive = filter === f.id
+                // Amber-toned chips echo the title-release alert so the
+                // visual relationship between panel ↔ chip ↔ badge is
+                // obvious. Other chips keep the default cyan accent.
+                const cls = f.tone === 'amber'
+                  ? `px-3 py-1.5 text-sm rounded-xl border transition-colors ${
+                      isActive
+                        ? 'bg-amber-100 dark:bg-amber-500/15 border-amber-300 dark:border-amber-500/30 text-amber-800 dark:text-amber-300'
+                        : 'border-amber-200 dark:border-amber-500/20 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-500/10'
+                    }`
+                  : S.filterBtn(isActive)
+                return (
+                  <button key={f.id} onClick={() => setFilter(f.id)} className={cls}>
+                    {f.label}
+                    <span className="ml-1.5 text-xs opacity-70">{counts[f.id] ?? 0}</span>
+                  </button>
+                )
+              })}
             </div>
             <div className="relative">
               <input
