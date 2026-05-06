@@ -3,6 +3,7 @@ import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../contexts/AuthContext'
 import CommentBody from './CommentBody'
 import CommentComposer from './CommentComposer'
+import Attachments from './Attachments'
 import { fmtDateTime, fmtRelative } from '../utils/format'
 
 const EDIT_WINDOW_MIN = 5
@@ -32,14 +33,6 @@ export default function CommentItem({ row, currentUserId, isAdmin, highlight }) 
     document.addEventListener('mousedown', onClick)
     return () => document.removeEventListener('mousedown', onClick)
   }, [menuOpen])
-
-  async function downloadAttachment(att) {
-    const { data, error: e } = await supabase.storage
-      .from('comment-attachments')
-      .createSignedUrl(att.file_path, 60)
-    if (e) { alert('Download failed: ' + e.message); return }
-    window.open(data.signedUrl, '_blank')
-  }
 
   async function copyLink() {
     const url = `${window.location.origin}/financial-controls/driver-purchases/${row.driver_purchase_id}?comment=${row.id}`
@@ -110,23 +103,7 @@ export default function CommentItem({ row, currentUserId, isAdmin, highlight }) 
         ) : (
           <div className="mt-0.5">
             <CommentBody doc={row.body_json} fallbackText={row.body_text} currentUserId={currentUserId} />
-            {Array.isArray(row.attachments) && row.attachments.length > 0 && (
-              <div className="mt-1.5 flex flex-wrap gap-1.5">
-                {row.attachments.map(att => (
-                  <button
-                    key={att.id}
-                    onClick={() => downloadAttachment(att)}
-                    className="inline-flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-full bg-gray-100 dark:bg-slate-700/40 text-gray-700 dark:text-slate-300 hover:bg-gray-200 dark:hover:bg-slate-700/60"
-                    title="Download"
-                  >
-                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    {att.file_name}
-                  </button>
-                ))}
-              </div>
-            )}
+            <Attachments items={row.attachments || []} />
           </div>
         )}
 
