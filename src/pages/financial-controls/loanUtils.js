@@ -36,6 +36,8 @@ export const STATUS_LABELS = {
   transfer: 'Transfer',
   note: 'Note',
   loan_merged: 'Loan Merged',
+  title_received: 'Title Received',
+  titles_received_bulk: 'All Titles Received',
 }
 
 export function loanStatusPill(status) {

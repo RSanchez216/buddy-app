@@ -16,6 +16,8 @@ function eventColor(type) {
     case 'balance_correction': return 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400'
     case 'transfer':           return 'bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-400'
     case 'loan_merged':        return 'bg-fuchsia-50 dark:bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-400'
+    case 'title_received':
+    case 'titles_received_bulk': return 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400'
     case 'note':               return 'bg-gray-100 dark:bg-slate-700/50 text-gray-700 dark:text-slate-300'
     default:                   return 'bg-gray-100 dark:bg-slate-700/50 text-gray-700 dark:text-slate-300'
   }

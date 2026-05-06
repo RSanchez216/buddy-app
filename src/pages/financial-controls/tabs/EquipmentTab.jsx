@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../../../lib/supabase'
+import { useAuth } from '../../../contexts/AuthContext'
 import { S } from '../../../lib/styles'
 import Modal from '../../../components/Modal'
 import Select from '../../../components/Select'
@@ -12,6 +13,7 @@ const empty = {
 }
 
 export default function EquipmentTab({ loanId, canEdit }) {
+  const { user } = useAuth()
   const [rows, setRows] = useState([])
   const [equipmentTypes, setEquipmentTypes] = useState([])
   const [loading, setLoading] = useState(true)
@@ -77,6 +79,32 @@ export default function EquipmentTab({ loanId, canEdit }) {
     load()
   }
 
+  // Flip has_title true on a single equipment row and write a 'title_received'
+  // event for the audit trail. Optimistic UI: bump the row in local state
+  // so the ✓ appears immediately, then revert if the network call fails.
+  async function markTitleReceived(row) {
+    if (!canEdit || row.has_title) return
+    const today = new Date().toISOString().slice(0, 10)
+    setRows(rs => rs.map(r => r.id === row.id ? { ...r, has_title: true } : r))
+    const { error } = await supabase
+      .from('loan_equipment')
+      .update({ has_title: true, updated_at: new Date().toISOString() })
+      .eq('id', row.id)
+    if (error) {
+      setRows(rs => rs.map(r => r.id === row.id ? { ...r, has_title: false } : r))
+      alert('Could not mark title received: ' + error.message)
+      return
+    }
+    const label = row.unit_number || row.vin || 'equipment'
+    await supabase.from('loan_events').insert({
+      loan_id: loanId,
+      event_date: today,
+      event_type: 'title_received',
+      description: `Title received for ${label}`,
+      created_by: user?.id || null,
+    })
+  }
+
   async function handleDelete(row) {
     if (!confirm(`Delete equipment ${row.unit_number || row.vin || ''}?`)) return
     await supabase.from('loan_equipment').delete().eq('id', row.id)
@@ -128,7 +156,31 @@ export default function EquipmentTab({ loanId, canEdit }) {
                   <td className={`${S.td} text-gray-600 dark:text-slate-400`}>{r.year || '—'}</td>
                   <td className={`${S.td} text-gray-600 dark:text-slate-400 whitespace-nowrap`}>{fmtDate(r.purchase_date)}</td>
                   <td className={`${S.td} font-mono text-gray-700 dark:text-slate-300 whitespace-nowrap`}>{fmtMoney(r.purchase_price)}</td>
-                  <td className={`${S.td}`}>{r.has_title ? <span className="text-emerald-600">✓</span> : <span className="text-gray-300 dark:text-slate-600">—</span>}</td>
+                  <td className={S.td}>
+                    {r.has_title ? (
+                      <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 dark:text-emerald-400" title="Title on file">
+                        <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M5 13l4 4L19 7" />
+                        </svg>
+                        On file
+                      </span>
+                    ) : canEdit ? (
+                      <button
+                        onClick={() => markTitleReceived(r)}
+                        title="Mark title as received from lender"
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-amber-50 dark:bg-amber-500/10 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-500/20 hover:bg-amber-100 dark:hover:bg-amber-500/20 transition-colors whitespace-nowrap"
+                      >
+                        <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.25} strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="7.5" cy="15.5" r="5.5" />
+                          <path d="m21 2-9.6 9.6" />
+                          <path d="m15.5 7.5 3 3L22 7l-3-3" />
+                        </svg>
+                        Mark received
+                      </button>
+                    ) : (
+                      <span className="text-gray-300 dark:text-slate-600">—</span>
+                    )}
+                  </td>
                   <td className={S.td}>
                     {canEdit ? (
                       <select

@@ -14,6 +14,7 @@ import DocumentsTab from './tabs/DocumentsTab'
 import EventsTab from './tabs/EventsTab'
 import NotesTab from './tabs/NotesTab'
 import MergeLoanModal from './components/MergeLoanModal'
+import Modal from '../../components/Modal'
 
 const TABS = [
   { id: 'overview', label: 'Overview' },
@@ -45,7 +46,7 @@ function NotesDot() {
 export default function LoanDetail() {
   const { loanId } = useParams()
   const navigate = useNavigate()
-  const { profile } = useAuth()
+  const { profile, user } = useAuth()
   const canEdit = profile?.role === 'admin' || profile?.role === 'manager'
 
   const [loan, setLoan] = useState(null)
@@ -53,6 +54,8 @@ export default function LoanDetail() {
   const [activeTab, setActiveTab] = useState('overview')
   const [statusSaving, setStatusSaving] = useState(false)
   const [showMerge, setShowMerge] = useState(false)
+  const [showBulkTitle, setShowBulkTitle] = useState(false)
+  const [bulkTitleSaving, setBulkTitleSaving] = useState(false)
 
   // Tab badge counts — fetched once per loan load
   const [counts, setCounts] = useState({
@@ -102,6 +105,41 @@ export default function LoanDetail() {
     const { error } = await supabase.from('loans').update({ status: newStatus, updated_at: new Date().toISOString() }).eq('id', loanId)
     setStatusSaving(false)
     if (error) { alert('Failed: ' + error.message); return }
+    await loadLoan()
+  }
+
+  // Bulk-flip every loan_equipment row from has_title=false to true,
+  // then write ONE consolidated 'titles_received_bulk' event so the
+  // EventsTab doesn't get spammed with N near-duplicate rows.
+  async function markAllTitlesReceived() {
+    if (!canEdit || bulkTitleSaving) return
+    setBulkTitleSaving(true)
+    const today = new Date().toISOString().slice(0, 10)
+    const { data: pending, error: pendErr } = await supabase
+      .from('loan_equipment')
+      .select('id, unit_number, vin')
+      .eq('loan_id', loanId)
+      .eq('has_title', false)
+    if (pendErr) { setBulkTitleSaving(false); alert('Could not read equipment: ' + pendErr.message); return }
+    const ids = (pending || []).map(r => r.id)
+    if (ids.length === 0) { setBulkTitleSaving(false); setShowBulkTitle(false); return }
+    const { error: updErr } = await supabase
+      .from('loan_equipment')
+      .update({ has_title: true, updated_at: new Date().toISOString() })
+      .in('id', ids)
+    if (updErr) { setBulkTitleSaving(false); alert('Could not mark titles received: ' + updErr.message); return }
+    const summary = (pending || [])
+      .map(r => r.unit_number || r.vin || 'equipment')
+      .join(', ')
+    await supabase.from('loan_events').insert({
+      loan_id: loanId,
+      event_date: today,
+      event_type: 'titles_received_bulk',
+      description: `All titles received (${ids.length} item${ids.length === 1 ? '' : 's'}): ${summary}`,
+      created_by: user?.id || null,
+    })
+    setBulkTitleSaving(false)
+    setShowBulkTitle(false)
     await loadLoan()
   }
 
@@ -166,6 +204,20 @@ export default function LoanDetail() {
                 Merge…
               </button>
             )}
+            {canEdit && loan.title_release_pending && (
+              <button
+                onClick={() => setShowBulkTitle(true)}
+                title="All titles for this loan have been physically received from the lender"
+                className="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-lg bg-amber-50 dark:bg-amber-500/10 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-500/20 hover:bg-amber-100 dark:hover:bg-amber-500/20 transition-colors"
+              >
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.25} strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="7.5" cy="15.5" r="5.5" />
+                  <path d="m21 2-9.6 9.6" />
+                  <path d="m15.5 7.5 3 3L22 7l-3-3" />
+                </svg>
+                Mark all titles received
+              </button>
+            )}
           </div>
           <p className="text-sm text-gray-500 dark:text-slate-500 mt-1">
             {loan.entity_name || '—'} · {loan.lender_name || '—'}
@@ -217,6 +269,23 @@ export default function LoanDetail() {
           else loadLoan()
         }}
       />
+
+      <Modal open={showBulkTitle} onClose={() => !bulkTitleSaving && setShowBulkTitle(false)} title="Mark all titles received" size="sm">
+        <div className={S.modalBody}>
+          <p className="text-sm text-gray-700 dark:text-slate-300">
+            This will mark <span className="font-semibold">{loan.title_pending_count}</span> pending {loan.title_pending_count === 1 ? 'title' : 'titles'} as received from the lender for this loan.
+          </p>
+          <p className="text-xs text-gray-500 dark:text-slate-500">
+            A single audit event will be logged. You can still flip individual titles back via Edit Equipment if needed.
+          </p>
+          <div className={S.modalFooter}>
+            <button onClick={() => setShowBulkTitle(false)} disabled={bulkTitleSaving} className={S.btnCancel}>Cancel</button>
+            <button onClick={markAllTitlesReceived} disabled={bulkTitleSaving} className={FC.btnSave}>
+              {bulkTitleSaving ? 'Marking…' : 'Confirm'}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }

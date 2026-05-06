@@ -10,6 +10,7 @@ import {
   fmtMoney, fmtMoneyCompact, fmtDate,
 } from './loanUtils'
 import AddLoanModal from './AddLoanModal'
+import TitleReleasePanel from './components/TitleReleasePanel'
 
 function KpiCard({ label, value, accent = 'orange' }) {
   const accents = {
@@ -64,6 +65,7 @@ export default function DebtSchedule() {
   const [filterStatus, setFilterStatus] = useState('')
   const [filterEquipType, setFilterEquipType] = useState('')
   const [pastDueOnly, setPastDueOnly] = useState(false)
+  const [titlePendingOnly, setTitlePendingOnly] = useState(false)
   const [groupByEntity, setGroupByEntity] = useState(false)
 
   // null = default order (entity, then loan_id)
@@ -132,6 +134,7 @@ export default function DebtSchedule() {
         if (filterLender && l.lender_id !== filterLender) return null
         if (filterStatus && l.status !== filterStatus) return null
         if (pastDueOnly && (!l.days_behind || l.days_behind <= 0)) return null
+        if (titlePendingOnly && !l.title_release_pending) return null
         if (filterEquipType) {
           const eq = equipmentByLoan[l.id] || []
           if (!eq.some(e => e.equipment_type === filterEquipType)) return null
@@ -139,7 +142,7 @@ export default function DebtSchedule() {
         return { ...l, _hit: hit }
       })
       .filter(Boolean)
-  }, [loans, equipmentByLoan, search, filterEntity, filterLender, filterStatus, filterEquipType, pastDueOnly])
+  }, [loans, equipmentByLoan, search, filterEntity, filterLender, filterStatus, filterEquipType, pastDueOnly, titlePendingOnly])
 
   // Apply column sort (client-side, after filters)
   const sorted = useMemo(() => {
@@ -172,6 +175,15 @@ export default function DebtSchedule() {
     if (sortDir === 'asc') { setSortDir('desc'); return }
     setSortKey(null); setSortDir('asc')
   }
+
+  // Loans paid off but still missing one or more equipment titles.
+  // Sorted oldest paid-off first so Rebeca works the longest-pending
+  // ones from the top.
+  const titlePendingRows = useMemo(() => (
+    loans
+      .filter(l => l.title_release_pending)
+      .sort((a, b) => (a.updated_at || '').localeCompare(b.updated_at || ''))
+  ), [loans])
 
   // KPIs
   const kpis = useMemo(() => {
@@ -231,6 +243,9 @@ export default function DebtSchedule() {
         <KpiCard label="Paid Off YTD" value={kpis.paidOffYTD} accent="gray" />
       </div>
 
+      {/* Awaiting title release — paid-off loans with equipment titles still pending */}
+      <TitleReleasePanel rows={titlePendingRows} />
+
       {/* Filters */}
       <div className="flex gap-3 flex-wrap items-center">
         <input
@@ -261,6 +276,12 @@ export default function DebtSchedule() {
           className={S.filterBtn(pastDueOnly)}
         >
           Past Due Only
+        </button>
+        <button
+          onClick={() => setTitlePendingOnly(v => !v)}
+          className={S.filterBtn(titlePendingOnly)}
+        >
+          Title Pending Only
         </button>
         <button
           onClick={() => setGroupByEntity(v => !v)}
@@ -386,11 +407,34 @@ function LoanRow({ loan, equipment }) {
         {days > 0 ? `${days}d` : '0'}
       </td>
       <td className={S.td}>
-        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${loanStatusPill(loan.status)}`}>
-          <span className="w-1.5 h-1.5 rounded-full bg-current opacity-70" />
-          {STATUS_LABELS[loan.status] || loan.status}
-        </span>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${loanStatusPill(loan.status)}`}>
+            <span className="w-1.5 h-1.5 rounded-full bg-current opacity-70" />
+            {STATUS_LABELS[loan.status] || loan.status}
+          </span>
+          {loan.title_release_pending && <TitlePendingBadge />}
+        </div>
       </td>
     </tr>
+  )
+}
+
+// Compact amber pill — KeyRound icon + "Title pending" — shown next to
+// the status pill on rows where the loan is paid off but at least one
+// piece of equipment still has has_title=false. Mirrors the driver-side
+// TitlePendingBadge in PurchasesTable for cross-module consistency.
+function TitlePendingBadge() {
+  return (
+    <span
+      title="Loan paid off — at least one equipment title still pending from lender"
+      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-50 dark:bg-amber-500/10 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-500/20 whitespace-nowrap"
+    >
+      <svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.25} strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="7.5" cy="15.5" r="5.5" />
+        <path d="m21 2-9.6 9.6" />
+        <path d="m15.5 7.5 3 3L22 7l-3-3" />
+      </svg>
+      Title pending
+    </span>
   )
 }
