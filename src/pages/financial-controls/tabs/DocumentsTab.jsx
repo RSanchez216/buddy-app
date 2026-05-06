@@ -96,6 +96,20 @@ export default function DocumentsTab({ loanId, canEdit, userRole, onChange }) {
     window.open(data.signedUrl, '_blank')
   }
 
+  // Click filename = open in a new tab. Browser previews PDFs/images
+  // inline; non-renderable types (.docx etc) trigger the native save
+  // dialog — both are acceptable v1 behavior. Signed URL is generated
+  // lazily on click rather than per-row at render time.
+  async function openDoc(doc) {
+    const { data, error: e } = await supabase.storage.from(BUCKET).createSignedUrl(doc.file_path, 3600)
+    if (e) {
+      console.error('Couldn\'t open document:', e)
+      showToast('error', "Couldn't open document")
+      return
+    }
+    window.open(data.signedUrl, '_blank', 'noopener,noreferrer')
+  }
+
   // DB row first, then storage object. If the DB delete fails we abort
   // and never touch storage. If the storage remove fails after the DB
   // succeeded, we keep the user-facing op as success — the orphaned
@@ -169,7 +183,15 @@ export default function DocumentsTab({ loanId, canEdit, userRole, onChange }) {
                 <tr><td colSpan={6} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">No documents yet</td></tr>
               ) : docs.map(d => (
                 <tr key={d.id} className={`${S.tableRow} group`}>
-                  <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200 truncate max-w-xs`} title={d.file_name}>{d.file_name}</td>
+                  <td className={`${S.td} max-w-xs`}>
+                    <button
+                      onClick={() => openDoc(d)}
+                      className="font-medium text-gray-900 dark:text-slate-200 hover:text-orange-600 dark:hover:text-orange-400 hover:underline truncate text-left max-w-full block"
+                      title={`Open ${d.file_name}`}
+                    >
+                      {d.file_name}
+                    </button>
+                  </td>
                   <td className={`${S.td} text-gray-500 dark:text-slate-400 text-xs whitespace-nowrap`}>{fmtSize(d.file_size)}</td>
                   <td className={S.td}>
                     {canEdit ? (
