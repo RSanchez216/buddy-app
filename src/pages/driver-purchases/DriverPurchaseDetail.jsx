@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
@@ -52,7 +52,11 @@ export default function DriverPurchaseDetail() {
 
   const [savingNotes, setSavingNotes] = useState(false)
   const [markingTitle, setMarkingTitle] = useState(false)
-  const [titleToast, setTitleToast] = useState(null)
+  // Shared toast for header-level actions (title transfer + quick status
+  // change). { kind: 'success'|'error', text: string }.
+  const [toast, setToast] = useState(null)
+  const [statuses, setStatuses] = useState([])
+  const [savingStatus, setSavingStatus] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -80,6 +84,19 @@ export default function DriverPurchaseDetail() {
   }, [id])
 
   useEffect(() => { load() }, [load])
+
+  // Status list rarely changes; fetch once on mount and keep around for
+  // the header dropdown. Ordered by sort_order so the natural workflow
+  // progression (waiting → paying → terminal) reads top-to-bottom.
+  useEffect(() => {
+    let cancelled = false
+    supabase
+      .from('driver_purchase_statuses')
+      .select('id, name, color_hex, sort_order, is_active_state, is_terminal')
+      .order('sort_order', { ascending: true })
+      .then(({ data }) => { if (!cancelled) setStatuses(data || []) })
+    return () => { cancelled = true }
+  }, [])
 
   // Receives the trimmed next value from NotesField (or null if cleared).
   // Equality check happens inside NotesField, so anything we get here is a
@@ -121,16 +138,69 @@ export default function DriverPurchaseDetail() {
       setSummary(s => s ? { ...s, title_transferred: false, title_release_pending: true } : s)
       setPurchase(p => p ? { ...p, title_transferred: false } : p)
       setMarkingTitle(false)
-      setTitleToast({ kind: 'error', text: 'Could not mark title transferred: ' + error.message })
-      setTimeout(() => setTitleToast(null), 4000)
+      setToast({ kind: 'error', text: 'Could not mark title transferred: ' + error.message })
+      setTimeout(() => setToast(null), 4000)
       return
     }
 
     const userName = profile?.full_name || profile?.email || 'a user'
     await logEvent(id, 'title_released', `Title marked as transferred by ${userName}`, {}, user?.id)
     setMarkingTitle(false)
-    setTitleToast({ kind: 'success', text: 'Title marked as transferred' })
-    setTimeout(() => setTitleToast(null), 3000)
+    setToast({ kind: 'success', text: 'Title marked as transferred' })
+    setTimeout(() => setToast(null), 3000)
+    load()
+  }
+
+  // Header-level "Change to: …" dropdown handler. Mirrors the loan-side
+  // quickStatusChange flow + the canonical edit-modal status_changed event
+  // shape from PurchaseFormModal: description "Status changed from X to Y"
+  // with metadata { old, new }.
+  async function quickStatusChange(newStatusId) {
+    if (!canEdit || !summary || savingStatus) return
+    if (newStatusId === summary.status_id) return
+    const newStatus = statuses.find(s => s.id === newStatusId)
+    if (!newStatus) return
+    const oldStatusId = summary.status_id
+    const oldName = summary.status_name
+    const oldColor = summary.status_color
+    const oldActive = summary.is_active_state
+    const oldTerminal = summary.is_terminal
+
+    setSavingStatus(true)
+    setSummary(s => s ? {
+      ...s,
+      status_id: newStatus.id,
+      status_name: newStatus.name,
+      status_color: newStatus.color_hex,
+      is_active_state: newStatus.is_active_state,
+      is_terminal: newStatus.is_terminal,
+    } : s)
+
+    const { error } = await supabase
+      .from('driver_purchases')
+      .update({ status_id: newStatus.id, updated_by: user?.id || null })
+      .eq('id', id)
+
+    if (error) {
+      setSummary(s => s ? {
+        ...s,
+        status_id: oldStatusId,
+        status_name: oldName,
+        status_color: oldColor,
+        is_active_state: oldActive,
+        is_terminal: oldTerminal,
+      } : s)
+      setSavingStatus(false)
+      setToast({ kind: 'error', text: 'Could not change status: ' + error.message })
+      setTimeout(() => setToast(null), 4000)
+      return
+    }
+
+    await logEvent(id, 'status_changed', `Status changed from ${oldName} to ${newStatus.name}`,
+      { old: oldName, new: newStatus.name }, user?.id)
+    setSavingStatus(false)
+    setToast({ kind: 'success', text: `Status changed to ${newStatus.name}` })
+    setTimeout(() => setToast(null), 3000)
     load()
   }
 
@@ -168,6 +238,14 @@ export default function DriverPurchaseDetail() {
               )}
             </h1>
             <StatusPill name={summary.status_name} colorHex={summary.status_color} />
+            {canEdit && statuses.length > 0 && (
+              <QuickStatusDropdown
+                statuses={statuses}
+                currentStatusId={summary.status_id}
+                disabled={savingStatus}
+                onChange={quickStatusChange}
+              />
+            )}
           </div>
           <p className="text-sm text-gray-500 dark:text-slate-500 mt-1">
             {summary.entity_name || 'No entity'} · {purchaseTypeLabel(summary.purchase_type)}
@@ -363,18 +441,18 @@ export default function DriverPurchaseDetail() {
         onDeleted={() => { setShowDelete(false); navigate('/financial-controls/driver-purchases') }}
       />
 
-      {/* Title-transfer toast */}
-      {titleToast && (
+      {/* Header-level toast — used by title-transfer + quick status change */}
+      {toast && (
         <div
           role="status"
           className="fixed bottom-6 right-6 z-[110] max-w-sm bg-white dark:bg-[#0d0d1f] border rounded-2xl shadow-2xl px-4 py-3 flex items-start gap-3"
           style={{
-            borderColor: titleToast.kind === 'success' ? 'rgb(110 231 183 / 0.4)' : 'rgb(252 165 165 / 0.6)',
+            borderColor: toast.kind === 'success' ? 'rgb(110 231 183 / 0.4)' : 'rgb(252 165 165 / 0.6)',
           }}
         >
-          <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${titleToast.kind === 'success' ? 'bg-emerald-500' : 'bg-red-500'}`} />
-          <div className="flex-1 text-sm text-gray-700 dark:text-slate-300">{titleToast.text}</div>
-          <button onClick={() => setTitleToast(null)} className="text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 shrink-0">
+          <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${toast.kind === 'success' ? 'bg-emerald-500' : 'bg-red-500'}`} />
+          <div className="flex-1 text-sm text-gray-700 dark:text-slate-300">{toast.text}</div>
+          <button onClick={() => setToast(null)} className="text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 shrink-0">
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -410,3 +488,82 @@ function YesNo({ on }) {
 }
 
 function fmtDateOrDash(d) { return d ? fmtDate(d) : null }
+
+// Header-level "Change to: …" dropdown. Mirrors the loan-side detail
+// page's quick-status select, but uses a custom popover so each option
+// can lead with a colored dot in status.color_hex (native <option>
+// elements can't render rich content reliably). Inserts a divider
+// between non-terminal and terminal statuses so end-states feel like
+// a separate group without adding a confirm step.
+function QuickStatusDropdown({ statuses, currentStatusId, disabled, onChange }) {
+  const [open, setOpen] = useState(false)
+  const wrapRef = useRef(null)
+
+  useEffect(() => {
+    if (!open) return
+    function onDocClick(e) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false)
+    }
+    function onKey(e) { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', onDocClick)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDocClick)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const current = statuses.find(s => s.id === currentStatusId)
+  const firstTerminalIdx = statuses.findIndex(s => s.is_terminal)
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen(o => !o)}
+        className="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-lg bg-white dark:bg-slate-800/80 border border-gray-300 dark:border-slate-700/40 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 focus:outline-none focus:ring-2 focus:ring-orange-500/40 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+      >
+        Change to: {current?.name || '…'}
+        <svg className={`w-3 h-3 transition-transform ${open ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute z-30 mt-1 left-0 min-w-[14rem] bg-white dark:bg-[#0d0d1f] border border-gray-200 dark:border-white/10 rounded-xl shadow-2xl py-1 overflow-hidden"
+        >
+          {statuses.map((s, i) => {
+            const isCurrent = s.id === currentStatusId
+            const showDivider = i === firstTerminalIdx && i > 0
+            return (
+              <div key={s.id}>
+                {showDivider && <div className="my-1 border-t border-gray-100 dark:border-white/5" />}
+                <button
+                  role="menuitem"
+                  type="button"
+                  onClick={() => { setOpen(false); if (!isCurrent) onChange(s.id) }}
+                  className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors ${
+                    isCurrent
+                      ? 'bg-gray-50 dark:bg-white/5 text-gray-400 dark:text-slate-500 cursor-default'
+                      : 'text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5'
+                  }`}
+                >
+                  <span
+                    className="w-2 h-2 rounded-full shrink-0"
+                    style={{ backgroundColor: s.color_hex || '#9ca3af' }}
+                  />
+                  <span className="flex-1">Change to: {s.name}</span>
+                  {isCurrent && (
+                    <span className="text-[10px] text-gray-400 dark:text-slate-500">current</span>
+                  )}
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
