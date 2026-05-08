@@ -64,11 +64,18 @@ export default function PurchasesTable({ rows = [] }) {
               className={`${S.tableRow} cursor-pointer`}
             >
               <td className={S.td}>
-                <div className="font-medium text-gray-900 dark:text-slate-200">{r.driver_name}</div>
-                <div className="text-xs text-gray-500 dark:text-slate-500 font-mono">
-                  {r.truck_number || '—'}
-                  {r.driver_internal_id && <span className="ml-2 text-gray-400">#{r.driver_internal_id}</span>}
+                <div className="font-medium text-gray-900 dark:text-slate-200">
+                  {r.driver_internal_id && (
+                    <span className="text-gray-500 dark:text-slate-500 font-mono font-normal mr-1.5">#{r.driver_internal_id}</span>
+                  )}
+                  {r.driver_internal_id && <span className="text-gray-400 dark:text-slate-600 font-normal mr-1.5">·</span>}
+                  {r.driver_name}
                 </div>
+                {r.truck_number && (
+                  <div className="text-xs text-gray-500 dark:text-slate-500 font-mono">
+                    {r.truck_number}
+                  </div>
+                )}
               </td>
               <td className={S.td}>
                 <div className="flex items-center gap-1.5 flex-wrap">
