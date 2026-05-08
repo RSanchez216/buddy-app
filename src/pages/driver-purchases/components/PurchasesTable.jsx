@@ -23,7 +23,7 @@ export default function PurchasesTable({ rows = [] }) {
         <table className="w-full text-sm">
           <thead className={S.tableHead}>
             <tr>
-              <th className={S.th}>Driver / truck</th>
+              <th className={S.th}>Driver / unit</th>
               <th className={S.th}>Status</th>
               <th className={S.th}>Payment</th>
               <th className={S.th}>Balance</th>

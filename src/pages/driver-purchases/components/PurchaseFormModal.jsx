@@ -253,7 +253,7 @@ export default function PurchaseFormModal({ open, onClose, purchase, onSaved }) 
 
         <Section title="Equipment">
           <div className="grid grid-cols-3 gap-4">
-            <Field label="Truck number">
+            <Field label="Unit number">
               <input className={S.input} value={form.truck_number} onChange={e => set('truck_number', e.target.value)} />
             </Field>
             <Field label="Equipment type">

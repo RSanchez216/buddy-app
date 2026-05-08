@@ -15,6 +15,20 @@ import DeletePurchaseModal from './components/DeletePurchaseModal'
 import { logEvent } from './utils/events'
 import { fmtDate, fmtMoney, fmtFreq, purchaseTypeLabel } from './utils/format'
 
+// Derive the unit-label noun from equipment_type. Falls back to neutral
+// "Unit" when type is null/empty/anything other than truck or trailer
+// (covers ClickUp imports that never had equipment_type filled in, and
+// any future "other" rows). Returns null if there's no number to label,
+// so the H1 can omit the dash entirely.
+function formatUnitLabel(equipmentType, unitNumber) {
+  if (!unitNumber) return null
+  const t = (equipmentType || '').toLowerCase()
+  const noun = t === 'truck' ? 'Truck'
+             : t === 'trailer' ? 'Trailer'
+             : 'Unit'
+  return `${noun} ${unitNumber}`
+}
+
 export default function DriverPurchaseDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -149,7 +163,9 @@ export default function DriverPurchaseDetail() {
           <div className="flex items-center gap-3 flex-wrap">
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
               {summary.driver_name}
-              {summary.truck_number && <> — Truck {summary.truck_number}</>}
+              {formatUnitLabel(summary.equipment_type, summary.truck_number) && (
+                <> — {formatUnitLabel(summary.equipment_type, summary.truck_number)}</>
+              )}
             </h1>
             <StatusPill name={summary.status_name} colorHex={summary.status_color} />
           </div>
@@ -224,7 +240,7 @@ export default function DriverPurchaseDetail() {
             <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
               <Fact label="Entity" value={summary.entity_name} />
               <Fact label="Total value" value={fmtMoney(summary.total_value)} mono />
-              <Fact label="Truck number" value={summary.truck_number} mono />
+              <Fact label="Unit number" value={summary.truck_number} mono />
               <Fact label="Downpayment" value={fmtMoney(summary.downpayment)} mono />
               <Fact label="VIN" value={summary.vin} mono />
               <Fact label="Sale price" value={fmtMoney(summary.sale_price)} mono />

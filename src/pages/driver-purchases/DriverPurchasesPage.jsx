@@ -186,7 +186,7 @@ export default function DriverPurchasesPage() {
               <input
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                placeholder="Search driver, truck, or VIN…"
+                placeholder="Search driver, unit, or VIN…"
                 className={`${S.input} pl-8 w-72`}
               />
               <svg className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
