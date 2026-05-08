@@ -20,8 +20,9 @@ const TYPE_OPTIONS = {
     { v: 'signed_contract', l: 'Signed contract' },
     { v: 'bill_of_sale',    l: 'Bill of sale' },
     { v: 'title',           l: 'Title' },
-    { v: 'payoff_letter',   l: 'Payoff letter' },
-    { v: 'other',           l: 'Other' },
+    { v: 'payoff_letter',         l: 'Payoff letter' },
+    { v: 'payment_confirmation',  l: 'Payment confirmation' },
+    { v: 'other',                 l: 'Other' },
   ],
 }
 
