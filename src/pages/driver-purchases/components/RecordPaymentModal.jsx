@@ -66,6 +66,11 @@ export default function RecordPaymentModal({
   // confirmation). Edit lets you uncheck — e.g. zero-out a wrong entry
   // without leaving an orphaned ✓.
   const [reconciledOnSave, setReconciledOnSave] = useState(true)
+  // Sticky flag — flips to true the first time the user clicks the
+  // checkbox directly. Once true, the smart-default auto-check/uncheck
+  // logic stops firing so we don't silently overwrite their override
+  // when they tweak Amount Received or toggle the reversal flag.
+  const [reconciledUserTouched, setReconciledUserTouched] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
@@ -92,11 +97,17 @@ export default function RecordPaymentModal({
       setPaymentMethod(p.payment_method || smartDefaultMethod(p.payment_source))
       setReferenceNumber(p.reference_number || '')
       setReason(p.reason || '')
-      // Edit-mode default mirrors the row's current reconciled state so
-      // re-saving doesn't silently flip the audit flag. User can toggle
-      // explicitly if they want to unreconcile via Save instead of via
-      // the ✓ cell click.
-      setReconciledOnSave(!!p.reconciled)
+      // Edit-mode smart default for "Mark as reconciled":
+      //   actual > 0 (recorded already, with or without prior reconcile)
+      //     → pre-check; user's clear intent on opening the row is to
+      //       confirm it (or re-save the existing confirmation).
+      //   actual = 0 (empty/unrecorded row)
+      //     → start unchecked; the amount-onChange auto-check fires
+      //       once the user actually enters a value.
+      // Either way, reset the "touched" flag — the modal is opening
+      // fresh and the user hasn't picked anything yet.
+      setReconciledOnSave(Number(p.actual_amount || 0) !== 0)
+      setReconciledUserTouched(false)
       setPeriods([{
         id: p.id, period_start: p.period_start, period_end: p.period_end,
         expected_amount: p.expected_amount, actual_amount: p.actual_amount,
@@ -152,10 +163,13 @@ export default function RecordPaymentModal({
       setReferenceNumber('')
       setReason('')
       setIsReversal(false)
-      // New-record path implicitly confirms the payment. Unchecking
-      // here means "log the actual_amount but leave reconciled=false",
-      // useful when entering a payment you haven't bank-confirmed yet.
+      // New-record path implicitly confirms the payment — the user
+      // wouldn't be entering an amount otherwise. The auto-check
+      // useEffect will keep this in sync with Amount Received as the
+      // user edits (down to 0 → uncheck), until they manually toggle
+      // the checkbox themselves (touched=true sticks).
       setReconciledOnSave(true)
+      setReconciledUserTouched(false)
     })()
     return () => { cancelled = true }
   }, [open, purchase, isEdit, existingPayment])
@@ -167,6 +181,25 @@ export default function RecordPaymentModal({
     const p = periods.find(x => x.id === pickedPeriodId)
     if (p) setAmount(String(p.expected_amount || ''))
   }, [pickedPeriodId, mode, periods, isEdit])
+
+  // Smart-default for "Mark as reconciled": keep the checkbox in sync
+  // with the entered amount until the user takes manual control. Any
+  // positive amount with reversal off ⇒ pre-check; zero/empty ⇒ uncheck;
+  // reversal on ⇒ uncheck (reversals aren't payroll confirmations).
+  // Once reconciledUserTouched flips true (user clicked the checkbox
+  // themselves), this effect becomes a no-op so we don't fight them.
+  useEffect(() => {
+    if (reconciledUserTouched) return
+    const n = Number(amount)
+    const positive = Number.isFinite(n) && n > 0
+    if (isReversal) {
+      setReconciledOnSave(false)
+    } else if (positive) {
+      setReconciledOnSave(true)
+    } else {
+      setReconciledOnSave(false)
+    }
+  }, [amount, isReversal, reconciledUserTouched])
 
   const signedAmount = useMemo(() => {
     const n = Number(amount)
@@ -462,17 +495,31 @@ export default function RecordPaymentModal({
           <span className="text-sm text-gray-700 dark:text-slate-300">This is a reversal (negative amount)</span>
         </label>
 
-        {/* Reconciled toggle. Edit-mode shows the row's current state and
-            lets the user flip it; new-record mode defaults to checked
-            (recording is itself a confirmation) but can be unchecked
-            when the amount is logged before bank confirmation. */}
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" checked={reconciledOnSave} onChange={e => setReconciledOnSave(e.target.checked)} />
-          <span className="text-sm text-gray-700 dark:text-slate-300">
-            Mark as reconciled
-            <span className="ml-1 text-[11px] text-gray-400 dark:text-slate-500">(audit-confirmed; does not affect the balance)</span>
-          </span>
-        </label>
+        {/* Reconciled toggle. The smart-default useEffect keeps this in
+            sync with Amount Received and the reversal flag — until the
+            user clicks the checkbox directly, which sticks via the
+            touched flag and disables the auto behavior. Helper text
+            below is deliberately explicit about the balance-vs-flag
+            distinction; the prior wording ("audit-confirmed; does not
+            affect the balance") was the same idea but used jargon
+            ("audit-confirmed") that didn't land. */}
+        <div>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={reconciledOnSave}
+              onChange={e => {
+                setReconciledOnSave(e.target.checked)
+                setReconciledUserTouched(true)
+              }}
+            />
+            <span className="text-sm text-gray-700 dark:text-slate-300">Mark as reconciled</span>
+          </label>
+          <p className="mt-1 ml-6 text-[11px] text-gray-500 dark:text-slate-500">
+            Confirms the payment was verified against payroll. The balance updates from
+            {' '}<span className="font-medium">Amount Received</span> above — not from this checkbox.
+          </p>
+        </div>
 
         <div className={S.modalFooter}>
           <button onClick={onClose} className={S.btnCancel} disabled={busy}>Cancel</button>
