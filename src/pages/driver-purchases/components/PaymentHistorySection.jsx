@@ -354,10 +354,88 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
     if (data) setReconcilerName(data.full_name || data.email || '')
   }
 
+  // Hybrid table-click handler. Branches on the row's current actual:
+  //   actual === 0 → COMBO fast path: record expected + reconcile in
+  //                  one UPDATE, smart-default payment_method, write
+  //                  BOTH payment_recorded AND payment_reconciled
+  //                  events for an honest audit trail, show a unified
+  //                  "Recorded & reconciled" toast.
+  //   actual !== 0 → amber-dot fast path: just flip the reconciled
+  //                  flag; actual is already correct, balance unaffected.
+  // The Edit Payment modal remains the precision tool — used when
+  // actual differs from expected or for after-the-fact corrections.
   async function reconcilePayment(p) {
     setReconcileBusy(true)
     const nowIso = new Date().toISOString()
-    const prev = { reconciled: p.reconciled, reconciled_at: p.reconciled_at, reconciled_by: p.reconciled_by }
+    const isCombo = Number(p.actual_amount || 0) === 0
+    // previousState snapshot drives the undo — for combo we need to
+    // revert actual_amount + payment_method too, not just the audit flag.
+    const prev = isCombo
+      ? {
+          actual_amount: p.actual_amount,
+          payment_method: p.payment_method,
+          reconciled: p.reconciled,
+          reconciled_at: p.reconciled_at,
+          reconciled_by: p.reconciled_by,
+        }
+      : { reconciled: p.reconciled, reconciled_at: p.reconciled_at, reconciled_by: p.reconciled_by }
+
+    if (isCombo) {
+      const expected = Number(p.expected_amount || 0)
+      if (expected <= 0) {
+        setReconcileBusy(false)
+        alert('No expected amount on this row — use Edit to record a custom amount.')
+        return
+      }
+      // Smart payment_method default: payroll for generated rows
+      // (the cron-created weekly), manual otherwise. Existing method
+      // wins (defensive — shouldn't normally exist on actual=0 rows).
+      const methodDefault = p.payment_method
+        || (p.payment_source === 'generated' ? 'payroll' : 'manual')
+      setRows(rs => rs.map(r => r.id === p.id
+        ? { ...r, actual_amount: expected, payment_method: methodDefault,
+            reconciled: true, reconciled_at: nowIso, reconciled_by: user?.id || null }
+        : r))
+      const { error } = await supabase
+        .from('driver_purchase_payments')
+        .update({
+          actual_amount: expected,
+          payment_method: methodDefault,
+          reconciled: true,
+          reconciled_at: nowIso,
+          reconciled_by: user?.id || null,
+          updated_at: nowIso,
+        })
+        .eq('id', p.id)
+      if (error) {
+        setRows(rs => rs.map(r => r.id === p.id ? { ...r, ...prev } : r))
+        setReconcileBusy(false)
+        alert('Could not reconcile: ' + error.message)
+        return
+      }
+      // Two events in order: record first, then reconcile. Keeps the
+      // audit trail symmetric with how Phase 3B bulk imports write
+      // these (and with the undo flow which fires the matching pair
+      // of "undone" events).
+      await logEvent(purchase.id, 'payment_recorded',
+        `Recorded ${fmtMoney(expected)} for ${fmtDate(p.period_start)} – ${fmtDate(p.period_end)}`,
+        { payment_id: p.id, amount: expected, method: methodDefault, combo: true },
+        user?.id)
+      await logEvent(purchase.id, 'payment_reconciled',
+        `Reconciled payment for ${fmtDate(p.period_start)} – ${fmtDate(p.period_end)} (${fmtMoney(expected)})`,
+        { payment_id: p.id, amount: expected, combo: true },
+        user?.id)
+      setReconcileBusy(false)
+      if (undoToast?.timer) clearTimeout(undoToast.timer)
+      const timer = setTimeout(() => setUndoToast(null), 10000)
+      setUndoToast({
+        paymentId: p.id, prev, periodStart: p.period_start, periodEnd: p.period_end,
+        isCombo: true, amount: expected, timer,
+      })
+      return
+    }
+
+    // Amber-dot path: just flip reconciled.
     setRows(rs => rs.map(r => r.id === p.id
       ? { ...r, reconciled: true, reconciled_at: nowIso, reconciled_by: user?.id || null }
       : r))
@@ -379,34 +457,61 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
       user?.id,
     )
     setReconcileBusy(false)
-    // Replace any existing undo toast (and clear its timer)
     if (undoToast?.timer) clearTimeout(undoToast.timer)
     const timer = setTimeout(() => setUndoToast(null), 10000)
-    setUndoToast({ paymentId: p.id, prev, periodStart: p.period_start, periodEnd: p.period_end, timer })
+    setUndoToast({ paymentId: p.id, prev, periodStart: p.period_start, periodEnd: p.period_end, isCombo: false, timer })
   }
 
   async function undoReconcile() {
     if (!undoToast) return
     clearTimeout(undoToast.timer)
-    const { paymentId, prev, periodStart, periodEnd } = undoToast
+    const { paymentId, prev, periodStart, periodEnd, isCombo, amount } = undoToast
     setUndoToast(null)
     setReconcileBusy(true)
     setRows(rs => rs.map(r => r.id === paymentId ? { ...r, ...prev } : r))
+    // Combo undo reverts actual_amount + payment_method back to prior
+    // values (which the balance trigger will pick up automatically) AND
+    // clears the audit flag. Reconcile-only undo just flips the flag.
+    const revert = isCombo
+      ? {
+          actual_amount: prev.actual_amount ?? 0,
+          payment_method: prev.payment_method ?? null,
+          reconciled: false,
+          reconciled_at: null,
+          reconciled_by: null,
+          updated_at: new Date().toISOString(),
+        }
+      : { reconciled: false, reconciled_at: null, reconciled_by: null }
     const { error } = await supabase
       .from('driver_purchase_payments')
-      .update({ reconciled: false, reconciled_at: null, reconciled_by: null })
+      .update(revert)
       .eq('id', paymentId)
     setReconcileBusy(false)
     if (error) { alert('Undo failed: ' + error.message); load(); return }
-    await logEvent(
-      purchase.id,
-      'payment_unreconciled',
-      `Unreconciled payment for ${fmtDate(periodStart)} – ${fmtDate(periodEnd)} (undo)`,
-      { payment_id: paymentId, undo: true },
-      user?.id,
-    )
+    if (isCombo) {
+      // Symmetric to the combo action: two events, in reverse order
+      // (unreconcile first, then record-undone) so the activity feed
+      // reads like a logical "undo what just happened".
+      await logEvent(purchase.id, 'payment_unreconciled',
+        `Unreconciled payment for ${fmtDate(periodStart)} – ${fmtDate(periodEnd)} (undo)`,
+        { payment_id: paymentId, undo: true, combo: true },
+        user?.id)
+      await logEvent(purchase.id, 'payment_record_undone',
+        `Recording undone for ${fmtDate(periodStart)} – ${fmtDate(periodEnd)} (${fmtMoney(amount)}) (undo)`,
+        { payment_id: paymentId, amount, undo: true, combo: true },
+        user?.id)
+    } else {
+      await logEvent(purchase.id, 'payment_unreconciled',
+        `Unreconciled payment for ${fmtDate(periodStart)} – ${fmtDate(periodEnd)} (undo)`,
+        { payment_id: paymentId, undo: true },
+        user?.id)
+    }
+    load(); onChange?.()
   }
 
+  // Unreconcile-only: keeps the recording. Use when "I confirmed the
+  // wrong week" — the money is still correctly recorded, just remove
+  // the confirmation flag.
   async function confirmUnreconcile() {
     if (!unreconcileTarget) return
     const p = unreconcileTarget
@@ -431,6 +536,53 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
       { payment_id: p.id },
       user?.id,
     )
+    load(); onChange?.()
+  }
+
+  // Unrecord & unreconcile: full reversal. Zeros actual_amount (balance
+  // trigger recovers), clears payment_method, removes the confirmation
+  // flag. Use when "I shouldn't have recorded this; it didn't happen."
+  async function confirmUnrecordAndUnreconcile() {
+    if (!unreconcileTarget) return
+    const p = unreconcileTarget
+    setUnreconcileTarget(null)
+    setReconcileBusy(true)
+    const prev = {
+      actual_amount: p.actual_amount,
+      payment_method: p.payment_method,
+      reconciled: p.reconciled,
+      reconciled_at: p.reconciled_at,
+      reconciled_by: p.reconciled_by,
+    }
+    setRows(rs => rs.map(r => r.id === p.id
+      ? { ...r, actual_amount: 0, payment_method: null, reconciled: false, reconciled_at: null, reconciled_by: null }
+      : r))
+    const { error } = await supabase
+      .from('driver_purchase_payments')
+      .update({
+        actual_amount: 0,
+        payment_method: null,
+        reconciled: false,
+        reconciled_at: null,
+        reconciled_by: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', p.id)
+    setReconcileBusy(false)
+    if (error) {
+      setRows(rs => rs.map(r => r.id === p.id ? { ...r, ...prev } : r))
+      alert('Could not undo payment: ' + error.message)
+      return
+    }
+    await logEvent(purchase.id, 'payment_unreconciled',
+      `Unreconciled payment for ${fmtDate(p.period_start)} – ${fmtDate(p.period_end)}`,
+      { payment_id: p.id },
+      user?.id)
+    await logEvent(purchase.id, 'payment_record_undone',
+      `Recording undone for ${fmtDate(p.period_start)} – ${fmtDate(p.period_end)} (${fmtMoney(prev.actual_amount)})`,
+      { payment_id: p.id, amount: prev.actual_amount },
+      user?.id)
+    load(); onChange?.()
   }
 
   function openTrackingEdit() {
@@ -674,26 +826,46 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
         </div>
       </Modal>
 
-      {/* Unreconcile confirmation (when user clicks an already-reconciled ✓) */}
-      <Modal open={!!unreconcileTarget} onClose={() => setUnreconcileTarget(null)} title="Unreconcile this payment?" size="sm">
+      {/* Green-✓ click popover. Two options because there are two
+          distinct undo scenarios:
+            • Unreconcile only — keep the recording, just remove the
+              audit flag. "I confirmed the wrong week; the payment
+              itself is correct." Balance unchanged.
+            • Unrecord & unreconcile — full reversal. "This payment
+              didn't happen at all." Balance recovers via the trigger. */}
+      <Modal open={!!unreconcileTarget} onClose={() => setUnreconcileTarget(null)} title="Undo this payment?" size="sm">
         {unreconcileTarget && (
           <div className={S.modalBody}>
-            <p className="text-sm text-gray-700 dark:text-slate-300">
-              Mark the payment for {fmtDate(unreconcileTarget.period_start)} – {fmtDate(unreconcileTarget.period_end)} as not reconciled.
-            </p>
             <p className="text-xs text-gray-500 dark:text-slate-500">
-              Originally reconciled by {reconcilerName || (unreconcileTarget.reconciled_by ? 'a user' : 'unknown')}
-              {unreconcileTarget.reconciled_at && <> on {fmtDate(unreconcileTarget.reconciled_at)}</>}.
+              Reconciled
+              {unreconcileTarget.reconciled_at && <> {fmtDate(unreconcileTarget.reconciled_at)}</>}
+              {' '}by {reconcilerName || (unreconcileTarget.reconciled_by ? 'a user' : 'unknown')} for{' '}
+              {fmtDate(unreconcileTarget.period_start)} – {fmtDate(unreconcileTarget.period_end)} ({fmtMoney(unreconcileTarget.actual_amount)}).
             </p>
-            <div className={S.modalFooter}>
-              <button onClick={() => setUnreconcileTarget(null)} disabled={reconcileBusy} className={S.btnCancel}>Cancel</button>
+            <div className="rounded-lg border border-gray-200 dark:border-white/10 p-3 space-y-1">
               <button
                 onClick={confirmUnreconcile}
                 disabled={reconcileBusy}
-                className="px-4 py-2 text-sm font-semibold bg-amber-500 hover:bg-amber-400 text-white rounded-xl transition-colors disabled:opacity-50"
+                className="w-full text-left px-3 py-2 rounded-md hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-50"
               >
-                {reconcileBusy ? 'Working…' : 'Unreconcile'}
+                <div className="text-sm font-medium text-gray-900 dark:text-slate-200">Unreconcile only</div>
+                <div className="text-[11px] text-gray-500 dark:text-slate-500">
+                  Removes the confirmation flag. Keeps the recording. Balance unchanged.
+                </div>
               </button>
+              <button
+                onClick={confirmUnrecordAndUnreconcile}
+                disabled={reconcileBusy}
+                className="w-full text-left px-3 py-2 rounded-md hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50"
+              >
+                <div className="text-sm font-medium text-red-700 dark:text-red-400">Unrecord &amp; unreconcile</div>
+                <div className="text-[11px] text-red-700/70 dark:text-red-400/70">
+                  Zeros the recorded amount and clears the method. Balance recovers.
+                </div>
+              </button>
+            </div>
+            <div className={S.modalFooter}>
+              <button onClick={() => setUnreconcileTarget(null)} disabled={reconcileBusy} className={S.btnCancel}>Cancel</button>
             </div>
           </div>
         )}
@@ -736,7 +908,10 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
         >
           <div className="w-2 h-2 rounded-full mt-1.5 shrink-0 bg-emerald-500" />
           <div className="flex-1 text-sm text-gray-700 dark:text-slate-300">
-            Reconciled {fmtDate(undoToast.periodStart)} payment.{' '}
+            {undoToast.isCombo
+              ? <>Recorded &amp; reconciled {fmtMoney(undoToast.amount)} for {fmtDate(undoToast.periodStart)}.</>
+              : <>Reconciled {fmtDate(undoToast.periodStart)} payment.</>}
+            {' '}
             <button onClick={undoReconcile} className="font-semibold text-emerald-600 dark:text-emerald-400 hover:underline ml-1">
               Undo (10s)
             </button>
