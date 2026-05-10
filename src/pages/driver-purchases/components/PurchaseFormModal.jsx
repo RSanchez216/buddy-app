@@ -252,7 +252,20 @@ export default function PurchaseFormModal({ open, onClose, purchase, onSaved }) 
       // picker in PaymentHistorySection.
       ...(isEdit ? {} : { payment_tracking_start_date: form.purchase_date || new Date().toISOString().slice(0, 10) }),
       contract_signed_date: form.contract_signed_date || null,
-      fully_paid_date: form.fully_paid_date || null,
+      // Auto-set fully_paid_date when the save transitions status to
+      // Fully Paid for the first time. Mirrors the quick-status-change
+      // shortcut: existing values are preserved (re-saving Fully Paid
+      // doesn't overwrite the original payoff date), and the user can
+      // still type a back-dated value before saving for historical
+      // imports.
+      fully_paid_date: (() => {
+        const isFullyPaidStatus = statuses.find(s => s.id === form.status_id)?.name === 'Fully Paid'
+        const wasFullyPaidBefore = isEdit && statuses.find(s => s.id === originalForm?.status_id)?.name === 'Fully Paid'
+        if (isFullyPaidStatus && !form.fully_paid_date && !wasFullyPaidBefore) {
+          return new Date().toISOString().slice(0, 10)
+        }
+        return form.fully_paid_date || null
+      })(),
       title_transferred: !!form.title_transferred,
       notes: form.notes.trim() || null,
       updated_by: user?.id || null,
@@ -499,10 +512,22 @@ export default function PurchaseFormModal({ open, onClose, purchase, onSaved }) 
               <input className={S.input} type="date" value={form.contract_signed_date}
                 onChange={e => set('contract_signed_date', e.target.value)} />
             </Field>
-            <Field label="Fully paid date">
-              <input className={S.input} type="date" value={form.fully_paid_date}
-                onChange={e => set('fully_paid_date', e.target.value)} />
-            </Field>
+            {/* Fully Paid Date is only meaningful when the selected
+                status IS Fully Paid. Active contracts show the
+                view-computed projection on the detail page instead —
+                no user input. For Fully Paid status, the field is
+                required and pre-filled (auto-set on first transition;
+                manually back-datable for historical imports). */}
+            {statuses.find(s => s.id === form.status_id)?.name === 'Fully Paid' && (
+              <Field label="Fully paid date">
+                <input
+                  className={S.input}
+                  type="date"
+                  value={form.fully_paid_date}
+                  onChange={e => set('fully_paid_date', e.target.value)}
+                />
+              </Field>
+            )}
           </div>
         </Section>
 

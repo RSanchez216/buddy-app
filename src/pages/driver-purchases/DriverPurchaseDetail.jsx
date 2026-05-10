@@ -171,6 +171,12 @@ export default function DriverPurchaseDetail() {
     const oldTerminal = summary.is_terminal
 
     setSavingStatus(true)
+    // Auto-set fully_paid_date when flipping to Fully Paid for the
+    // first time — common workflow shortcut. Existing values are
+    // preserved (re-flipping later doesn't overwrite the original
+    // payoff date).
+    const today = new Date().toISOString().slice(0, 10)
+    const autoSetPaidDate = newStatus.name === 'Fully Paid' && !summary.fully_paid_date
     setSummary(s => s ? {
       ...s,
       status_id: newStatus.id,
@@ -178,11 +184,17 @@ export default function DriverPurchaseDetail() {
       status_color: newStatus.color_hex,
       is_active_state: newStatus.is_active_state,
       is_terminal: newStatus.is_terminal,
+      ...(autoSetPaidDate ? { fully_paid_date: today } : {}),
     } : s)
 
+    const updatePayload = {
+      status_id: newStatus.id,
+      updated_by: user?.id || null,
+      ...(autoSetPaidDate ? { fully_paid_date: today } : {}),
+    }
     const { error } = await supabase
       .from('driver_purchases')
-      .update({ status_id: newStatus.id, updated_by: user?.id || null })
+      .update(updatePayload)
       .eq('id', id)
 
     if (error) {
@@ -378,7 +390,7 @@ export default function DriverPurchaseDetail() {
                 }
               />
               <Fact label="Contract signed" value={fmtDateOrDash(summary.contract_signed_date)} />
-              <Fact label="Fully paid date" value={fmtDateOrDash(summary.fully_paid_date)} />
+              <PayoffDateFact summary={summary} />
             </div>
           </div>
 
@@ -501,6 +513,41 @@ function YesNo({ on }) {
 }
 
 function fmtDateOrDash(d) { return d ? fmtDate(d) : null }
+
+// Smart payoff-date row in the contract terms grid:
+//   • Fully Paid status     → "Fully paid date" + stored fully_paid_date
+//   • non-terminal active   → "Projected fully paid date" + view-computed
+//   • terminal not-Fully-Paid (Contract Broken / Driver Left / Owner Left)
+//                           → entire row hidden (no payoff expected)
+//   • active but no projection possible (payment_amount missing)
+//                           → "Projected fully paid date" + "—" + hint
+function PayoffDateFact({ summary }) {
+  const fullyPaid = summary.status_name === 'Fully Paid'
+  // Non-Fully-Paid terminal statuses skip the row entirely. is_terminal
+  // is exposed by the status lookup join.
+  if (!fullyPaid && summary.is_terminal) return null
+
+  if (fullyPaid) {
+    return <Fact label="Fully paid date" value={fmtDateOrDash(summary.fully_paid_date)} />
+  }
+
+  const projected = summary.projected_fully_paid_date
+  return (
+    <div className="flex flex-col py-1 border-b border-gray-50 dark:border-white/[0.03]">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-xs text-gray-500 dark:text-slate-400">Projected fully paid date</span>
+        <span className="text-sm text-gray-700 dark:text-slate-300 text-right">
+          {projected ? fmtDate(projected) : '—'}
+        </span>
+      </div>
+      <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-0.5 self-end">
+        {projected
+          ? 'Updates automatically based on balance and payment cadence.'
+          : 'Set a payment amount to see the projection.'}
+      </p>
+    </div>
+  )
+}
 
 // Header-level "Change to: …" dropdown. Mirrors the loan-side detail
 // page's quick-status select, but uses a custom popover so each option
