@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 
 function fmt(n) {
@@ -49,13 +50,11 @@ export default function WarningPanels({
         <Panel
           tone="amber"
           title="Behind on payments"
-          count={behindRows.length}
-          rows={behindRows.slice(0, 5).map(r => ({
+          rows={behindRows.map(r => ({
             id: r.id,
             primary: `${r.driver_name}${r.truck_number ? ' · ' + r.truck_number : ''}`,
             secondary: behindSecondary(r),
           }))}
-          rest={Math.max(0, behindRows.length - 5)}
         />
       )}
 
@@ -63,13 +62,11 @@ export default function WarningPanels({
         <Panel
           tone="red"
           title="Underwater contracts"
-          count={underwaterRows.length}
-          rows={underwaterRows.slice(0, 5).map(r => ({
+          rows={underwaterRows.map(r => ({
             id: r.id,
             primary: `${r.driver_name}${r.truck_number ? ' · ' + r.truck_number : ''}`,
             secondary: `Gap ${fmt(r.coverage_gap)}`,
           }))}
-          rest={Math.max(0, underwaterRows.length - 5)}
         />
       )}
 
@@ -87,7 +84,13 @@ export default function WarningPanels({
 }
 
 // ── Generic panel (Behind / Underwater) ────────────────────────────────
-function Panel({ tone, title, count, rows, rest }) {
+// Shows first 5 rows by default; a "Show all N" / "Show less" button
+// toggles inline expansion. No navigation, no modal. Matches the
+// TitleReleasePanel expand/collapse pattern for cross-panel consistency.
+function Panel({ tone, title, rows }) {
+  const [expanded, setExpanded] = useState(false)
+  const total = rows.length
+  const visible = expanded ? rows : rows.slice(0, 5)
   const tones = {
     amber: {
       bg: 'bg-amber-50 dark:bg-amber-500/10',
@@ -109,24 +112,41 @@ function Panel({ tone, title, count, rows, rest }) {
     <div className={`${tones.bg} border ${tones.border} rounded-2xl p-4 min-w-0`}>
       <div className="flex items-baseline justify-between gap-2 mb-2">
         <p className={`text-xs font-bold uppercase tracking-wide ${tones.text}`}>{title}</p>
-        <span className={`text-xs font-mono font-semibold ${tones.text}`}>{count}</span>
+        <span className={`text-xs font-mono font-semibold ${tones.text}`}>{total}</span>
       </div>
       <ul className="space-y-0.5">
-        {rows.map((r) => (
+        {visible.map(r => (
           <li key={r.id || r.primary}><Row tone={tones} row={r} /></li>
         ))}
-        {rest > 0 && (
-          <li className={`${tones.sub} text-[11px] italic px-2 pt-1`}>+{rest} more</li>
-        )}
       </ul>
+      {total > 5 && (
+        <ExpandToggle tone={tones} expanded={expanded} total={total} onToggle={() => setExpanded(v => !v)} />
+      )}
     </div>
+  )
+}
+
+// Shared inline expand/collapse affordance. Plain text (no arrows), tone-
+// matched color, underline on hover, padded for a comfortable hit target.
+function ExpandToggle({ tone, expanded, total, onToggle }) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className={`mt-1 px-2 py-1 text-[11px] font-medium ${tone.sub} hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-current/30 rounded`}
+    >
+      {expanded ? 'Show less' : `Show all ${total}`}
+    </button>
   )
 }
 
 // ── Title Release panel ────────────────────────────────────────────────
 // Visually distinct from the standard panels: 4px amber-500 left bar +
-// pulsing KeyRound icon. "Show all N" expands inline (no separate page).
+// pulsing KeyRound icon. Inline expand/collapse via the shared
+// ExpandToggle so wording matches the generic Panel ("Show all N" /
+// "Show less", no arrow glyphs that imply navigation).
 function TitleReleasePanel({ rows }) {
+  const [expanded, setExpanded] = useState(false)
   const tone = {
     bg: 'bg-amber-50 dark:bg-amber-500/10',
     border: 'border-amber-200 dark:border-amber-500/20',
@@ -135,12 +155,7 @@ function TitleReleasePanel({ rows }) {
     hover: 'hover:bg-amber-100/70 dark:hover:bg-amber-500/15',
   }
   const total = rows.length
-
-  // Show first 5 by default, then "Show all N" expands inline.
-  // Local state via a simple useState would require lifting; using a
-  // <details>/<summary> is simpler and accessible.
-  const head = rows.slice(0, 5)
-  const tail = rows.slice(5)
+  const visible = expanded ? rows : rows.slice(0, 5)
 
   return (
     <div
@@ -156,23 +171,13 @@ function TitleReleasePanel({ rows }) {
       </div>
 
       <ul className="space-y-0.5">
-        {head.map(r => (
+        {visible.map(r => (
           <li key={r.id || r.primary}><Row tone={tone} row={r} /></li>
         ))}
       </ul>
 
-      {tail.length > 0 && (
-        <details className="mt-1 group">
-          <summary className={`cursor-pointer list-none ${tone.sub} text-[11px] font-medium px-2 pt-1 select-none hover:underline`}>
-            <span className="group-open:hidden">Show all {total} →</span>
-            <span className="hidden group-open:inline">Show fewer ↑</span>
-          </summary>
-          <ul className="space-y-0.5 mt-0.5">
-            {tail.map(r => (
-              <li key={r.id || r.primary}><Row tone={tone} row={r} /></li>
-            ))}
-          </ul>
-        </details>
+      {total > 5 && (
+        <ExpandToggle tone={tone} expanded={expanded} total={total} onToggle={() => setExpanded(v => !v)} />
       )}
     </div>
   )
