@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../contexts/AuthContext'
 import { S } from '../../../lib/styles'
@@ -121,6 +121,21 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
   // armed when the user re-saves an existing skipped row (no state
   // change worth offering to undo).
   const [skipUndoToast, setSkipUndoToast] = useState(null)
+  // Single shared 1-Hz tick — forces a re-render every second so every
+  // undo toast's "(Ns)" label recomputes live. The setTimeout that
+  // actually dismisses the toast at 10s is unchanged (per toast); this
+  // is purely the visible countdown layer. One interval covers all
+  // toasts; only runs while at least one is armed.
+  const [, forceTick] = useReducer(x => x + 1, 0)
+  useEffect(() => {
+    if (!undoToast && !recordUndoToast && !skipUndoToast) return
+    const id = setInterval(forceTick, 1000)
+    return () => clearInterval(id)
+  }, [undoToast, recordUndoToast, skipUndoToast])
+  function remainingSeconds(toast) {
+    if (!toast?.expiresAt) return 0
+    return Math.max(0, Math.ceil((toast.expiresAt - Date.now()) / 1000))
+  }
   const [unreconcileTarget, setUnreconcileTarget] = useState(null)  // payment row
   const [unskipTarget, setUnskipTarget] = useState(null)            // payment row
   const [reconcileBusy, setReconcileBusy] = useState(false)
@@ -197,6 +212,7 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
         paymentId: info.paymentId,
         periodStart: info.periodStart,
         periodEnd: info.periodEnd,
+        expiresAt: Date.now() + 10000,
         previousState: info.previousState,
         timer,
       })
@@ -210,6 +226,7 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
         paymentId: info.paymentId,
         amount: info.amount,
         periodStart: info.periodStart,
+        expiresAt: Date.now() + 10000,
         periodEnd: info.periodEnd,
         isNewlyInserted: info.isNewlyInserted,
         previousState: info.previousState,
@@ -431,6 +448,7 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
       setUndoToast({
         paymentId: p.id, prev, periodStart: p.period_start, periodEnd: p.period_end,
         isCombo: true, amount: expected, timer,
+        expiresAt: Date.now() + 10000,
       })
       return
     }
@@ -459,7 +477,7 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
     setReconcileBusy(false)
     if (undoToast?.timer) clearTimeout(undoToast.timer)
     const timer = setTimeout(() => setUndoToast(null), 10000)
-    setUndoToast({ paymentId: p.id, prev, periodStart: p.period_start, periodEnd: p.period_end, isCombo: false, timer })
+    setUndoToast({ paymentId: p.id, prev, periodStart: p.period_start, periodEnd: p.period_end, isCombo: false, timer, expiresAt: Date.now() + 10000 })
   }
 
   async function undoReconcile() {
@@ -913,7 +931,7 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
               : <>Reconciled {fmtDate(undoToast.periodStart)} payment.</>}
             {' '}
             <button onClick={undoReconcile} className="font-semibold text-emerald-600 dark:text-emerald-400 hover:underline ml-1">
-              Undo (10s)
+              Undo ({remainingSeconds(undoToast)}s)
             </button>
           </div>
           <button
@@ -939,7 +957,7 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
           <div className="flex-1 text-sm text-gray-700 dark:text-slate-300">
             Recorded {fmtMoney(recordUndoToast.amount)} for {fmtDate(recordUndoToast.periodStart)}.{' '}
             <button onClick={undoRecordPayment} className="font-semibold text-cyan-600 dark:text-cyan-400 hover:underline ml-1">
-              Undo (10s)
+              Undo ({remainingSeconds(recordUndoToast)}s)
             </button>
           </div>
           <button
@@ -965,7 +983,7 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
           <div className="flex-1 text-sm text-gray-700 dark:text-slate-300">
             Payment skipped for {fmtDate(skipUndoToast.periodStart)}.{' '}
             <button onClick={undoSkip} className="font-semibold text-indigo-600 dark:text-indigo-400 hover:underline ml-1">
-              Undo (10s)
+              Undo ({remainingSeconds(skipUndoToast)}s)
             </button>
           </div>
           <button
