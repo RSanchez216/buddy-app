@@ -73,7 +73,7 @@ export default function PurchasesTable({ rows = [] }) {
                 </div>
                 {r.truck_number && (
                   <div className="text-xs text-gray-500 dark:text-slate-500 font-mono">
-                    {r.truck_number}
+                    Unit - {r.truck_number}
                   </div>
                 )}
               </td>

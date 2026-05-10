@@ -64,7 +64,7 @@ export default function WarningPanels({
           title="Underwater contracts"
           rows={underwaterRows.map(r => ({
             id: r.id,
-            primary: `${r.driver_name}${r.truck_number ? ' · ' + r.truck_number : ''}`,
+            primary: `${r.driver_name}${r.truck_number ? ' · Unit - ' + r.truck_number : ''}`,
             secondary: `Gap ${fmt(r.coverage_gap)}`,
           }))}
         />
@@ -74,7 +74,7 @@ export default function WarningPanels({
         <TitleReleasePanel
           rows={titlePendingRows.map(r => ({
             id: r.id,
-            primary: `${r.driver_name}${r.truck_number ? ' · ' + r.truck_number : ''}`,
+            primary: `${r.driver_name}${r.truck_number ? ' · Unit - ' + r.truck_number : ''}`,
             secondary: paidOffPhrase(r),
           }))}
         />
