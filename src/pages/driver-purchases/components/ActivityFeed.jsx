@@ -18,6 +18,8 @@ const EVENT_DOT = {
   equipment_unlinked:'bg-amber-500',
   driver_updated:    'bg-orange-500',
   imported:          'bg-gray-300 dark:bg-slate-600',
+  payment_reconciled:   'bg-emerald-500',
+  payment_unreconciled: 'bg-amber-500',
 }
 
 // Combined activity feed: rich-text comments + system events, queried

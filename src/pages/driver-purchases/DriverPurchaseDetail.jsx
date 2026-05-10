@@ -57,6 +57,10 @@ export default function DriverPurchaseDetail() {
   const [toast, setToast] = useState(null)
   const [statuses, setStatuses] = useState([])
   const [savingStatus, setSavingStatus] = useState(false)
+  // Bumped by the header "+ Record payment" button. PaymentHistorySection
+  // watches this counter and opens its existing RecordPaymentModal in
+  // new-payment mode on each tick. Avoids lifting the modal up here.
+  const [recordPaymentSignal, setRecordPaymentSignal] = useState(0)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -255,6 +259,15 @@ export default function DriverPurchaseDetail() {
 
         {canEdit && (
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setRecordPaymentSignal(s => s + 1)}
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 text-white rounded-xl transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Record payment
+            </button>
             <button onClick={() => setShowEditPurchase(true)} className={S.btnSecondary}>
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -418,6 +431,7 @@ export default function DriverPurchaseDetail() {
         purchase={purchase}
         canEdit={canEdit}
         onChange={load}
+        openSignal={recordPaymentSignal}
       />
 
       {/* Modals */}

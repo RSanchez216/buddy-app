@@ -230,6 +230,14 @@ export default function PurchaseFormModal({ open, onClose, purchase, onSaved }) 
       payment_amount: numOrNull(form.payment_amount),
       payment_frequency: form.payment_frequency || null,
       purchase_date: form.purchase_date || null,
+      // New contracts default the tracking cutoff to purchase_date so the
+      // payment-history table doesn't show pre-launch rows as red Missed.
+      // Falls back to today when purchase_date is empty so the column is
+      // always populated (null cutoff = every past week renders as Missed,
+      // which defeats the purpose). On edit we leave the existing value
+      // alone — Rebeca controls it through the "Tracking since" date
+      // picker in PaymentHistorySection.
+      ...(isEdit ? {} : { payment_tracking_start_date: form.purchase_date || new Date().toISOString().slice(0, 10) }),
       contract_signed_date: form.contract_signed_date || null,
       fully_paid_date: form.fully_paid_date || null,
       title_transferred: !!form.title_transferred,

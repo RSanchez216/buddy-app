@@ -43,6 +43,8 @@ const EVENT_LABELS = {
   equipment_linked:  'Equipment linked',
   equipment_unlinked:'Equipment unlinked',
   driver_updated:    'Driver updated',
+  payment_reconciled:   'Payment reconciled',
+  payment_unreconciled: 'Payment unreconciled',
 }
 export function formatEventType(t) {
   return EVENT_LABELS[t] || (t || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
