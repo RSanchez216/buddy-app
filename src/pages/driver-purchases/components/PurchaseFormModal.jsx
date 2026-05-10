@@ -20,7 +20,7 @@ const FREQUENCIES = [
 
 const TRACKED = [
   'driver_id','entity_id','truck_number','vin','equipment_type','equipment_id','underlying_loan_id',
-  'purchase_type','status_id','total_value','downpayment','sale_price','current_balance',
+  'purchase_type','status_id','downpayment','sale_price','current_balance',
   'payment_amount','payment_frequency','purchase_date','contract_signed_date','fully_paid_date',
   'title_transferred','notes',
 ]
@@ -33,7 +33,7 @@ function emptyForm(defaultStatusId) {
     equipment_id: null, underlying_loan_id: null, linkedLabel: '',
     purchase_type: 'cash',
     status_id: defaultStatusId || '',
-    total_value: '', downpayment: '0', sale_price: '', current_balance: '',
+    downpayment: '0', sale_price: '', current_balance: '',
     payment_amount: '', payment_frequency: 'weekly',
     purchase_date: new Date().toISOString().slice(0, 10),
     contract_signed_date: '', fully_paid_date: '',
@@ -58,6 +58,9 @@ export default function PurchaseFormModal({ open, onClose, purchase, onSaved }) 
   // the "Auto-filled from linked …" inline hint. Reset on user edit
   // and on unlink (values themselves are preserved in both cases).
   const [autoFilled, setAutoFilled] = useState({ entity_id: false, equipment_type: false })
+  // Confirmation popover for the Edit-mode "Reset from sale price" link.
+  // Only shown when user explicitly clicks the link — never auto-fires.
+  const [showResetConfirm, setShowResetConfirm] = useState(false)
   const [error, setError] = useState('')
 
   const defaultStatusId = useMemo(
@@ -99,7 +102,6 @@ export default function PurchaseFormModal({ open, onClose, purchase, onSaved }) 
           linkedLabel: purchase.equipment_id ? buildLinkedLabel(purchase) : '',
           purchase_type: purchase.purchase_type || 'cash',
           status_id: purchase.status_id || fallbackStatus,
-          total_value: purchase.total_value ?? '',
           downpayment: purchase.downpayment ?? '',
           sale_price: purchase.sale_price ?? '',
           current_balance: purchase.current_balance ?? '',
@@ -152,23 +154,24 @@ export default function PurchaseFormModal({ open, onClose, purchase, onSaved }) 
     return () => { cancelled = true }
   }, [open, isEdit, purchase])
 
-  // Auto-derive sale_price = total_value - downpayment when user hasn't
-  // explicitly set sale_price. We only apply for new mode; in edit we
-  // respect whatever's there already.
+  // Auto-calc current_balance = max(0, sale_price - downpayment) on
+  // create. The floor-at-zero matches the balance trigger's safety
+  // guard. Edit mode skips this — current_balance is the manual
+  // correction escape hatch for legitimate cases where the running
+  // balance drifted (and the "Reset from sale price" button gives the
+  // user an explicit opt-in to recompute).
+  const computedBalance = useMemo(() => {
+    const sp = parseFloat(form.sale_price)
+    const dp = parseFloat(form.downpayment)
+    if (!Number.isFinite(sp)) return null
+    return Math.max(0, sp - (Number.isFinite(dp) ? dp : 0))
+  }, [form.sale_price, form.downpayment])
+
   useEffect(() => {
     if (isEdit) return
-    const tv = parseFloat(form.total_value)
-    const dp = parseFloat(form.downpayment)
-    if (Number.isFinite(tv)) {
-      const sp = (Number.isFinite(dp) ? tv - dp : tv).toFixed(2)
-      setForm(f => {
-        if (f.sale_price === '' || Number(f.sale_price) === Number(f._lastDerivedSale)) {
-          return { ...f, sale_price: sp, _lastDerivedSale: sp, current_balance: f.current_balance === '' ? sp : f.current_balance }
-        }
-        return f
-      })
-    }
-  }, [form.total_value, form.downpayment, isEdit])
+    if (computedBalance == null) return
+    setForm(f => ({ ...f, current_balance: String(computedBalance) }))
+  }, [computedBalance, isEdit])
 
   function set(key, val) {
     setForm(f => ({ ...f, [key]: val }))
@@ -211,6 +214,12 @@ export default function PurchaseFormModal({ open, onClose, purchase, onSaved }) 
     if (!form.driver_id) return setError('Driver is required')
     if (!form.purchase_type) return setError('Purchase type is required')
     if (!form.status_id) return setError('Status is required')
+    // New mode requires sale_price so current_balance has a sensible
+    // starting value. Edit mode skips this — existing rows may legit-
+    // imately have a null sale_price (6 of the day-1 imports do).
+    if (!isEdit && (form.sale_price === '' || form.sale_price == null)) {
+      return setError('Sale price is required')
+    }
     setSaving(true); setError('')
 
     const payload = {
@@ -223,10 +232,14 @@ export default function PurchaseFormModal({ open, onClose, purchase, onSaved }) 
       underlying_loan_id: form.underlying_loan_id || null,
       purchase_type: form.purchase_type,
       status_id: form.status_id,
-      total_value: numOrNull(form.total_value),
       downpayment: numOrNull(form.downpayment) ?? 0,
       sale_price: numOrNull(form.sale_price),
-      current_balance: numOrNull(form.current_balance) ?? 0,
+      // New mode persists the auto-computed value; edit mode preserves
+      // whatever's currently in the field (user-editable, including the
+      // optional "Reset from sale price" recompute).
+      current_balance: isEdit
+        ? (numOrNull(form.current_balance) ?? 0)
+        : (computedBalance ?? 0),
       payment_amount: numOrNull(form.payment_amount),
       payment_frequency: form.payment_frequency || null,
       purchase_date: form.purchase_date || null,
@@ -377,21 +390,82 @@ export default function PurchaseFormModal({ open, onClose, purchase, onSaved }) 
               </div>
             </Field>
 
-            <Field label="Total value">
-              <input className={S.input} type="number" step="0.01" value={form.total_value}
-                onChange={e => set('total_value', e.target.value)} />
+            <Field label="Sale price">
+              <input className={S.input} type="number" step="0.01" value={form.sale_price}
+                onChange={e => set('sale_price', e.target.value)} />
             </Field>
             <Field label="Downpayment">
               <input className={S.input} type="number" step="0.01" value={form.downpayment}
                 onChange={e => set('downpayment', e.target.value)} />
             </Field>
-            <Field label="Sale price">
-              <input className={S.input} type="number" step="0.01" value={form.sale_price}
-                onChange={e => set('sale_price', e.target.value)} />
-            </Field>
             <Field label="Current balance">
-              <input className={S.input} type="number" step="0.01" value={form.current_balance}
-                onChange={e => set('current_balance', e.target.value)} />
+              {isEdit ? (
+                <>
+                  <input className={S.input} type="number" step="0.01" value={form.current_balance}
+                    onChange={e => set('current_balance', e.target.value)} />
+                  <div className="mt-1 flex items-center justify-between gap-2">
+                    <p className="text-[11px] text-gray-500 dark:text-slate-500">
+                      Editable for manual corrections. Recorded payments still auto-adjust this value.
+                    </p>
+                    <div className="relative shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setShowResetConfirm(v => !v)}
+                        className="text-[11px] font-medium text-cyan-600 dark:text-cyan-400 hover:underline whitespace-nowrap"
+                      >
+                        Reset from sale price
+                      </button>
+                      {showResetConfirm && (
+                        <div className="absolute right-0 mt-1 w-64 z-30 rounded-lg bg-white dark:bg-[#0d0d1f] border border-gray-200 dark:border-white/10 shadow-xl p-3 space-y-2">
+                          <p className="text-xs text-gray-700 dark:text-slate-300">
+                            Reset current balance to{' '}
+                            <span className="font-semibold">
+                              {computedBalance != null
+                                ? Number(computedBalance).toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 })
+                                : '—'}
+                            </span>
+                            ?
+                          </p>
+                          <p className="text-[11px] text-gray-500 dark:text-slate-500">
+                            This won&apos;t change recorded payments — only the starting balance.
+                          </p>
+                          <div className="flex justify-end gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setShowResetConfirm(false)}
+                              className="text-[11px] px-2 py-1 rounded text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              disabled={computedBalance == null}
+                              onClick={() => {
+                                if (computedBalance != null) set('current_balance', String(computedBalance))
+                                setShowResetConfirm(false)
+                              }}
+                              className="text-[11px] font-semibold px-2.5 py-1 rounded bg-cyan-500 hover:bg-cyan-400 text-white disabled:opacity-50"
+                            >
+                              Reset
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className={`${S.input} bg-gray-50 dark:bg-white/[0.03] text-gray-700 dark:text-slate-300 font-mono`}>
+                    {computedBalance != null
+                      ? Number(computedBalance).toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 })
+                      : '—'}
+                  </div>
+                  <p className="mt-1 text-[11px] text-gray-500 dark:text-slate-500">
+                    Auto-calculated from sale price minus downpayment.
+                  </p>
+                </>
+              )}
             </Field>
 
             <Field label="Payment amount">
@@ -446,7 +520,11 @@ export default function PurchaseFormModal({ open, onClose, purchase, onSaved }) 
 
         <div className={S.modalFooter}>
           <button onClick={onClose} className={S.btnCancel}>Cancel</button>
-          <button onClick={save} disabled={saving} className={S.btnSave}>
+          <button
+            onClick={save}
+            disabled={saving || (!isEdit && (form.sale_price === '' || form.sale_price == null))}
+            className={S.btnSave}
+          >
             {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Create purchase'}
           </button>
         </div>

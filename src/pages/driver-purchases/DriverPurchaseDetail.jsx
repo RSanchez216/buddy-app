@@ -330,13 +330,12 @@ export default function DriverPurchaseDetail() {
             <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Contract terms</h3>
             <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
               <Fact label="Entity" value={summary.entity_name} />
-              <Fact label="Total value" value={fmtMoney(summary.total_value)} mono />
+              <Fact label="Sale price" value={fmtMoney(summary.sale_price)} mono />
               <Fact label="Unit number" value={summary.truck_number} mono />
               <Fact label="Downpayment" value={fmtMoney(summary.downpayment)} mono />
               <Fact label="VIN" value={summary.vin} mono />
-              <Fact label="Sale price" value={fmtMoney(summary.sale_price)} mono />
-              <Fact label="Equipment type" value={summary.equipment_type} />
               <Fact label="Current balance" value={fmtMoney(summary.current_balance)} mono />
+              <Fact label="Equipment type" value={summary.equipment_type} />
               <Fact
                 label="Linked equipment"
                 value={equipment ? (
