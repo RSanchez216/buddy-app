@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { S } from '../../lib/styles'
@@ -7,6 +7,56 @@ import KpiCards from './components/KpiCards'
 import WarningPanels from './components/WarningPanels'
 import PurchasesTable from './components/PurchasesTable'
 import PurchaseFormModal from './components/PurchaseFormModal'
+
+// Columns the user can sort by, with their default first-click direction.
+// Anything else in the URL falls back to the application default (last
+// charged DESC), keeping bookmarked URLs robust against typos.
+const SORT_DEFAULT_DIR = {
+  driver_name:       'asc',
+  status:            'desc',
+  payment_amount:    'asc',
+  current_balance:   'desc',
+  last_charged_date: 'desc',
+  linked:            'desc',
+}
+
+// Returns the final signed result for the (a, b, direction) triple,
+// already accounting for direction. Returning final-signed (vs. raw +
+// caller-multiplies) lets us pin NULLS LAST regardless of asc/desc:
+// the null branches return a fixed +1/-1 instead of being flipped by
+// the caller.
+function compareByKey(a, b, key, dir) {
+  const flip = dir === 'asc' ? 1 : -1
+  if (key === 'status') {
+    // Composite: active rows always group on top, then alphabetical by
+    // status_name. The direction flip only affects the alphabetical
+    // half — active-first is invariant.
+    const aActive = a.is_active_state ? 1 : 0
+    const bActive = b.is_active_state ? 1 : 0
+    if (aActive !== bActive) return bActive - aActive
+    return (a.status_name || '').localeCompare(b.status_name || '') * flip
+  }
+  if (key === 'linked') {
+    const av = a.underlying_loan_id ? 1 : 0
+    const bv = b.underlying_loan_id ? 1 : 0
+    return (av - bv) * flip
+  }
+  if (key === 'driver_name') {
+    return (a.driver_name || '').localeCompare(b.driver_name || '') * flip
+  }
+  if (key === 'payment_amount' || key === 'current_balance') {
+    return (Number(a[key] || 0) - Number(b[key] || 0)) * flip
+  }
+  if (key === 'last_charged_date') {
+    const av = a.last_charged_date
+    const bv = b.last_charged_date
+    if (!av && !bv) return 0
+    if (!av) return 1   // NULLS LAST regardless of dir
+    if (!bv) return -1
+    return (av < bv ? -1 : av > bv ? 1 : 0) * flip
+  }
+  return 0
+}
 
 const FILTERS = [
   { id: 'all',            label: 'All' },
@@ -27,6 +77,36 @@ export default function DriverPurchasesPage() {
   const [filter, setFilter] = useState('all')
   const [search, setSearch] = useState('')
   const [showNew, setShowNew] = useState(false)
+
+  // Sort state lives in the URL so refresh + back-from-detail preserve
+  // it. sortKey === null means "no user sort applied" → the default
+  // last_charged_date DESC NULLS LAST ordering kicks in.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const rawKey = searchParams.get('sort')
+  const rawDir = searchParams.get('dir')
+  const sortKey = rawKey && SORT_DEFAULT_DIR[rawKey] ? rawKey : null
+  const sortDir = rawDir === 'asc' || rawDir === 'desc' ? rawDir : (sortKey ? SORT_DEFAULT_DIR[sortKey] : 'desc')
+
+  // 3-state cycle: unsorted → default direction → reverse → cleared.
+  // Clicking a different column starts fresh on its default direction.
+  function handleSort(nextKey) {
+    if (!SORT_DEFAULT_DIR[nextKey]) return
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      if (sortKey !== nextKey) {
+        next.set('sort', nextKey)
+        next.set('dir', SORT_DEFAULT_DIR[nextKey])
+      } else if (sortDir === SORT_DEFAULT_DIR[nextKey]) {
+        // Currently at default direction → flip to opposite
+        next.set('dir', SORT_DEFAULT_DIR[nextKey] === 'asc' ? 'desc' : 'asc')
+      } else {
+        // Already flipped → clear
+        next.delete('sort')
+        next.delete('dir')
+      }
+      return next
+    }, { replace: true })
+  }
 
   useEffect(() => { load() }, [])
 
@@ -82,8 +162,21 @@ export default function DriverPurchasesPage() {
         (r.vin || '').toLowerCase().includes(q)
       )
     }
-    return list
-  }, [rows, filter, search])
+
+    // Apply sort. When no user sort is set, default to most-recently-
+    // charged at the top with never-charged contracts at the bottom
+    // (compareByKey pins nulls last regardless of direction).
+    const effectiveKey = sortKey || 'last_charged_date'
+    const effectiveDir = sortKey ? sortDir : 'desc'
+    const sorted = [...list].sort((a, b) => {
+      const cmp = compareByKey(a, b, effectiveKey, effectiveDir)
+      // Tiebreaker on driver_name keeps sort output stable when the
+      // primary key ties (common for $0 balances, status groups, etc).
+      if (cmp !== 0) return cmp
+      return (a.driver_name || '').localeCompare(b.driver_name || '')
+    })
+    return sorted
+  }, [rows, filter, search, sortKey, sortDir])
 
   const underwaterRows = useMemo(() => rows.filter(r => r.is_underwater), [rows])
 
@@ -195,7 +288,12 @@ export default function DriverPurchasesPage() {
             </div>
           </div>
 
-          <PurchasesTable rows={visible} />
+          <PurchasesTable
+            rows={visible}
+            sortKey={sortKey}
+            sortDir={sortDir}
+            onSort={handleSort}
+          />
         </>
       )}
 

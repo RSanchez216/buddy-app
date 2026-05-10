@@ -15,7 +15,69 @@ function fmtFreq(f) {
   return ''
 }
 
-export default function PurchasesTable({ rows = [] }) {
+// Relative-time label for the Last Charged column. days_since_last_payment
+// is straight off v_driver_purchase_summary; last_charged_date is the
+// absolute date for the tooltip.
+function relativeLastCharged(days) {
+  const d = Number(days)
+  if (!Number.isFinite(d)) return null
+  if (d <= 0) return 'Today'
+  if (d === 1) return 'Yesterday'
+  if (d <= 30) return `${d} days ago`
+  if (d <= 60) return `${Math.floor(d / 7)} weeks ago`
+  return `${Math.floor(d / 30)} months ago`
+}
+
+// Passive overdue signal — amber when slightly past the expected cadence,
+// red when clearly past. Thresholds picked to give one cadence cycle of
+// grace before going red (per the spec).
+function lastChargedToneClass(days, frequency) {
+  const d = Number(days)
+  if (!Number.isFinite(d)) return ''
+  if (frequency === 'monthly') {
+    if (d >= 45) return 'text-red-600 dark:text-red-400 font-medium'
+    if (d >= 32) return 'text-amber-600 dark:text-amber-400'
+  } else if (frequency === 'biweekly') {
+    if (d >= 21) return 'text-red-600 dark:text-red-400 font-medium'
+    if (d >= 15) return 'text-amber-600 dark:text-amber-400'
+  } else {
+    // weekly (default)
+    if (d >= 14) return 'text-red-600 dark:text-red-400 font-medium'
+    if (d >= 8) return 'text-amber-600 dark:text-amber-400'
+  }
+  return ''
+}
+
+// Absolute-date tooltip (e.g. "May 4, 2026") for hover on the relative
+// "6 days ago" string. Date-only ISO strings need the T00:00:00 anchor
+// or they get UTC-interpreted into the previous day in negative TZs.
+function fmtAbsDate(iso) {
+  if (!iso) return ''
+  const d = new Date(iso.length === 10 ? `${iso}T00:00:00` : iso)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+// Sortable column header — clicking cycles asc → desc → off. Matches
+// the DebtSchedule pattern for app-wide consistency.
+function SortableTh({ label, columnKey, sortKey, sortDir, onSort, align = 'left' }) {
+  const active = sortKey === columnKey
+  return (
+    <th
+      className={`${S.th} cursor-pointer select-none hover:text-gray-700 dark:hover:text-slate-300`}
+      onClick={() => onSort(columnKey)}
+    >
+      <span className={`inline-flex items-center gap-1 ${align === 'right' ? 'flex-row-reverse' : ''}`}>
+        {label}
+        <span className={`text-[9px] leading-none ${active ? 'text-orange-500' : 'text-gray-300 dark:text-slate-700'}`}>
+          {active ? (sortDir === 'asc' ? '▲' : '▼') : '⇅'}
+        </span>
+      </span>
+    </th>
+  )
+}
+
+export default function PurchasesTable({ rows = [], sortKey = null, sortDir = 'desc', onSort = () => {} }) {
   const navigate = useNavigate()
   if (rows.length === 0) {
     return (
@@ -23,12 +85,12 @@ export default function PurchasesTable({ rows = [] }) {
         <table className="w-full text-sm">
           <thead className={S.tableHead}>
             <tr>
-              <th className={S.th}>Driver / unit</th>
-              <th className={S.th}>Status</th>
-              <th className={S.th}>Payment</th>
-              <th className={S.th}>Balance</th>
-              <th className={S.th}>Last charged</th>
-              <th className={S.th}>Linked</th>
+              <SortableTh label="Driver / unit"  columnKey="driver_name"        sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+              <SortableTh label="Status"         columnKey="status"             sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+              <SortableTh label="Payment"        columnKey="payment_amount"     sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+              <SortableTh label="Balance"        columnKey="current_balance"    sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+              <SortableTh label="Last charged"   columnKey="last_charged_date"  sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+              <SortableTh label="Linked"         columnKey="linked"             sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
             </tr>
           </thead>
           <tbody>
@@ -48,12 +110,12 @@ export default function PurchasesTable({ rows = [] }) {
       <table className="w-full text-sm">
         <thead className={S.tableHead}>
           <tr>
-            <th className={S.th}>Driver / truck</th>
-            <th className={S.th}>Status</th>
-            <th className={S.th}>Payment</th>
-            <th className={S.th}>Balance</th>
-            <th className={S.th}>Last charged</th>
-            <th className={S.th}>Linked</th>
+            <SortableTh label="Driver / unit"  columnKey="driver_name"        sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+            <SortableTh label="Status"         columnKey="status"             sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+            <SortableTh label="Payment"        columnKey="payment_amount"     sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+            <SortableTh label="Balance"        columnKey="current_balance"    sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+            <SortableTh label="Last charged"   columnKey="last_charged_date"  sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+            <SortableTh label="Linked"         columnKey="linked"             sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
           </tr>
         </thead>
         <tbody>
@@ -90,8 +152,17 @@ export default function PurchasesTable({ rows = [] }) {
               <td className={`${S.td} font-mono text-gray-900 dark:text-slate-200`}>
                 {fmtMoney(r.current_balance)}
               </td>
-              <td className={`${S.td} text-xs text-gray-400 dark:text-slate-500 italic`}>
-                Phase 3
+              <td className={S.td}>
+                {r.last_charged_date ? (
+                  <span
+                    className={`text-xs ${lastChargedToneClass(r.days_since_last_payment, r.payment_frequency) || 'text-gray-500 dark:text-slate-500'}`}
+                    title={fmtAbsDate(r.last_charged_date)}
+                  >
+                    {relativeLastCharged(r.days_since_last_payment) || fmtAbsDate(r.last_charged_date)}
+                  </span>
+                ) : (
+                  <span className="text-xs text-gray-400 dark:text-slate-600" title="No payments recorded yet">—</span>
+                )}
               </td>
               <td className={S.td}>
                 {r.underlying_loan_id ? (
