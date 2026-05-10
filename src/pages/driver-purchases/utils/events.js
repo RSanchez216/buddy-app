@@ -49,6 +49,8 @@ const EVENT_LABELS = {
   payment_recorded:     'Payment recorded',
   payment_record_undone:'Recording undone',
   payment_edited:       'Payment edited',
+  payment_skipped:      'Payment skipped',
+  payment_skip_undone:  'Skip undone',
 }
 export function formatEventType(t) {
   return EVENT_LABELS[t] || (t || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())

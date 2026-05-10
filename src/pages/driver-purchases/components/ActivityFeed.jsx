@@ -24,6 +24,8 @@ const EVENT_DOT = {
   payment_recorded:     'bg-cyan-500',
   payment_record_undone:'bg-amber-500',
   payment_edited:       'bg-blue-500',
+  payment_skipped:      'bg-indigo-500',
+  payment_skip_undone:  'bg-amber-500',
 }
 
 // Combined activity feed: rich-text comments + system events, queried

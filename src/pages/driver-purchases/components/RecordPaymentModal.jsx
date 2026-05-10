@@ -52,7 +52,10 @@ export default function RecordPaymentModal({
   const isEdit = !!existingPayment
 
   const [periods, setPeriods] = useState([])      // unreconciled / open periods
-  const [mode, setMode] = useState('existing')    // 'existing' | 'custom'
+  // 'existing' (apply to a generated period), 'custom' (insert a new
+  // period row), or 'skipped' (mark a generated period as skipped — no
+  // amount, no balance impact, just an agreed non-payment).
+  const [mode, setMode] = useState('existing')
   const [pickedPeriodId, setPickedPeriodId] = useState('')
   const [customStart, setCustomStart] = useState('')
   const [customEnd, setCustomEnd] = useState('')
@@ -66,6 +69,11 @@ export default function RecordPaymentModal({
   // confirmation). Edit lets you uncheck — e.g. zero-out a wrong entry
   // without leaving an orphaned ✓.
   const [reconciledOnSave, setReconciledOnSave] = useState(true)
+  // Skip flow: when true, save writes the skipped fields instead of an
+  // actual payment. Reason is required when skipped is true. Mutually
+  // exclusive with actual_amount > 0 (the either-or guard enforces).
+  const [skipped, setSkipped] = useState(false)
+  const [skipReason, setSkipReason] = useState('')
   // Sticky flag — flips to true the first time the user clicks the
   // checkbox directly. Once true, the smart-default auto-check/uncheck
   // logic stops firing so we don't silently overwrite their override
@@ -108,6 +116,11 @@ export default function RecordPaymentModal({
       // fresh and the user hasn't picked anything yet.
       setReconciledOnSave(Number(p.actual_amount || 0) !== 0)
       setReconciledUserTouched(false)
+      // Hydrate skip state from the row so re-opening a skipped period
+      // shows the existing reason; user can edit the reason or unskip
+      // by un-checking + entering an amount.
+      setSkipped(!!p.skipped)
+      setSkipReason(p.skip_reason || '')
       setPeriods([{
         id: p.id, period_start: p.period_start, period_end: p.period_end,
         expected_amount: p.expected_amount, actual_amount: p.actual_amount,
@@ -170,6 +183,8 @@ export default function RecordPaymentModal({
       // the checkbox themselves (touched=true sticks).
       setReconciledOnSave(true)
       setReconciledUserTouched(false)
+      setSkipped(false)
+      setSkipReason('')
     })()
     return () => { cancelled = true }
   }, [open, purchase, isEdit, existingPayment])
@@ -192,14 +207,30 @@ export default function RecordPaymentModal({
     if (reconciledUserTouched) return
     const n = Number(amount)
     const positive = Number.isFinite(n) && n > 0
-    if (isReversal) {
+    if (isReversal || skipped) {
+      // Skipped periods aren't payroll confirmations; reversals aren't
+      // either. Both force reconciled false until the user retakes
+      // control by clicking the checkbox directly.
       setReconciledOnSave(false)
     } else if (positive) {
       setReconciledOnSave(true)
     } else {
       setReconciledOnSave(false)
     }
-  }, [amount, isReversal, reconciledUserTouched])
+  }, [amount, isReversal, skipped, reconciledUserTouched])
+
+  // Either-or invariant: skipped and actual_amount > 0 cannot coexist.
+  // Checking skip auto-zeros the amount; typing a positive amount auto-
+  // unchecks skip. The reason field stays in state across the toggle so
+  // the user doesn't lose what they typed if they flip-flop.
+  useEffect(() => {
+    if (skipped) {
+      setAmount('0')
+    }
+  }, [skipped])
+  // The opposite direction (positive amount unchecks skip) is handled
+  // inline on the amount input's onChange below — doing it in an
+  // effect would race with the skip→zero effect above on toggle.
 
   const signedAmount = useMemo(() => {
     const n = Number(amount)
@@ -209,6 +240,70 @@ export default function RecordPaymentModal({
 
   async function save() {
     if (!purchase) return
+
+    // Skip path: distinct from the payment-recording path. Writes the
+    // skipped fields + zeros actual_amount + clears reconcile audit so
+    // the row can never end up "skipped AND has actual_amount > 0" (the
+    // either-or invariant). Reason is required — skip without a reason
+    // would leave a useless audit trail.
+    const skipFlow = skipped && (isEdit || (mode === 'skipped' && pickedPeriodId))
+    if (skipFlow) {
+      if (!skipReason.trim()) { setError('Reason is required when marking as skipped'); return }
+      const targetId = isEdit ? existingPayment.id : pickedPeriodId
+      const target = isEdit ? existingPayment : periods.find(p => p.id === pickedPeriodId)
+      if (!target) { setError('Pick a period to skip'); return }
+      setBusy(true); setError('')
+      const nowIso = new Date().toISOString()
+      const previousState = {
+        actual_amount: target.actual_amount,
+        payment_method: target.payment_method || null,
+        reference_number: target.reference_number || null,
+        reason: target.reason || null,
+        reconciled: !!target.reconciled,
+        reconciled_at: target.reconciled_at || null,
+        reconciled_by: target.reconciled_by || null,
+        payment_source: target.payment_source || 'generated',
+        skipped: !!target.skipped,
+        skipped_at: target.skipped_at || null,
+        skipped_by: target.skipped_by || null,
+        skip_reason: target.skip_reason || null,
+      }
+      const res = await supabase
+        .from('driver_purchase_payments')
+        .update({
+          skipped: true,
+          skipped_at: nowIso,
+          skipped_by: user?.id || null,
+          skip_reason: skipReason.trim(),
+          actual_amount: 0,
+          reconciled: false,
+          reconciled_at: null,
+          reconciled_by: null,
+          updated_at: nowIso,
+        })
+        .eq('id', targetId)
+        .select('id')
+        .single()
+      setBusy(false)
+      if (res.error) { setError(res.error.message); return }
+      await logEvent(
+        purchase.id,
+        'payment_skipped',
+        `Skipped payment for ${fmtDate(target.period_start)} – ${fmtDate(target.period_end)}: ${skipReason.trim()}`,
+        { payment_id: targetId, period_start: target.period_start, period_end: target.period_end, reason: skipReason.trim() },
+        user?.id,
+      )
+      onRecorded?.({
+        paymentId: targetId,
+        periodStart: target.period_start,
+        periodEnd: target.period_end,
+        isEdit,
+        isSkip: true,
+        previousState,
+      })
+      return
+    }
+
     if (signedAmount == null) { setError('Enter a numeric amount'); return }
     setBusy(true); setError('')
 
@@ -225,6 +320,11 @@ export default function RecordPaymentModal({
       reference_number: referenceNumber.trim() || null,
       reason: reason.trim() || null,
       ...reconciledFields,
+      // Recording a payment clears any prior skip state on the row.
+      // skipped + actual_amount>0 is the forbidden combination; nuking
+      // skip here keeps the invariant intact when a user un-skips by
+      // typing an amount in Edit.
+      skipped: false, skipped_at: null, skipped_by: null, skip_reason: null,
       payment_source: isReversal ? 'reversal' : (isEdit ? existingPayment.payment_source : 'manual'),
       updated_at: nowIso,
     }
@@ -377,7 +477,7 @@ export default function RecordPaymentModal({
                   <Select
                     value={pickedPeriodId}
                     onChange={e => setPickedPeriodId(e.target.value)}
-                    disabled={mode !== 'existing'}
+                    disabled={mode !== 'existing' && mode !== 'skipped'}
                     className="mt-1"
                   >
                     {periods.map(p => {
@@ -403,7 +503,12 @@ export default function RecordPaymentModal({
               </div>
             </label>
             <label className="flex items-start gap-2 cursor-pointer">
-              <input type="radio" checked={mode === 'custom'} onChange={() => setMode('custom')} className="mt-0.5" />
+              <input
+                type="radio"
+                checked={mode === 'custom'}
+                onChange={() => { setMode('custom'); setSkipped(false) }}
+                className="mt-0.5"
+              />
               <div className="flex-1 min-w-0">
                 <span className="text-sm text-gray-700 dark:text-slate-300">Custom period</span>
                 {mode === 'custom' && (
@@ -414,7 +519,44 @@ export default function RecordPaymentModal({
                 )}
               </div>
             </label>
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="radio"
+                checked={mode === 'skipped'}
+                disabled={periods.length === 0}
+                onChange={() => { setMode('skipped'); setSkipped(true) }}
+                className="mt-0.5"
+              />
+              <div className="flex-1 min-w-0">
+                <span className="text-sm text-gray-700 dark:text-slate-300">Mark a period as skipped</span>
+                <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-0.5">
+                  Records an agreed non-payment. Doesn&apos;t change the balance and doesn&apos;t count against the Behind tally.
+                </p>
+              </div>
+            </label>
           </div>
+        )}
+
+        {/* Edit-mode skip toggle — no radio group here, just a checkbox.
+            Wires the same `skipped` state. When checked, the
+            Amount/Method/Reference/Reason fields stay visible but the
+            amount is forced to 0 + reconciled auto-unchecks, and the
+            skip reason textarea below becomes required. */}
+        {isEdit && (
+          <label className="flex items-start gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={skipped}
+              onChange={e => setSkipped(e.target.checked)}
+              className="mt-0.5"
+            />
+            <div className="flex-1">
+              <span className="text-sm text-gray-700 dark:text-slate-300">Mark this period as skipped</span>
+              <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-0.5">
+                Driver vacation, agreed deferral, equipment in shop. Doesn&apos;t affect the balance or the Behind tally.
+              </p>
+            </div>
+          </label>
         )}
 
         {isEdit && (() => {
@@ -446,52 +588,87 @@ export default function RecordPaymentModal({
           )
         })()}
 
-        <div>
-          <label className={S.label}>Amount received</label>
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-gray-500 dark:text-slate-400">$</span>
-            <input
-              className={S.input}
-              type="number"
-              step="0.01"
-              value={amount}
-              onChange={e => setAmount(e.target.value)}
-              placeholder="0.00"
+        {/* Payment-recording fields. Hidden entirely when the skip flow
+            is active — skipped periods have no amount, no method, no
+            reference. The skip reason field below replaces them. */}
+        {!skipped && (
+          <>
+            <div>
+              <label className={S.label}>Amount received</label>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-500 dark:text-slate-400">$</span>
+                <input
+                  className={S.input}
+                  type="number"
+                  step="0.01"
+                  value={amount}
+                  onChange={e => {
+                    setAmount(e.target.value)
+                    // Either-or invariant: typing a positive amount
+                    // un-skips the row. Reason textarea hides via the
+                    // !skipped guard.
+                    const n = Number(e.target.value)
+                    if (Number.isFinite(n) && n > 0 && skipped) setSkipped(false)
+                  }}
+                  placeholder="0.00"
+                />
+              </div>
+              {isReversal && (
+                <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">
+                  Will be stored as <span className="font-mono">{fmtMoney(signedAmount)}</span> (reversal).
+                </p>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={S.label}>Method</label>
+                <Select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}>
+                  {PAYMENT_METHODS.map(m => <option key={m.v} value={m.v}>{m.l}</option>)}
+                </Select>
+              </div>
+              <div>
+                <label className={S.label}>Reference #</label>
+                <input className={S.input} value={referenceNumber} onChange={e => setReferenceNumber(e.target.value)} placeholder="optional" />
+              </div>
+            </div>
+
+            <div>
+              <label className={S.label}>Reason / notes</label>
+              <textarea
+                className={S.textarea}
+                rows={2}
+                value={reason}
+                onChange={e => setReason(e.target.value)}
+                placeholder='e.g. "Cash this week", "Refund issued for over-deduction"'
+              />
+            </div>
+          </>
+        )}
+
+        {/* Skip-reason textarea — replaces the payment fields above.
+            Required (enforced in save()); placeholder lists the
+            common cases so Rebeca has examples to anchor on. */}
+        {skipped && (
+          <div>
+            <label className={S.label}>Skip reason *</label>
+            <textarea
+              className={S.textarea}
+              rows={2}
+              value={skipReason}
+              onChange={e => setSkipReason(e.target.value)}
+              placeholder='e.g. "Driver on vacation", "Equipment in shop", "Deferred by agreement"'
             />
           </div>
-          {isReversal && (
-            <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">
-              Will be stored as <span className="font-mono">{fmtMoney(signedAmount)}</span> (reversal).
-            </p>
-          )}
-        </div>
+        )}
 
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className={S.label}>Method</label>
-            <Select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}>
-              {PAYMENT_METHODS.map(m => <option key={m.v} value={m.v}>{m.l}</option>)}
-            </Select>
-          </div>
-          <div>
-            <label className={S.label}>Reference #</label>
-            <input className={S.input} value={referenceNumber} onChange={e => setReferenceNumber(e.target.value)} placeholder="optional" />
-          </div>
-        </div>
-
-        <div>
-          <label className={S.label}>Reason / notes</label>
-          <textarea
-            className={S.textarea}
-            rows={2}
-            value={reason}
-            onChange={e => setReason(e.target.value)}
-            placeholder='e.g. "Cash this week", "Refund issued for over-deduction"'
+        <label className={`flex items-center gap-2 ${skipped ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
+          <input
+            type="checkbox"
+            checked={isReversal}
+            disabled={skipped}
+            onChange={e => setIsReversal(e.target.checked)}
           />
-        </div>
-
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" checked={isReversal} onChange={e => setIsReversal(e.target.checked)} />
           <span className="text-sm text-gray-700 dark:text-slate-300">This is a reversal (negative amount)</span>
         </label>
 
@@ -504,10 +681,11 @@ export default function RecordPaymentModal({
             affect the balance") was the same idea but used jargon
             ("audit-confirmed") that didn't land. */}
         <div>
-          <label className="flex items-center gap-2 cursor-pointer">
+          <label className={`flex items-center gap-2 ${skipped ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
             <input
               type="checkbox"
               checked={reconciledOnSave}
+              disabled={skipped}
               onChange={e => {
                 setReconciledOnSave(e.target.checked)
                 setReconciledUserTouched(true)
@@ -524,7 +702,13 @@ export default function RecordPaymentModal({
         <div className={S.modalFooter}>
           <button onClick={onClose} className={S.btnCancel} disabled={busy}>Cancel</button>
           <button onClick={save} disabled={busy} className={S.btnSave}>
-            {busy ? 'Saving…' : (isEdit ? 'Save changes' : 'Record payment')}
+            {busy
+              ? 'Saving…'
+              : skipped
+                ? 'Mark as skipped'
+                : isEdit
+                  ? 'Save changes'
+                  : 'Record payment'}
           </button>
         </div>
       </div>

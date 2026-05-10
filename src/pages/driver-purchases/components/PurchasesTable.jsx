@@ -28,6 +28,28 @@ function relativeLastCharged(days) {
   return `${Math.floor(d / 30)} months ago`
 }
 
+// Frequency-aware unit label for the Behind column. Singular/plural,
+// abbreviated to fit the cell on narrow viewports.
+function behindUnit(periods, frequency) {
+  const n = Number(periods) || 0
+  if (n <= 0) return null
+  const unit = frequency === 'monthly' ? 'mo'
+             : frequency === 'biweekly' ? 'biwk'
+             : 'wk'
+  return `${n} ${unit}${n === 1 ? '' : 's'}`
+}
+
+// Color thresholds for the Behind column. 1 period = amber, 2 = darker
+// amber, 3+ = red+semibold. Mirrors the LAST CHARGED column's escalating
+// urgency.
+function behindToneClass(periods) {
+  const n = Number(periods) || 0
+  if (n >= 3) return 'text-red-600 dark:text-red-400 font-semibold'
+  if (n === 2) return 'text-amber-700 dark:text-amber-400 font-medium'
+  if (n === 1) return 'text-amber-600 dark:text-amber-400'
+  return 'text-gray-400 dark:text-slate-600'
+}
+
 // Passive overdue signal — amber when slightly past the expected cadence,
 // red when clearly past. Thresholds picked to give one cadence cycle of
 // grace before going red (per the spec).
@@ -89,13 +111,14 @@ export default function PurchasesTable({ rows = [], sortKey = null, sortDir = 'd
               <SortableTh label="Status"         columnKey="status"             sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
               <SortableTh label="Payment"        columnKey="payment_amount"     sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
               <SortableTh label="Balance"        columnKey="current_balance"    sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+              <SortableTh label="Behind"         columnKey="periods_behind"     sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
               <SortableTh label="Last charged"   columnKey="last_charged_date"  sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
               <SortableTh label="Linked"         columnKey="linked"             sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td colSpan={6} className="px-4 py-12 text-center text-sm text-gray-400 dark:text-slate-600">
+              <td colSpan={7} className="px-4 py-12 text-center text-sm text-gray-400 dark:text-slate-600">
                 No driver purchases yet. Phase 2 will import historical records from ClickUp.
               </td>
             </tr>
@@ -151,6 +174,22 @@ export default function PurchasesTable({ rows = [], sortKey = null, sortDir = 'd
               </td>
               <td className={`${S.td} font-mono text-gray-900 dark:text-slate-200`}>
                 {fmtMoney(r.current_balance)}
+              </td>
+              <td className={S.td}>
+                {(() => {
+                  const n = Number(r.periods_behind) || 0
+                  const label = behindUnit(n, r.payment_frequency)
+                  if (!label) return <span className="text-xs text-gray-400 dark:text-slate-600">—</span>
+                  const dollars = Number(r.amount_behind) || 0
+                  return (
+                    <span
+                      className={`text-xs ${behindToneClass(n)}`}
+                      title={`${dollars.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })} owed across ${n} ${n === 1 ? 'period' : 'periods'}`}
+                    >
+                      {label}
+                    </span>
+                  )
+                })()}
               </td>
               <td className={S.td}>
                 {r.last_charged_date ? (

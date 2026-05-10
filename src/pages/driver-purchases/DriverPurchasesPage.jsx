@@ -16,6 +16,7 @@ const SORT_DEFAULT_DIR = {
   status:            'desc',
   payment_amount:    'asc',
   current_balance:   'desc',
+  periods_behind:    'desc',
   last_charged_date: 'desc',
   linked:            'desc',
 }
@@ -44,7 +45,7 @@ function compareByKey(a, b, key, dir) {
   if (key === 'driver_name') {
     return (a.driver_name || '').localeCompare(b.driver_name || '') * flip
   }
-  if (key === 'payment_amount' || key === 'current_balance') {
+  if (key === 'payment_amount' || key === 'current_balance' || key === 'periods_behind') {
     return (Number(a[key] || 0) - Number(b[key] || 0)) * flip
   }
   if (key === 'last_charged_date') {

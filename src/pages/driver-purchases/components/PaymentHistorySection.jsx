@@ -32,17 +32,17 @@ function varianceClass(v) {
 }
 
 // Returns one of: 'reversal' | 'reconciled' | 'recorded-unconfirmed' |
-// 'pre-tracking' | 'missed' | 'expected'.
-// Priority: actual data wins over pre-tracking, and the reconciled bool
-// disambiguates "money in" rows so a recorded-but-not-yet-reconciled
-// row reads as a distinct "needs confirmation" state instead of looking
-// identical to a fully confirmed payment. That visual collapse caused
-// the production bug where a user unreconciled to undo a recording.
+// 'skipped' | 'pre-tracking' | 'missed' | 'expected'.
+// Priority: actual data wins over skipped/pre-tracking (the either-or
+// invariant prevents skipped + actual>0 at the DB level, but defending
+// here keeps the UI sane against any drift). Then skipped wins over
+// pre-tracking/missed because a deliberate skip is an explicit override.
 function rowStatus(p, trackingStart) {
   const actual = Number(p.actual_amount || 0)
   if (actual < 0) return 'reversal'
   if (actual > 0) return p.reconciled ? 'reconciled' : 'recorded-unconfirmed'
   // actual === 0 from here on
+  if (p.skipped) return 'skipped'
   if (trackingStart && p.period_end && p.period_end < trackingStart) return 'pre-tracking'
   const ended = p.period_end && new Date(p.period_end + 'T00:00:00') < new Date()
   if (ended && Number(p.expected_amount || 0) > 0) return 'missed'
@@ -87,6 +87,10 @@ function rowTint(status) {
     case 'pre-tracking':         return 'bg-gray-50/60 dark:bg-white/[0.015]'
     case 'recorded-unconfirmed': return 'bg-amber-50/40 dark:bg-amber-500/[0.04]'
     case 'reconciled':           return 'bg-emerald-50/30 dark:bg-emerald-500/[0.04]'
+    // Indigo for skipped — neutral, deliberate, not alarming or
+    // celebratory. Visually distinct from reversal (also blue) by
+    // hue + the SKIPPED source pill that replaces "Generated".
+    case 'skipped':              return 'bg-indigo-50/40 dark:bg-indigo-500/[0.04]'
     default:                     return ''
   }
 }
@@ -111,7 +115,14 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
   // reconciled bool. Set after a successful RecordPaymentModal save in
   // new-record mode (NOT edit mode).
   const [recordUndoToast, setRecordUndoToast] = useState(null)
+  // Skip-undo toast — sibling to record/reconcile undo. Reverts the
+  // skip flag + restores the previous state (amount, reconcile, etc.)
+  // captured in previousState. Always armed after a fresh skip; not
+  // armed when the user re-saves an existing skipped row (no state
+  // change worth offering to undo).
+  const [skipUndoToast, setSkipUndoToast] = useState(null)
   const [unreconcileTarget, setUnreconcileTarget] = useState(null)  // payment row
+  const [unskipTarget, setUnskipTarget] = useState(null)            // payment row
   const [reconcileBusy, setReconcileBusy] = useState(false)
   // Lookup for the unreconcile popover's "originally reconciled by" line —
   // populated lazily when the popover opens.
@@ -176,8 +187,22 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
     setShowModal(false); setEditRow(null)
     load()
     onChange?.()
-    // Only arm the 10s undo toast on fresh records — edits already
-    // have their own recovery path (re-open the row in the same modal).
+    // Skip flow gets its own undo toast — distinct shape from the
+    // record toast because the revert path needs to restore the
+    // previous skip+amount+reconcile triplet, not delete a row.
+    if (info && info.isSkip && info.paymentId) {
+      if (skipUndoToast?.timer) clearTimeout(skipUndoToast.timer)
+      const timer = setTimeout(() => setSkipUndoToast(null), 10000)
+      setSkipUndoToast({
+        paymentId: info.paymentId,
+        periodStart: info.periodStart,
+        periodEnd: info.periodEnd,
+        previousState: info.previousState,
+        timer,
+      })
+      return
+    }
+    // Fresh record (not edit, not skip) → arm the record-undo toast.
     if (info && !info.isEdit && info.paymentId) {
       if (recordUndoToast?.timer) clearTimeout(recordUndoToast.timer)
       const timer = setTimeout(() => setRecordUndoToast(null), 10000)
@@ -191,6 +216,68 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
         timer,
       })
     }
+  }
+
+  async function undoSkip() {
+    if (!skipUndoToast) return
+    const { paymentId, periodStart, periodEnd, previousState, timer } = skipUndoToast
+    clearTimeout(timer)
+    setSkipUndoToast(null)
+    // Revert to whatever the row was before the skip — usually
+    // actual=0, reconciled=false, but we preserve previousState fully
+    // so an unskip can never silently mutate the row's history.
+    const revert = previousState ? {
+      skipped: previousState.skipped,
+      skipped_at: previousState.skipped_at,
+      skipped_by: previousState.skipped_by,
+      skip_reason: previousState.skip_reason,
+      actual_amount: previousState.actual_amount,
+      payment_method: previousState.payment_method,
+      reference_number: previousState.reference_number,
+      reason: previousState.reason,
+      reconciled: previousState.reconciled,
+      reconciled_at: previousState.reconciled_at,
+      reconciled_by: previousState.reconciled_by,
+      updated_at: new Date().toISOString(),
+    } : {
+      skipped: false, skipped_at: null, skipped_by: null, skip_reason: null,
+      updated_at: new Date().toISOString(),
+    }
+    const { error } = await supabase
+      .from('driver_purchase_payments')
+      .update(revert)
+      .eq('id', paymentId)
+    if (error) { alert('Undo failed: ' + error.message); load(); return }
+    await logEvent(
+      purchase.id,
+      'payment_skip_undone',
+      `Skip undone for ${fmtDate(periodStart)} – ${fmtDate(periodEnd)} (undo)`,
+      { payment_id: paymentId, undo: true },
+      user?.id,
+    )
+    load(); onChange?.()
+  }
+
+  async function confirmUnskip() {
+    if (!unskipTarget) return
+    const p = unskipTarget
+    setUnskipTarget(null)
+    const { error } = await supabase
+      .from('driver_purchase_payments')
+      .update({
+        skipped: false, skipped_at: null, skipped_by: null, skip_reason: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', p.id)
+    if (error) { alert('Could not unskip: ' + error.message); return }
+    await logEvent(
+      purchase.id,
+      'payment_skip_undone',
+      `Skip undone for ${fmtDate(p.period_start)} – ${fmtDate(p.period_end)}`,
+      { payment_id: p.id },
+      user?.id,
+    )
+    load(); onChange?.()
   }
 
   async function undoRecordPayment() {
@@ -423,7 +510,12 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
             <tbody>
               {rows.map(p => {
                 const status = rowStatus(p, trackingStart)
-                const muted = status === 'pre-tracking'
+                // pre-tracking + skipped share the muted styling: their
+                // amounts/variance don't read as actionable data, and the
+                // Reconciled column doesn't apply (skipped is an explicit
+                // non-payment; reconciling something with no payment is
+                // meaningless).
+                const muted = status === 'pre-tracking' || status === 'skipped'
                 const amountClass = muted
                   ? 'text-gray-400 dark:text-slate-600'
                   : 'text-gray-700 dark:text-slate-300'
@@ -457,7 +549,25 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
                       {METHOD_LABEL[p.payment_method] || p.payment_method || '—'}
                     </td>
                     <td className="py-1.5 px-3 text-[11px]">
-                      {status === 'pre-tracking' ? (
+                      {status === 'skipped' ? (
+                        canEdit ? (
+                          <button
+                            type="button"
+                            onClick={e => { e.stopPropagation(); setUnskipTarget(p) }}
+                            title={p.skip_reason ? `Skipped: ${p.skip_reason} · Click to unskip` : 'Click to unskip'}
+                            className="inline-flex items-center px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/20 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 font-semibold transition-colors"
+                          >
+                            Skipped
+                          </button>
+                        ) : (
+                          <span
+                            title={p.skip_reason ? `Skipped: ${p.skip_reason}` : 'Skipped'}
+                            className="inline-flex items-center px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/20 font-semibold"
+                          >
+                            Skipped
+                          </span>
+                        )
+                      ) : status === 'pre-tracking' ? (
                         <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-gray-100 dark:bg-slate-700/40 text-gray-500 dark:text-slate-400">
                           Pre-tracking
                         </span>
@@ -517,10 +627,13 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
                             : <span className="text-gray-300 dark:text-slate-600">—</span>
                       })()}
                     </td>
-                    <td className={`py-1.5 pl-3 text-xs ${muted ? 'text-gray-400 dark:text-slate-600' : 'text-gray-500 dark:text-slate-400'} max-w-[14rem] truncate`} title={p.reason || ''}>
-                      {p.reason || (status === 'missed'
-                        ? <span className="italic text-red-600/80 dark:text-red-400/80">Missed</span>
-                        : '—')}
+                    <td className={`py-1.5 pl-3 text-xs ${muted ? 'text-gray-400 dark:text-slate-600' : 'text-gray-500 dark:text-slate-400'} max-w-[14rem] truncate`}
+                        title={status === 'skipped' ? (p.skip_reason || 'Skipped') : (p.reason || '')}>
+                      {status === 'skipped'
+                        ? <span className="italic text-indigo-700/80 dark:text-indigo-400/80">{p.skip_reason || 'Skipped'}</span>
+                        : p.reason || (status === 'missed'
+                          ? <span className="italic text-red-600/80 dark:text-red-400/80">Missed</span>
+                          : '—')}
                     </td>
                   </tr>
                 )
@@ -586,6 +699,31 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
         )}
       </Modal>
 
+      {/* Unskip confirmation — sibling to the unreconcile popover above */}
+      <Modal open={!!unskipTarget} onClose={() => setUnskipTarget(null)} title="Unskip this period?" size="sm">
+        {unskipTarget && (
+          <div className={S.modalBody}>
+            <p className="text-sm text-gray-700 dark:text-slate-300">
+              Mark the period for {fmtDate(unskipTarget.period_start)} – {fmtDate(unskipTarget.period_end)} as not skipped. It will return to the standard expected/missed treatment.
+            </p>
+            {unskipTarget.skip_reason && (
+              <p className="text-xs text-gray-500 dark:text-slate-500">
+                Original reason: <span className="italic">{unskipTarget.skip_reason}</span>
+              </p>
+            )}
+            <div className={S.modalFooter}>
+              <button onClick={() => setUnskipTarget(null)} className={S.btnCancel}>Cancel</button>
+              <button
+                onClick={confirmUnskip}
+                className="px-4 py-2 text-sm font-semibold bg-indigo-500 hover:bg-indigo-400 text-white rounded-xl transition-colors"
+              >
+                Unskip
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
       {/* Reconcile-undo toast — 10s window. Stacks above the record-
           undo toast when both are visible (rare but possible if Rebeca
           reconciles immediately after recording). */}
@@ -631,6 +769,32 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
           </div>
           <button
             onClick={() => { clearTimeout(recordUndoToast.timer); setRecordUndoToast(null) }}
+            className="text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 shrink-0"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
+
+      {/* Skip-undo toast — distinct from reconcile/record toasts.
+          Doesn't touch the balance (skipped rows have actual=0); just
+          restores the row to its pre-skip state via previousState. */}
+      {skipUndoToast && (
+        <div
+          role="status"
+          className="fixed bottom-6 right-6 z-[110] max-w-sm bg-white dark:bg-[#0d0d1f] border border-indigo-200 dark:border-indigo-500/30 rounded-2xl shadow-2xl px-4 py-3 flex items-start gap-3"
+        >
+          <div className="w-2 h-2 rounded-full mt-1.5 shrink-0 bg-indigo-500" />
+          <div className="flex-1 text-sm text-gray-700 dark:text-slate-300">
+            Payment skipped for {fmtDate(skipUndoToast.periodStart)}.{' '}
+            <button onClick={undoSkip} className="font-semibold text-indigo-600 dark:text-indigo-400 hover:underline ml-1">
+              Undo (10s)
+            </button>
+          </div>
+          <button
+            onClick={() => { clearTimeout(skipUndoToast.timer); setSkipUndoToast(null) }}
             className="text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 shrink-0"
           >
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
