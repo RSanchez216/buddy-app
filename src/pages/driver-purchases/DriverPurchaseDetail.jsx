@@ -238,7 +238,15 @@ export default function DriverPurchaseDetail() {
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div className="min-w-0">
           <button
-            onClick={() => navigate('/financial-controls/driver-purchases')}
+            onClick={() => {
+              // navigate(-1) preserves the list's URL query state
+              // (filter + search + sort) — clicking the contract was
+              // a push, so the previous history entry IS the filtered
+              // list. Falls back to the absolute path on the edge case
+              // of arriving via a deep link with no in-app referrer.
+              if (window.history.length > 1) navigate(-1)
+              else navigate('/financial-controls/driver-purchases')
+            }}
             className="flex items-center gap-1 text-xs text-gray-500 dark:text-slate-500 hover:text-orange-600 dark:hover:text-orange-400 mb-2 transition-colors"
           >
             <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">

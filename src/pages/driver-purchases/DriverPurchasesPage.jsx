@@ -75,18 +75,56 @@ export default function DriverPurchasesPage() {
 
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState('all')
-  const [search, setSearch] = useState('')
   const [showNew, setShowNew] = useState(false)
 
-  // Sort state lives in the URL so refresh + back-from-detail preserve
-  // it. sortKey === null means "no user sort applied" → the default
-  // last_charged_date DESC NULLS LAST ordering kicks in.
+  // All list-page filter/sort state lives in the URL so refresh,
+  // bookmarking, and back-from-detail preserve it. Filter + sort write
+  // synchronously on click; search debounces (300ms) to avoid spamming
+  // history with every keystroke.
   const [searchParams, setSearchParams] = useSearchParams()
   const rawKey = searchParams.get('sort')
   const rawDir = searchParams.get('dir')
   const sortKey = rawKey && SORT_DEFAULT_DIR[rawKey] ? rawKey : null
   const sortDir = rawDir === 'asc' || rawDir === 'desc' ? rawDir : (sortKey ? SORT_DEFAULT_DIR[sortKey] : 'desc')
+  // Filter is URL-derived with allowlist fallback. Bookmarks with
+  // unknown values gracefully default to 'all' instead of breaking.
+  const rawFilter = searchParams.get('filter')
+  const filter = FILTERS.some(f => f.id === rawFilter) ? rawFilter : 'all'
+  const urlQ = searchParams.get('q') || ''
+  // Local search state mirrors what's in the input so keystrokes filter
+  // immediately. A debounced effect (below) syncs it to the URL.
+  const [search, setSearch] = useState(urlQ)
+
+  // Back/forward navigation: URL changes → re-sync local search input
+  // so the field doesn't drift away from what's actually being filtered.
+  useEffect(() => { setSearch(urlQ) }, [urlQ])
+
+  // Debounced URL write for search. The user sees their keystrokes
+  // filter the table immediately (via local `search`), and 300ms after
+  // the last keystroke we push the value to the URL via `replace` so
+  // history doesn't get one entry per keystroke.
+  useEffect(() => {
+    if (search === urlQ) return
+    const t = setTimeout(() => {
+      setSearchParams(prev => {
+        const next = new URLSearchParams(prev)
+        if (search.trim()) next.set('q', search.trim())
+        else next.delete('q')
+        return next
+      }, { replace: true })
+    }, 300)
+    return () => clearTimeout(t)
+  }, [search, urlQ, setSearchParams])
+
+  function setFilter(nextId) {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      // 'all' is the implicit default — keep the URL tidy by omitting it.
+      if (nextId === 'all') next.delete('filter')
+      else next.set('filter', nextId)
+      return next
+    }, { replace: true })
+  }
 
   // 3-state cycle: unsorted → default direction → reverse → cleared.
   // Clicking a different column starts fresh on its default direction.
