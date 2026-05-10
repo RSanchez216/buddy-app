@@ -15,6 +15,16 @@ const PAYMENT_METHODS = [
   { v: 'other',   l: 'Other' },
 ]
 
+// Smart-default the Method dropdown for the Edit path. Generated rows
+// (cron-produced weeklies that represent expected payroll deductions)
+// default to payroll; anything else falls back to manual/cash. The
+// New-record path always defaults to payroll regardless of mode —
+// payroll deduction is overwhelmingly the common case at Manas Express.
+function smartDefaultMethod(payment_source) {
+  if (payment_source === 'generated') return 'payroll'
+  return 'manual'
+}
+
 // Modal for recording a single payment against a driver purchase.
 // Two modes:
 //   • Apply to existing period — UPDATEs the matching pre-generated row
@@ -64,7 +74,9 @@ export default function RecordPaymentModal({
       const rev = Number(p.actual_amount) < 0
       setIsReversal(rev)
       setAmount(rev ? String(Math.abs(p.actual_amount)) : String(p.actual_amount || p.expected_amount || ''))
-      setPaymentMethod(p.payment_method || 'manual')
+      // Smart default: existing method wins; otherwise infer from source
+      // (generated → payroll, anything else → manual).
+      setPaymentMethod(p.payment_method || smartDefaultMethod(p.payment_source))
       setReferenceNumber(p.reference_number || '')
       setReason(p.reason || '')
       setPeriods([{
@@ -98,7 +110,12 @@ export default function RecordPaymentModal({
       }
       setCustomStart(new Date().toISOString().slice(0, 10))
       setCustomEnd(new Date().toISOString().slice(0, 10))
-      setPaymentMethod('manual')
+      // Default to payroll for ALL new-record paths (existing-period
+      // AND custom-period) — payroll deduction is the common case, and
+      // having one consistent default avoids the cognitive overhead of
+      // remembering which mode picks which default. User can still
+      // change to manual/wire/check/other before saving.
+      setPaymentMethod('payroll')
       setReferenceNumber('')
       setReason('')
       setIsReversal(false)

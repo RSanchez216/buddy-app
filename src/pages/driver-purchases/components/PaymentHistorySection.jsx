@@ -49,6 +49,33 @@ function rowStatus(p, trackingStart) {
   return 'expected'
 }
 
+// Relative "Xd ago" label for a reconciled timestamp. Matches the
+// Last Charged column pattern on the list page so the relative-time
+// vocabulary stays consistent across the app. Returns null for falsy
+// input so the caller can fall back to a static "✓".
+function relativeAgo(iso) {
+  if (!iso) return null
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return null
+  const diffDays = Math.floor((Date.now() - d.getTime()) / 86400000)
+  if (diffDays <= 0) return 'Today'
+  if (diffDays === 1) return 'Yesterday'
+  if (diffDays <= 30) return `${diffDays}d ago`
+  if (diffDays <= 60) return `${Math.floor(diffDays / 7)}w ago`
+  return `${Math.floor(diffDays / 30)}mo ago`
+}
+
+// Absolute timestamp for tooltip — "May 4, 2026, 3:43 PM".
+function fmtAbsTimestamp(iso) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric',
+    hour: 'numeric', minute: '2-digit',
+  })
+}
+
 // Row tint: missed → red wash; reversal → blue wash; pre-tracking →
 // subtle gray wash; recorded-unconfirmed → subtle amber wash so the
 // "needs confirmation" rows stand apart from both reconciled (green)
@@ -88,6 +115,10 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
   // Lookup for the unreconcile popover's "originally reconciled by" line —
   // populated lazily when the popover opens.
   const [reconcilerName, setReconcilerName] = useState('')
+  // { user_id → display name } batch-fetched alongside rows so the
+  // tooltip on every reconciled cell can say "by {name}" without doing
+  // one query per row.
+  const [reconcilerMap, setReconcilerMap] = useState({})
 
   // Keep local tracking state in sync if the underlying purchase row
   // changes (e.g. after the parent reloads on save).
@@ -104,7 +135,23 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
       .eq('driver_purchase_id', purchase.id)
       .order('period_end', { ascending: false })
       .limit(100)
-    setRows(data || [])
+    const list = data || []
+    setRows(list)
+    // Batch-resolve the unique reconciler ids on this contract so the
+    // tooltip on every reconciled cell can show "by {name}". One query
+    // covers the whole page (usually 1-2 distinct users).
+    const ids = Array.from(new Set(list.map(r => r.reconciled_by).filter(Boolean)))
+    if (ids.length) {
+      const { data: users } = await supabase
+        .from('users')
+        .select('id, full_name, email')
+        .in('id', ids)
+      const map = {}
+      ;(users || []).forEach(u => { map[u.id] = u.full_name || u.email || '' })
+      setReconcilerMap(map)
+    } else {
+      setReconcilerMap({})
+    }
     setLoading(false)
   }, [purchase])
 
@@ -422,38 +469,52 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
                     <td className="py-1.5 px-3 text-center text-xs">
                       {muted ? (
                         <span className="text-gray-300 dark:text-slate-600">—</span>
-                      ) : canEdit ? (
-                        <button
-                          onClick={(e) => onReconcileCellClick(e, p)}
-                          disabled={reconcileBusy}
-                          title={
-                            p.reconciled
-                              ? 'Click to unreconcile'
-                              : status === 'recorded-unconfirmed'
-                                ? 'Payment recorded but not yet reconciled. Click to confirm.'
-                                : 'Click to reconcile'
-                          }
-                          className={`w-6 h-6 inline-flex items-center justify-center rounded transition-colors disabled:opacity-50 ${
-                            p.reconciled
-                              ? 'text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-500/10'
-                              : status === 'recorded-unconfirmed'
-                                ? 'text-amber-600 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-500/15'
-                                : 'text-gray-300 dark:text-slate-600 hover:bg-gray-100 dark:hover:bg-white/5 hover:text-gray-500 dark:hover:text-slate-400'
-                          }`}
-                        >
-                          {p.reconciled
-                            ? '✓'
-                            : status === 'recorded-unconfirmed'
-                              ? <span className="w-2 h-2 rounded-full bg-amber-500 dark:bg-amber-400 inline-block" aria-label="needs confirmation" />
-                              : '○'}
-                        </button>
-                      ) : (
-                        p.reconciled
-                          ? <span className="text-emerald-600 dark:text-emerald-400">✓</span>
+                      ) : (() => {
+                        // Build the reconciled tooltip once so it's identical
+                        // whether the cell is a button (canEdit) or a span.
+                        const reconcilerLabel = p.reconciled_by && reconcilerMap[p.reconciled_by]
+                          ? ` by ${reconcilerMap[p.reconciled_by]}`
+                          : ''
+                        const reconciledTitle = p.reconciled
+                          ? `Reconciled ${fmtAbsTimestamp(p.reconciled_at)}${reconcilerLabel}`
+                          : status === 'recorded-unconfirmed'
+                            ? 'Payment recorded but not yet reconciled. Click to confirm.'
+                            : 'Click to reconcile'
+                        const relAgo = p.reconciled ? relativeAgo(p.reconciled_at) : null
+                        const inner = p.reconciled
+                          ? (
+                              <span className="inline-flex items-center gap-1 whitespace-nowrap">
+                                <span>✓</span>
+                                {relAgo && <span className="text-[10px] text-emerald-600/80 dark:text-emerald-400/80">{relAgo}</span>}
+                              </span>
+                            )
+                          : status === 'recorded-unconfirmed'
+                            ? <span className="w-2 h-2 rounded-full bg-amber-500 dark:bg-amber-400 inline-block" aria-label="needs confirmation" />
+                            : '○'
+                        if (canEdit) {
+                          return (
+                            <button
+                              onClick={(e) => onReconcileCellClick(e, p)}
+                              disabled={reconcileBusy}
+                              title={canEdit && p.reconciled ? `${reconciledTitle} · Click to unreconcile` : reconciledTitle}
+                              className={`inline-flex items-center justify-center px-1.5 py-0.5 min-w-[1.5rem] h-6 rounded transition-colors disabled:opacity-50 ${
+                                p.reconciled
+                                  ? 'text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-500/10'
+                                  : status === 'recorded-unconfirmed'
+                                    ? 'text-amber-600 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-500/15'
+                                    : 'text-gray-300 dark:text-slate-600 hover:bg-gray-100 dark:hover:bg-white/5 hover:text-gray-500 dark:hover:text-slate-400'
+                              }`}
+                            >
+                              {inner}
+                            </button>
+                          )
+                        }
+                        return p.reconciled
+                          ? <span className="text-emerald-600 dark:text-emerald-400" title={reconciledTitle}>{inner}</span>
                           : status === 'recorded-unconfirmed'
                             ? <span className="w-2 h-2 rounded-full bg-amber-500 dark:bg-amber-400 inline-block" title="Payment recorded but not yet reconciled" />
                             : <span className="text-gray-300 dark:text-slate-600">—</span>
-                      )}
+                      })()}
                     </td>
                     <td className={`py-1.5 pl-3 text-xs ${muted ? 'text-gray-400 dark:text-slate-600' : 'text-gray-500 dark:text-slate-400'} max-w-[14rem] truncate`} title={p.reason || ''}>
                       {p.reason || (status === 'missed'
