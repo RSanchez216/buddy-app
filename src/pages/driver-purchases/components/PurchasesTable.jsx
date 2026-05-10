@@ -137,6 +137,7 @@ export default function PurchasesTable({ rows = [], sortKey = null, sortDir = 'd
             <SortableTh label="Status"         columnKey="status"             sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
             <SortableTh label="Payment"        columnKey="payment_amount"     sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
             <SortableTh label="Balance"        columnKey="current_balance"    sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+            <SortableTh label="Behind"         columnKey="periods_behind"     sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
             <SortableTh label="Last charged"   columnKey="last_charged_date"  sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
             <SortableTh label="Linked"         columnKey="linked"             sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
           </tr>
