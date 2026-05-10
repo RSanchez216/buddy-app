@@ -180,15 +180,36 @@ export default function PurchasesTable({ rows = [], sortKey = null, sortDir = 'd
                 {(() => {
                   const n = Number(r.periods_behind) || 0
                   const label = behindUnit(n, r.payment_frequency)
-                  if (!label) return <span className="text-xs text-gray-400 dark:text-slate-600">—</span>
                   const dollars = Number(r.amount_behind) || 0
+                  const skipped = Number(r.skipped_count_recent) || 0
+                  const skippedTotal = Number(r.skipped_count_total) || 0
+                  // Soft skipped pill rides alongside the BEHIND value
+                  // (or stands alone when behind=0). They're independent
+                  // signals — BEHIND = needs follow-up, SKIPPED = by
+                  // agreement, no follow-up needed. The pill click
+                  // bubbles to the row's navigate(detail) handler so
+                  // no extra wiring is needed.
                   return (
-                    <span
-                      className={`text-xs ${behindToneClass(n)}`}
-                      title={`${dollars.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })} owed across ${n} ${n === 1 ? 'period' : 'periods'}`}
-                    >
-                      {label}
-                    </span>
+                    <div className="flex flex-col gap-0.5 items-start">
+                      {label ? (
+                        <span
+                          className={`text-xs ${behindToneClass(n)}`}
+                          title={`${dollars.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })} owed across ${n} ${n === 1 ? 'period' : 'periods'}`}
+                        >
+                          {label}
+                        </span>
+                      ) : skipped === 0 ? (
+                        <span className="text-xs text-gray-400 dark:text-slate-600">—</span>
+                      ) : null}
+                      {skipped > 0 && (
+                        <span
+                          className="inline-flex items-center text-[10px] font-semibold px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/20 whitespace-nowrap"
+                          title={`${skipped} skipped in last 90 days. ${skippedTotal} total. Click for details.`}
+                        >
+                          {skipped} skipped
+                        </span>
+                      )}
+                    </div>
                   )
                 })()}
               </td>
