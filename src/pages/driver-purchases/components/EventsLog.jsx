@@ -19,6 +19,9 @@ const EVENT_COLORS = {
   imported:          'bg-gray-100 dark:bg-slate-700/40 text-gray-600 dark:text-slate-400',
   payment_reconciled:   'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
   payment_unreconciled: 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400',
+  payment_recorded:     'bg-cyan-50 dark:bg-cyan-500/10 text-cyan-700 dark:text-cyan-400',
+  payment_record_undone:'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400',
+  payment_edited:       'bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400',
 }
 
 // Solid dot color per event type — used as the left-side timeline marker.
@@ -35,6 +38,9 @@ const DOT_COLORS = {
   imported:          'bg-gray-300 dark:bg-slate-600',
   payment_reconciled:   'bg-emerald-500',
   payment_unreconciled: 'bg-amber-500',
+  payment_recorded:     'bg-cyan-500',
+  payment_record_undone:'bg-amber-500',
+  payment_edited:       'bg-blue-500',
 }
 
 export default function EventsLog({ purchaseId, refreshKey }) {

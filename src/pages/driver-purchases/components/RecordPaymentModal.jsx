@@ -138,8 +138,26 @@ export default function RecordPaymentModal({
       updated_at: nowIso,
     }
 
-    let row, opError
+    let row, opError, periodStart, periodEnd
+    // previousState captures the row's state BEFORE this save — needed
+    // so the parent can offer an undo path that reverts to whatever was
+    // there (not just "actual=0"). For inserts, isNewlyInserted=true
+    // signals the undo should delete the row instead of reverting.
+    let previousState = null
+    let isNewlyInserted = false
     if (isEdit) {
+      previousState = {
+        actual_amount: existingPayment.actual_amount,
+        payment_method: existingPayment.payment_method,
+        reference_number: existingPayment.reference_number,
+        reason: existingPayment.reason,
+        reconciled: existingPayment.reconciled,
+        reconciled_at: existingPayment.reconciled_at,
+        reconciled_by: existingPayment.reconciled_by,
+        payment_source: existingPayment.payment_source,
+      }
+      periodStart = existingPayment.period_start
+      periodEnd = existingPayment.period_end
       const res = await supabase
         .from('driver_purchase_payments')
         .update(payload)
@@ -148,6 +166,22 @@ export default function RecordPaymentModal({
         .single()
       row = res.data; opError = res.error
     } else if (mode === 'existing' && pickedPeriodId) {
+      // Updating a pre-generated row. Its prior state was actual=0,
+      // reconciled=false (otherwise it wouldn't have been listed as an
+      // open period), but pull the full row to be safe.
+      const picked = periods.find(x => x.id === pickedPeriodId)
+      previousState = picked ? {
+        actual_amount: picked.actual_amount,
+        payment_method: null,
+        reference_number: null,
+        reason: null,
+        reconciled: false,
+        reconciled_at: null,
+        reconciled_by: null,
+        payment_source: picked.payment_source || 'generated',
+      } : null
+      periodStart = picked?.period_start
+      periodEnd = picked?.period_end
       const res = await supabase
         .from('driver_purchase_payments')
         .update(payload)
@@ -159,6 +193,9 @@ export default function RecordPaymentModal({
       // Custom period: insert a new row. period_type defaults to the
       // contract's payment_frequency.
       if (!customStart || !customEnd) { setBusy(false); setError('Pick start and end dates'); return }
+      isNewlyInserted = true
+      periodStart = customStart
+      periodEnd = customEnd
       const res = await supabase
         .from('driver_purchase_payments')
         .insert({
@@ -177,24 +214,51 @@ export default function RecordPaymentModal({
     setBusy(false)
     if (opError) { setError(opError.message); return }
 
-    // Audit event so the activity feed reflects the action
-    await logEvent(
-      purchase.id,
-      'payment_recorded',
-      isReversal
-        ? `Reversal of ${fmtMoney(Math.abs(signedAmount))} recorded`
-        : `Payment of ${fmtMoney(signedAmount)} recorded`,
-      {
-        payment_id: row?.id,
-        amount: signedAmount,
-        method: paymentMethod,
-        reversal: !!isReversal,
-        edit: !!isEdit,
-      },
-      user?.id,
-    )
+    // Audit event. Distinct event_type for edits so the activity feed
+    // and audit query can tell record-from-scratch from edit-after-the-fact.
+    if (isEdit) {
+      const prevAmt = Number(previousState?.actual_amount || 0)
+      const newAmt = Number(signedAmount)
+      const fields = []
+      if (prevAmt !== newAmt) fields.push(`actual ${fmtMoney(prevAmt)} → ${fmtMoney(newAmt)}`)
+      if ((previousState?.payment_method || '') !== (paymentMethod || '')) {
+        fields.push(`method ${previousState?.payment_method || '—'} → ${paymentMethod || '—'}`)
+      }
+      if (!!previousState?.reconciled !== true) fields.push('reconciled true')
+      await logEvent(
+        purchase.id,
+        'payment_edited',
+        `Edited payment for ${fmtDate(periodStart)} – ${fmtDate(periodEnd)}${fields.length ? ': ' + fields.join(', ') : ''}`,
+        { payment_id: row?.id, before: previousState, after: payload },
+        user?.id,
+      )
+    } else {
+      await logEvent(
+        purchase.id,
+        'payment_recorded',
+        isReversal
+          ? `Reversal of ${fmtMoney(Math.abs(signedAmount))} recorded for ${fmtDate(periodStart)}`
+          : `Recorded ${fmtMoney(signedAmount)} for ${fmtDate(periodStart)}`,
+        {
+          payment_id: row?.id,
+          amount: signedAmount,
+          method: paymentMethod,
+          reversal: !!isReversal,
+        },
+        user?.id,
+      )
+    }
 
-    onRecorded?.(row?.id)
+    onRecorded?.({
+      paymentId: row?.id,
+      amount: signedAmount,
+      periodStart,
+      periodEnd,
+      isEdit,
+      isReversal: !!isReversal,
+      isNewlyInserted,
+      previousState,
+    })
   }
 
   if (!purchase) return null

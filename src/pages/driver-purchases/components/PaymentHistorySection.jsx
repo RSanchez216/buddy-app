@@ -31,12 +31,17 @@ function varianceClass(v) {
   return 'text-red-600 dark:text-red-400'
 }
 
-// Returns one of: 'reversal' | 'pre-tracking' | 'reconciled' | 'missed' | 'expected'.
-// Priority matches the spec: actual data always wins over pre-tracking.
+// Returns one of: 'reversal' | 'reconciled' | 'recorded-unconfirmed' |
+// 'pre-tracking' | 'missed' | 'expected'.
+// Priority: actual data wins over pre-tracking, and the reconciled bool
+// disambiguates "money in" rows so a recorded-but-not-yet-reconciled
+// row reads as a distinct "needs confirmation" state instead of looking
+// identical to a fully confirmed payment. That visual collapse caused
+// the production bug where a user unreconciled to undo a recording.
 function rowStatus(p, trackingStart) {
   const actual = Number(p.actual_amount || 0)
   if (actual < 0) return 'reversal'
-  if (actual > 0) return 'reconciled'
+  if (actual > 0) return p.reconciled ? 'reconciled' : 'recorded-unconfirmed'
   // actual === 0 from here on
   if (trackingStart && p.period_end && p.period_end < trackingStart) return 'pre-tracking'
   const ended = p.period_end && new Date(p.period_end + 'T00:00:00') < new Date()
@@ -45,13 +50,16 @@ function rowStatus(p, trackingStart) {
 }
 
 // Row tint: missed → red wash; reversal → blue wash; pre-tracking →
-// subtle gray wash to visually de-emphasize the row; everything else neutral.
+// subtle gray wash; recorded-unconfirmed → subtle amber wash so the
+// "needs confirmation" rows stand apart from both reconciled (green)
+// and missed (red) at-a-glance.
 function rowTint(status) {
   switch (status) {
-    case 'reversal':     return 'bg-blue-50/50 dark:bg-blue-500/5'
-    case 'missed':       return 'bg-red-50/50 dark:bg-red-500/5'
-    case 'pre-tracking': return 'bg-gray-50/60 dark:bg-white/[0.015]'
-    default:             return ''
+    case 'reversal':             return 'bg-blue-50/50 dark:bg-blue-500/5'
+    case 'missed':               return 'bg-red-50/50 dark:bg-red-500/5'
+    case 'pre-tracking':         return 'bg-gray-50/60 dark:bg-white/[0.015]'
+    case 'recorded-unconfirmed': return 'bg-amber-50/40 dark:bg-amber-500/[0.04]'
+    default:                     return ''
   }
 }
 
@@ -69,6 +77,12 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
   // Reconcile-undo toast: { paymentId, prevValues, periodStart, timer }.
   // Only ever shown for user-initiated reconciles, not bulk imports.
   const [undoToast, setUndoToast] = useState(null)
+  // Record-payment undo toast — the production-bug fix. Distinct from
+  // the reconcile undo above because this one reverts actual_amount
+  // (which moves the balance via the sync trigger), not just the
+  // reconciled bool. Set after a successful RecordPaymentModal save in
+  // new-record mode (NOT edit mode).
+  const [recordUndoToast, setRecordUndoToast] = useState(null)
   const [unreconcileTarget, setUnreconcileTarget] = useState(null)  // payment row
   const [reconcileBusy, setReconcileBusy] = useState(false)
   // Lookup for the unreconcile popover's "originally reconciled by" line —
@@ -110,8 +124,70 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
   function openNew() { setEditRow(null); setShowModal(true) }
   function openEdit(row) { if (!canEdit) return; setEditRow(row); setShowModal(true) }
   function onModalClose() { setShowModal(false); setEditRow(null) }
-  function onRecorded() {
+  function onRecorded(info) {
     setShowModal(false); setEditRow(null)
+    load()
+    onChange?.()
+    // Only arm the 10s undo toast on fresh records — edits already
+    // have their own recovery path (re-open the row in the same modal).
+    if (info && !info.isEdit && info.paymentId) {
+      if (recordUndoToast?.timer) clearTimeout(recordUndoToast.timer)
+      const timer = setTimeout(() => setRecordUndoToast(null), 10000)
+      setRecordUndoToast({
+        paymentId: info.paymentId,
+        amount: info.amount,
+        periodStart: info.periodStart,
+        periodEnd: info.periodEnd,
+        isNewlyInserted: info.isNewlyInserted,
+        previousState: info.previousState,
+        timer,
+      })
+    }
+  }
+
+  async function undoRecordPayment() {
+    if (!recordUndoToast) return
+    const { paymentId, amount, periodStart, periodEnd, isNewlyInserted, previousState, timer } = recordUndoToast
+    clearTimeout(timer)
+    setRecordUndoToast(null)
+    if (isNewlyInserted) {
+      // The row was just inserted by the modal — drop it. The balance
+      // trigger will re-sum on delete.
+      const { error } = await supabase
+        .from('driver_purchase_payments')
+        .delete()
+        .eq('id', paymentId)
+      if (error) { alert('Undo failed: ' + error.message); load(); return }
+    } else {
+      // Pre-generated row was updated. Revert to whatever was there
+      // before (typically actual=0, no method, not reconciled). Trigger
+      // re-sums actual_amount automatically.
+      const revert = previousState
+        ? {
+            actual_amount: previousState.actual_amount,
+            payment_method: previousState.payment_method,
+            reference_number: previousState.reference_number,
+            reason: previousState.reason,
+            reconciled: previousState.reconciled,
+            reconciled_at: previousState.reconciled_at,
+            reconciled_by: previousState.reconciled_by,
+            payment_source: previousState.payment_source,
+            updated_at: new Date().toISOString(),
+          }
+        : { actual_amount: 0, payment_method: null, reconciled: false, reconciled_at: null, reconciled_by: null, updated_at: new Date().toISOString() }
+      const { error } = await supabase
+        .from('driver_purchase_payments')
+        .update(revert)
+        .eq('id', paymentId)
+      if (error) { alert('Undo failed: ' + error.message); load(); return }
+    }
+    await logEvent(
+      purchase.id,
+      'payment_record_undone',
+      `Recording undone for ${fmtDate(periodStart)} – ${fmtDate(periodEnd)} (${fmtMoney(amount)})`,
+      { payment_id: paymentId, amount },
+      user?.id,
+    )
     load()
     onChange?.()
   }
@@ -350,19 +426,33 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
                         <button
                           onClick={(e) => onReconcileCellClick(e, p)}
                           disabled={reconcileBusy}
-                          title={p.reconciled ? 'Click to unreconcile' : 'Click to reconcile'}
+                          title={
+                            p.reconciled
+                              ? 'Click to unreconcile'
+                              : status === 'recorded-unconfirmed'
+                                ? 'Payment recorded but not yet reconciled. Click to confirm.'
+                                : 'Click to reconcile'
+                          }
                           className={`w-6 h-6 inline-flex items-center justify-center rounded transition-colors disabled:opacity-50 ${
                             p.reconciled
                               ? 'text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-500/10'
-                              : 'text-gray-300 dark:text-slate-600 hover:bg-gray-100 dark:hover:bg-white/5 hover:text-gray-500 dark:hover:text-slate-400'
+                              : status === 'recorded-unconfirmed'
+                                ? 'text-amber-600 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-500/15'
+                                : 'text-gray-300 dark:text-slate-600 hover:bg-gray-100 dark:hover:bg-white/5 hover:text-gray-500 dark:hover:text-slate-400'
                           }`}
                         >
-                          {p.reconciled ? '✓' : '○'}
+                          {p.reconciled
+                            ? '✓'
+                            : status === 'recorded-unconfirmed'
+                              ? <span className="w-2 h-2 rounded-full bg-amber-500 dark:bg-amber-400 inline-block" aria-label="needs confirmation" />
+                              : '○'}
                         </button>
                       ) : (
                         p.reconciled
                           ? <span className="text-emerald-600 dark:text-emerald-400">✓</span>
-                          : <span className="text-gray-300 dark:text-slate-600">—</span>
+                          : status === 'recorded-unconfirmed'
+                            ? <span className="w-2 h-2 rounded-full bg-amber-500 dark:bg-amber-400 inline-block" title="Payment recorded but not yet reconciled" />
+                            : <span className="text-gray-300 dark:text-slate-600">—</span>
                       )}
                     </td>
                     <td className={`py-1.5 pl-3 text-xs ${muted ? 'text-gray-400 dark:text-slate-600' : 'text-gray-500 dark:text-slate-400'} max-w-[14rem] truncate`} title={p.reason || ''}>
@@ -433,11 +523,15 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
         )}
       </Modal>
 
-      {/* Reconcile-undo toast — 10s window */}
+      {/* Reconcile-undo toast — 10s window. Stacks above the record-
+          undo toast when both are visible (rare but possible if Rebeca
+          reconciles immediately after recording). */}
       {undoToast && (
         <div
           role="status"
-          className="fixed bottom-6 right-6 z-[110] max-w-sm bg-white dark:bg-[#0d0d1f] border border-emerald-200 dark:border-emerald-500/30 rounded-2xl shadow-2xl px-4 py-3 flex items-start gap-3"
+          className={`fixed right-6 z-[110] max-w-sm bg-white dark:bg-[#0d0d1f] border border-emerald-200 dark:border-emerald-500/30 rounded-2xl shadow-2xl px-4 py-3 flex items-start gap-3 ${
+            recordUndoToast ? 'bottom-24' : 'bottom-6'
+          }`}
         >
           <div className="w-2 h-2 rounded-full mt-1.5 shrink-0 bg-emerald-500" />
           <div className="flex-1 text-sm text-gray-700 dark:text-slate-300">
@@ -448,6 +542,32 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
           </div>
           <button
             onClick={() => { clearTimeout(undoToast.timer); setUndoToast(null) }}
+            className="text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 shrink-0"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
+
+      {/* Record-payment undo toast — distinct from the reconcile toast.
+          This one moves the BALANCE (via actual_amount), which is what
+          the production bug was actually trying to undo. */}
+      {recordUndoToast && (
+        <div
+          role="status"
+          className="fixed bottom-6 right-6 z-[110] max-w-sm bg-white dark:bg-[#0d0d1f] border border-cyan-200 dark:border-cyan-500/30 rounded-2xl shadow-2xl px-4 py-3 flex items-start gap-3"
+        >
+          <div className="w-2 h-2 rounded-full mt-1.5 shrink-0 bg-cyan-500" />
+          <div className="flex-1 text-sm text-gray-700 dark:text-slate-300">
+            Recorded {fmtMoney(recordUndoToast.amount)} for {fmtDate(recordUndoToast.periodStart)}.{' '}
+            <button onClick={undoRecordPayment} className="font-semibold text-cyan-600 dark:text-cyan-400 hover:underline ml-1">
+              Undo (10s)
+            </button>
+          </div>
+          <button
+            onClick={() => { clearTimeout(recordUndoToast.timer); setRecordUndoToast(null) }}
             className="text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 shrink-0"
           >
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

@@ -20,6 +20,9 @@ const EVENT_DOT = {
   imported:          'bg-gray-300 dark:bg-slate-600',
   payment_reconciled:   'bg-emerald-500',
   payment_unreconciled: 'bg-amber-500',
+  payment_recorded:     'bg-cyan-500',
+  payment_record_undone:'bg-amber-500',
+  payment_edited:       'bg-blue-500',
 }
 
 // Combined activity feed: rich-text comments + system events, queried
