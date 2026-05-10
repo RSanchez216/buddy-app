@@ -107,21 +107,36 @@ export default function RecordPaymentModal({
     // New mode: fetch open periods (actual_amount = 0) for this contract
     let cancelled = false
     ;(async () => {
-      const { data } = await supabase
+      // Pull every period at/after the contract's tracking-start cutoff,
+      // chronological ascending. Both paid and unpaid rows are included
+      // so the user can target a paid row for reversal/correction; the
+      // option label distinguishes them visually. Limit raised to 200
+      // (~4 years of weekly periods) so long contracts don't get cut off.
+      let q = supabase
         .from('driver_purchase_payments')
         .select('id, period_start, period_end, expected_amount, actual_amount, payment_source, period_type')
         .eq('driver_purchase_id', purchase.id)
-        .eq('actual_amount', 0)
-        .order('period_end', { ascending: false })
-        .limit(20)
+      if (purchase.payment_tracking_start_date) {
+        q = q.gte('period_end', purchase.payment_tracking_start_date)
+      }
+      const { data } = await q
+        .order('period_start', { ascending: true })
+        .limit(200)
       if (cancelled) return
-      const open = data || []
-      setPeriods(open)
-      setMode(open.length ? 'existing' : 'custom')
-      const first = open[0]
-      if (first) {
-        setPickedPeriodId(first.id)
-        setAmount(String(first.expected_amount || ''))
+      const all = data || []
+      setPeriods(all)
+      setMode(all.length ? 'existing' : 'custom')
+      // Default selection: earliest unpaid period (smallest period_start
+      // where actual_amount = 0). This is the natural "next payment to
+      // record" target. If everything's paid (contract caught up),
+      // fall back to the most recent paid period for the rare
+      // reversal/correction case.
+      const earliestUnpaid = all.find(p => Number(p.actual_amount || 0) === 0)
+      const fallbackPaid = [...all].reverse().find(p => Number(p.actual_amount || 0) !== 0)
+      const picked = earliestUnpaid || fallbackPaid
+      if (picked) {
+        setPickedPeriodId(picked.id)
+        setAmount(String(picked.expected_amount || ''))
       } else {
         setPickedPeriodId('')
         setAmount(String(purchase.payment_amount || ''))
@@ -332,12 +347,22 @@ export default function RecordPaymentModal({
                     disabled={mode !== 'existing'}
                     className="mt-1"
                   >
-                    {periods.map(p => (
-                      <option key={p.id} value={p.id}>
-                        {fmtDate(p.period_start)} – {fmtDate(p.period_end)}
-                        {' · '}expected {fmtMoney(p.expected_amount)}
-                      </option>
-                    ))}
+                    {periods.map(p => {
+                      const paid = Number(p.actual_amount || 0) !== 0
+                      // Native <option> can't be richly styled, so the
+                      // visual distinction lives in the text itself —
+                      // "✓ paid $X" on paid rows reads as a clearly
+                      // different state from "expected $X".
+                      return (
+                        <option key={p.id} value={p.id}>
+                          {fmtDate(p.period_start)} – {fmtDate(p.period_end)}
+                          {' · '}
+                          {paid
+                            ? `✓ paid ${fmtMoney(p.actual_amount)}`
+                            : `expected ${fmtMoney(p.expected_amount)}`}
+                        </option>
+                      )
+                    })}
                   </Select>
                 ) : (
                   <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-0.5">No open periods. Use a custom period below.</p>
