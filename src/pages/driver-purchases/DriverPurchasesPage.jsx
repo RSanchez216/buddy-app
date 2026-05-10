@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useReducer, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { S } from '../../lib/styles'
+import { logEvent } from './utils/events'
+import { fmtDate, fmtMoney } from './utils/format'
 import KpiCards from './components/KpiCards'
 import WarningPanels from './components/WarningPanels'
 import PurchasesTable from './components/PurchasesTable'
@@ -60,22 +62,41 @@ function compareByKey(a, b, key, dir) {
 }
 
 const FILTERS = [
-  { id: 'all',            label: 'All' },
-  { id: 'active',         label: 'Active' },
-  { id: 'behind',         label: 'Behind' },
-  { id: 'fully_paid',     label: 'Fully paid' },
-  { id: 'title_pending',  label: 'Title pending', tone: 'amber' },
-  { id: 'cancelled',      label: 'Cancelled' },
+  { id: 'all',              label: 'All' },
+  { id: 'active',           label: 'Active' },
+  { id: 'behind',           label: 'Behind' },
+  { id: 'needs_recording',  label: 'Needs recording' },
+  { id: 'fully_paid',       label: 'Fully paid' },
+  { id: 'title_pending',    label: 'Title pending', tone: 'amber' },
+  { id: 'cancelled',        label: 'Cancelled' },
 ]
 
 export default function DriverPurchasesPage() {
   const navigate = useNavigate()
-  const { profile } = useAuth()
+  const { profile, user } = useAuth()
   const canEdit = profile?.role === 'admin' || profile?.role === 'manager'
 
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [showNew, setShowNew] = useState(false)
+
+  // Inline-reconcile bookkeeping: a single undo toast at the page level
+  // (records OR reconciles, depending on which target was clicked) and
+  // a busy flag to suppress double-clicks while a request is in flight.
+  // Live countdown via the same expiresAt + 1Hz forceTick pattern used
+  // in PaymentHistorySection's toasts.
+  const [inlineToast, setInlineToast] = useState(null)
+  const [inlineBusy, setInlineBusy] = useState(false)
+  const [, forceTick] = useReducer(x => x + 1, 0)
+  useEffect(() => {
+    if (!inlineToast) return
+    const id = setInterval(forceTick, 1000)
+    return () => clearInterval(id)
+  }, [inlineToast])
+  function remainingSeconds(t) {
+    if (!t?.expiresAt) return 0
+    return Math.max(0, Math.ceil((t.expiresAt - Date.now()) / 1000))
+  }
 
   // All list-page filter/sort state lives in the URL so refresh,
   // bookmarking, and back-from-detail preserve it. Filter + sort write
@@ -164,6 +185,168 @@ export default function DriverPurchasesPage() {
     setLoading(false)
   }
 
+  // Inline reconcile click handler. Mirrors the logic in
+  // PaymentHistorySection.reconcilePayment but works against the row's
+  // view-computed target id rather than a payment passed by reference.
+  // Two branches: combo (next_record_target_id present) or
+  // reconcile-only (next_reconcile_only_target_id present).
+  async function handleInlineReconcile(row) {
+    if (!canEdit || inlineBusy || !row) return
+    const nowIso = new Date().toISOString()
+
+    if (row.next_record_target_id) {
+      // Combo: record + reconcile in one UPDATE.
+      const targetId = row.next_record_target_id
+      const expected = Number(row.next_record_target_amount || 0)
+      if (expected <= 0) {
+        alert('No expected amount on this period — open the contract to record a custom amount.')
+        return
+      }
+      setInlineBusy(true)
+      // Fetch the row's current state so we can capture previousState
+      // for the undo + check payment_source for the method default.
+      const { data: payment, error: fetchErr } = await supabase
+        .from('driver_purchase_payments')
+        .select('id, payment_method, payment_source, actual_amount, reconciled, reconciled_at, reconciled_by, period_start, period_end')
+        .eq('id', targetId)
+        .single()
+      if (fetchErr || !payment) {
+        setInlineBusy(false)
+        alert('Could not load target payment: ' + (fetchErr?.message || 'not found'))
+        load()
+        return
+      }
+      const methodDefault = payment.payment_method
+        || (payment.payment_source === 'generated' ? 'payroll' : 'manual')
+      const prev = {
+        actual_amount: payment.actual_amount,
+        payment_method: payment.payment_method,
+        reconciled: payment.reconciled,
+        reconciled_at: payment.reconciled_at,
+        reconciled_by: payment.reconciled_by,
+      }
+      const { error } = await supabase
+        .from('driver_purchase_payments')
+        .update({
+          actual_amount: expected,
+          payment_method: methodDefault,
+          reconciled: true,
+          reconciled_at: nowIso,
+          reconciled_by: user?.id || null,
+          updated_at: nowIso,
+        })
+        .eq('id', targetId)
+      setInlineBusy(false)
+      if (error) { alert('Could not reconcile: ' + error.message); return }
+      await logEvent(row.id, 'payment_recorded',
+        `Recorded ${fmtMoney(expected)} for ${fmtDate(payment.period_start)} – ${fmtDate(payment.period_end)}`,
+        { payment_id: targetId, amount: expected, method: methodDefault, combo: true, source: 'list_inline' },
+        user?.id)
+      await logEvent(row.id, 'payment_reconciled',
+        `Reconciled payment for ${fmtDate(payment.period_start)} – ${fmtDate(payment.period_end)} (${fmtMoney(expected)})`,
+        { payment_id: targetId, amount: expected, combo: true, source: 'list_inline' },
+        user?.id)
+      // Arm 10s undo toast and refetch so the row's targets advance.
+      if (inlineToast?.timer) clearTimeout(inlineToast.timer)
+      const timer = setTimeout(() => setInlineToast(null), 10000)
+      setInlineToast({
+        kind: 'combo',
+        paymentId: targetId,
+        purchaseId: row.id,
+        prev,
+        amount: expected,
+        periodStart: payment.period_start,
+        periodEnd: payment.period_end,
+        timer,
+        expiresAt: Date.now() + 10000,
+      })
+      load()
+      return
+    }
+
+    if (row.next_reconcile_only_target_id) {
+      // Amber-dot path: just flip reconciled.
+      const targetId = row.next_reconcile_only_target_id
+      setInlineBusy(true)
+      const { data: payment, error: fetchErr } = await supabase
+        .from('driver_purchase_payments')
+        .select('id, actual_amount, reconciled, reconciled_at, reconciled_by, period_start, period_end')
+        .eq('id', targetId)
+        .single()
+      if (fetchErr || !payment) {
+        setInlineBusy(false); alert('Could not load target payment: ' + (fetchErr?.message || 'not found')); load(); return
+      }
+      const prev = {
+        reconciled: payment.reconciled,
+        reconciled_at: payment.reconciled_at,
+        reconciled_by: payment.reconciled_by,
+      }
+      const { error } = await supabase
+        .from('driver_purchase_payments')
+        .update({ reconciled: true, reconciled_at: nowIso, reconciled_by: user?.id || null })
+        .eq('id', targetId)
+      setInlineBusy(false)
+      if (error) { alert('Could not reconcile: ' + error.message); return }
+      await logEvent(row.id, 'payment_reconciled',
+        `Reconciled payment for ${fmtDate(payment.period_start)} – ${fmtDate(payment.period_end)} (${fmtMoney(payment.actual_amount)})`,
+        { payment_id: targetId, amount: payment.actual_amount, source: 'list_inline' },
+        user?.id)
+      if (inlineToast?.timer) clearTimeout(inlineToast.timer)
+      const timer = setTimeout(() => setInlineToast(null), 10000)
+      setInlineToast({
+        kind: 'reconcile',
+        paymentId: targetId,
+        purchaseId: row.id,
+        prev,
+        periodStart: payment.period_start,
+        periodEnd: payment.period_end,
+        timer,
+        expiresAt: Date.now() + 10000,
+      })
+      load()
+    }
+  }
+
+  async function undoInlineReconcile() {
+    if (!inlineToast) return
+    const { kind, paymentId, purchaseId, prev, periodStart, periodEnd, amount, timer } = inlineToast
+    clearTimeout(timer)
+    setInlineToast(null)
+    setInlineBusy(true)
+    const revert = kind === 'combo'
+      ? {
+          actual_amount: prev.actual_amount ?? 0,
+          payment_method: prev.payment_method ?? null,
+          reconciled: false,
+          reconciled_at: null,
+          reconciled_by: null,
+          updated_at: new Date().toISOString(),
+        }
+      : { reconciled: false, reconciled_at: null, reconciled_by: null }
+    const { error } = await supabase
+      .from('driver_purchase_payments')
+      .update(revert)
+      .eq('id', paymentId)
+    setInlineBusy(false)
+    if (error) { alert('Undo failed: ' + error.message); load(); return }
+    if (kind === 'combo') {
+      await logEvent(purchaseId, 'payment_unreconciled',
+        `Unreconciled payment for ${fmtDate(periodStart)} – ${fmtDate(periodEnd)} (undo)`,
+        { payment_id: paymentId, undo: true, combo: true, source: 'list_inline' },
+        user?.id)
+      await logEvent(purchaseId, 'payment_record_undone',
+        `Recording undone for ${fmtDate(periodStart)} – ${fmtDate(periodEnd)} (${fmtMoney(amount)}) (undo)`,
+        { payment_id: paymentId, amount, undo: true, combo: true, source: 'list_inline' },
+        user?.id)
+    } else {
+      await logEvent(purchaseId, 'payment_unreconciled',
+        `Unreconciled payment for ${fmtDate(periodStart)} – ${fmtDate(periodEnd)} (undo)`,
+        { payment_id: paymentId, undo: true, source: 'list_inline' },
+        user?.id)
+    }
+    load()
+  }
+
   // Counts per filter chip — computed off the unfiltered set
   const counts = useMemo(() => {
     const active     = rows.filter(r => r.is_active_state).length
@@ -175,8 +358,13 @@ export default function DriverPurchasesPage() {
     ).length
     const behind = rows.filter(r => r.is_behind).length
     const titlePending = rows.filter(r => r.title_release_pending).length
+    // "Needs recording" = at least one unpaid past period within the
+    // tracking window. The view's next_record_target_id resolves the
+    // earliest such row per contract; non-null here means there's
+    // work to do on this contract.
+    const needsRecording = rows.filter(r => r.next_record_target_id).length
     return {
-      all: rows.length, active, behind,
+      all: rows.length, active, behind, needs_recording: needsRecording,
       fully_paid: fullyPaid, title_pending: titlePending, cancelled,
     }
   }, [rows])
@@ -191,6 +379,7 @@ export default function DriverPurchasesPage() {
       r.status_name === 'Owner Left'
     )
     else if (filter === 'behind') list = list.filter(r => r.is_behind)
+    else if (filter === 'needs_recording') list = list.filter(r => r.next_record_target_id)
     else if (filter === 'title_pending') list = list.filter(r => r.title_release_pending)
 
     const q = search.trim().toLowerCase()
@@ -332,6 +521,9 @@ export default function DriverPurchasesPage() {
             sortKey={sortKey}
             sortDir={sortDir}
             onSort={handleSort}
+            canEdit={canEdit}
+            inlineBusy={inlineBusy}
+            onInlineReconcile={handleInlineReconcile}
           />
         </>
       )}
@@ -344,6 +536,39 @@ export default function DriverPurchasesPage() {
           if (newId) navigate(`/financial-controls/driver-purchases/${newId}`)
         }}
       />
+
+      {/* Inline reconcile undo toast — single page-level slot. Live
+          countdown via the same expiresAt + 1Hz pattern used in the
+          payment-history toasts. */}
+      {inlineToast && (
+        <div
+          role="status"
+          className={`fixed bottom-6 right-6 z-[110] max-w-sm bg-white dark:bg-[#0d0d1f] border rounded-2xl shadow-2xl px-4 py-3 flex items-start gap-3 ${
+            inlineToast.kind === 'combo'
+              ? 'border-emerald-200 dark:border-emerald-500/30'
+              : 'border-emerald-200 dark:border-emerald-500/30'
+          }`}
+        >
+          <div className="w-2 h-2 rounded-full mt-1.5 shrink-0 bg-emerald-500" />
+          <div className="flex-1 text-sm text-gray-700 dark:text-slate-300">
+            {inlineToast.kind === 'combo'
+              ? <>Recorded &amp; reconciled {fmtMoney(inlineToast.amount)} for {fmtDate(inlineToast.periodStart)}.</>
+              : <>Reconciled {fmtDate(inlineToast.periodStart)} payment.</>}
+            {' '}
+            <button onClick={undoInlineReconcile} className="font-semibold text-emerald-600 dark:text-emerald-400 hover:underline ml-1">
+              Undo ({remainingSeconds(inlineToast)}s)
+            </button>
+          </div>
+          <button
+            onClick={() => { clearTimeout(inlineToast.timer); setInlineToast(null) }}
+            className="text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 shrink-0"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
     </div>
   )
 }

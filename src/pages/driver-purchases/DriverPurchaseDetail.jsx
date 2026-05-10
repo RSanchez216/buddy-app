@@ -34,6 +34,10 @@ export default function DriverPurchaseDetail() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const focusCommentId = searchParams.get('comment') || null
+  // ?record=1 from the list page's overflow menu opens the Record
+  // Payment modal as soon as the contract loads. Single-shot trigger:
+  // bumped once on mount via setRecordPaymentSignal below.
+  const openRecordOnMount = searchParams.get('record') === '1'
   const { user, profile } = useAuth()
   const canEdit = profile?.role === 'admin' || profile?.role === 'manager'
 
@@ -88,6 +92,17 @@ export default function DriverPurchaseDetail() {
   }, [id])
 
   useEffect(() => { load() }, [load])
+
+  // ?record=1 → fire the Record Payment modal once the contract data
+  // is loaded. Gated on `summary` so we don't try to open against an
+  // empty state. Bumped exactly once via the firedRef latch (refresh
+  // on the detail page with the same URL shouldn't re-open).
+  const recordOnMountFired = useRef(false)
+  useEffect(() => {
+    if (!openRecordOnMount || !summary || recordOnMountFired.current) return
+    recordOnMountFired.current = true
+    setRecordPaymentSignal(s => s + 1)
+  }, [openRecordOnMount, summary])
 
   // Status list rarely changes; fetch once on mount and keep around for
   // the header dropdown. Ordered by sort_order so the natural workflow
