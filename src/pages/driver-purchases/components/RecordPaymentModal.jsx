@@ -15,6 +15,13 @@ const PAYMENT_METHODS = [
   { v: 'other',   l: 'Other' },
 ]
 
+const SOURCE_LABEL = {
+  generated:      'Generated',
+  manual:         'Manual',
+  payroll_import: 'Payroll import',
+  reversal:       'Reversal',
+}
+
 // Smart-default the Method dropdown for the Edit path. Generated rows
 // (cron-produced weeklies that represent expected payroll deductions)
 // default to payroll; anything else falls back to manual/cash. The
@@ -38,7 +45,8 @@ export default function RecordPaymentModal({
   onClose,
   purchase,                  // raw driver_purchases row
   existingPayment,           // optional — if set, edit that row
-  onRecorded,                // (paymentId) => void
+  onRecorded,                // (info) => void
+  reconcilerMap = {},        // { user_id → display name } for audit display
 }) {
   const { user } = useAuth()
   const isEdit = !!existingPayment
@@ -53,6 +61,11 @@ export default function RecordPaymentModal({
   const [referenceNumber, setReferenceNumber] = useState('')
   const [reason, setReason] = useState('')
   const [isReversal, setIsReversal] = useState(false)
+  // Reconciled is only user-controlled in Edit mode. New records always
+  // get reconciled=true on save (recording a payment is itself a
+  // confirmation). Edit lets you uncheck — e.g. zero-out a wrong entry
+  // without leaving an orphaned ✓.
+  const [reconciledOnSave, setReconciledOnSave] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
@@ -79,6 +92,11 @@ export default function RecordPaymentModal({
       setPaymentMethod(p.payment_method || smartDefaultMethod(p.payment_source))
       setReferenceNumber(p.reference_number || '')
       setReason(p.reason || '')
+      // Edit-mode default mirrors the row's current reconciled state so
+      // re-saving doesn't silently flip the audit flag. User can toggle
+      // explicitly if they want to unreconcile via Save instead of via
+      // the ✓ cell click.
+      setReconciledOnSave(!!p.reconciled)
       setPeriods([{
         id: p.id, period_start: p.period_start, period_end: p.period_end,
         expected_amount: p.expected_amount, actual_amount: p.actual_amount,
@@ -119,6 +137,10 @@ export default function RecordPaymentModal({
       setReferenceNumber('')
       setReason('')
       setIsReversal(false)
+      // New-record path implicitly confirms the payment. Unchecking
+      // here means "log the actual_amount but leave reconciled=false",
+      // useful when entering a payment you haven't bank-confirmed yet.
+      setReconciledOnSave(true)
     })()
     return () => { cancelled = true }
   }, [open, purchase, isEdit, existingPayment])
@@ -143,14 +165,18 @@ export default function RecordPaymentModal({
     setBusy(true); setError('')
 
     const nowIso = new Date().toISOString()
+    // reconciledOnSave drives the audit-flag fields. When unchecked,
+    // we explicitly null the audit fields too — keeping them stale
+    // would misattribute the prior reconcile to this save.
+    const reconciledFields = reconciledOnSave
+      ? { reconciled: true, reconciled_at: nowIso, reconciled_by: user?.id || null }
+      : { reconciled: false, reconciled_at: null, reconciled_by: null }
     const payload = {
       actual_amount: signedAmount,
       payment_method: paymentMethod || null,
       reference_number: referenceNumber.trim() || null,
       reason: reason.trim() || null,
-      reconciled: true,
-      reconciled_at: nowIso,
-      reconciled_by: user?.id || null,
+      ...reconciledFields,
       payment_source: isReversal ? 'reversal' : (isEdit ? existingPayment.payment_source : 'manual'),
       updated_at: nowIso,
     }
@@ -333,11 +359,34 @@ export default function RecordPaymentModal({
           </div>
         )}
 
-        {isEdit && (
-          <div className="text-xs text-gray-500 dark:text-slate-500">
-            Editing payment for {fmtDate(existingPayment.period_start)} – {fmtDate(existingPayment.period_end)}
-          </div>
-        )}
+        {isEdit && (() => {
+          const recName = existingPayment.reconciled_by ? reconcilerMap[existingPayment.reconciled_by] : ''
+          return (
+            <div className="rounded-lg bg-gray-50 dark:bg-white/[0.02] border border-gray-100 dark:border-white/5 px-3 py-2 space-y-1 text-xs">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-gray-500 dark:text-slate-500">
+                  Editing payment for {fmtDate(existingPayment.period_start)} – {fmtDate(existingPayment.period_end)}
+                </span>
+                {existingPayment.payment_source && (
+                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-gray-100 dark:bg-slate-700/40 text-gray-600 dark:text-slate-400">
+                    {SOURCE_LABEL[existingPayment.payment_source] || existingPayment.payment_source}
+                  </span>
+                )}
+              </div>
+              <div className="text-[11px] text-gray-400 dark:text-slate-500 space-x-2">
+                {existingPayment.created_at && (
+                  <span>Created {fmtDate(existingPayment.created_at)}</span>
+                )}
+                {existingPayment.reconciled && existingPayment.reconciled_at && (
+                  <span>
+                    · Reconciled {fmtDate(existingPayment.reconciled_at)}
+                    {recName && <> by {recName}</>}
+                  </span>
+                )}
+              </div>
+            </div>
+          )
+        })()}
 
         <div>
           <label className={S.label}>Amount received</label>
@@ -386,6 +435,18 @@ export default function RecordPaymentModal({
         <label className="flex items-center gap-2 cursor-pointer">
           <input type="checkbox" checked={isReversal} onChange={e => setIsReversal(e.target.checked)} />
           <span className="text-sm text-gray-700 dark:text-slate-300">This is a reversal (negative amount)</span>
+        </label>
+
+        {/* Reconciled toggle. Edit-mode shows the row's current state and
+            lets the user flip it; new-record mode defaults to checked
+            (recording is itself a confirmation) but can be unchecked
+            when the amount is logged before bank confirmation. */}
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" checked={reconciledOnSave} onChange={e => setReconciledOnSave(e.target.checked)} />
+          <span className="text-sm text-gray-700 dark:text-slate-300">
+            Mark as reconciled
+            <span className="ml-1 text-[11px] text-gray-400 dark:text-slate-500">(audit-confirmed; does not affect the balance)</span>
+          </span>
         </label>
 
         <div className={S.modalFooter}>

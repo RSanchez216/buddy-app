@@ -86,6 +86,7 @@ function rowTint(status) {
     case 'missed':               return 'bg-red-50/50 dark:bg-red-500/5'
     case 'pre-tracking':         return 'bg-gray-50/60 dark:bg-white/[0.015]'
     case 'recorded-unconfirmed': return 'bg-amber-50/40 dark:bg-amber-500/[0.04]'
+    case 'reconciled':           return 'bg-emerald-50/30 dark:bg-emerald-500/[0.04]'
     default:                     return ''
   }
 }
@@ -535,6 +536,7 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
         purchase={purchase}
         existingPayment={editRow}
         onRecorded={onRecorded}
+        reconcilerMap={reconcilerMap}
       />
 
       {/* "Tracking since" date editor */}
