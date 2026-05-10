@@ -53,6 +53,11 @@ export default function PurchaseFormModal({ open, onClose, purchase, onSaved }) 
   const [form, setForm] = useState(() => emptyForm())
   const [originalForm, setOriginalForm] = useState(null)
   const [saving, setSaving] = useState(false)
+  // Tracks which derived fields were just autofilled from the linked
+  // loan/equipment AND haven't been edited by the user since. Drives
+  // the "Auto-filled from linked …" inline hint. Reset on user edit
+  // and on unlink (values themselves are preserved in both cases).
+  const [autoFilled, setAutoFilled] = useState({ entity_id: false, equipment_type: false })
   const [error, setError] = useState('')
 
   const defaultStatusId = useMemo(
@@ -106,11 +111,40 @@ export default function PurchaseFormModal({ open, onClose, purchase, onSaved }) 
           title_transferred: !!purchase.title_transferred,
           notes: purchase.notes || '',
         }
+
+        // Mount-time autofill: if the contract is already linked but a
+        // derived field is still empty, fetch the source row(s) and fill.
+        // Covers the case where Phase-1 imports established links but
+        // never populated entity_id / equipment_type.
+        const wantEntity = !next.entity_id && purchase.underlying_loan_id
+        const wantEquipType = !next.equipment_type.trim() && purchase.equipment_id
+        const flags = { entity_id: false, equipment_type: false }
+        if (wantEntity || wantEquipType) {
+          const [loanRes, eqRes] = await Promise.all([
+            wantEntity
+              ? supabase.from('loans').select('entity_id').eq('id', purchase.underlying_loan_id).maybeSingle()
+              : Promise.resolve({ data: null }),
+            wantEquipType
+              ? supabase.from('loan_equipment').select('equipment_type').eq('id', purchase.equipment_id).maybeSingle()
+              : Promise.resolve({ data: null }),
+          ])
+          if (cancelled) return
+          if (wantEntity && loanRes?.data?.entity_id) {
+            next.entity_id = loanRes.data.entity_id
+            flags.entity_id = true
+          }
+          if (wantEquipType && eqRes?.data?.equipment_type) {
+            next.equipment_type = eqRes.data.equipment_type
+            flags.equipment_type = true
+          }
+        }
         setForm(next)
         setOriginalForm(next)
+        setAutoFilled(flags)
       } else {
         setForm(emptyForm(fallbackStatus))
         setOriginalForm(null)
+        setAutoFilled({ entity_id: false, equipment_type: false })
       }
       setError('')
     }
@@ -136,15 +170,41 @@ export default function PurchaseFormModal({ open, onClose, purchase, onSaved }) 
     }
   }, [form.total_value, form.downpayment, isEdit])
 
-  function set(key, val) { setForm(f => ({ ...f, [key]: val })) }
+  function set(key, val) {
+    setForm(f => ({ ...f, [key]: val }))
+    // Any manual edit to a derived field hands ownership to the user
+    // and removes the autofilled hint.
+    if (key === 'entity_id' || key === 'equipment_type') {
+      setAutoFilled(a => a[key] ? { ...a, [key]: false } : a)
+    }
+  }
 
   function pickDriver(id, drv) { setForm(f => ({ ...f, driver_id: id, driver: drv })) }
 
-  function applyLink({ equipmentId, loanId, label }) {
-    setForm(f => ({ ...f, equipment_id: equipmentId, underlying_loan_id: loanId, linkedLabel: label }))
+  // Establishes the link AND fills derived fields (entity_id,
+  // equipment_type) from the linked loan/equipment when the
+  // corresponding form field is still empty. Never overwrites a
+  // non-empty value — user input always wins.
+  function applyLink({ equipmentId, loanId, label, entityId, equipmentType }) {
+    setForm(f => {
+      const next = { ...f, equipment_id: equipmentId, underlying_loan_id: loanId, linkedLabel: label }
+      const filled = {}
+      if (entityId && !f.entity_id) { next.entity_id = entityId; filled.entity_id = true }
+      if (equipmentType && !(f.equipment_type || '').trim()) {
+        next.equipment_type = equipmentType
+        filled.equipment_type = true
+      }
+      if (Object.keys(filled).length) {
+        setAutoFilled(a => ({ ...a, ...filled }))
+      }
+      return next
+    })
   }
+  // Unlink keeps the values (entity_id / equipment_type) — once filled
+  // they belong to the contract. Only the link + hints are cleared.
   function clearLink() {
     setForm(f => ({ ...f, equipment_id: null, underlying_loan_id: null, linkedLabel: '' }))
+    setAutoFilled({ entity_id: false, equipment_type: false })
   }
 
   async function save() {
@@ -258,6 +318,9 @@ export default function PurchaseFormModal({ open, onClose, purchase, onSaved }) 
             </Field>
             <Field label="Equipment type">
               <input className={S.input} value={form.equipment_type} onChange={e => set('equipment_type', e.target.value)} placeholder="Truck, Trailer, etc." />
+              {autoFilled.equipment_type && (
+                <p className="text-[11px] text-gray-500 dark:text-slate-500 mt-1">Auto-filled from linked equipment</p>
+              )}
             </Field>
             <Field label="VIN" wide={false}>
               <input className={S.input} value={form.vin} onChange={e => set('vin', e.target.value)} />
@@ -278,6 +341,9 @@ export default function PurchaseFormModal({ open, onClose, purchase, onSaved }) 
                 <option value="">—</option>
                 {entities.map(en => <option key={en.id} value={en.id}>{en.name}</option>)}
               </Select>
+              {autoFilled.entity_id && (
+                <p className="text-[11px] text-gray-500 dark:text-slate-500 mt-1">Auto-filled from linked loan</p>
+              )}
             </Field>
             <Field label="Status *">
               <Select value={form.status_id} onChange={e => set('status_id', e.target.value)}>

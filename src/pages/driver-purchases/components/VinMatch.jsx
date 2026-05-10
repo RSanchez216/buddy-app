@@ -21,7 +21,7 @@ export default function VinMatch({ vin, linked, onLink, onUnlink }) {
       setSearching(true)
       const { data } = await supabase
         .from('loan_equipment')
-        .select('id, vin, year, make, model, equipment_type, unit_number, loan_id, loans!inner(id, loan_id_external, contract_number)')
+        .select('id, vin, year, make, model, equipment_type, unit_number, loan_id, loans!inner(id, loan_id_external, contract_number, entity_id)')
         .ilike('vin', trimmed)
         .limit(1)
       if (cancelled) return
@@ -83,6 +83,11 @@ export default function VinMatch({ vin, linked, onLink, onUnlink }) {
             equipmentId: match.id,
             loanId: match.loan_id,
             label: desc + (loanLabel ? ` · loan ${loanLabel}` : ''),
+            // Carry along derived values so the parent can autofill
+            // empty Entity / Equipment Type fields without an extra
+            // round-trip.
+            entityId: match.loans?.entity_id || null,
+            equipmentType: match.equipment_type || null,
           })}
           className="shrink-0 text-xs font-semibold text-emerald-700 dark:text-emerald-400 px-2.5 py-0.5 rounded border border-emerald-300 dark:border-emerald-500/30 hover:bg-emerald-100/60 dark:hover:bg-emerald-500/20 whitespace-nowrap"
         >
