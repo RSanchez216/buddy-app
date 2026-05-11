@@ -6,9 +6,62 @@
 //
 // All math is plain client-side; no realtime subscriptions or server calls.
 
+import { supabase } from '../../lib/supabase'
 import { addDays, toISO } from './calendarUtils'
 
 const UNASSIGNED = '__unassigned__'
+
+// Fetch per-day per-account projected balances from the SQL function
+// projected_balances(account_id, end_date). Returns the same shape as
+// the legacy computeBalanceProjections() so consumers (PaymentCalendar,
+// RightRail, week/month views) don't change:
+//
+//   { timelines: { [accountId]: { account, byDate: {iso: balance}, firstShortfall } },
+//     shortfallDays: Set<`${accountId}:${iso}`> }
+//
+// The RPC computes flows server-side directly from loan_payments,
+// custom_outflows, invoices, and expected_inflow_deposits — so this
+// helper doesn't need events/depositsByInflow inputs. It only needs
+// the account list (for active filtering + display metadata) and the
+// view-end date.
+//
+// Performance: one RPC per active account, in parallel. 11 accounts ×
+// ~5ms per call ≈ 50ms wall-clock. If the count grows we can change
+// the function signature to take an array of accounts.
+export async function fetchProjectedBalances(accounts, viewEndISO) {
+  const timelines = {}
+  const shortfallDays = new Set()
+  const activeAccounts = (accounts || []).filter(a => a.is_active)
+  if (activeAccounts.length === 0 || !viewEndISO) {
+    return { timelines, shortfallDays }
+  }
+  const results = await Promise.all(activeAccounts.map(async acc => {
+    const { data, error } = await supabase.rpc('projected_balances', {
+      p_funding_account_id: acc.id,
+      p_end_date: viewEndISO,
+    })
+    if (error) console.warn('projected_balances error for', acc.name, error.message)
+    return { acc, rows: error ? [] : (data || []) }
+  }))
+  for (const { acc, rows } of results) {
+    // Empty rows = no anchor entry yet for this account. The consumer
+    // pattern is "timelines[id] missing → balance: null → 'balance
+    // not set'" — preserve that by leaving the entry out.
+    if (rows.length === 0) continue
+    const byDate = {}
+    let firstShortfall = null
+    for (const r of rows) {
+      const bal = Number(r.ending_balance)
+      byDate[r.as_of_date] = bal
+      if (bal < 0) {
+        if (!firstShortfall) firstShortfall = { date: r.as_of_date, balance: bal }
+        shortfallDays.add(`${acc.id}:${r.as_of_date}`)
+      }
+    }
+    timelines[acc.id] = { account: acc, byDate, firstShortfall }
+  }
+  return { timelines, shortfallDays }
+}
 
 // ── Per-event "bank impacts" ────────────────────────────────────────────
 // Returns: { inflow_amount_by_account: {accountId|UNASSIGNED: number},

@@ -8,7 +8,7 @@ import {
   CF, addDays, endOfMonthGrid, fmtRange, startOfMonthGrid, startOfWeek, toISO, isPaidStatus,
 } from './calendarUtils'
 import {
-  bucketByDayAndBank, computeBalanceProjections,
+  bucketByDayAndBank, fetchProjectedBalances,
   sumByBankInRange, worstShortfallInRange,
 } from './balanceCalc'
 import WeekView from './WeekView'
@@ -210,10 +210,19 @@ export default function PaymentCalendar() {
   )
 
   const viewEndISO = useMemo(() => toISO(fetchRange.end), [fetchRange.end])
-  const projections = useMemo(
-    () => computeBalanceProjections(accounts, events, depositsByInflow, viewEndISO),
-    [accounts, events, depositsByInflow, viewEndISO]
-  )
+  // Projections now come from the projected_balances() RPC — one call
+  // per active account, parallelized. Re-fetch when accounts, viewEnd,
+  // or the underlying flow data (events / deposits) changes; the RPC
+  // doesn't read those props, but their reload signals new data on the
+  // server side that the projection should reflect.
+  const [projections, setProjections] = useState({ timelines: {}, shortfallDays: new Set() })
+  useEffect(() => {
+    let cancelled = false
+    fetchProjectedBalances(accounts, viewEndISO).then(p => {
+      if (!cancelled) setProjections(p)
+    })
+    return () => { cancelled = true }
+  }, [accounts, viewEndISO, events, depositsByInflow])
 
   const accountsMissingBalance = useMemo(
     () => accounts.filter(a => a.current_balance == null || !a.balance_as_of_date).length,

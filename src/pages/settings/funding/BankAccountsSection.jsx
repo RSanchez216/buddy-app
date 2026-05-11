@@ -1,20 +1,32 @@
-// Bank Accounts section of the Funding & Sources page.
-// Behavior unchanged from the prior FundingAccounts page —
-// fields, validation, and admin gating around current_balance / balance_as_of_date
-// are preserved verbatim.
+// Bank Accounts section of the Funding & Sources page. Reads from
+// v_funding_accounts_with_balance so the balance + as-of-date come
+// from the latest funding_account_balance_entries row per account.
+// Account metadata (name, bank, last_four, notes) is edited inline;
+// balance changes go through the Record Balance modal which writes
+// a time-series entry.
 
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../contexts/AuthContext'
 import { S } from '../../../lib/styles'
 import Modal from '../../../components/Modal'
+import RecordBalanceEntryModal from './RecordBalanceEntryModal'
 
-const empty = {
-  name: '', bank_name: '', last_four: '', notes: '',
-  current_balance: '', balance_as_of_date: '',
+// Account-metadata form (everything BUT balance — balance now lives in
+// funding_account_balance_entries via the Record Balance modal).
+const empty = { name: '', bank_name: '', last_four: '', notes: '' }
+
+// Stale pill thresholds (days since the most recent recorded balance):
+//   0..2 → green / fresh
+//   3..7 → amber / aging
+//   8+   → red / overdue for reconciliation
+//   null → "no balance recorded yet" gray
+function stalenessTone(days) {
+  if (days == null) return { dot: 'bg-gray-300 dark:bg-slate-600', text: 'text-gray-500 dark:text-slate-500', label: 'No balance recorded yet — record one' }
+  if (days <= 2)    return { dot: 'bg-emerald-500', text: 'text-emerald-700 dark:text-emerald-400', label: `${days}d old` }
+  if (days <= 7)    return { dot: 'bg-amber-500',   text: 'text-amber-700 dark:text-amber-400',     label: `${days}d old` }
+  return                    { dot: 'bg-red-500',    text: 'text-red-700 dark:text-red-400',        label: `${days}d old` }
 }
-
-const STALE_DAYS = 7
 
 function fmtCurrency(n) {
   if (n === null || n === undefined || n === '') return '—'
@@ -33,16 +45,8 @@ function fmtAsOfShort(iso) {
     : { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-function daysSince(iso) {
-  if (!iso) return Infinity
-  const d = new Date(`${iso}T00:00:00`)
-  if (Number.isNaN(d.getTime())) return Infinity
-  const today = new Date(); today.setHours(0, 0, 0, 0)
-  return Math.floor((today.getTime() - d.getTime()) / 86400000)
-}
-
 export default function BankAccountsSection() {
-  const { user, isAdmin } = useAuth()
+  const { isAdmin } = useAuth()
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
@@ -51,12 +55,17 @@ export default function BankAccountsSection() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [showInactive, setShowInactive] = useState(false)
+  // Record-balance modal target (null when closed).
+  const [recordingAccount, setRecordingAccount] = useState(null)
 
   useEffect(() => { load() }, [])
 
   async function load() {
+    // v_funding_accounts_with_balance joins funding_accounts with the
+    // latest balance entry per account. Field names balance /
+    // balance_as_of_date / days_since_balance come from the view.
     const { data } = await supabase
-      .from('funding_accounts')
+      .from('v_funding_accounts_with_balance')
       .select('*')
       .order('is_active', { ascending: false })
       .order('name')
@@ -76,24 +85,14 @@ export default function BankAccountsSection() {
       bank_name: it.bank_name || '',
       last_four: it.last_four || '',
       notes: it.notes || '',
-      current_balance: it.current_balance ?? '',
-      balance_as_of_date: it.balance_as_of_date || '',
     })
     setError(''); setShowModal(true)
   }
 
+  // Account-metadata save only. Balance moved to the Record Balance
+  // modal (writes to funding_account_balance_entries).
   async function save() {
     if (!form.name.trim()) return setError('Name is required')
-
-    // Coupled balance validation — both fields or neither.
-    const hasBalance = form.current_balance !== '' && form.current_balance !== null
-    const hasDate    = !!form.balance_as_of_date
-    if (hasBalance && !hasDate) return setError('Set "As of Date" when entering a balance.')
-    if (hasDate && !hasBalance) return setError('Set "Current Balance" when entering an as-of date.')
-    if (hasBalance && Number.isNaN(Number(form.current_balance))) {
-      return setError('Current balance must be a number.')
-    }
-
     setSaving(true); setError('')
     const payload = {
       name: form.name.trim(),
@@ -101,21 +100,6 @@ export default function BankAccountsSection() {
       last_four: form.last_four.trim() || null,
       notes: form.notes.trim() || null,
     }
-
-    if (isAdmin) {
-      const newBalance = hasBalance ? Number(form.current_balance) : null
-      const newDate    = hasDate    ? form.balance_as_of_date     : null
-      const balanceChanged =
-        editItem
-          ? (Number(editItem.current_balance ?? null) !== Number(newBalance ?? null)
-             || (editItem.balance_as_of_date || null) !== newDate)
-          : (hasBalance || hasDate)
-
-      payload.current_balance    = newBalance
-      payload.balance_as_of_date = newDate
-      if (balanceChanged) payload.balance_updated_by = user?.id || null
-    }
-
     const res = editItem
       ? await supabase.from('funding_accounts').update(payload).eq('id', editItem.id)
       : await supabase.from('funding_accounts').insert(payload)
@@ -191,19 +175,24 @@ export default function BankAccountsSection() {
               {visibleItems.length === 0 ? (
                 <tr><td colSpan={6} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">{items.length === 0 ? 'No funding accounts yet' : 'No accounts match this filter'}</td></tr>
               ) : visibleItems.map(it => {
-                const stale = it.balance_as_of_date && daysSince(it.balance_as_of_date) > STALE_DAYS
                 const muted = !it.is_active
+                const tone = stalenessTone(it.days_since_balance)
                 return (
                   <tr key={it.id} className={`${S.tableRow} ${muted ? 'opacity-55' : ''}`}>
                     <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>{it.name}</td>
                     <td className={`${S.td} text-gray-500 dark:text-slate-400`}>{it.bank_name || '—'}</td>
                     <td className={`${S.td} text-gray-500 dark:text-slate-400 font-mono text-xs`}>{it.last_four || '—'}</td>
                     <td className={`${S.td} whitespace-nowrap`}>
-                      <div className="font-mono text-gray-900 dark:text-slate-200">{fmtCurrency(it.current_balance)}</div>
-                      {it.balance_as_of_date && (
-                        <div className={`text-[11px] mt-0.5 ${stale ? 'text-amber-600 dark:text-amber-400' : 'text-gray-400 dark:text-slate-500'}`}>
-                          as of {fmtAsOfShort(it.balance_as_of_date)}
-                          {stale && <span className="ml-1">·  {daysSince(it.balance_as_of_date)}d old</span>}
+                      <div className="font-mono text-gray-900 dark:text-slate-200">{fmtCurrency(it.balance)}</div>
+                      {it.balance_as_of_date ? (
+                        <div className={`text-[11px] mt-0.5 inline-flex items-center gap-1.5 ${tone.text}`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${tone.dot}`} />
+                          as of {fmtAsOfShort(it.balance_as_of_date)} · {tone.label}
+                        </div>
+                      ) : (
+                        <div className={`text-[11px] mt-0.5 inline-flex items-center gap-1.5 ${tone.text}`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${tone.dot}`} />
+                          {tone.label}
                         </div>
                       )}
                     </td>
@@ -216,6 +205,15 @@ export default function BankAccountsSection() {
                     </td>
                     <td className={`${S.td} text-right`}>
                       <div className="flex items-center justify-end gap-3">
+                        {isAdmin && it.is_active && (
+                          <button
+                            onClick={() => setRecordingAccount(it)}
+                            className="text-xs font-medium px-2 py-1 rounded-md bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-400 border border-orange-200 dark:border-orange-500/20 hover:bg-orange-100 dark:hover:bg-orange-500/15 transition-colors whitespace-nowrap"
+                            title="Record today's actual bank balance"
+                          >
+                            Record balance
+                          </button>
+                        )}
                         <button onClick={() => openEdit(it)} className="text-gray-400 hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors" title="Edit">
                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
                         </button>
@@ -256,52 +254,9 @@ export default function BankAccountsSection() {
           </div>
 
           <div className="pt-2 border-t border-gray-100 dark:border-white/5">
-            <div className="flex items-baseline justify-between mb-2">
-              <h4 className="text-xs font-semibold text-gray-700 dark:text-slate-300 uppercase tracking-wide">Reconciled balance</h4>
-              {!isAdmin && (
-                <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-slate-500">Read-only</span>
-              )}
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className={S.label}>Current Balance ($)</label>
-                <input
-                  type="number" step="0.01"
-                  className={S.input}
-                  value={form.current_balance}
-                  disabled={!isAdmin}
-                  onChange={e => setForm(f => ({ ...f, current_balance: e.target.value }))}
-                  placeholder="0.00"
-                />
-              </div>
-              <div>
-                <label className={S.label}>As of Date</label>
-                <input
-                  type="date"
-                  className={S.input}
-                  value={form.balance_as_of_date}
-                  disabled={!isAdmin}
-                  onChange={e => setForm(f => ({ ...f, balance_as_of_date: e.target.value }))}
-                />
-                {isAdmin && !form.balance_as_of_date && form.current_balance !== '' && (
-                  <button
-                    type="button"
-                    onClick={() => setForm(f => ({ ...f, balance_as_of_date: new Date().toISOString().slice(0, 10) }))}
-                    className="text-[11px] text-orange-600 dark:text-orange-400 hover:underline mt-1"
-                  >
-                    Use today
-                  </button>
-                )}
-              </div>
-            </div>
-            <p className="text-xs text-gray-500 dark:text-slate-500 mt-2">
-              Balance is used to project end-of-day cash on the Payment Calendar. Update whenever you reconcile.
+            <p className="text-xs text-gray-500 dark:text-slate-500">
+              Balance is no longer edited here. Use <span className="font-medium text-orange-700 dark:text-orange-400">Record balance</span> on the row to log an actual bank reading; the Payment Calendar projects forward from the most recent entry.
             </p>
-            {editItem?.balance_updated_at && (
-              <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1">
-                Last updated {new Date(editItem.balance_updated_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-              </p>
-            )}
           </div>
 
           <div>
@@ -316,6 +271,13 @@ export default function BankAccountsSection() {
           </div>
         </div>
       </Modal>
+
+      <RecordBalanceEntryModal
+        open={!!recordingAccount}
+        account={recordingAccount}
+        onClose={() => setRecordingAccount(null)}
+        onSaved={() => { setRecordingAccount(null); load() }}
+      />
     </SectionCard>
   )
 }
