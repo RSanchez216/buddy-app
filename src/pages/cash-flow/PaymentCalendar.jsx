@@ -21,6 +21,7 @@ import RecurringExpensesModal from './RecurringExpensesModal'
 import AdjustLoanDateModal from './AdjustLoanDateModal'
 import StartingCashModal from './StartingCashModal'
 import ChipDetailPanel from './ChipDetailPanel'
+import UnassignedItemsPanel from './UnassignedItemsPanel'
 
 const SHOW_PAID_KEY = 'cf-show-paid'
 const GROUP_BY_BANK_KEY = 'cf-group-by-bank'
@@ -433,6 +434,11 @@ export default function PaymentCalendar() {
           </div>
         )}
       </div>
+
+      {/* Unassigned items warning panel — sits above the grid; self-
+          hides when zero items. Refetches the calendar on tag/undo so
+          the "BY BANK: Unassigned" buckets clear in real time. */}
+      <UnassignedItemsPanel onAssigned={loadData} />
 
       {/* Quick filter pills — only visible when toggle is on */}
       {showPaid && (
