@@ -95,7 +95,10 @@ export default function RecurringExpensesModal({ open, onClose, onSaved }) {
   async function save() {
     if (!form.name.trim()) return setError('Name is required')
     if (!Number(form.amount)) return setError('Amount is required')
-    if (editing === 'new' && !form.funding_account_id) return setError('Pick a funding account.')
+    // Required for both create AND edit. Was previously gated on
+    // `editing === 'new'`; policy now requires explicit picking before
+    // any save lands (DB stays nullable for non-form code paths).
+    if (!form.funding_account_id) return setError('Funding account is required')
     setSaving(true); setError('')
 
     const payload = {
@@ -271,14 +274,14 @@ export default function RecurringExpensesModal({ open, onClose, onSaved }) {
                   {entities.map(en => <option key={en.id} value={en.id}>{en.name}</option>)}
                 </Select>
               </Field>
-              <Field label={editing === 'new' ? 'Funding account *' : 'Funding account'}>
+              <Field label="Funding account *">
                 <Select value={form.funding_account_id} onChange={e => setForm(f => ({ ...f, funding_account_id: e.target.value }))}>
                   <option value="">— Select account —</option>
                   {accounts.map(a => <option key={a.id} value={a.id}>{fmtAccountOption(a)}</option>)}
                 </Select>
                 {editing !== 'new' && !form.funding_account_id && (
                   <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">
-                    No funding account assigned — won't appear in bank breakdowns.
+                    Required before saving — pick the account this expense will be paid from.
                   </p>
                 )}
               </Field>
@@ -321,7 +324,7 @@ export default function RecurringExpensesModal({ open, onClose, onSaved }) {
 
             <div className={S.modalFooter}>
               <button onClick={() => setEditing(null)} className={S.btnCancel}>Cancel</button>
-              <button onClick={save} disabled={saving} className={CF.btnSave}>
+              <button onClick={save} disabled={saving || !form.funding_account_id} className={CF.btnSave}>
                 {saving ? 'Saving…' : editing === 'new' ? 'Create Template' : 'Update Template'}
               </button>
             </div>

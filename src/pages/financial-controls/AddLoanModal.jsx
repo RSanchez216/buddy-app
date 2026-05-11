@@ -63,6 +63,7 @@ export default function AddLoanModal({ open, onClose, onCreated }) {
     if (!form.loan_id_external.trim()) return setError('Loan ID is required')
     if (!form.entity_id) return setError('Entity is required')
     if (!form.lender_id) return setError('Lender is required')
+    if (!form.funding_account_id) return setError('Funding account is required')
 
     setSaving(true); setError('')
 
@@ -162,7 +163,7 @@ export default function AddLoanModal({ open, onClose, onCreated }) {
                 {lenders.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
               </Select>
             </Field>
-            <Field label="Funding Account">
+            <Field label="Funding account *">
               <Select value={form.funding_account_id} onChange={e => update('funding_account_id', e.target.value)}>
                 <option value="">Select…</option>
                 {accounts.map(a => (
@@ -274,7 +275,11 @@ export default function AddLoanModal({ open, onClose, onCreated }) {
 
         <div className={S.modalFooter}>
           <button onClick={onClose} className={S.btnCancel}>Cancel</button>
-          <button onClick={handleSave} disabled={saving} className={FC.btnSave}>
+          <button
+            onClick={handleSave}
+            disabled={saving || !form.loan_id_external.trim() || !form.entity_id || !form.lender_id || !form.funding_account_id}
+            className={FC.btnSave}
+          >
             {saving ? 'Saving…' : 'Add Loan'}
           </button>
         </div>

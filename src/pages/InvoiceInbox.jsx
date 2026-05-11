@@ -251,7 +251,11 @@ export default function InvoiceInbox() {
     if (!form.vendor_id) return setError('Vendor is required')
     if (!form.amount || Number(form.amount) <= 0) return setError('Valid amount is required')
     if (!form.department_ids.length) return setError('At least one department is required')
-    if (!editInvoice && !form.funding_account_id) return setError('Pick a funding account.')
+    // Funding account is required for both create AND edit. Edit was
+    // previously skipped to let legacy NULL rows save without picking;
+    // policy now requires explicit picking before save lands (DB is
+    // still nullable for the Parseur webhook path).
+    if (!form.funding_account_id) return setError('Funding account is required')
     setSaving(true); setError('')
 
     const payload = {
@@ -834,7 +838,7 @@ export default function InvoiceInbox() {
           </div>
 
           <div>
-            <label className={S.label}>Funding Account {!editInvoice && '*'}</label>
+            <label className={S.label}>Funding Account *</label>
             <Select value={form.funding_account_id} onChange={e => setForm(f => ({ ...f, funding_account_id: e.target.value }))}>
               <option value="">— Select account —</option>
               {fundingAccounts.map(a => (
@@ -845,7 +849,7 @@ export default function InvoiceInbox() {
             </Select>
             {editInvoice && !form.funding_account_id && (
               <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">
-                No funding account assigned — won't appear in bank breakdowns.
+                Required before saving — pick the account this invoice will be paid from.
               </p>
             )}
           </div>
@@ -934,7 +938,7 @@ export default function InvoiceInbox() {
 
           <div className={S.modalFooter}>
             <button onClick={() => setShowModal(false)} className={S.btnCancel}>Cancel</button>
-            <button onClick={handleSave} disabled={saving} className={S.btnSave}>
+            <button onClick={handleSave} disabled={saving || !form.funding_account_id} className={S.btnSave}>
               {saving ? 'Saving…' : editInvoice ? 'Update Invoice' : 'Add Invoice'}
             </button>
           </div>

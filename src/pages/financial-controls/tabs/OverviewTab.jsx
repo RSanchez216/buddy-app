@@ -59,6 +59,15 @@ export default function OverviewTab({ loan, canEdit, onChange }) {
   function update(field, value) { setForm(f => ({ ...f, [field]: value })) }
 
   async function handleSave() {
+    // Block save when funding_account_id is empty. Spec rule: UI
+    // enforcement only (DB stays nullable for webhook intake paths).
+    // The asterisk on the label is silent until the user actually
+    // tries to save — avoids accusing the user the moment they open
+    // an edit form on a legacy NULL row.
+    if (!form.funding_account_id) {
+      setError('Funding account is required')
+      return
+    }
     setSaving(true); setError('')
 
     const payload = {
@@ -180,7 +189,7 @@ export default function OverviewTab({ loan, canEdit, onChange }) {
               {lenders.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
             </Select>
           </Field>
-          <Field label="Funding Account">
+          <Field label="Funding account *">
             <Select value={form.funding_account_id} onChange={e => update('funding_account_id', e.target.value)} disabled={!canEdit}>
               <option value="">Select…</option>
               {accounts.map(a => (
@@ -247,7 +256,7 @@ export default function OverviewTab({ loan, canEdit, onChange }) {
 
       {canEdit && (
         <div className="flex justify-end">
-          <button onClick={handleSave} disabled={saving} className={FC.btnSave}>
+          <button onClick={handleSave} disabled={saving || !form.funding_account_id} className={FC.btnSave}>
             {saving ? 'Saving…' : 'Save Changes'}
           </button>
         </div>
