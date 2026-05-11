@@ -156,23 +156,24 @@ export default function AddIncomeModal({
   // amount. After that, the user owns the allocation and we stop overwriting.
   // Adding a 2nd row leaves it empty — the first row keeps tracking until
   // the user types an amount somewhere.
+  // Amount-mirror only: when the user changes the inflow's total
+  // amount, the first deposit row's amount tracks along so the
+  // allocation sum stays balanced. Spec disallows auto-suggesting the
+  // funding_account_id from factor defaults or any other heuristic —
+  // the user must explicitly pick. Account selection stays whatever
+  // the user has already chosen (empty by default on first render).
   useEffect(() => {
     if (depositsTouched) return
     setForm(f => {
       if (f.deposits.length === 0) return f
       const first = f.deposits[0]
       const targetStr = target > 0 ? target.toString() : ''
-      const defaultAcc = f.sourceType === 'factor'
-        ? (selectedFactor?.default_deposit_account_id || first.funding_account_id || '')
-        : first.funding_account_id || ''
-      // No-op if both fields already match the desired auto values
-      if (first.amount === targetStr && first.funding_account_id === defaultAcc) return f
+      if (first.amount === targetStr) return f
       const next = [...f.deposits]
-      next[0] = { ...first, amount: targetStr, funding_account_id: defaultAcc }
+      next[0] = { ...first, amount: targetStr }
       return { ...f, deposits: next }
     })
-  /* eslint-disable-next-line */
-  }, [target, form.sourceType, form.factorId, selectedFactor?.default_deposit_account_id, depositsTouched])
+  }, [target, depositsTouched])
 
   // ── Helpers
   function updateDeposit(i, field, val) {
