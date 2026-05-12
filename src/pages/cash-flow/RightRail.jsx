@@ -10,6 +10,10 @@ export default function RightRail({
   // Day-mode props
   selectedDay, setSelectedDay,
   dayBucket, dayShortfall, dayProjections = [],
+  // Stale-balance prompt props — passed through to DayPanel.
+  // needsUpdateIdSet is a Set<accountId> for O(1) row-level lookup;
+  // onRecordBalance(account) opens the parent's modal.
+  needsUpdateIdSet, onRecordBalance,
 }) {
   return (
     <aside className="space-y-3 sticky top-2 self-start">
@@ -60,6 +64,8 @@ export default function RightRail({
             dayBucket={dayBucket}
             dayShortfall={dayShortfall}
             dayProjections={dayProjections}
+            needsUpdateIdSet={needsUpdateIdSet}
+            onRecordBalance={onRecordBalance}
           />
         )}
       </div>
@@ -173,7 +179,7 @@ function WeekPanel({
   )
 }
 
-function DayPanel({ weekStart, selectedDay, setSelectedDay, dayBucket, dayShortfall, dayProjections }) {
+function DayPanel({ weekStart, selectedDay, setSelectedDay, dayBucket, dayShortfall, dayProjections, needsUpdateIdSet, onRecordBalance }) {
   if (!selectedDay) {
     return (
       <p className="text-xs text-gray-500 dark:text-slate-400 py-4 text-center">
@@ -292,16 +298,34 @@ function DayPanel({ weekStart, selectedDay, setSelectedDay, dayBucket, dayShortf
           {dayProjections.map(({ account, balance }) => {
             const hasBalance = balance != null
             const positive = hasBalance && balance >= 0
+            // "Update" inline link surfaces when this account is in
+            // the staleness-and-has-movement set from Slice 2c. Same
+            // semantics as the banner above the calendar — opens the
+            // Record Balance modal for this specific account. Subtle
+            // blue so it doesn't compete with the balance number.
+            const needsUpdate = needsUpdateIdSet?.has?.(account.id)
             return (
               <div key={account.id} className="flex items-baseline justify-between gap-2 text-xs">
                 <span className="text-gray-500 dark:text-slate-400 truncate">{account.name}</span>
-                {hasBalance ? (
-                  <span className={`font-mono font-semibold ${positive ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-                    {positive ? '' : '−'}{fmtMoney(Math.abs(balance))}
-                  </span>
-                ) : (
-                  <span className="text-[10px] italic text-gray-400 dark:text-slate-600">balance not set</span>
-                )}
+                <div className="flex items-baseline gap-2 shrink-0">
+                  {needsUpdate && onRecordBalance && (
+                    <button
+                      type="button"
+                      onClick={() => onRecordBalance(account)}
+                      className="text-[10px] font-medium text-blue-600 dark:text-blue-400 hover:underline"
+                      title={`Record today's actual balance for ${account.name}`}
+                    >
+                      Update
+                    </button>
+                  )}
+                  {hasBalance ? (
+                    <span className={`font-mono font-semibold ${positive ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                      {positive ? '' : '−'}{fmtMoney(Math.abs(balance))}
+                    </span>
+                  ) : (
+                    <span className="text-[10px] italic text-gray-400 dark:text-slate-600">balance not set</span>
+                  )}
+                </div>
               </div>
             )
           })}

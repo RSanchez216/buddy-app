@@ -22,6 +22,9 @@ import AdjustLoanDateModal from './AdjustLoanDateModal'
 import StartingCashModal from './StartingCashModal'
 import ChipDetailPanel from './ChipDetailPanel'
 import UnassignedItemsPanel from './UnassignedItemsPanel'
+import BalanceUpdatePromptBanner from './BalanceUpdatePromptBanner'
+import { useAccountsNeedingBalanceUpdate } from './useAccountsNeedingBalanceUpdate'
+import RecordBalanceEntryModal from '../settings/funding/RecordBalanceEntryModal'
 
 const SHOW_PAID_KEY = 'cf-show-paid'
 const GROUP_BY_BANK_KEY = 'cf-group-by-bank'
@@ -216,13 +219,47 @@ export default function PaymentCalendar() {
   // doesn't read those props, but their reload signals new data on the
   // server side that the projection should reflect.
   const [projections, setProjections] = useState({ timelines: {}, shortfallDays: new Set() })
+  // Bumping balanceRefreshKey re-runs the projection effect AND the
+  // stale-prompt hook below — both need to invalidate when a balance
+  // entry lands. Neither otherwise re-runs on balance saves (accounts
+  // / events / deposits don't change), so this is the explicit kick.
+  const [balanceRefreshKey, setBalanceRefreshKey] = useState(0)
   useEffect(() => {
     let cancelled = false
     fetchProjectedBalances(accounts, viewEndISO).then(p => {
       if (!cancelled) setProjections(p)
     })
     return () => { cancelled = true }
-  }, [accounts, viewEndISO, events, depositsByInflow])
+  }, [accounts, viewEndISO, events, depositsByInflow, balanceRefreshKey])
+
+  // Day mode (selectedDay set) collapses start = end = that day.
+  // Otherwise the window is the visible week (Mon..Sun). Month view
+  // also uses the current week — the prompt is a "this week's work"
+  // surface, not a month-aggregate roll-up.
+  const promptStartISO = selectedDay || toISO(weekStart)
+  const promptEndISO = selectedDay || toISO(addDays(weekStart, 6))
+  const { accounts: needsUpdateAccounts, idSet: needsUpdateIdSet, refetch: refetchNeedsUpdate } =
+    useAccountsNeedingBalanceUpdate({ startDate: promptStartISO, endDate: promptEndISO })
+  // Modal state — opened from the banner click OR the row Update link.
+  // presetAccount carries the minimum shape the modal needs (id, name,
+  // bank_name, last_four), built from either the hook row or the
+  // calendar's full accounts list.
+  const [recordTarget, setRecordTarget] = useState(null)
+  function openRecordModal(account) {
+    if (!account) return
+    setRecordTarget({
+      id: account.id || account.funding_account_id,
+      name: account.name,
+      bank_name: account.bank_name || null,
+      last_four: account.last_four || null,
+    })
+  }
+  function closeRecordModal() { setRecordTarget(null) }
+  function onBalanceSaved() {
+    setRecordTarget(null)
+    setBalanceRefreshKey(k => k + 1)  // re-runs projection effect
+    refetchNeedsUpdate()               // re-runs stale-prompt hook
+  }
 
   const accountsMissingBalance = useMemo(
     () => accounts.filter(a => a.current_balance == null || !a.balance_as_of_date).length,
@@ -449,6 +486,18 @@ export default function PaymentCalendar() {
           the "BY BANK: Unassigned" buckets clear in real time. */}
       <UnassignedItemsPanel onAssigned={loadData} />
 
+      {/* Stale-balance prompt — soft blue, sits below the amber
+          Unassigned panel. Renders only when the SQL function returns
+          accounts with both staleness AND in-window movement. Click
+          opens the Record Balance modal pre-filled with the first
+          account; chain by clicking again after each save. */}
+      <BalanceUpdatePromptBanner
+        accounts={needsUpdateAccounts}
+        isDayMode={!!selectedDay}
+        dayISO={selectedDay}
+        onOpenModal={openRecordModal}
+      />
+
       {/* Quick filter pills — only visible when toggle is on */}
       {showPaid && (
         <div className="flex items-center gap-2 flex-wrap -mt-2">
@@ -509,6 +558,8 @@ export default function PaymentCalendar() {
               dayBucket={selectedDay ? dayBuckets[selectedDay] : null}
               dayShortfall={dayShortfall}
               dayProjections={dayProjections}
+              needsUpdateIdSet={needsUpdateIdSet}
+              onRecordBalance={openRecordModal}
             />
           </div>
 
@@ -549,6 +600,17 @@ export default function PaymentCalendar() {
       <RecurringExpensesModal open={showRecurring} onClose={() => setShowRecurring(false)} onSaved={loadData} />
       <AdjustLoanDateModal open={!!adjustLoanEvent} event={adjustLoanEvent} onClose={() => setAdjustLoanEvent(null)} onSaved={loadData} />
       <StartingCashModal open={showStartingCash} onClose={() => setShowStartingCash(false)} weekStart={weekStart} onSaved={loadData} />
+
+      {/* Record Balance modal — opened from BalanceUpdatePromptBanner
+          or the RightRail inline "Update" link. On save, kicks both
+          the projection refetch (via balanceRefreshKey bump) and the
+          stale-prompt hook refetch. */}
+      <RecordBalanceEntryModal
+        open={!!recordTarget}
+        account={recordTarget}
+        onClose={closeRecordModal}
+        onSaved={onBalanceSaved}
+      />
       <ChipDetailPanel
         event={chipDetail}
         canEdit={canEdit}
