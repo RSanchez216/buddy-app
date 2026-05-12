@@ -21,12 +21,18 @@ export default function EventChip({ event, onClick, onDragStart, onDragEnd, drag
   const draggable = !!event.is_draggable && !paid
   const isRecurring = event.reference_type === 'recurring' || event.category === 'recurring'
   const isLoan = event.reference_type === 'loan'
+  const isAdjustment = event.reference_type === 'adjustment'
+  const isUnclassifiedAdj = isAdjustment && event.status === 'needs_review'
   const isDragging = draggingId === event.event_id
 
-  // Recurring uses dashed red; paid uses solid darker color. Paid wins if both apply.
+  // Recurring uses dashed red; paid uses solid darker color. Paid wins if both
+  // apply. Unclassified adjustments use a solid amber bar so they read as
+  // "flagged" even at a glance.
   let leftStyle
   if (paid) {
     leftStyle = { borderLeft: `3px solid ${paidAccentColor(event)}`, paddingLeft: 6 }
+  } else if (isUnclassifiedAdj) {
+    leftStyle = { borderLeft: '3px solid #B45309', paddingLeft: 6 }
   } else if (isRecurring) {
     leftStyle = { borderLeft: '2px dashed #E24B4A', paddingLeft: 7 }
   }
@@ -50,7 +56,10 @@ export default function EventChip({ event, onClick, onDragStart, onDragEnd, drag
       onClick={() => onClick?.(event)}
       title={paid
         ? `✓ ${event.direction === 'inflow' ? 'Received' : 'Paid'}: ${event.label || ''}`
-        : isRecurring ? `↻ Recurring: ${event.label || ''}` : event.label || ''}
+        : isUnclassifiedAdj ? `⚑ Needs review: ${event.label || ''}`
+        : isAdjustment      ? `${event.label || ''}`
+        : isRecurring       ? `↻ Recurring: ${event.label || ''}`
+        : event.label || ''}
       style={leftStyle}
       className={`group relative w-full text-left px-2 py-1 rounded-lg ${palette.bg} ${palette.text} ${
         draggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
@@ -62,6 +71,16 @@ export default function EventChip({ event, onClick, onDragStart, onDragEnd, drag
         </span>
         {paid ? (
           <svg className="w-3 h-3 ml-auto shrink-0 opacity-80" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.25}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+          </svg>
+        ) : isUnclassifiedAdj ? (
+          // Yellow flag — adjustment awaiting human classification.
+          <svg className="w-3 h-3 ml-auto shrink-0 opacity-90" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M5 3a1 1 0 011-1h11a1 1 0 01.8 1.6L15 7l2.8 3.4A1 1 0 0117 12H7v9a1 1 0 01-2 0V3z" />
+          </svg>
+        ) : isAdjustment ? (
+          // Classified adjustment — small check, no flag
+          <svg className="w-3 h-3 ml-auto shrink-0 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.25}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
           </svg>
         ) : isLoan ? (

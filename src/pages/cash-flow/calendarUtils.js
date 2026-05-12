@@ -123,8 +123,19 @@ export function fmtDayHeader(date) {
 // ── Chip styling ───────────────────────────────────────────────────────────
 // Maps a v_cash_flow_events row → palette tokens for the chip
 // direction: 'inflow' | 'outflow'
-// reference_type: 'inflow' | 'loan' | 'invoice' | 'custom' | 'recurring'
+// reference_type: 'inflow' | 'loan' | 'invoice' | 'custom' | 'recurring' | 'adjustment'
 export function chipPalette(event) {
+  // Reconciliation adjustments are yellow regardless of sign — they're a
+  // distinct "needs attention" category, not a normal inflow/outflow.
+  if (event.reference_type === 'adjustment') {
+    return {
+      kind: 'adjustment',
+      bg: 'bg-[#FEF3C7] dark:bg-[#3a2a05]',
+      text: 'text-[#854D0E] dark:text-amber-300',
+      border: 'border-transparent',
+      legend: 'Reconciliation adjustment',
+    }
+  }
   if (event.direction === 'inflow') {
     return {
       kind: 'inflow',

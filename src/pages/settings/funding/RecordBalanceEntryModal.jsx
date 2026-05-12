@@ -129,7 +129,21 @@ export default function RecordBalanceEntryModal({ open, account, onClose, onSave
         ...(existingEntry ? { previous_balance: previousBalance } : {}),
       },
     )
-    onSaved?.()
+    // The trigger on funding_account_balance_entries may have just created
+    // (or removed) a variance adjustment. Look up the result so the parent
+    // can decide whether to show a "matched projection" or "variance →
+    // review" toast. Returning the entry id lets the parent open the
+    // AdjustmentDetailsModal directly if the user clicks the toast.
+    let adjustment = null
+    {
+      const { data: adj } = await supabase
+        .from('funding_account_adjustments')
+        .select('id, amount, adjustment_date, classification')
+        .eq('source_balance_entry_id', data.id)
+        .maybeSingle()
+      adjustment = adj || null
+    }
+    onSaved?.({ entryId: data.id, asOfDate: date, adjustment })
     onClose?.()
   }
 

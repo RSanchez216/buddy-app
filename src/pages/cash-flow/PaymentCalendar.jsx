@@ -25,6 +25,7 @@ import UnassignedItemsPanel from './UnassignedItemsPanel'
 import BalanceUpdatePromptBanner from './BalanceUpdatePromptBanner'
 import { useAccountsNeedingBalanceUpdate } from './useAccountsNeedingBalanceUpdate'
 import RecordBalanceEntryModal from '../settings/funding/RecordBalanceEntryModal'
+import AdjustmentDetailsModal from '../settings/funding/AdjustmentDetailsModal'
 
 const SHOW_PAID_KEY = 'cf-show-paid'
 const GROUP_BY_BANK_KEY = 'cf-group-by-bank'
@@ -82,12 +83,28 @@ export default function PaymentCalendar() {
   const [showStartingCash, setShowStartingCash] = useState(false)
   const [adjustLoanEvent, setAdjustLoanEvent] = useState(null) // event obj
   const [chipDetail, setChipDetail] = useState(null)
+  const [adjustmentDetail, setAdjustmentDetail] = useState(null) // adjustment id when classification modal is open
   const [defaultDate, setDefaultDate] = useState('')
-  const [toast, setToast] = useState(null) // { message, link? }
+  // Toast can carry either:
+  //   { message } — plain text, optional AP Control link inline
+  //   { message, onClick, actionLabel } — clickable CTA (variance review)
+  const [toast, setToast] = useState(null)
 
   function showToast(message) {
     setToast({ message })
     setTimeout(() => setToast(null), 5000)
+  }
+  function showVarianceToast(adjustmentId, amount, dateISO) {
+    const sign = Number(amount) >= 0 ? '+' : '−'
+    const abs = Math.abs(Number(amount || 0))
+    const fmt = abs.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 })
+    setToast({
+      tone: 'amber',
+      message: `Variance of ${sign}${fmt} created an adjustment on ${dateISO}.`,
+      actionLabel: 'Review →',
+      onClick: () => { setAdjustmentDetail(adjustmentId); setToast(null) },
+    })
+    setTimeout(() => setToast(prev => (prev && prev.tone === 'amber' ? null : prev)), 12000)
   }
 
   const weekStart = useMemo(() => startOfWeek(anchor), [anchor])
@@ -255,10 +272,20 @@ export default function PaymentCalendar() {
     })
   }
   function closeRecordModal() { setRecordTarget(null) }
-  function onBalanceSaved() {
+  function onBalanceSaved(result) {
     setRecordTarget(null)
     setBalanceRefreshKey(k => k + 1)  // re-runs projection effect
     refetchNeedsUpdate()               // re-runs stale-prompt hook
+    loadData()                          // pulls the adjustment chip into the visible event set
+    // Variance feedback. If the trigger created an adjustment, surface it
+    // with a clickable "Review" toast that opens the classification modal.
+    // If projection matched (no adjustment row), give a quiet "matched" nudge.
+    if (result?.adjustment) {
+      // Trigger amount is signed; we kept it raw on the adjustment row.
+      showVarianceToast(result.adjustment.id, result.adjustment.amount, result.adjustment.adjustment_date)
+    } else if (result?.entryId) {
+      showToast('Recorded balance matched projection — no variance.')
+    }
   }
 
   const accountsMissingBalance = useMemo(
@@ -370,9 +397,14 @@ export default function PaymentCalendar() {
   }
 
   // ── Chip click router ──────────────────────────────────────────────────
-  // All chips route through the side panel. Loan chips can still open the
-  // Adjust Planned Date modal from inside the panel via the footer button.
+  // Most chips route through the side panel. Reconciliation adjustments
+  // get a dedicated modal — different action set (classify, remove)
+  // than the normal "open invoice / adjust loan" panel.
   function handleChipClick(event) {
+    if (event?.reference_type === 'adjustment') {
+      setAdjustmentDetail(event.reference_id)
+      return
+    }
     setChipDetail(event)
   }
 
@@ -611,6 +643,12 @@ export default function PaymentCalendar() {
         onClose={closeRecordModal}
         onSaved={onBalanceSaved}
       />
+      <AdjustmentDetailsModal
+        open={!!adjustmentDetail}
+        adjustmentId={adjustmentDetail}
+        onClose={() => setAdjustmentDetail(null)}
+        onSaved={() => { setAdjustmentDetail(null); loadData(); setBalanceRefreshKey(k => k + 1) }}
+      />
       <ChipDetailPanel
         event={chipDetail}
         canEdit={canEdit}
@@ -624,11 +662,25 @@ export default function PaymentCalendar() {
 
       {/* Toast */}
       {toast && (
-        <div className="fixed bottom-6 right-6 z-[110] max-w-sm bg-white dark:bg-[#0d0d1f] border border-emerald-200 dark:border-emerald-500/30 rounded-2xl shadow-2xl px-4 py-3 flex items-start gap-3">
-          <div className="w-2 h-2 rounded-full bg-emerald-500 mt-1.5 shrink-0" />
+        <div className={`fixed bottom-6 right-6 z-[110] max-w-sm bg-white dark:bg-[#0d0d1f] border rounded-2xl shadow-2xl px-4 py-3 flex items-start gap-3 ${
+          toast.tone === 'amber'
+            ? 'border-amber-300 dark:border-amber-500/40'
+            : 'border-emerald-200 dark:border-emerald-500/30'
+        }`}>
+          <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${
+            toast.tone === 'amber' ? 'bg-amber-500' : 'bg-emerald-500'
+          }`} />
           <div className="flex-1 text-sm text-gray-700 dark:text-slate-300">
             <span>{toast.message.replace(/\s*View it in AP Control →\s*$/, '')}</span>
-            {toast.message.includes('AP Control') && (
+            {toast.onClick && toast.actionLabel && (
+              <>
+                {' '}
+                <button onClick={toast.onClick} className="text-orange-600 dark:text-orange-400 hover:underline font-semibold">
+                  {toast.actionLabel}
+                </button>
+              </>
+            )}
+            {!toast.onClick && toast.message.includes('AP Control') && (
               <>
                 {' '}
                 <Link to="/invoices" className="text-orange-600 dark:text-orange-400 hover:underline font-semibold">
@@ -662,6 +714,10 @@ function CalendarLegend() {
         <span className="flex items-center gap-1.5">
           <span className="inline-block w-3.5 h-3.5 rounded bg-[#FCEBEB] dark:bg-[#371616]" style={{ borderLeft: '2px dashed #E24B4A' }} />
           <span className="text-gray-600 dark:text-slate-400 font-medium">Recurring (dashed left)</span>
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block w-3.5 h-3.5 rounded bg-[#FEF3C7] dark:bg-[#3a2a05]" style={{ borderLeft: '3px solid #B45309' }} />
+          <span className="text-[#854D0E] dark:text-amber-300 font-medium">Reconciliation — needs review</span>
         </span>
       </div>
     </div>

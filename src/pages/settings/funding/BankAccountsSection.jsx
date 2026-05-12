@@ -11,6 +11,8 @@ import { useAuth } from '../../../contexts/AuthContext'
 import { S } from '../../../lib/styles'
 import Modal from '../../../components/Modal'
 import RecordBalanceEntryModal from './RecordBalanceEntryModal'
+import AdjustmentDetailsModal from './AdjustmentDetailsModal'
+import NeedsReviewPill from './NeedsReviewPill'
 
 // Account-metadata form (everything BUT balance — balance now lives in
 // funding_account_balance_entries via the Record Balance modal).
@@ -57,6 +59,10 @@ export default function BankAccountsSection() {
   const [showInactive, setShowInactive] = useState(false)
   // Record-balance modal target (null when closed).
   const [recordingAccount, setRecordingAccount] = useState(null)
+  // Adjustment classification modal target (adjustment id or null).
+  const [adjustmentId, setAdjustmentId] = useState(null)
+  // Inline status banner after recording a balance (variance hint).
+  const [statusBanner, setStatusBanner] = useState(null)
 
   useEffect(() => { load() }, [])
 
@@ -197,11 +203,21 @@ export default function BankAccountsSection() {
                       )}
                     </td>
                     <td className={S.td}>
-                      <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${
-                        it.is_active
-                          ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20'
-                          : 'bg-gray-100 dark:bg-slate-700/50 text-gray-500 dark:text-slate-400 border border-gray-200 dark:border-slate-600/30'
-                      }`}>{it.is_active ? 'Active' : 'Inactive'}</span>
+                      <div className="flex flex-col items-start gap-1.5">
+                        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${
+                          it.is_active
+                            ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20'
+                            : 'bg-gray-100 dark:bg-slate-700/50 text-gray-500 dark:text-slate-400 border border-gray-200 dark:border-slate-600/30'
+                        }`}>{it.is_active ? 'Active' : 'Inactive'}</span>
+                        {it.unclassified_adjustments_count > 0 && (
+                          <NeedsReviewPill
+                            fundingAccountId={it.id}
+                            count={it.unclassified_adjustments_count}
+                            total={it.unclassified_adjustments_total}
+                            onSelectAdjustment={(id) => setAdjustmentId(id)}
+                          />
+                        )}
+                      </div>
                     </td>
                     <td className={`${S.td} text-right`}>
                       <div className="flex items-center justify-end gap-3">
@@ -276,8 +292,61 @@ export default function BankAccountsSection() {
         open={!!recordingAccount}
         account={recordingAccount}
         onClose={() => setRecordingAccount(null)}
-        onSaved={() => { setRecordingAccount(null); load() }}
+        onSaved={(result) => {
+          setRecordingAccount(null)
+          load()
+          // Variance feedback. If an adjustment was created, surface it
+          // inline at the section header — the user is already on the
+          // Bank Accounts page, so a click goes straight to classify.
+          if (result?.adjustment) {
+            const sign = Number(result.adjustment.amount) >= 0 ? '+' : '−'
+            const abs = Math.abs(Number(result.adjustment.amount || 0))
+            const fmt = abs.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 })
+            setStatusBanner({
+              tone: 'amber',
+              message: `Variance of ${sign}${fmt} created an adjustment on ${result.adjustment.adjustment_date}.`,
+              actionLabel: 'Classify →',
+              onClick: () => { setAdjustmentId(result.adjustment.id); setStatusBanner(null) },
+            })
+          } else if (result?.entryId) {
+            setStatusBanner({ tone: 'emerald', message: 'Recorded balance matched projection — no variance.' })
+          }
+          setTimeout(() => setStatusBanner(null), 12000)
+        }}
       />
+      <AdjustmentDetailsModal
+        open={!!adjustmentId}
+        adjustmentId={adjustmentId}
+        onClose={() => setAdjustmentId(null)}
+        onSaved={() => { setAdjustmentId(null); load() }}
+      />
+      {statusBanner && (
+        <div className={`fixed bottom-6 right-6 z-[110] max-w-sm bg-white dark:bg-[#0d0d1f] border rounded-2xl shadow-2xl px-4 py-3 flex items-start gap-3 ${
+          statusBanner.tone === 'amber'
+            ? 'border-amber-300 dark:border-amber-500/40'
+            : 'border-emerald-200 dark:border-emerald-500/30'
+        }`}>
+          <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${
+            statusBanner.tone === 'amber' ? 'bg-amber-500' : 'bg-emerald-500'
+          }`} />
+          <div className="flex-1 text-sm text-gray-700 dark:text-slate-300">
+            <span>{statusBanner.message}</span>
+            {statusBanner.onClick && statusBanner.actionLabel && (
+              <>
+                {' '}
+                <button onClick={statusBanner.onClick} className="text-orange-600 dark:text-orange-400 hover:underline font-semibold">
+                  {statusBanner.actionLabel}
+                </button>
+              </>
+            )}
+          </div>
+          <button onClick={() => setStatusBanner(null)} className="text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 shrink-0">
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
     </SectionCard>
   )
 }
