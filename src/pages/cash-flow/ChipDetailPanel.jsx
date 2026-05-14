@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
+import { useAuth } from '../../contexts/AuthContext'
 import { S } from '../../lib/styles'
 import { CF, chipPalette, fmtMoney, fmtMoneySigned, toISO, isPaidStatus } from './calendarUtils'
 import ConvertToInvoiceModal from './ConvertToInvoiceModal'
@@ -12,6 +13,7 @@ function fmtDate(d) {
 }
 
 export default function ChipDetailPanel({ event, canEdit = true, onClose, onChange, onOpenAdjustLoan, onOpenManageRecurring, onOpenEditInflow, onSuccess }) {
+  const { user, profile } = useAuth()
   const [details, setDetails] = useState(null)
   const [editing, setEditing] = useState(false)
   const [form, setForm] = useState({})
@@ -41,7 +43,7 @@ export default function ChipDetailPanel({ event, canEdit = true, onClose, onChan
       setDetails({ kind: 'inflow', row: data })
     } else if (reference_type === 'invoice') {
       const { data } = await supabase.from('invoices')
-        .select('id, invoice_number, vendor_id, amount, due_date, planned_pay_date, status, notes, vendor:vendors(name)')
+        .select('id, invoice_number, vendor_id, amount, due_date, planned_pay_date, paid_date, paid_amount, payment_method, status, notes, funding_account_id, vendor:vendors(name)')
         .eq('id', reference_id).maybeSingle()
       setDetails({ kind: 'invoice', row: data })
     } else if (reference_type === 'custom' || reference_type === 'recurring') {
@@ -149,6 +151,76 @@ export default function ChipDetailPanel({ event, canEdit = true, onClose, onChan
     if (res.error) { alert(res.error.message); return }
     onChange?.()
     onClose?.()
+  }
+
+  // Revert a paid custom_outflow or invoice back to its planned/pending state.
+  // Clears paid_date + payment_method; the row will re-render on the calendar
+  // on its planned_pay_date (or due_date) instead of its paid_date.
+  //
+  // Audit log captures before/after for both tables. There is no balance-entry
+  // cascade — same caveat as the transfers PR: if the user already recorded a
+  // balance entry around the unmarked date, variance won't auto-recompute.
+  async function unmarkAsPaid() {
+    if (!details) return
+    const kind = details.kind
+    if (kind !== 'custom_outflow' && kind !== 'invoice') return
+    const row = details.row
+    const scheduledDate = row.planned_pay_date || row.due_date
+    const scheduledLabel = scheduledDate ? fmtDate(scheduledDate) : 'its scheduled date'
+    const itemLabel = kind === 'invoice'
+      ? (row.invoice_number ? `Invoice #${row.invoice_number}` : 'this invoice')
+      : (row.description || 'this row')
+    const ok = confirm(
+      `Unmark this as paid?\n\n` +
+      `It will return to planned status and reappear on the calendar on its scheduled date (${scheduledLabel}). ` +
+      `The paid date and payment method will be cleared.`
+    )
+    if (!ok) return
+
+    const tableName = kind === 'invoice' ? 'invoices' : 'custom_outflows'
+    const revertStatus = kind === 'invoice' ? 'Pending' : 'planned'
+    // Schema differences: custom_outflows has updated_at but no
+    // payment_method column. Invoices have payment_method but no updated_at.
+    const before = {
+      status: row.status,
+      paid_date: row.paid_date || null,
+      paid_amount: row.paid_amount != null ? Number(row.paid_amount) : null,
+      payment_method: kind === 'invoice' ? (row.payment_method || null) : undefined,
+    }
+    const update = kind === 'invoice'
+      ? { status: revertStatus, paid_date: null, paid_amount: null, payment_method: null }
+      : { status: revertStatus, paid_date: null, paid_amount: null, updated_at: new Date().toISOString() }
+
+    const { error: e } = await supabase.from(tableName).update(update).eq('id', row.id)
+    if (e) { setError(e.message); return }
+
+    await supabase.from('audit_log').insert({
+      table_name: tableName,
+      record_id: row.id,
+      action: 'paid_status_reverted',
+      performed_by: user?.id || null,
+      performed_by_email: profile?.email || null,
+      metadata: {
+        ...(kind === 'invoice'
+          ? { invoice_number: row.invoice_number, vendor: row.vendor?.name || null }
+          : { description: row.description }),
+        amount: Number(row.amount || 0),
+        funding_account_name: event?.funding_account_name || null,
+        planned_pay_date: row.planned_pay_date || null,
+        due_date: row.due_date || null,
+        before,
+        after: {
+          status: revertStatus,
+          paid_date: null,
+          paid_amount: null,
+          payment_method: kind === 'invoice' ? null : undefined,
+        },
+      },
+    })
+
+    onSuccess?.(`Unmarked as paid. ${itemLabel} will appear on the calendar on ${scheduledLabel}.`)
+    await loadDetails()
+    onChange?.()
   }
 
   function startMarkReceived() {
@@ -317,6 +389,15 @@ export default function ChipDetailPanel({ event, canEdit = true, onClose, onChan
                   className={CF.btnSave}
                 >
                   Mark as paid
+                </button>
+              )}
+              {(details?.kind === 'custom_outflow' || details?.kind === 'invoice') && isPaidStatus(details.row.status) && (
+                <button
+                  onClick={unmarkAsPaid}
+                  className="text-xs font-medium text-orange-600 dark:text-orange-400 hover:underline"
+                  title="Revert to planned status"
+                >
+                  Unmark as paid
                 </button>
               )}
               {details && (details.kind !== 'loan_payment') && (
