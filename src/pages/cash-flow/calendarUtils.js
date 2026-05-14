@@ -123,8 +123,20 @@ export function fmtDayHeader(date) {
 // ── Chip styling ───────────────────────────────────────────────────────────
 // Maps a v_cash_flow_events row → palette tokens for the chip
 // direction: 'inflow' | 'outflow'
-// reference_type: 'inflow' | 'loan' | 'invoice' | 'custom' | 'recurring' | 'adjustment'
+// reference_type: 'inflow' | 'loan' | 'invoice' | 'custom' | 'recurring' | 'adjustment' | 'transfer_in' | 'transfer_out'
 export function chipPalette(event) {
+  // Inter-account transfers are cyan/teal — distinct from real money flow
+  // (orange income / red expense / green inflow). Both legs share the
+  // palette; the chip icon/label disambiguates direction.
+  if (event.reference_type === 'transfer_in' || event.reference_type === 'transfer_out') {
+    return {
+      kind: 'transfer',
+      bg: 'bg-[#E0F7FA] dark:bg-[#0e2a30]',
+      text: 'text-[#0E7490] dark:text-cyan-300',
+      border: 'border-transparent',
+      legend: 'Inter-account transfer',
+    }
+  }
   // Reconciliation adjustments are yellow regardless of sign — they're a
   // distinct "needs attention" category, not a normal inflow/outflow.
   if (event.reference_type === 'adjustment') {

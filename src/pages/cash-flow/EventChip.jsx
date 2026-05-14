@@ -23,6 +23,8 @@ export default function EventChip({ event, onClick, onDragStart, onDragEnd, drag
   const isLoan = event.reference_type === 'loan'
   const isAdjustment = event.reference_type === 'adjustment'
   const isUnclassifiedAdj = isAdjustment && event.status === 'needs_review'
+  const isTransfer = event.reference_type === 'transfer_in' || event.reference_type === 'transfer_out'
+  const isInTransit = isTransfer && event.status === 'in_transit'
   const isDragging = draggingId === event.event_id
 
   // Recurring uses dashed red; paid uses solid darker color. Paid wins if both
@@ -33,6 +35,11 @@ export default function EventChip({ event, onClick, onDragStart, onDragEnd, drag
     leftStyle = { borderLeft: `3px solid ${paidAccentColor(event)}`, paddingLeft: 6 }
   } else if (isUnclassifiedAdj) {
     leftStyle = { borderLeft: '3px solid #B45309', paddingLeft: 6 }
+  } else if (isInTransit) {
+    // Dashed cyan bar — money has left but not yet arrived.
+    leftStyle = { borderLeft: '2px dashed #0E7490', paddingLeft: 7 }
+  } else if (isTransfer) {
+    leftStyle = { borderLeft: '3px solid #0E7490', paddingLeft: 6 }
   } else if (isRecurring) {
     leftStyle = { borderLeft: '2px dashed #E24B4A', paddingLeft: 7 }
   }
@@ -58,6 +65,7 @@ export default function EventChip({ event, onClick, onDragStart, onDragEnd, drag
         ? `✓ ${event.direction === 'inflow' ? 'Received' : 'Paid'}: ${event.label || ''}`
         : isUnclassifiedAdj ? `⚑ Needs review: ${event.label || ''}`
         : isAdjustment      ? `${event.label || ''}`
+        : isTransfer        ? `${event.label || ''}${isInTransit ? ' (in transit)' : ''}`
         : isRecurring       ? `↻ Recurring: ${event.label || ''}`
         : event.label || ''}
       style={leftStyle}
@@ -82,6 +90,12 @@ export default function EventChip({ event, onClick, onDragStart, onDragEnd, drag
           // Classified adjustment — small check, no flag
           <svg className="w-3 h-3 ml-auto shrink-0 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.25}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+          </svg>
+        ) : isTransfer ? (
+          // Swap-arrow — bidirectional indicator. Both legs use the same icon;
+          // direction is conveyed by the label's arrow prefix (→ / ←).
+          <svg className="w-3 h-3 ml-auto shrink-0 opacity-80" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
           </svg>
         ) : isLoan ? (
           <svg className="w-3 h-3 ml-auto opacity-60 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">

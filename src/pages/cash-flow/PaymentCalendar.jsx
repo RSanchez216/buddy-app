@@ -26,6 +26,7 @@ import BalanceUpdatePromptBanner from './BalanceUpdatePromptBanner'
 import { useAccountsNeedingBalanceUpdate } from './useAccountsNeedingBalanceUpdate'
 import RecordBalanceEntryModal from '../settings/funding/RecordBalanceEntryModal'
 import AdjustmentDetailsModal from '../settings/funding/AdjustmentDetailsModal'
+import AddTransferModal from './AddTransferModal'
 
 const SHOW_PAID_KEY = 'cf-show-paid'
 const GROUP_BY_BANK_KEY = 'cf-group-by-bank'
@@ -84,6 +85,8 @@ export default function PaymentCalendar() {
   const [adjustLoanEvent, setAdjustLoanEvent] = useState(null) // event obj
   const [chipDetail, setChipDetail] = useState(null)
   const [adjustmentDetail, setAdjustmentDetail] = useState(null) // adjustment id when classification modal is open
+  // Transfer modal — null = closed, { transferId: null } = create, { transferId: <uuid> } = edit
+  const [transferTarget, setTransferTarget] = useState(null)
   const [defaultDate, setDefaultDate] = useState('')
   // Toast can carry either:
   //   { message } — plain text, optional AP Control link inline
@@ -399,10 +402,16 @@ export default function PaymentCalendar() {
   // ── Chip click router ──────────────────────────────────────────────────
   // Most chips route through the side panel. Reconciliation adjustments
   // get a dedicated modal — different action set (classify, remove)
-  // than the normal "open invoice / adjust loan" panel.
+  // than the normal "open invoice / adjust loan" panel. Transfer legs
+  // (both out and in) open the transfer edit modal — clicking either leg
+  // edits the underlying transfer row.
   function handleChipClick(event) {
     if (event?.reference_type === 'adjustment') {
       setAdjustmentDetail(event.reference_id)
+      return
+    }
+    if (event?.reference_type === 'transfer_in' || event?.reference_type === 'transfer_out') {
+      setTransferTarget({ transferId: event.reference_id })
       return
     }
     setChipDetail(event)
@@ -503,6 +512,15 @@ export default function PaymentCalendar() {
             <button onClick={() => { setDefaultDate(toISO(new Date())); setShowAddExpense(true) }} className={CF.btnPrimary}>
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
               Add Expense
+            </button>
+            <button
+              onClick={() => setTransferTarget({ transferId: null })}
+              className="flex items-center gap-2 px-3 py-2 text-sm font-semibold bg-cyan-500 hover:bg-cyan-400 text-slate-900 rounded-xl transition-all shadow-lg shadow-cyan-500/20"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
+              </svg>
+              Add Transfer
             </button>
           </>
         )}
@@ -649,6 +667,13 @@ export default function PaymentCalendar() {
         onClose={() => setAdjustmentDetail(null)}
         onSaved={() => { setAdjustmentDetail(null); loadData(); setBalanceRefreshKey(k => k + 1) }}
       />
+      <AddTransferModal
+        open={!!transferTarget}
+        transferId={transferTarget?.transferId || null}
+        defaultDate={defaultDate || toISO(new Date())}
+        onClose={() => setTransferTarget(null)}
+        onSaved={() => { setTransferTarget(null); loadData(); setBalanceRefreshKey(k => k + 1) }}
+      />
       <ChipDetailPanel
         event={chipDetail}
         canEdit={canEdit}
@@ -718,6 +743,14 @@ function CalendarLegend() {
         <span className="flex items-center gap-1.5">
           <span className="inline-block w-3.5 h-3.5 rounded bg-[#FEF3C7] dark:bg-[#3a2a05]" style={{ borderLeft: '3px solid #B45309' }} />
           <span className="text-[#854D0E] dark:text-amber-300 font-medium">Reconciliation — needs review</span>
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block w-3.5 h-3.5 rounded bg-[#E0F7FA] dark:bg-[#0e2a30]" style={{ borderLeft: '3px solid #0E7490' }} />
+          <span className="text-[#0E7490] dark:text-cyan-300 font-medium">Inter-account transfer</span>
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block w-3.5 h-3.5 rounded bg-[#E0F7FA] dark:bg-[#0e2a30]" style={{ borderLeft: '2px dashed #0E7490' }} />
+          <span className="text-[#0E7490] dark:text-cyan-300 font-medium">Transfer in transit (dashed left)</span>
         </span>
       </div>
     </div>
