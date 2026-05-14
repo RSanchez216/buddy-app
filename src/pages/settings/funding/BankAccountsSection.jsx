@@ -169,12 +169,12 @@ export default function BankAccountsSection() {
           <table className="w-full text-sm">
             <thead className={S.tableHead}>
               <tr>
-                <th className={S.th}>Name</th>
-                <th className={S.th}>Bank</th>
-                <th className={S.th}>Last 4</th>
-                <th className={S.th}>Balance</th>
-                <th className={S.th}>Status</th>
-                <th className={S.th}></th>
+                <th className={`${S.th} min-w-[180px]`}>Name</th>
+                <th className={`${S.th} min-w-[120px]`}>Bank</th>
+                <th className={`${S.th} w-20`}>Last 4</th>
+                <th className={`${S.th} min-w-[170px]`}>Balance</th>
+                <th className={`${S.th} min-w-[120px]`}>Status</th>
+                <th className={`${S.th} min-w-[280px] text-right`}></th>
               </tr>
             </thead>
             <tbody>

@@ -8,7 +8,7 @@ import FactorsSection from './funding/FactorsSection'
 
 export default function SettingsFundingAndSources() {
   return (
-    <div className="space-y-8 max-w-3xl">
+    <div className="space-y-8 max-w-7xl">
       <div>
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Funding & Sources</h1>
         <p className="text-sm text-gray-500 dark:text-slate-500 mt-0.5">

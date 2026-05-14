@@ -159,11 +159,11 @@ export default function FactorsSection() {
           <table className="w-full text-sm">
             <thead className={S.tableHead}>
               <tr>
-                <th className={S.th}>Name</th>
-                <th className={S.th}>Fee Rate</th>
-                <th className={S.th}>Default Deposit</th>
-                <th className={S.th}>Status</th>
-                <th className={S.th}></th>
+                <th className={`${S.th} min-w-[200px]`}>Name</th>
+                <th className={`${S.th} w-28`}>Fee Rate</th>
+                <th className={`${S.th} min-w-[240px]`}>Default Deposit</th>
+                <th className={`${S.th} min-w-[100px]`}>Status</th>
+                <th className={`${S.th} min-w-[180px] text-right`}></th>
               </tr>
             </thead>
             <tbody>
