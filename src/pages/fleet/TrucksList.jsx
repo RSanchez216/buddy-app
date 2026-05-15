@@ -3,20 +3,38 @@ import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { S } from '../../lib/styles'
-import { StagePill } from './fleetUtils'
+import { StagePill, OWNERSHIP_STAGES } from './fleetUtils'
 import TruckTrailerFormModal from './TruckTrailerFormModal'
+import FleetUploadModal from './upload/FleetUploadModal'
 
-// Trucks master list. Joins to drivers for name display. Add modal opens
-// the shared TruckTrailerFormModal with kind="truck". Edit opens the same
-// modal seeded with the row.
+// Trucks master list. Filter pills by ownership stage, click-to-sort on
+// key columns, extended search across unit/VIN/plate/driver/owner. The
+// Upload Excel button opens the multi-stage upload modal.
+
+const STAGE_PILLS = [
+  { key: 'all',                          label: 'All',                  icon: '' },
+  ...OWNERSHIP_STAGES.map(s => ({ key: s.value, label: s.label, icon: s.icon })),
+]
+
+const SORT_FIELDS = {
+  unit_number:     (r) => (r.unit_number || '').toLowerCase(),
+  vin:             (r) => (r.vin || '').toLowerCase(),
+  year:            (r) => r.year ?? -Infinity,
+  ownership_stage: (r) => r.ownership_stage || '',
+  driver:          (r) => (r.driver?.full_name || '').toLowerCase(),
+}
 
 export default function TrucksList() {
   const { canEdit } = useAuth()
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('')
+  const [stageFilter, setStageFilter] = useState('all')
+  const [sortField, setSortField] = useState('unit_number')
+  const [sortDir, setSortDir] = useState('asc')
   const [showModal, setShowModal] = useState(false)
   const [editItem, setEditItem] = useState(null)
+  const [showUpload, setShowUpload] = useState(false)
 
   useEffect(() => { load() }, [])
 
@@ -30,18 +48,44 @@ export default function TrucksList() {
     setLoading(false)
   }
 
+  const stageCounts = useMemo(() => {
+    const c = { all: rows.length }
+    for (const s of OWNERSHIP_STAGES) c[s.value] = 0
+    for (const r of rows) {
+      if (c[r.ownership_stage] !== undefined) c[r.ownership_stage]++
+    }
+    return c
+  }, [rows])
+
   const filtered = useMemo(() => {
-    if (!filter.trim()) return rows
-    const q = filter.toLowerCase()
-    return rows.filter(r =>
+    const q = filter.trim().toLowerCase()
+    const base = stageFilter === 'all' ? rows : rows.filter(r => r.ownership_stage === stageFilter)
+    const searched = q ? base.filter(r =>
       (r.unit_number || '').toLowerCase().includes(q) ||
       (r.vin || '').toLowerCase().includes(q) ||
       (r.make || '').toLowerCase().includes(q) ||
       (r.model || '').toLowerCase().includes(q) ||
       (r.license_plate || '').toLowerCase().includes(q) ||
+      (r.equipment_owner_raw || '').toLowerCase().includes(q) ||
       (r.driver?.full_name || '').toLowerCase().includes(q)
-    )
-  }, [rows, filter])
+    ) : base
+    const fn = SORT_FIELDS[sortField] || SORT_FIELDS.unit_number
+    const dir = sortDir === 'desc' ? -1 : 1
+    return [...searched].sort((a, b) => {
+      const va = fn(a); const vb = fn(b)
+      if (va < vb) return -1 * dir
+      if (va > vb) return  1 * dir
+      return 0
+    })
+  }, [rows, filter, stageFilter, sortField, sortDir])
+
+  function toggleSort(field) {
+    if (sortField === field) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortField(field); setSortDir('asc')
+    }
+  }
 
   function openAdd() { setEditItem(null); setShowModal(true) }
   function openEdit(r) { setEditItem(r); setShowModal(true) }
@@ -56,24 +100,53 @@ export default function TrucksList() {
           </div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Trucks</h1>
           <p className="text-sm text-gray-500 dark:text-slate-500 mt-0.5">
-            Fleet inventory — manual entry only in this version
+            Fleet inventory — upload a TMS Excel export or add rows manually
           </p>
         </div>
         {canEdit && (
-          <button onClick={openAdd} className={S.btnPrimary}>
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
-            Add Truck
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowUpload(true)}
+              className="flex items-center gap-2 px-3 py-2 text-sm font-semibold border border-orange-500 text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-500/10 rounded-xl transition-all"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+              Upload Excel
+            </button>
+            <button onClick={openAdd} className={S.btnPrimary}>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+              Add Truck
+            </button>
+          </div>
         )}
+      </div>
+
+      {/* Stage filter pills */}
+      <div className="flex items-center flex-wrap gap-2">
+        {STAGE_PILLS.map(p => {
+          const active = stageFilter === p.key
+          return (
+            <button
+              key={p.key}
+              onClick={() => setStageFilter(p.key)}
+              className={`px-3 py-1.5 text-xs font-medium rounded-full border transition-colors ${
+                active
+                  ? 'bg-orange-50 dark:bg-orange-500/10 border-orange-300 dark:border-orange-500/30 text-orange-700 dark:text-orange-400'
+                  : 'border-gray-200 dark:border-slate-700/50 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5'
+              }`}
+            >
+              {p.icon} {p.label} <span className="ml-1 opacity-70">{stageCounts[p.key] ?? 0}</span>
+            </button>
+          )
+        })}
       </div>
 
       <div className="flex items-center justify-between flex-wrap gap-3">
         <p className="text-xs text-gray-500 dark:text-slate-500">
-          {rows.length} truck{rows.length === 1 ? '' : 's'}
+          Showing {filtered.length} of {rows.length} truck{rows.length === 1 ? '' : 's'}
         </p>
         <input
           className={`${S.input} max-w-xs`}
-          placeholder="Search unit, VIN, plate, driver…"
+          placeholder="Search unit, VIN, plate, owner, driver…"
           value={filter}
           onChange={e => setFilter(e.target.value)}
         />
@@ -84,11 +157,11 @@ export default function TrucksList() {
           <table className="w-full text-sm">
             <thead className={S.tableHead}>
               <tr>
-                <th className={`${S.th} min-w-[110px]`}>Unit #</th>
-                <th className={`${S.th} min-w-[170px]`}>VIN</th>
-                <th className={`${S.th} min-w-[160px]`}>Year / Make / Model</th>
-                <th className={`${S.th} min-w-[160px]`}>Driver</th>
-                <th className={`${S.th} min-w-[180px]`}>Ownership Stage</th>
+                <SortableTh field="unit_number" label="Unit #" sortField={sortField} sortDir={sortDir} onToggle={toggleSort} minW="min-w-[110px]" />
+                <SortableTh field="vin"         label="VIN"    sortField={sortField} sortDir={sortDir} onToggle={toggleSort} minW="min-w-[170px]" />
+                <SortableTh field="year"        label="Year / Make / Model" sortField={sortField} sortDir={sortDir} onToggle={toggleSort} minW="min-w-[160px]" />
+                <SortableTh field="driver"      label="Driver" sortField={sortField} sortDir={sortDir} onToggle={toggleSort} minW="min-w-[160px]" />
+                <SortableTh field="ownership_stage" label="Ownership Stage" sortField={sortField} sortDir={sortDir} onToggle={toggleSort} minW="min-w-[180px]" />
                 <th className={`${S.th} min-w-[160px]`}>Carrier</th>
                 <th className={`${S.th} min-w-[120px]`}>License</th>
                 <th className={`${S.th} text-right`}></th>
@@ -100,8 +173,8 @@ export default function TrucksList() {
               ) : filtered.length === 0 ? (
                 <tr><td colSpan={8} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">
                   {rows.length === 0
-                    ? "No trucks yet. Click 'Add Truck' to add your first one, or wait for PR 2 to upload an Excel report."
-                    : 'No trucks match this filter.'}
+                    ? "No trucks yet. Click 'Upload Excel' to import a TMS export or 'Add Truck' to add one manually."
+                    : 'No trucks match these filters.'}
                 </td></tr>
               ) : filtered.map(r => (
                 <tr key={r.id} className={S.tableRow}>
@@ -144,6 +217,26 @@ export default function TrucksList() {
         onClose={() => setShowModal(false)}
         onSaved={() => { setShowModal(false); load() }}
       />
+      <FleetUploadModal
+        kind="truck"
+        open={showUpload}
+        onClose={() => setShowUpload(false)}
+        onCommitted={() => load()}
+      />
     </div>
+  )
+}
+
+function SortableTh({ field, label, sortField, sortDir, onToggle, minW }) {
+  const active = sortField === field
+  return (
+    <th className={`${S.th} ${minW || ''}`}>
+      <button onClick={() => onToggle(field)} className="inline-flex items-center gap-1 hover:text-gray-700 dark:hover:text-slate-200">
+        {label}
+        {active && (
+          <span className="text-[10px]">{sortDir === 'asc' ? '▲' : '▼'}</span>
+        )}
+      </button>
+    </th>
   )
 }
