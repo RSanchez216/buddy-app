@@ -6,7 +6,7 @@ import Modal from '../../../components/Modal'
 import Select from '../../../components/Select'
 import { OWNERSHIP_STAGES, STAGE_LABELS, StagePill } from '../fleetUtils'
 import { parseFleetWorkbook } from './fleetParser'
-import { classifyOwnership, loadKnownLessors } from './fleetClassifier'
+import { classifyOwnership, loadKnownLessors, loadActiveLoanEntities } from './fleetClassifier'
 import { commitFleetRows } from './fleetCommit'
 
 // Three stages:
@@ -63,9 +63,12 @@ export default function FleetUploadModal({ kind, open, onClose, onCommitted }) {
     setParsing(true); setParseErrors([])
     try {
       const buf = await file.arrayBuffer()
+      // Loan entities load first; lessor list filters out any vendor that
+      // clashes with a loan entity name so the entity rule wins on conflict.
+      const loanEntities = await loadActiveLoanEntities()
       const [{ data: driversData }, knownLessors] = await Promise.all([
         supabase.from('drivers').select('id, internal_id, full_name'),
-        loadKnownLessors(),
+        loadKnownLessors(loanEntities),
       ])
       const allDrivers = driversData || []
       const { rows: parsed, errors } = parseFleetWorkbook(buf, kind, allDrivers)
@@ -80,7 +83,7 @@ export default function FleetUploadModal({ kind, open, onClose, onCommitted }) {
       const existingMap = new Map((existing || []).map(e => [e.vin, e]))
 
       const classified = parsed.map(row => {
-        const cls = classifyOwnership(row.equipment_owner_raw, row.driver_id, knownLessors, allDrivers)
+        const cls = classifyOwnership(row.equipment_owner_raw, row.driver_id, knownLessors, allDrivers, loanEntities)
         const dupOf = existingMap.get(row.vin) || null
         return {
           ...row,
