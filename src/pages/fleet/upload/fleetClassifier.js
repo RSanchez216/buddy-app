@@ -16,11 +16,49 @@ export const HARDCODED_LESSORS = [
   'UA Team Inc',
 ]
 
-// Loosen punctuation/whitespace for fuzzy match: "M-Team Investments" and
-// "M Team Investments" should compare equal. Lowercases, replaces hyphens
-// with spaces, collapses runs of whitespace.
+// Loosen punctuation / business-suffix / singular-plural variation so
+// "M Team Investment LLC" (TMS export) compares equal to "M-Team Investments"
+// (loan_entities.name).
+//
+// Pipeline:
+//   1. lowercase
+//   2. hyphens → spaces
+//   3. collapse runs of whitespace + trim
+//   4. strip a trailing business suffix preceded by whitespace
+//      ('llc' / 'inc' / 'corp' / 'co' / 'ltd')
+//   5. per-word: strip a single trailing 's' to handle plural variation,
+//      guarded against (a) words shorter than 6 chars (so "Manas" doesn't
+//      become "Mana") and (b) words ending in 'ss' (so "Express" / "Address"
+//      stay intact)
+//
+// Both sides of every comparison run through this normalizer.
+
+const BUSINESS_SUFFIXES = ['llc', 'inc', 'corp', 'co', 'ltd']
+
+function stripTrailingBusinessSuffix(s) {
+  for (const suf of BUSINESS_SUFFIXES) {
+    const re = new RegExp(`\\s${suf}$`)
+    if (re.test(s)) return s.replace(re, '').trim()
+  }
+  return s
+}
+
+function stripTrailingS(word) {
+  if (word.length < 6) return word
+  if (word.endsWith('ss')) return word
+  if (word.endsWith('s')) return word.slice(0, -1)
+  return word
+}
+
 function normalizeForMatch(s) {
-  return String(s || '').toLowerCase().replace(/-/g, ' ').replace(/\s+/g, ' ').trim()
+  let out = String(s || '')
+    .toLowerCase()
+    .replace(/-/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  out = stripTrailingBusinessSuffix(out)
+  out = out.split(' ').filter(Boolean).map(stripTrailingS).join(' ')
+  return out
 }
 
 // Reusable fuzzy-include matcher — `equal` OR `haystack contains needle`
