@@ -4,7 +4,6 @@ import { addDays, fmtMoneyExact, isToday, toISO, consolidateTransfers } from './
 import { worstShortfallOnOrBefore } from './balanceCalc'
 
 const WEEK_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-const MAX_BANKS_BEFORE_OVERFLOW = 5
 
 export default function WeekView({
   weekStart,
@@ -184,30 +183,15 @@ function BankGroupedChips({ bucket, draggingId, setDraggingId, setDropTarget, on
 }
 
 function DayFooter({ bucket, shortfall }) {
-  const [showAllBanks, setShowAllBanks] = useState(false)
   if (!bucket) return null
 
   const inflow = bucket.totals.inflow
   const outflow = bucket.totals.outflow
   const net = inflow - outflow
-  const hasEvents = inflow > 0 || outflow > 0
 
-  // By-bank list — sorted by |net| desc, with Unassigned pinned to bottom.
-  // Hide Unassigned row entirely if it has zero net AND zero in/outflow
-  // (per the spec example: "Unassigned −$0   (hide if zero)").
-  const banks = Object.entries(bucket.banks)
-    .map(([key, b]) => ({ key, ...b, net: b.inflow - b.outflow }))
-    .filter(b => b.events.length > 0)
-    .filter(b => b.accountId || (b.inflow !== 0 || b.outflow !== 0))
-    .sort((a, b) => {
-      if (!a.accountId && b.accountId) return 1
-      if (a.accountId && !b.accountId) return -1
-      return Math.abs(b.net) - Math.abs(a.net)
-    })
-
-  const visibleBanks = showAllBanks ? banks : banks.slice(0, MAX_BANKS_BEFORE_OVERFLOW)
-  const hidden = banks.length - visibleBanks.length
-
+  // Day card simplification: per-account flow breakdown was removed.
+  // The right rail's Projected End of Day is the per-account decision
+  // surface; the day card just shows what's happening on this date.
   return (
     <div className="px-2 py-2 border-t border-gray-100 dark:border-white/5 bg-gray-50/60 dark:bg-white/[0.015] rounded-b-xl space-y-1.5">
       <FooterRow label="Inflow"  value={`+${fmtMoneyExact(inflow)}`}  positive />
@@ -221,32 +205,6 @@ function DayFooter({ bucket, shortfall }) {
           bold
         />
       </div>
-
-      {hasEvents && banks.length > 0 && (
-        <div className="pt-1.5">
-          <p className="text-[9px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500 mb-1">By bank</p>
-          <ul className="space-y-0.5">
-            {visibleBanks.map(b => (
-              <li key={b.key} className="flex items-baseline justify-between gap-1.5 text-[11px]">
-                <span className="text-gray-500 dark:text-slate-400 truncate">{b.name}</span>
-                <span className={`font-mono font-semibold ${b.net >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-                  {b.net >= 0 ? '+' : '−'}{fmtMoneyExact(Math.abs(b.net))}
-                </span>
-              </li>
-            ))}
-            {hidden > 0 && (
-              <li>
-                <button
-                  onClick={() => setShowAllBanks(true)}
-                  className="text-[10px] text-orange-600 dark:text-orange-400 hover:underline"
-                >
-                  +{hidden} more
-                </button>
-              </li>
-            )}
-          </ul>
-        </div>
-      )}
 
       {shortfall && (
         <div className="mt-1.5 inline-flex w-full items-center gap-1 px-1.5 py-1 rounded bg-red-50 dark:bg-red-500/10 text-[10px] text-red-700 dark:text-red-400">
