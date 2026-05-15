@@ -333,28 +333,71 @@ export default function PaymentCalendar() {
   }, [projections, weekStart])
 
   // ── Day-mode rail data ───────────────────────────────────────────────────
-  // Per-bank EOD balance for the selected day. Accounts without a balance
-  // baseline appear with balance: null (rendered as "balance not set").
+  // The week-wide projections.timelines only contains rows from the most
+  // recent anchor onward (the RPC walks forward from anchor → p_end_date).
+  // When the user navigates to a past date that's BEFORE the current
+  // anchor, byDate[selectedDay] is undefined → "balance not set" — even
+  // though the function returns the right number if we call it with
+  // p_end_date = selectedDay (it picks the most recent anchor on or before
+  // that date). We do that second call here, in parallel per account.
+  //
+  // Value semantics for dayEndingByAccount[accId]:
+  //   missing key → not yet fetched (fall back to week-wide timeline)
+  //   number      → RPC found the selectedDay row; render this balance
+  //   null        → RPC returned zero rows; render "balance not set"
+  const [dayEndingByAccount, setDayEndingByAccount] = useState({})
+  useEffect(() => {
+    if (!selectedDay || accounts.length === 0) {
+      setDayEndingByAccount({})
+      return
+    }
+    let cancelled = false
+    Promise.all(
+      accounts.filter(a => a.is_active).map(async acc => {
+        const { data } = await supabase.rpc('projected_balances', {
+          p_funding_account_id: acc.id,
+          p_end_date: selectedDay,
+        })
+        const row = (data || []).find(r => r.as_of_date === selectedDay)
+        return [acc.id, row ? Number(row.ending_balance) : null]
+      })
+    ).then(entries => {
+      if (cancelled) return
+      setDayEndingByAccount(Object.fromEntries(entries))
+    })
+    return () => { cancelled = true }
+  }, [accounts, selectedDay, balanceRefreshKey])
+
+  // Per-bank EOD balance for the selected day. Prefer the day-specific RPC
+  // result (correct for past dates too) and fall back to the week-wide
+  // timeline while the day-specific fetch is in flight.
   const dayProjections = useMemo(() => {
     if (!selectedDay) return []
     return accounts.map(acc => {
+      if (acc.id in dayEndingByAccount) {
+        return { account: acc, balance: dayEndingByAccount[acc.id] }
+      }
       const t = projections.timelines[acc.id]
       const balance = t ? t.byDate[selectedDay] : null
       return { account: acc, balance: balance == null ? null : balance }
     })
-  }, [accounts, projections, selectedDay])
+  }, [accounts, projections, selectedDay, dayEndingByAccount])
 
-  // Worst shortfall on or before the selected day.
+  // Worst shortfall on the selected day. Prefer the day-specific RPC
+  // values (correct for past dates) over the week-wide timelines (which
+  // miss dates before the current anchor).
   const dayShortfall = useMemo(() => {
     if (!selectedDay) return null
     let worst = null
-    for (const t of Object.values(projections.timelines)) {
-      const bal = t.byDate[selectedDay]
-      if (bal == null || bal >= 0) continue
-      if (!worst || bal < worst.balance) worst = { account: t.account, balance: bal }
+    for (const acc of accounts) {
+      const balance = (acc.id in dayEndingByAccount)
+        ? dayEndingByAccount[acc.id]
+        : (projections.timelines[acc.id]?.byDate?.[selectedDay] ?? null)
+      if (balance == null || balance >= 0) continue
+      if (!worst || balance < worst.balance) worst = { account: acc, balance }
     }
     return worst
-  }, [projections, selectedDay])
+  }, [accounts, projections, selectedDay, dayEndingByAccount])
 
   // 4-week outlook — same split (pending vs paid) per week
   const outlookWeeks = useMemo(() => {
