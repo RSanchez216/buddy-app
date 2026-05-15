@@ -410,7 +410,9 @@ export default function PaymentCalendar() {
       setAdjustmentDetail(event.reference_id)
       return
     }
-    if (event?.reference_type === 'transfer_in' || event?.reference_type === 'transfer_out') {
+    if (event?.reference_type === 'transfer'
+     || event?.reference_type === 'transfer_in'
+     || event?.reference_type === 'transfer_out') {
       setTransferTarget({ transferId: event.reference_id })
       return
     }

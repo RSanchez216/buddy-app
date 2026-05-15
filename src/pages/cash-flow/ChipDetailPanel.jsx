@@ -43,10 +43,11 @@ export default function ChipDetailPanel({ event, canEdit = true, onClose, onChan
       setDetails({ kind: 'inflow', row: data })
     } else if (reference_type === 'invoice') {
       const { data } = await supabase.from('invoices')
-        .select('id, invoice_number, vendor_id, amount, due_date, planned_pay_date, paid_date, paid_amount, payment_method, status, notes, funding_account_id, vendor:vendors(name)')
+        .select('id, invoice_number, vendor_id, amount, due_date, planned_pay_date, paid_date, paid_at, paid_amount, payment_method, status, notes, funding_account_id, vendor:vendors(name)')
         .eq('id', reference_id).maybeSingle()
       setDetails({ kind: 'invoice', row: data })
     } else if (reference_type === 'custom' || reference_type === 'recurring') {
+      // custom_outflows is select * already; paid_at comes through automatically.
       const { data } = await supabase.from('custom_outflows')
         .select('*, entity:loan_entities(name), template:recurring_expense_templates(id, name, frequency), converted_invoice:invoices!custom_outflows_converted_to_invoice_id_fkey(id, invoice_number, amount, status, due_date)')
         .eq('id', reference_id).maybeSingle()
@@ -142,9 +143,12 @@ export default function ChipDetailPanel({ event, canEdit = true, onClose, onChan
   async function markPaid() {
     if (!details || details.kind !== 'custom_outflow') return
     const today = toISO(new Date())
+    // paid_at stamps the moment of marking so the time-aware projection can
+    // decide whether to include the cash impact on the anchor day.
     const res = await supabase.from('custom_outflows').update({
       status: 'paid',
       paid_date: today,
+      paid_at: new Date().toISOString(),
       paid_amount: Number(details.row.amount || 0),
       updated_at: new Date().toISOString(),
     }).eq('id', details.row.id)
@@ -181,15 +185,18 @@ export default function ChipDetailPanel({ event, canEdit = true, onClose, onChan
     const revertStatus = kind === 'invoice' ? 'Pending' : 'planned'
     // Schema differences: custom_outflows has updated_at but no
     // payment_method column. Invoices have payment_method but no updated_at.
+    // paid_at is on both; cleared on revert so the time-aware projection
+    // stops treating the row as a post-anchor paid event.
     const before = {
       status: row.status,
       paid_date: row.paid_date || null,
+      paid_at: row.paid_at || null,
       paid_amount: row.paid_amount != null ? Number(row.paid_amount) : null,
       payment_method: kind === 'invoice' ? (row.payment_method || null) : undefined,
     }
     const update = kind === 'invoice'
-      ? { status: revertStatus, paid_date: null, paid_amount: null, payment_method: null }
-      : { status: revertStatus, paid_date: null, paid_amount: null, updated_at: new Date().toISOString() }
+      ? { status: revertStatus, paid_date: null, paid_at: null, paid_amount: null, payment_method: null }
+      : { status: revertStatus, paid_date: null, paid_at: null, paid_amount: null, updated_at: new Date().toISOString() }
 
     const { error: e } = await supabase.from(tableName).update(update).eq('id', row.id)
     if (e) { setError(e.message); return }
@@ -212,6 +219,7 @@ export default function ChipDetailPanel({ event, canEdit = true, onClose, onChan
         after: {
           status: revertStatus,
           paid_date: null,
+          paid_at: null,
           paid_amount: null,
           payment_method: kind === 'invoice' ? null : undefined,
         },

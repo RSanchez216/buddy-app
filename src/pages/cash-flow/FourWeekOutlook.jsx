@@ -1,4 +1,4 @@
-import { addDays, fmtMoneyShort, isSameDay, startOfWeek } from './calendarUtils'
+import { addDays, fmtMoneyExact, isSameDay, startOfWeek } from './calendarUtils'
 
 export default function FourWeekOutlook({ baseWeekStart, weeks, showPaid, onJumpToWeek }) {
   const today = startOfWeek(new Date())
@@ -28,16 +28,16 @@ export default function FourWeekOutlook({ baseWeekStart, weeks, showPaid, onJump
             <div className="mt-3 space-y-1">
               <div className="flex items-baseline justify-between text-sm">
                 <span className="text-gray-500 dark:text-slate-400">▲ In</span>
-                <span className="font-semibold font-mono text-emerald-600 dark:text-emerald-400">{fmtMoneyShort(w.inflow)}</span>
+                <span className="font-semibold font-mono text-emerald-600 dark:text-emerald-400">{fmtMoneyExact(w.inflow)}</span>
               </div>
               <div className="flex items-baseline justify-between text-sm">
                 <span className="text-gray-500 dark:text-slate-400">▼ Out</span>
-                <span className="font-semibold font-mono text-red-600 dark:text-red-400">{fmtMoneyShort(w.outflow)}</span>
+                <span className="font-semibold font-mono text-red-600 dark:text-red-400">{fmtMoneyExact(w.outflow)}</span>
               </div>
               {showPaid && (
                 <div className="flex items-baseline justify-between text-xs pt-1 border-t border-gray-100 dark:border-white/5">
                   <span className="text-gray-400 dark:text-slate-500">✓ Paid</span>
-                  <span className="font-medium font-mono text-emerald-600 dark:text-emerald-400 opacity-80">{fmtMoneyShort(w.paidOut)}</span>
+                  <span className="font-medium font-mono text-emerald-600 dark:text-emerald-400 opacity-80">{fmtMoneyExact(w.paidOut)}</span>
                 </div>
               )}
             </div>
@@ -49,7 +49,7 @@ export default function FourWeekOutlook({ baseWeekStart, weeks, showPaid, onJump
               <div className="flex items-baseline justify-between">
                 <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-slate-400">Net</span>
                 <span className={`text-sm font-bold font-mono ${positive ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-700 dark:text-red-300'}`}>
-                  {positive ? '+' : '−'} {fmtMoneyShort(Math.abs(net))}
+                  {positive ? '+' : '−'} {fmtMoneyExact(Math.abs(net))}
                 </span>
               </div>
             </div>

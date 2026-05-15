@@ -1,4 +1,4 @@
-import { fmtMoney, fmtMoneyShort, addDays, toISO } from './calendarUtils'
+import { fmtMoney, fmtMoneyExact, addDays, toISO } from './calendarUtils'
 
 export default function RightRail({
   mode = 'week',
@@ -135,7 +135,7 @@ function WeekPanel({
             <div key={b.accountId || '__unassigned__'} className="flex items-baseline justify-between gap-2 text-xs">
               <span className="text-gray-500 dark:text-slate-400 truncate">{b.name}</span>
               <span className={`font-mono font-semibold ${b.net >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-                {b.net >= 0 ? '+' : '−'}{fmtMoneyShort(Math.abs(b.net))}
+                {b.net >= 0 ? '+' : '−'}{fmtMoneyExact(Math.abs(b.net))}
               </span>
             </div>
           ))}
@@ -152,7 +152,7 @@ function WeekPanel({
           </p>
           <p className="text-red-700 dark:text-red-400 mt-1">
             <span className="font-semibold">{shortfall.account.name}</span>{' '}
-            <span className="font-mono">−{fmtMoneyShort(Math.abs(shortfall.lowest))}</span>{' '}
+            <span className="font-mono">−{fmtMoneyExact(Math.abs(shortfall.lowest))}</span>{' '}
             <span className="text-red-600/80 dark:text-red-400/80">by {shortDay(shortfall.firstNegDate)}</span>
           </p>
         </div>
@@ -269,7 +269,7 @@ function DayPanel({ weekStart, selectedDay, setSelectedDay, dayBucket, dayShortf
             <div key={b.key} className="flex items-baseline justify-between gap-2 text-xs">
               <span className="text-gray-500 dark:text-slate-400 truncate">{b.name}</span>
               <span className={`font-mono font-semibold ${b.net >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-                {b.net >= 0 ? '+' : '−'}{fmtMoneyShort(Math.abs(b.net))}
+                {b.net >= 0 ? '+' : '−'}{fmtMoneyExact(Math.abs(b.net))}
               </span>
             </div>
           ))}
@@ -286,7 +286,7 @@ function DayPanel({ weekStart, selectedDay, setSelectedDay, dayBucket, dayShortf
           </p>
           <p className="text-red-700 dark:text-red-400 mt-1">
             <span className="font-semibold">{dayShortfall.account.name}</span>{' '}
-            <span className="font-mono">−{fmtMoneyShort(Math.abs(dayShortfall.balance))}</span>
+            <span className="font-mono">−{fmtMoneyExact(Math.abs(dayShortfall.balance))}</span>
           </p>
         </div>
       )}

@@ -1,4 +1,4 @@
-import { chipPalette, fmtMoneySigned, isPaidStatus } from './calendarUtils'
+import { chipPalette, fmtMoneyExact, fmtMoneySigned, isPaidStatus } from './calendarUtils'
 
 // Darker accent stripe for the "settled" left-border on paid/received chips.
 // Matches the chip's category but a shade darker, so it reads as "done"
@@ -23,7 +23,13 @@ export default function EventChip({ event, onClick, onDragStart, onDragEnd, drag
   const isLoan = event.reference_type === 'loan'
   const isAdjustment = event.reference_type === 'adjustment'
   const isUnclassifiedAdj = isAdjustment && event.status === 'needs_review'
-  const isTransfer = event.reference_type === 'transfer_in' || event.reference_type === 'transfer_out'
+  // 'transfer' is the consolidated form (one row per transfer.id) emitted by
+  // consolidateTransfers(). transfer_in / transfer_out are the raw legs from
+  // v_cash_flow_events, used inside the per-bank grouped view.
+  const isTransfer = event.reference_type === 'transfer'
+    || event.reference_type === 'transfer_in'
+    || event.reference_type === 'transfer_out'
+  const isConsolidatedTransfer = event.reference_type === 'transfer'
   const isInTransit = isTransfer && event.status === 'in_transit'
   const isDragging = draggingId === event.event_id
 
@@ -75,7 +81,9 @@ export default function EventChip({ event, onClick, onDragStart, onDragEnd, drag
     >
       <div className="flex items-center gap-1">
         <span className="text-[12px] font-semibold leading-tight truncate">
-          {fmtMoneySigned(event.amount, event.direction)}
+          {isConsolidatedTransfer
+            ? fmtMoneyExact(Math.abs(Number(event.amount || 0)))
+            : fmtMoneySigned(event.amount, event.direction)}
         </span>
         {paid ? (
           <svg className="w-3 h-3 ml-auto shrink-0 opacity-80" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.25}>

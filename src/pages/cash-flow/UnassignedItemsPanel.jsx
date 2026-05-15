@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useReducer, useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
+import { fmtMoneyExact } from './calendarUtils'
 
 // Warning panel listing actionable items that lack a funding_account_id.
 // Lives above the Payment Calendar grid. Mirrors the Underwater
@@ -31,11 +32,8 @@ const AUDIT_TABLE_NAME = {
   expected_inflow: 'expected_inflows',
 }
 
-function fmtMoney(n) {
-  return Number(n || 0).toLocaleString('en-US', {
-    style: 'currency', currency: 'USD', maximumFractionDigits: 0,
-  })
-}
+// Calendar's exact-amount formatter — cents only when non-zero, comma thousands.
+const fmtMoney = fmtMoneyExact
 
 function fmtDate(iso) {
   if (!iso) return null

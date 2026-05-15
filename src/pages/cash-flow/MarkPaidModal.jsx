@@ -69,11 +69,14 @@ export default function MarkPaidModal({ open, kind, mode = 'paid', record, heade
           updated_at: new Date().toISOString(),
         }).eq('id', record.id)
       } else {
-        // invoices status check constraint requires Pascal-case
+        // invoices status check constraint requires Pascal-case. paid_at
+        // stamps the moment of marking so the time-aware projection can
+        // decide whether to include the cash impact on the anchor day.
         res = await supabase.from('invoices').update({
           status: 'Paid',
           paid_amount: Number(paidAmount),
           paid_date: paidDate,
+          paid_at: new Date().toISOString(),
           payment_method: method || null,
           reference_number: reference.trim() || null,
           notes: notes.trim() || null,

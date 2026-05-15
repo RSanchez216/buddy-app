@@ -1,6 +1,6 @@
 import {
   startOfMonth, endOfMonth, startOfMonthGrid, endOfMonthGrid,
-  addDays, isToday, toISO, fmtMoneyShort, isPaidStatus,
+  addDays, isToday, toISO, fmtMoneyExact, isPaidStatus,
 } from './calendarUtils'
 import { anyShortfallOnDay } from './balanceCalc'
 
@@ -77,14 +77,14 @@ export default function MonthView({ monthAnchor, eventsByDate, shortfallDays, sh
                 <div className="mt-1 space-y-0.5 w-full">
                   <div className="text-[10px] text-gray-500 dark:text-slate-500">{events.length} event{events.length === 1 ? '' : 's'}</div>
                   {inPending > 0 && (
-                    <div className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">+ {fmtMoneyShort(inPending)}</div>
+                    <div className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">+ {fmtMoneyExact(inPending)}</div>
                   )}
                   {outPending > 0 && (
-                    <div className="text-[11px] font-semibold text-red-600 dark:text-red-400">− {fmtMoneyShort(outPending)}</div>
+                    <div className="text-[11px] font-semibold text-red-600 dark:text-red-400">− {fmtMoneyExact(outPending)}</div>
                   )}
                   {(inPending > 0 || outPending > 0) && (
                     <div className={`text-[10px] font-medium ${net >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}`}>
-                      Net {net >= 0 ? '+' : '−'} {fmtMoneyShort(Math.abs(net))}
+                      Net {net >= 0 ? '+' : '−'} {fmtMoneyExact(Math.abs(net))}
                     </div>
                   )}
                   {showPaid && settledTotal > 0 && (
@@ -92,7 +92,7 @@ export default function MonthView({ monthAnchor, eventsByDate, shortfallDays, sh
                       <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.25}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                       </svg>
-                      {fmtMoneyShort(settledTotal)} settled
+                      {fmtMoneyExact(settledTotal)} settled
                     </div>
                   )}
                 </div>

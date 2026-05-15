@@ -89,7 +89,8 @@ export function fmtMoney(n) {
   return moneyFmt.format(num)
 }
 
-// "$42k", "$1.2M" — compact for chips
+// "$42k", "$1.2M" — compact for chips. Kept for any non-calendar consumer;
+// new calendar code should use fmtMoneyExact() which shows exact amounts.
 export function fmtMoneyShort(n) {
   if (n == null || n === '') return '$0'
   const num = Number(n)
@@ -101,9 +102,27 @@ export function fmtMoneyShort(n) {
   return `$${abs.toFixed(0)}`
 }
 
+// Exact-amount formatter for the Payment Calendar. Cents only when non-zero,
+// thousands separated. Sign goes BEFORE the dollar so negatives read as
+// "-$14,484.55" rather than "$-14,484.55".
+export function fmtMoneyExact(n) {
+  if (n == null || n === '') return '$0'
+  const num = Number(n)
+  if (isNaN(num)) return '$0'
+  const negative = num < 0
+  const abs = Math.abs(num)
+  const fixed = abs.toFixed(2)
+  const [intPart, decPart] = fixed.split('.')
+  const formatted = Number(intPart).toLocaleString('en-US')
+  const body = decPart === '00' ? `$${formatted}` : `$${formatted}.${decPart}`
+  return negative ? `-${body}` : body
+}
+
+// Sign prefix for directional totals (kept for chip rendering where we
+// explicitly want the +/− sign instead of a leading minus).
 export function fmtMoneySigned(n, direction) {
   const sign = direction === 'inflow' ? '+ ' : '− '
-  return `${sign}${fmtMoneyShort(n)}`
+  return `${sign}${fmtMoneyExact(Math.abs(Number(n || 0)))}`
 }
 
 export function fmtRange(weekStart) {
@@ -127,8 +146,12 @@ export function fmtDayHeader(date) {
 export function chipPalette(event) {
   // Inter-account transfers are cyan/teal — distinct from real money flow
   // (orange income / red expense / green inflow). Both legs share the
-  // palette; the chip icon/label disambiguates direction.
-  if (event.reference_type === 'transfer_in' || event.reference_type === 'transfer_out') {
+  // palette; the chip icon/label disambiguates direction. The consolidated
+  // 'transfer' tag (one row per transfer.id, used in the flat day listing)
+  // shares the palette too.
+  if (event.reference_type === 'transfer'
+   || event.reference_type === 'transfer_in'
+   || event.reference_type === 'transfer_out') {
     return {
       kind: 'transfer',
       bg: 'bg-[#E0F7FA] dark:bg-[#0e2a30]',
@@ -185,6 +208,62 @@ export function chipPalette(event) {
         legend: event.reference_type === 'recurring' ? 'Recurring expense' : 'Custom expense',
       }
   }
+}
+
+// ── Transfer consolidation ─────────────────────────────────────────────────
+// v_cash_flow_events emits two rows per transfer (one out, one in). The flat
+// day-column listing should display a single row per transfer.id. The grouped
+// (BY BANK) listing still wants both legs visible — each bank's section
+// naturally shows only its own leg, so no dedup is needed there.
+//
+// For the consolidated row we synthesize a "↔ Transfer: from → to" label
+// and tag reference_type='transfer' so downstream consumers (EventChip,
+// chip-click router) can recognize the merged form.
+
+function _counterpartName(leg) {
+  // Parse the counterpart account name out of the view's label string.
+  // outgoing: "→ Transfer to NAME"  or  "→ Transfer to NAME · settles Mon DD"
+  // incoming: "← Transfer from NAME" or "← Transfer from NAME · debited Mon DD"
+  const m = leg?.label?.match(/^(?:→ Transfer to|← Transfer from)\s+(.+?)(?:\s+·\s+.+)?$/)
+  return m ? m[1] : '—'
+}
+
+function _fmtShortDate(iso) {
+  if (!iso) return ''
+  const d = new Date(`${iso}T00:00:00`)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+export function consolidateTransfers(events) {
+  const out = []
+  const seen = new Set()
+  for (const ev of (events || [])) {
+    if (ev.reference_type === 'transfer_out' || ev.reference_type === 'transfer_in') {
+      if (seen.has(ev.reference_id)) continue
+      seen.add(ev.reference_id)
+      const isOut = ev.reference_type === 'transfer_out'
+      const fromName = isOut ? ev.funding_account_name : _counterpartName(ev)
+      const toName   = isOut ? _counterpartName(ev) : ev.funding_account_name
+      const counterpartDate = ev.original_due_date  // view stores counterpart date here
+      const inTransit = ev.status === 'in_transit'
+      const suffix = inTransit
+        ? (isOut
+            ? ` · credits ${_fmtShortDate(counterpartDate)}`
+            : ` · debited ${_fmtShortDate(counterpartDate)}`)
+        : ''
+      out.push({
+        ...ev,
+        // Tagged so EventChip can render an unsigned amount and the click
+        // router can recognize the consolidated form.
+        reference_type: 'transfer',
+        label: `↔ Transfer: ${fromName} → ${toName}${suffix}`,
+      })
+    } else {
+      out.push(ev)
+    }
+  }
+  return out
 }
 
 // Weekday label shortcuts for recurring patterns

@@ -449,7 +449,17 @@ export default function InvoiceInbox() {
   }
 
   async function markPaid(inv) {
-    await supabase.from('invoices').update({ status: 'Paid' }).eq('id', inv.id)
+    // Stamp paid_date + paid_at alongside status so the time-aware projection
+    // can include this invoice's cash impact on the anchor day (and beyond).
+    // Without paid_date the projection has no day to attribute it to.
+    const today = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date())
+    await supabase.from('invoices').update({
+      status: 'Paid',
+      paid_date: today,
+      paid_at: new Date().toISOString(),
+    }).eq('id', inv.id)
     await writeAudit('mark_paid', inv)
     loadData()
   }
