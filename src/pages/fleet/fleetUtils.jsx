@@ -97,3 +97,75 @@ export function chicagoToday() {
     timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit',
   }).format(new Date())
 }
+
+// ── Driver master helpers ─────────────────────────────────────────────────
+export const DRIVER_TYPES = [
+  { value: 'Owner Operator',  label: 'Owner Operator',  short: 'Owner Op' },
+  { value: 'Leased Owner-Op', label: 'Leased Owner-Op', short: 'Leased OO' },
+  { value: 'Contract Driver', label: 'Contract Driver', short: 'Contract' },
+  { value: 'Company Driver',  label: 'Company Driver',  short: 'Company' },
+]
+
+export function driverTypePillClasses(type) {
+  switch (type) {
+    case 'Owner Operator':  return 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20'
+    case 'Leased Owner-Op': return 'bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400 border border-sky-200 dark:border-sky-500/20'
+    case 'Contract Driver': return 'bg-amber-50 dark:bg-amber-500/10 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-500/30'
+    case 'Company Driver':  return 'bg-violet-50 dark:bg-violet-500/10 text-violet-700 dark:text-violet-400 border border-violet-200 dark:border-violet-500/20'
+    default:                return 'bg-gray-100 dark:bg-slate-700/40 text-gray-500 dark:text-slate-400 border border-gray-200 dark:border-slate-600/30'
+  }
+}
+
+export function DriverTypePill({ type, short = false }) {
+  if (!type) return <span className="text-gray-400 dark:text-slate-600 text-xs">—</span>
+  const meta = DRIVER_TYPES.find(t => t.value === type)
+  const label = short ? (meta?.short || type) : (meta?.label || type)
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${driverTypePillClasses(type)}`}>
+      {label}
+    </span>
+  )
+}
+
+export const DRIVER_STATUSES = [
+  { value: 'active',     label: 'Active',     icon: '🟢' },
+  { value: 'inactive',   label: 'Inactive',   icon: '🟡' },
+  { value: 'on_leave',   label: 'On Leave',   icon: '🟣' },
+  { value: 'terminated', label: 'Terminated', icon: '🔴' },
+  { value: 'archived',   label: 'Archived',   icon: '📦' },
+]
+
+export const DRIVER_STATUS_LABELS = Object.fromEntries(DRIVER_STATUSES.map(s => [s.value, s.label]))
+
+export function driverStatusPillClasses(status) {
+  switch (status) {
+    case 'active':     return 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20'
+    case 'inactive':   return 'bg-amber-50 dark:bg-amber-500/10 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-500/30'
+    case 'on_leave':   return 'bg-violet-50 dark:bg-violet-500/10 text-violet-700 dark:text-violet-400 border border-violet-200 dark:border-violet-500/20'
+    case 'terminated': return 'bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-500/20'
+    case 'archived':   return 'bg-gray-100 dark:bg-slate-700/40 text-gray-500 dark:text-slate-400 border border-gray-200 dark:border-slate-600/30 line-through'
+    default:           return 'bg-gray-100 dark:bg-slate-700/40 text-gray-500 dark:text-slate-400'
+  }
+}
+
+export function DriverStatusPill({ status }) {
+  const meta = DRIVER_STATUSES.find(s => s.value === status)
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${driverStatusPillClasses(status)}`}>
+      <span aria-hidden>{meta?.icon || ''}</span>
+      <span>{meta?.label || status || 'Unknown'}</span>
+    </span>
+  )
+}
+
+// "12% SERVICE CHARGE" / "$0.65 RATE" etc. → readable when raw is missing.
+export function fmtCompensation({ compensation_raw, compensation_type, compensation_value }) {
+  if (compensation_raw) return compensation_raw
+  if (compensation_value == null) return '—'
+  switch (compensation_type) {
+    case 'service_charge_pct': return `${compensation_value}% service charge`
+    case 'rate_pct':           return `${compensation_value}% rate`
+    case 'rate_per_mile':      return `$${compensation_value}/mile`
+    default:                   return String(compensation_value)
+  }
+}
