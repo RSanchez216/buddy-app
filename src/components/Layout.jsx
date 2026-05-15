@@ -21,6 +21,7 @@ const Icons = {
   lender:    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 21h18M3 10h18M5 6l7-3 7 3M4 10v11m16-11v11M8 14v3m4-3v3m4-3v3" /></svg>,
   bank:      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" /></svg>,
   truck:     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8 0h6m-6 0V8h4l3 4v4m0 0h-3m-3-7h6" /></svg>,
+  trailer:   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 6h17v11H3V6zm0 11l-1 2m18-2l1 2M8 19a2 2 0 11-4 0 2 2 0 014 0zM20 19a2 2 0 11-4 0 2 2 0 014 0z" /></svg>,
   driverSale: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" /></svg>,
   flag:      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 21v-7m0 0V5a2 2 0 012-2h11l-2 5 2 5H5a2 2 0 00-2 2z" /></svg>,
   calendar:  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>,
@@ -139,6 +140,12 @@ export default function Layout() {
             <NavItem to="/invoices"  label="Invoice Inbox"    icon={Icons.invoices}  onClick={close} />
             <NavItem to="/transactions" label="Transaction Feed" icon={Icons.txns}   onClick={close} />
             <NavItem to="/reports"   label="Monthly Report"   icon={Icons.report}    onClick={close} />
+          </NavSection>
+
+          {/* Fleet */}
+          <NavSection id="fleet" label="Fleet" withDivider>
+            <NavItem to="/fleet/trucks"   label="Trucks"   icon={Icons.truck}   onClick={close} />
+            <NavItem to="/fleet/trailers" label="Trailers" icon={Icons.trailer} onClick={close} />
           </NavSection>
 
           {/* Financial Controls */}

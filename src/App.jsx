@@ -24,6 +24,10 @@ import DriverPurchaseDetail from './pages/driver-purchases/DriverPurchaseDetail'
 import SettingsDriverPurchaseStatuses from './pages/settings/DriverPurchaseStatusesSettings'
 import NotificationsPage from './pages/Notifications'
 import PaymentCalendar from './pages/cash-flow/PaymentCalendar'
+import TrucksList from './pages/fleet/TrucksList'
+import TrailersList from './pages/fleet/TrailersList'
+import TruckDetail from './pages/fleet/TruckDetail'
+import TrailerDetail from './pages/fleet/TrailerDetail'
 import SetPassword from './pages/auth/SetPassword'
 
 export default function App() {
@@ -44,6 +48,11 @@ export default function App() {
               <Route path="invoices" element={<InvoiceInbox />} />
               <Route path="transactions" element={<TransactionFeed />} />
               <Route path="reports" element={<MonthlyReport />} />
+              {/* Fleet Inventory */}
+              <Route path="fleet/trucks" element={<TrucksList />} />
+              <Route path="fleet/trucks/:id" element={<TruckDetail />} />
+              <Route path="fleet/trailers" element={<TrailersList />} />
+              <Route path="fleet/trailers/:id" element={<TrailerDetail />} />
               {/* Financial Controls */}
               <Route path="financial-controls/debt-schedule" element={<DebtSchedule />} />
               <Route path="financial-controls/debt-schedule/:loanId" element={<LoanDetail />} />

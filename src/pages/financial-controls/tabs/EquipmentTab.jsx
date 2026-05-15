@@ -22,19 +22,70 @@ export default function EquipmentTab({ loanId, canEdit }) {
   const [form, setForm] = useState(empty)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  // loans.monthly_payment is the contract total; edited inline via the panel.
+  const [contractTotal, setContractTotal] = useState('')
+  const [contractTotalSaving, setContractTotalSaving] = useState(false)
+  const [splitting, setSplitting] = useState(false)
 
   useEffect(() => { load() /* eslint-disable-line */ }, [loanId])
 
   async function load() {
     setLoading(true)
-    const [eqRes, typeRes] = await Promise.all([
+    const [eqRes, typeRes, loanRes] = await Promise.all([
       supabase.from('loan_equipment').select('*').eq('loan_id', loanId).order('unit_number', { ascending: true }),
       supabase.from('equipment_types').select('id, name, display_label, sort_order').eq('is_active', true).order('sort_order').order('display_label'),
+      supabase.from('loans').select('monthly_payment').eq('id', loanId).maybeSingle(),
     ])
     setRows(eqRes.data || [])
     setEquipmentTypes(typeRes.data || [])
+    setContractTotal(loanRes.data?.monthly_payment != null ? String(loanRes.data.monthly_payment) : '')
     setLoading(false)
   }
+
+  // Per-row monthly payment editing. Manual edits flip override=true so the
+  // next auto-split run leaves the row alone. "Reset to auto" clears override
+  // and re-runs the split.
+  async function setRowMonthlyPayment(row, value) {
+    if (!canEdit) return
+    const num = value === '' || value === null ? null : Number(value)
+    const { error } = await supabase
+      .from('loan_equipment')
+      .update({ monthly_payment: num, monthly_payment_override: true, updated_at: new Date().toISOString() })
+      .eq('id', row.id)
+    if (error) { alert(error.message); return }
+    load()
+  }
+
+  async function resetRowToAuto(row) {
+    if (!canEdit) return
+    await supabase
+      .from('loan_equipment')
+      .update({ monthly_payment_override: false, updated_at: new Date().toISOString() })
+      .eq('id', row.id)
+    await supabase.rpc('auto_split_contract_monthly_payment', { p_loan_id: loanId })
+    load()
+  }
+
+  async function saveContractTotal() {
+    if (!canEdit) return
+    setContractTotalSaving(true)
+    const num = contractTotal === '' ? null : Number(contractTotal)
+    await supabase.from('loans').update({ monthly_payment: num }).eq('id', loanId)
+    setContractTotalSaving(false)
+    load()
+  }
+
+  async function runAutoSplit() {
+    if (!canEdit) return
+    setSplitting(true)
+    await supabase.rpc('auto_split_contract_monthly_payment', { p_loan_id: loanId })
+    setSplitting(false)
+    load()
+  }
+
+  const totalAllocated = rows.reduce((sum, r) => sum + (Number(r.monthly_payment) || 0), 0)
+  const contractTotalNum = Number(contractTotal) || 0
+  const allocatedDelta = contractTotalNum - totalAllocated
 
   function openAdd() { setEditItem(null); setForm(empty); setError(''); setShowModal(true) }
   function openEdit(r) {
@@ -123,6 +174,50 @@ export default function EquipmentTab({ loanId, canEdit }) {
 
   return (
     <div className="space-y-4">
+      {/* Contract Monthly Payment Total + Auto-Split panel */}
+      <div className={`${S.card} p-4`}>
+        <div className="flex items-start justify-between flex-wrap gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-slate-400 mb-1">
+              Contract Monthly Payment Total
+            </p>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-400 dark:text-slate-500">$</span>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                className={`${S.input} max-w-[180px] font-mono`}
+                value={contractTotal}
+                disabled={!canEdit || contractTotalSaving}
+                onChange={e => setContractTotal(e.target.value)}
+                onBlur={saveContractTotal}
+                placeholder="0.00"
+              />
+              {canEdit && (
+                <button
+                  onClick={runAutoSplit}
+                  disabled={splitting || contractTotal === '' || Number(contractTotal) <= 0 || rows.length === 0}
+                  className={FC.btnPrimary}
+                  title={contractTotal === '' || Number(contractTotal) <= 0
+                    ? 'Set a non-zero total first'
+                    : rows.length === 0
+                      ? 'Add equipment first'
+                      : 'Split evenly across non-overridden equipment'}
+                >
+                  {splitting ? 'Splitting…' : 'Auto-Split to Equipment'}
+                </button>
+              )}
+            </div>
+            <p className="text-[11px] text-gray-500 dark:text-slate-500 mt-1.5">
+              {contractTotalNum > 0
+                ? `Allocated: ${fmtMoney(totalAllocated)} of ${fmtMoney(contractTotalNum)}${Math.abs(allocatedDelta) > 0.01 ? ` · ${allocatedDelta > 0 ? 'remaining' : 'over'} ${fmtMoney(Math.abs(allocatedDelta))}` : ' ✓'}`
+                : 'Enter the contract\'s total monthly payment, then click Auto-Split.'}
+            </p>
+          </div>
+        </div>
+      </div>
+
       <div className="flex items-center justify-between">
         <p className="text-sm text-gray-500 dark:text-slate-500">{summary || 'No equipment yet'}</p>
         {canEdit && (
@@ -138,14 +233,14 @@ export default function EquipmentTab({ loanId, canEdit }) {
           <table className="w-full text-sm">
             <thead className={S.tableHead}>
               <tr>
-                {['Unit#', 'VIN', 'Type', 'Make', 'Model', 'Year', 'Purchase Date', 'Purchase Price', 'Title', 'Status', 'Notes', canEdit && ''].filter(h => h !== false).map((h, i) => (
+                {['Unit#', 'VIN', 'Type', 'Make', 'Model', 'Year', 'Purchase Date', 'Purchase Price', 'Monthly Payment', 'Title', 'Status', 'Notes', canEdit && ''].filter(h => h !== false).map((h, i) => (
                   <th key={i} className={S.th}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 ? (
-                <tr><td colSpan={12} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">No equipment</td></tr>
+                <tr><td colSpan={13} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">No equipment</td></tr>
               ) : rows.map(r => (
                 <tr key={r.id} className={S.tableRow}>
                   <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>{r.unit_number || '—'}</td>
@@ -156,6 +251,29 @@ export default function EquipmentTab({ loanId, canEdit }) {
                   <td className={`${S.td} text-gray-600 dark:text-slate-400`}>{r.year || '—'}</td>
                   <td className={`${S.td} text-gray-600 dark:text-slate-400 whitespace-nowrap`}>{fmtDate(r.purchase_date)}</td>
                   <td className={`${S.td} font-mono text-gray-700 dark:text-slate-300 whitespace-nowrap`}>{fmtMoney(r.purchase_price)}</td>
+                  <td className={`${S.td} whitespace-nowrap`}>
+                    {canEdit ? (
+                      <div className="flex items-center gap-1.5">
+                        <MonthlyPaymentInput row={r} onCommit={setRowMonthlyPayment} />
+                        {r.monthly_payment_override && (
+                          <>
+                            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-500/10 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-500/20" title="Manually set — auto-split will skip">
+                              ✋ Manual
+                            </span>
+                            <button
+                              onClick={() => resetRowToAuto(r)}
+                              className="text-[10px] text-orange-600 dark:text-orange-400 hover:underline whitespace-nowrap"
+                              title="Clear override and re-run auto-split"
+                            >
+                              Reset to auto
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="font-mono text-gray-700 dark:text-slate-300">{fmtMoney(r.monthly_payment)}</span>
+                    )}
+                  </td>
                   <td className={S.td}>
                     {r.has_title ? (
                       <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 dark:text-emerald-400" title="Title on file">
@@ -286,5 +404,34 @@ function Field({ label, children }) {
       <label className={S.label}>{label}</label>
       {children}
     </div>
+  )
+}
+
+// Inline monthly-payment editor — commits on blur or Enter so we don't spam
+// the network as the user types. Maintains its own local string state so
+// values like "1500.00" survive empty-string typing.
+function MonthlyPaymentInput({ row, onCommit }) {
+  const [val, setVal] = useState(row.monthly_payment != null ? String(row.monthly_payment) : '')
+  useEffect(() => {
+    setVal(row.monthly_payment != null ? String(row.monthly_payment) : '')
+  }, [row.monthly_payment])
+  function commit() {
+    const next = val.trim() === '' ? null : Number(val)
+    const current = row.monthly_payment != null ? Number(row.monthly_payment) : null
+    if (next === current) return
+    onCommit(row, val.trim() === '' ? '' : next)
+  }
+  return (
+    <input
+      type="number"
+      step="0.01"
+      min="0"
+      value={val}
+      onChange={e => setVal(e.target.value)}
+      onBlur={commit}
+      onKeyDown={e => { if (e.key === 'Enter') e.target.blur() }}
+      placeholder="—"
+      className="w-24 px-2 py-1 text-xs font-mono bg-white dark:bg-slate-800/80 border border-gray-200 dark:border-slate-700/40 rounded-md focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+    />
   )
 }

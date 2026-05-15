@@ -1,0 +1,99 @@
+// Shared formatters + presentation helpers for the Fleet Inventory module.
+// Trucks and trailers share most of the field set; the differences live in
+// the trailer-only columns (trailer_type, annual_inspection_expiration_date).
+
+export const OWNERSHIP_STAGES = [
+  { value: 'unclassified',                label: 'Unclassified',                  icon: '⚠️' },
+  { value: 'company_owned',               label: 'Company Owned',                 icon: '🏢' },
+  { value: 'company_leased',              label: 'Company Leased',                icon: '🔄' },
+  { value: 'driver_purchase_in_progress', label: 'Driver Purchase In Progress',   icon: '💰' },
+  { value: 'driver_owned',                label: 'Driver Owned',                  icon: '👤' },
+  { value: 'archived',                    label: 'Archived',                      icon: '📦' },
+]
+
+export const STAGE_LABELS = Object.fromEntries(OWNERSHIP_STAGES.map(s => [s.value, s.label]))
+
+// Tailwind classes per stage. Mirrors the project's status-pill convention
+// (StatusBadge component, equipmentStatusPill in loanUtils).
+export function stagePillClasses(stage) {
+  switch (stage) {
+    case 'company_owned':
+      return 'bg-slate-100 dark:bg-slate-500/20 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-500/30'
+    case 'company_leased':
+      return 'bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400 border border-sky-200 dark:border-sky-500/20'
+    case 'driver_purchase_in_progress':
+      return 'bg-amber-50 dark:bg-amber-500/10 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-500/30'
+    case 'driver_owned':
+      return 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20'
+    case 'archived':
+      return 'bg-gray-100 dark:bg-slate-700/40 text-gray-500 dark:text-slate-400 border border-gray-200 dark:border-slate-600/30 line-through'
+    case 'unclassified':
+    default:
+      return 'bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-500/20'
+  }
+}
+
+export function StagePill({ stage }) {
+  const meta = OWNERSHIP_STAGES.find(s => s.value === stage)
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${stagePillClasses(stage)}`}>
+      <span aria-hidden>{meta?.icon || '⚠️'}</span>
+      <span>{meta?.label || stage || 'Unclassified'}</span>
+    </span>
+  )
+}
+
+export const TRAILER_TYPES = ['Dry Van', 'Reefer', 'Flatbed', 'Step Deck', 'Conestoga', 'Other']
+
+export function trailerTypePillClasses(type) {
+  switch (type) {
+    case 'Dry Van':   return 'bg-slate-100 dark:bg-slate-500/20 text-slate-700 dark:text-slate-300'
+    case 'Reefer':    return 'bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400'
+    case 'Flatbed':   return 'bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-400'
+    case 'Step Deck': return 'bg-amber-50 dark:bg-amber-500/10 text-amber-800 dark:text-amber-300'
+    case 'Conestoga': return 'bg-violet-50 dark:bg-violet-500/10 text-violet-700 dark:text-violet-400'
+    case 'Other':     return 'bg-gray-100 dark:bg-slate-700/40 text-gray-600 dark:text-slate-400'
+    default:          return 'bg-gray-100 dark:bg-slate-700/40 text-gray-400 dark:text-slate-500'
+  }
+}
+
+// Days between today (America/Chicago) and the inspection date.
+// Returns null if no date. Negative = expired.
+export function daysUntilInspection(iso) {
+  if (!iso) return null
+  const today = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date())
+  const a = new Date(`${today}T00:00:00`)
+  const b = new Date(`${iso}T00:00:00`)
+  return Math.round((b - a) / 86_400_000)
+}
+
+export function inspectionTone(iso) {
+  const d = daysUntilInspection(iso)
+  if (d == null) return { dot: 'bg-gray-300 dark:bg-slate-600', text: 'text-gray-400 dark:text-slate-500', label: 'No date' }
+  if (d < 0)     return { dot: 'bg-red-500',                    text: 'text-red-700 dark:text-red-400',     label: `Expired ${Math.abs(d)}d ago` }
+  if (d < 30)    return { dot: 'bg-red-500',                    text: 'text-red-700 dark:text-red-400',     label: `${d}d` }
+  if (d <= 90)   return { dot: 'bg-amber-500',                  text: 'text-amber-700 dark:text-amber-400', label: `${d}d` }
+  return                  { dot: 'bg-emerald-500',              text: 'text-emerald-700 dark:text-emerald-400', label: `${d}d` }
+}
+
+export function fmtDate(iso) {
+  if (!iso) return '—'
+  const d = new Date(`${iso}T00:00:00`)
+  if (Number.isNaN(d.getTime())) return '—'
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+export function fmtMoney(n) {
+  if (n == null || n === '') return '—'
+  const num = Number(n)
+  if (Number.isNaN(num)) return '—'
+  return num.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 })
+}
+
+export function chicagoToday() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date())
+}
