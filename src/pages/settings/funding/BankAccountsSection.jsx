@@ -19,15 +19,19 @@ import NeedsReviewPill from './NeedsReviewPill'
 const empty = { name: '', bank_name: '', last_four: '', notes: '' }
 
 // Stale pill thresholds (days since the most recent recorded balance):
-//   0..2 → green / fresh
-//   3..7 → amber / aging
+//   0    → green / fresh (recorded today)
+//   1..2 → neutral / muted gray (recent, acceptable)
+//   3..7 → amber / aging (matches the Slice 2.5 "Funding update needed" banner)
 //   8+   → red / overdue for reconciliation
 //   null → "no balance recorded yet" gray
+// Both the dot and the supporting text share the tier color so staleness reads
+// at a glance without parsing the dot.
 function stalenessTone(days) {
   if (days == null) return { dot: 'bg-gray-300 dark:bg-slate-600', text: 'text-gray-500 dark:text-slate-500', label: 'No balance recorded yet — record one' }
-  if (days <= 2)    return { dot: 'bg-emerald-500', text: 'text-emerald-700 dark:text-emerald-400', label: `${days}d old` }
-  if (days <= 7)    return { dot: 'bg-amber-500',   text: 'text-amber-700 dark:text-amber-400',     label: `${days}d old` }
-  return                    { dot: 'bg-red-500',    text: 'text-red-700 dark:text-red-400',        label: `${days}d old` }
+  if (days === 0)   return { dot: 'bg-emerald-500', text: 'text-emerald-700 dark:text-emerald-400', label: '0d old' }
+  if (days <= 2)    return { dot: 'bg-slate-400 dark:bg-slate-500', text: 'text-slate-500 dark:text-slate-400', label: `${days}d old` }
+  if (days <= 7)    return { dot: 'bg-amber-500', text: 'text-amber-700 dark:text-amber-400', label: `${days}d old` }
+  return                    { dot: 'bg-rose-500', text: 'text-rose-700 dark:text-rose-400',  label: `${days}d old` }
 }
 
 function fmtCurrency(n) {
