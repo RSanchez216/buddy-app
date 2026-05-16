@@ -415,7 +415,7 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
                       <th className={S.th}>Truck / Trailer</th>
                       <th className={S.th}>Compensation</th>
                       <th className={S.th}>Match</th>
-                      <th className={S.th}>Status</th>
+                      <th className={`${S.th} hidden sm:table-cell w-12`} title="Skip / Include rows from commit">Action</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -425,7 +425,14 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
                       const idx = rows.indexOf(row)
                       const isSel = selected.has(row._rowNum)
                       return (
-                        <tr key={row._rowNum} className={`${S.tableRow} ${row.skip ? 'opacity-40' : ''}`}>
+                        <tr
+                          key={row._rowNum}
+                          className={`${S.tableRow} ${
+                            row.skip
+                              ? 'opacity-60 bg-gray-100/50 dark:bg-white/[0.02] [&>td]:line-through'
+                              : ''
+                          }`}
+                        >
                           <td className={S.td}>
                             <input type="checkbox" checked={isSel} onChange={() => toggleSelect(row._rowNum)} className="rounded" />
                           </td>
@@ -459,10 +466,30 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
                           <td className={S.td}>
                             <MatchCell row={row} idx={idx} onResolve={setRowResolution} />
                           </td>
-                          <td className={S.td}>
-                            {row.skip
-                              ? <button onClick={() => setRowSkip(idx, false)} className="text-[11px] text-emerald-700 dark:text-emerald-400 hover:underline">Include</button>
-                              : <button onClick={() => setRowSkip(idx, true)} className="text-[11px] text-gray-400 hover:text-red-500" title="Skip this row">Skip</button>}
+                          <td className={`${S.td} hidden sm:table-cell text-center [text-decoration:none]`}>
+                            {row.skip ? (
+                              <button
+                                onClick={() => setRowSkip(idx, false)}
+                                title="Include this row in the commit"
+                                className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 dark:text-emerald-400 hover:underline"
+                              >
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 14l-4-4m0 0l4-4m-4 4h11a4 4 0 014 4v4" />
+                                </svg>
+                                Include
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => setRowSkip(idx, true)}
+                                title="Skip this row from commit"
+                                className="inline-flex items-center justify-center w-6 h-6 rounded-full text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
+                              >
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+                                  <circle cx="12" cy="12" r="9" />
+                                  <line x1="6" y1="18" x2="18" y2="6" strokeLinecap="round" />
+                                </svg>
+                              </button>
+                            )}
                           </td>
                         </tr>
                       )
