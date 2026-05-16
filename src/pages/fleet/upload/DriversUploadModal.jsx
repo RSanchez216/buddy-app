@@ -54,6 +54,11 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
   const [rows, setRows] = useState([])
   const [possiblyTerminated, setPossiblyTerminated] = useState([])
   const [termActions, setTermActions] = useState({})  // driverId → { action, reason }
+  // Bulk-action bar state for the Possibly Terminated section.
+  const [bulkAction, setBulkAction] = useState('')
+  const [bulkReason, setBulkReason] = useState('')
+  const [pendingBulkConfirm, setPendingBulkConfirm] = useState(false)
+  const [bulkToast, setBulkToast] = useState('')  // ephemeral confirmation
   const [committing, setCommitting] = useState(false)
   const [commitResult, setCommitResult] = useState(null)
   const [filter, setFilter] = useState('all')
@@ -66,6 +71,7 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
       setStage('pick'); setFileName(''); setParseErrors([]); setRows([])
       setPossiblyTerminated([]); setTermActions({}); setCommitResult(null)
       setFilter('all'); setSearch(''); setSelected(new Set()); setBulkType('')
+      setBulkAction(''); setBulkReason(''); setPendingBulkConfirm(false); setBulkToast('')
     }
   }, [open])
 
@@ -156,6 +162,35 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
     setRows(prev => prev.map((r, i) => i === idx ? { ...r, resolution } : r))
   }
 
+  // Default reason when bulk-applying "Confirm Terminated" with a blank
+  // reason field. Chicago-tz today for consistency with the rest of BUDDY.
+  const defaultTerminationReason = useMemo(() => {
+    const today = new Date().toLocaleDateString('en-US', {
+      timeZone: 'America/Chicago', year: 'numeric', month: 'long', day: 'numeric',
+    })
+    return `Not in TMS active roster as of ${today}`
+  }, [])
+
+  const bulkActionLabel = TERM_ACTIONS.find(a => a.value === bulkAction)?.label || ''
+  const bulkEffectiveReason = bulkAction === 'terminate' && !bulkReason.trim()
+    ? defaultTerminationReason
+    : bulkReason.trim()
+
+  function applyBulkTerminations() {
+    if (!bulkAction || possiblyTerminated.length === 0) return
+    const reason = bulkEffectiveReason
+    const next = { ...termActions }
+    for (const d of possiblyTerminated) {
+      next[d.id] = { action: bulkAction, reason }
+    }
+    setTermActions(next)
+    setPendingBulkConfirm(false)
+    setBulkToast(`${possiblyTerminated.length} drivers marked as ${bulkActionLabel}`)
+    setTimeout(() => setBulkToast(''), 3000)
+    // Reset bar so a stray click doesn't re-apply.
+    setBulkAction(''); setBulkReason('')
+  }
+
   const filteredRows = useMemo(() => {
     const q = search.trim().toLowerCase()
     return rows.filter(r => {
@@ -221,7 +256,19 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
   const willInsert = toCommit.filter(r => effectiveKind(r) === 'insert').length
   const willUpdate = toCommit.filter(r => effectiveKind(r) === 'update').length
   const willBackfill = toCommit.filter(r => r.match?.method === 'name_backfill').length
-  const willTerm = Object.values(termActions).filter(t => t.action === 'terminate' || t.action === 'inactive' || t.action === 'on_leave').length
+  // Split status changes so the Commit button can label them precisely when
+  // the bulk action was Terminate vs the mixed case.
+  const termValues = Object.values(termActions)
+  const willTerminate = termValues.filter(t => t.action === 'terminate').length
+  const willOtherStatus = termValues.filter(t => t.action === 'inactive' || t.action === 'on_leave').length
+  const willTerm = willTerminate + willOtherStatus
+  // Pick the noun: "terminations" when all status changes are terminate,
+  // "status changes" for the mixed case.
+  const statusChangeSuffix = willTerm === 0
+    ? ''
+    : willTerminate > 0 && willOtherStatus === 0
+      ? ` + ${willTerminate} termination${willTerminate === 1 ? '' : 's'}`
+      : ` + ${willTerm} status change${willTerm === 1 ? '' : 's'}`
   // Block commit while any visible (non-skipped) row still requires user resolution.
   const hasUnresolved = toCommit.some(r => effectiveKind(r) === 'pending')
 
@@ -433,6 +480,71 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
                     These drivers were active in BUDDY but are missing from this upload. Review each — default is "Keep Active" so nothing terminates by accident.
                   </p>
                 </div>
+
+                {/* Bulk action bar — set every row in one click, with per-row override after. */}
+                <div className="mb-3 rounded-xl bg-gray-50 dark:bg-white/[0.02] border border-gray-200 dark:border-white/5 p-3 space-y-2">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500">Bulk Action</p>
+                  {!pendingBulkConfirm ? (
+                    <>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Select
+                          value={bulkAction}
+                          onChange={e => setBulkAction(e.target.value)}
+                          className="text-xs"
+                        >
+                          <option value="">— Apply to all {possiblyTerminated.length}: —</option>
+                          {TERM_ACTIONS.filter(a => a.value !== 'keep_active').map(a => (
+                            <option key={a.value} value={a.value}>{a.label}</option>
+                          ))}
+                          <option value="keep_active">Reset all to Keep Active</option>
+                        </Select>
+                        <input
+                          className={`${S.input} text-xs flex-1 min-w-[260px]`}
+                          placeholder={
+                            bulkAction === 'terminate' ? defaultTerminationReason : 'Reason (optional)'
+                          }
+                          value={bulkReason}
+                          onChange={e => setBulkReason(e.target.value)}
+                          disabled={bulkAction === 'keep_active' || bulkAction === ''}
+                        />
+                        <button
+                          onClick={() => setPendingBulkConfirm(true)}
+                          disabled={!bulkAction}
+                          className={S.btnSave}
+                        >
+                          Apply to All {possiblyTerminated.length}
+                        </button>
+                      </div>
+                      {bulkToast && (
+                        <div className="text-xs text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5">
+                          <span>✓</span><span>{bulkToast}</span>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    // Inline confirmation step (avoids nesting a Modal inside a Modal).
+                    <div className="space-y-2 text-sm">
+                      <p className="font-semibold text-gray-700 dark:text-slate-300">
+                        Apply "{bulkActionLabel}" to all {possiblyTerminated.length} drivers?
+                      </p>
+                      {bulkAction === 'terminate' && (
+                        <p className="text-xs text-gray-600 dark:text-slate-400">
+                          Reason: <span className="italic">"{bulkEffectiveReason}"</span>
+                        </p>
+                      )}
+                      <p className="text-[11px] text-gray-500 dark:text-slate-500">
+                        Applied to all rows below. You can still override individual rows afterward.
+                      </p>
+                      <div className="flex justify-end gap-2">
+                        <button onClick={() => setPendingBulkConfirm(false)} className={S.btnCancel}>Cancel</button>
+                        <button onClick={applyBulkTerminations} className={S.btnSave}>
+                          Apply to All {possiblyTerminated.length}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead className={S.tableHead}>
@@ -497,7 +609,7 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
               >
                 {committing
                   ? 'Committing…'
-                  : `Commit ${willInsert} new + ${willUpdate} update${willBackfill > 0 ? ` (${willBackfill} ID backfill)` : ''}${willTerm > 0 ? ` + ${willTerm} status change${willTerm === 1 ? '' : 's'}` : ''}`}
+                  : `Commit ${willInsert} new + ${willUpdate} update${willBackfill > 0 ? ` (${willBackfill} ID backfill)` : ''}${statusChangeSuffix}`}
               </button>
             </div>
           </>
