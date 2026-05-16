@@ -7,6 +7,7 @@ import Select from '../../../components/Select'
 import { DRIVER_TYPES, DriverTypePill } from '../fleetUtils'
 import { parseDriversWorkbook } from './driversParser'
 import { commitDriverRows } from './driversCommit'
+import { matchExistingDriver } from './driversMatcher'
 
 // Three stages: pick → preview → done.
 // Preview computes possibly-terminated drivers (active in DB but missing from
@@ -20,8 +21,18 @@ const TYPE_FILTERS = [
   { key: 'Leased Owner-Op',      label: 'Leased OO' },
   { key: 'Contract Driver',      label: 'Contract' },
   { key: 'Company Driver',       label: 'Company' },
+  { key: 'needs_resolution',     label: '⚠️ Needs Resolution' },
   { key: 'errors',               label: 'Errors' },
 ]
+
+// Match-method visual treatment (pill + label).
+const MATCH_PILLS = {
+  id_match:           { label: '🔁 Update by ID',          cls: 'bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400 border border-sky-200 dark:border-sky-500/20' },
+  name_backfill:      { label: '🆔 Update + Backfill ID',  cls: 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20' },
+  new:                { label: '🆕 New',                   cls: 'bg-gray-100 dark:bg-slate-700/40 text-gray-600 dark:text-slate-400 border border-gray-200 dark:border-slate-600/30' },
+  possible_duplicate: { label: '⚠️ Possible Duplicate',    cls: 'bg-amber-50 dark:bg-amber-500/10 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-500/30' },
+  name_ambiguous:     { label: '⚠️ Multiple Name Matches', cls: 'bg-amber-50 dark:bg-amber-500/10 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-500/30' },
+}
 
 const TERM_ACTIONS = [
   { value: 'keep_active', label: 'Keep Active (false +)' },
@@ -71,32 +82,41 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
       const buf = await file.arrayBuffer()
       const { rows: parsed, errors } = parseDriversWorkbook(buf)
 
-      // Dedup lookup (per row: is this internal_id already in DB?)
-      const internalIds = parsed.map(p => p.internal_id).filter(Boolean)
-      const { data: existing } = internalIds.length
-        ? await supabase.from('drivers').select('internal_id, current_status').in('internal_id', internalIds)
-        : { data: [] }
-      const existingMap = new Map((existing || []).map(e => [e.internal_id, e]))
+      // Load the FULL drivers roster once so the matcher can run all four
+      // tiers (id, name-backfill, possible-duplicate, ambiguous). We need
+      // the full set, not just the in-upload internal_ids, because Tier-2
+      // name-match candidates have internal_id IS NULL.
+      const { data: allDrivers } = await supabase
+        .from('drivers')
+        .select('id, internal_id, full_name, current_status, last_seen_in_upload_at')
 
-      const preview = parsed.map(r => ({
-        ...r,
-        is_duplicate: existingMap.has(r.internal_id),
-        existing_status: existingMap.get(r.internal_id)?.current_status || null,
-        skip: false,
-      }))
+      const preview = parsed.map(r => {
+        const match = matchExistingDriver(r, allDrivers || [])
+        return {
+          ...r,
+          match,                                       // { method, existing, confidence, candidates? }
+          resolution: null,                            // user-set for possible_duplicate / name_ambiguous
+          existing_status: match.existing?.current_status || null,
+          skip: false,
+        }
+      })
       setRows(preview)
       setParseErrors(errors)
 
       // Termination detection: currently-active drivers whose internal_id is
-      // NOT in the upload. First-ever-upload (no active drivers in DB) → empty.
-      const uploadedIdSet = new Set(internalIds)
-      const { data: activeInDB } = await supabase
-        .from('drivers')
-        .select('id, internal_id, full_name, last_seen_in_upload_at, current_status')
-        .eq('current_status', 'active')
-      const missing = (activeInDB || []).filter(d => d.internal_id && !uploadedIdSet.has(d.internal_id))
+      // present in DB but NOT in the upload's id set. Rows matched only by
+      // name (Tier 2 backfill) don't count as "missing" — we still saw the
+      // person on this run, just by name. So we union the upload's ids with
+      // the existing.internal_id of every matched row, then diff.
+      const uploadedIds = new Set()
+      for (const r of preview) {
+        if (r.internal_id) uploadedIds.add(r.internal_id)
+        if (r.match?.existing?.internal_id) uploadedIds.add(r.match.existing.internal_id)
+      }
+      const missing = (allDrivers || []).filter(d =>
+        d.current_status === 'active' && d.internal_id && !uploadedIds.has(d.internal_id)
+      )
       setPossiblyTerminated(missing)
-      // Default all to keep_active so nothing is auto-terminated.
       const defaults = {}
       for (const d of missing) defaults[d.id] = { action: 'keep_active', reason: '' }
       setTermActions(defaults)
@@ -113,22 +133,38 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
   function onDrop(e) { e.preventDefault(); handleFile(e.dataTransfer.files?.[0]) }
 
   const counts = useMemo(() => {
-    const c = { total: rows.length, new: 0, duplicate: 0, errors: 0, by_type: { 'Owner Operator': 0, 'Leased Owner-Op': 0, 'Contract Driver': 0, 'Company Driver': 0, unrecognized: 0 } }
+    const c = {
+      total: rows.length,
+      errors: 0,
+      by_type: { 'Owner Operator': 0, 'Leased Owner-Op': 0, 'Contract Driver': 0, 'Company Driver': 0, unrecognized: 0 },
+      by_method: { id_match: 0, name_backfill: 0, new: 0, possible_duplicate: 0, name_ambiguous: 0 },
+      unresolved: 0,
+    }
     for (const r of rows) {
-      if (r.is_duplicate) c.duplicate++; else c.new++
       if (r.driver_type) c.by_type[r.driver_type] = (c.by_type[r.driver_type] || 0) + 1
       else if (r.driver_type_raw) c.by_type.unrecognized++
       if (r.driver_type_raw && !r.driver_type) c.errors++
       if (r.compensation_raw && !r.compensation_type) c.errors++
+      const m = r.match?.method
+      if (m && c.by_method[m] !== undefined) c.by_method[m]++
+      if ((m === 'possible_duplicate' || m === 'name_ambiguous') && !r.resolution) c.unresolved++
     }
     return c
   }, [rows])
+
+  function setRowResolution(idx, resolution) {
+    setRows(prev => prev.map((r, i) => i === idx ? { ...r, resolution } : r))
+  }
 
   const filteredRows = useMemo(() => {
     const q = search.trim().toLowerCase()
     return rows.filter(r => {
       if (filter === 'errors') {
         if (!(r.compensation_raw && !r.compensation_type) && !(r.driver_type_raw && !r.driver_type)) return false
+      } else if (filter === 'needs_resolution') {
+        const m = r.match?.method
+        const needs = (m === 'possible_duplicate' || m === 'name_ambiguous') && !r.resolution
+        if (!needs) return false
       } else if (filter !== 'all' && r.driver_type !== filter) return false
       if (!q) return true
       return (r.internal_id || '').toLowerCase().includes(q)
@@ -168,9 +204,26 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
   }
 
   const toCommit = rows.filter(r => !r.skip)
-  const willInsert = toCommit.filter(r => !r.is_duplicate).length
-  const willUpdate = toCommit.filter(r => r.is_duplicate).length
+  // Project each committable row to its effective action so the commit
+  // button label matches what driversCommit.decideRowAction() will do.
+  function effectiveKind(r) {
+    const m = r.match?.method
+    if (m === 'id_match' || m === 'name_backfill') return 'update'
+    if (m === 'new') return 'insert'
+    if (m === 'possible_duplicate' || m === 'name_ambiguous') {
+      const a = r.resolution?.action
+      if (a === 'merge_into' && r.resolution?.target_id) return 'update'
+      if (a === 'keep_separate') return 'insert'
+      return 'pending'
+    }
+    return 'insert'
+  }
+  const willInsert = toCommit.filter(r => effectiveKind(r) === 'insert').length
+  const willUpdate = toCommit.filter(r => effectiveKind(r) === 'update').length
+  const willBackfill = toCommit.filter(r => r.match?.method === 'name_backfill').length
   const willTerm = Object.values(termActions).filter(t => t.action === 'terminate' || t.action === 'inactive' || t.action === 'on_leave').length
+  // Block commit while any visible (non-skipped) row still requires user resolution.
+  const hasUnresolved = toCommit.some(r => effectiveKind(r) === 'pending')
 
   async function doCommit() {
     setCommitting(true)
@@ -231,9 +284,13 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
                   <SummaryRow icon="🟣" label="Company Driver" value={counts.by_type['Company Driver']} />
                   {counts.by_type.unrecognized > 0 && <SummaryRow icon="⚠️" label="Unrecognized type" value={counts.by_type.unrecognized} />}
                 </SummaryGroup>
-                <SummaryGroup title="Dedup">
-                  <SummaryRow icon="🆕" label="New drivers" value={counts.new} />
-                  <SummaryRow icon="🔁" label="Already in DB" value={counts.duplicate} />
+                <SummaryGroup title="Match Breakdown">
+                  <SummaryRow icon="🔁" label="Update by ID"         value={counts.by_method.id_match} />
+                  <SummaryRow icon="🆔" label="Update + Backfill ID" value={counts.by_method.name_backfill} />
+                  <SummaryRow icon="🆕" label="New driver"            value={counts.by_method.new} />
+                  {(counts.by_method.possible_duplicate + counts.by_method.name_ambiguous) > 0 && (
+                    <SummaryRow icon="⚠️" label="Needs resolution"   value={counts.by_method.possible_duplicate + counts.by_method.name_ambiguous} />
+                  )}
                 </SummaryGroup>
                 <SummaryGroup title="Termination Detection">
                   <SummaryRow icon="📋" label="In this upload" value={counts.total} />
@@ -250,6 +307,7 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
               {TYPE_FILTERS.map(f => {
                 const count = f.key === 'all' ? counts.total
                   : f.key === 'errors' ? counts.errors
+                  : f.key === 'needs_resolution' ? counts.unresolved
                   : (counts.by_type[f.key] || 0)
                 const active = filter === f.key
                 return (
@@ -309,12 +367,13 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
                       <th className={S.th}>Carrier</th>
                       <th className={S.th}>Truck / Trailer</th>
                       <th className={S.th}>Compensation</th>
+                      <th className={S.th}>Match</th>
                       <th className={S.th}>Status</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredRows.length === 0 ? (
-                      <tr><td colSpan={8} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">No rows match this filter.</td></tr>
+                      <tr><td colSpan={9} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">No rows match this filter.</td></tr>
                     ) : filteredRows.map(row => {
                       const idx = rows.indexOf(row)
                       const isSel = selected.has(row._rowNum)
@@ -351,14 +410,12 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
                                 : null}
                           </td>
                           <td className={S.td}>
+                            <MatchCell row={row} idx={idx} onResolve={setRowResolution} />
+                          </td>
+                          <td className={S.td}>
                             {row.skip
                               ? <button onClick={() => setRowSkip(idx, false)} className="text-[11px] text-emerald-700 dark:text-emerald-400 hover:underline">Include</button>
-                              : row.is_duplicate
-                                ? <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-50 dark:bg-amber-500/10 text-amber-800 dark:text-amber-300">Update</span>
-                                : <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400">New</span>}
-                            {!row.skip && (
-                              <button onClick={() => setRowSkip(idx, true)} className="ml-2 text-[11px] text-gray-400 hover:text-red-500" title="Skip this row">×</button>
-                            )}
+                              : <button onClick={() => setRowSkip(idx, true)} className="text-[11px] text-gray-400 hover:text-red-500" title="Skip this row">Skip</button>}
                           </td>
                         </tr>
                       )
@@ -426,11 +483,21 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
             )}
 
             <div className={S.modalFooter}>
+              {hasUnresolved && (
+                <span className="text-[11px] text-amber-700 dark:text-amber-400 mr-auto self-center">
+                  ⚠️ {counts.unresolved} row{counts.unresolved === 1 ? '' : 's'} need resolution before commit
+                </span>
+              )}
               <button onClick={onClose} className={S.btnCancel} disabled={committing}>Cancel</button>
-              <button onClick={doCommit} disabled={committing || (toCommit.length === 0 && willTerm === 0)} className={S.btnSave}>
+              <button
+                onClick={doCommit}
+                disabled={committing || hasUnresolved || (toCommit.length === 0 && willTerm === 0)}
+                className={S.btnSave}
+                title={hasUnresolved ? 'Resolve ambiguous rows before committing' : ''}
+              >
                 {committing
                   ? 'Committing…'
-                  : `Commit ${willInsert} new + ${willUpdate} update${willTerm > 0 ? ` + ${willTerm} status change${willTerm === 1 ? '' : 's'}` : ''}`}
+                  : `Commit ${willInsert} new + ${willUpdate} update${willBackfill > 0 ? ` (${willBackfill} ID backfill)` : ''}${willTerm > 0 ? ` + ${willTerm} status change${willTerm === 1 ? '' : 's'}` : ''}`}
               </button>
             </div>
           </>
@@ -487,6 +554,74 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
         )}
       </div>
     </Modal>
+  )
+}
+
+// Renders the match-method pill plus a resolve dropdown for needs-resolution
+// rows. Two sub-pills:
+//   1. The match-method tag (always visible).
+//   2. For id_match / name_backfill — the existing row's name + id so the
+//      user can verify the merge target at a glance.
+//   3. For possible_duplicate / name_ambiguous — a candidate selector that
+//      lets the user pick "Merge into <candidate>" / "Keep separate" / "Skip".
+function MatchCell({ row, idx, onResolve }) {
+  const m = row.match
+  if (!m) return <span className="text-[11px] text-gray-400">—</span>
+  const meta = MATCH_PILLS[m.method] || { label: m.method, cls: 'bg-gray-100 text-gray-600' }
+  const pill = (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium whitespace-nowrap ${meta.cls}`}>
+      {meta.label}
+    </span>
+  )
+
+  if (m.method === 'id_match' || m.method === 'name_backfill') {
+    return (
+      <div className="space-y-0.5">
+        {pill}
+        <div className="text-[10px] text-gray-500 dark:text-slate-500">
+          → {m.existing?.full_name}
+          {m.method === 'name_backfill' && row.internal_id && (
+            <span className="ml-1 text-emerald-700 dark:text-emerald-400">+ ID {row.internal_id}</span>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  if (m.method === 'new') {
+    return pill
+  }
+
+  // possible_duplicate / name_ambiguous → resolve UI
+  const action = row.resolution?.action || ''
+  const targetId = row.resolution?.target_id || ''
+  return (
+    <div className="space-y-1">
+      {pill}
+      <select
+        value={action ? `${action}:${targetId}` : ''}
+        onChange={e => {
+          const v = e.target.value
+          if (!v) { onResolve(idx, null); return }
+          if (v === 'keep_separate') { onResolve(idx, { action: 'keep_separate' }); return }
+          if (v === 'skip') { onResolve(idx, { action: 'skip' }); return }
+          if (v.startsWith('merge_into:')) {
+            const id = v.slice('merge_into:'.length)
+            onResolve(idx, { action: 'merge_into', target_id: id })
+          }
+        }}
+        className="text-[11px] px-1.5 py-0.5 bg-white dark:bg-slate-800/80 border border-amber-200 dark:border-amber-500/30 rounded-md focus:outline-none focus:ring-2 focus:ring-amber-500/40"
+      >
+        <option value="">— Resolve —</option>
+        {(m.candidates || []).map(c => (
+          <option key={c.id} value={`merge_into:${c.id}`}>
+            Merge → {c.full_name}{c.internal_id ? ` (#${c.internal_id})` : ''}
+          </option>
+        ))}
+        <option value="keep_separate">Keep separate (INSERT new)</option>
+        <option value="skip">Skip this row</option>
+      </select>
+    </div>
   )
 }
 
