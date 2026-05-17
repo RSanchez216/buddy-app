@@ -490,7 +490,6 @@ const FIELDS = [
   { key: 'maturity_date',        label: 'Maturity',      fmt: v => fmtDate(v) },
   { key: 'status',               label: 'Status',        fmt: v => v ?? '—' },
   { key: 'description',          label: 'Description',   fmt: v => v ? truncate(v, 40) : '—' },
-  { key: 'payment_status_notes', label: 'Status notes',  fmt: v => v ? truncate(v, 40) : '—' },
 ]
 
 function isMissing(v) { return v === null || v === undefined || v === '' }

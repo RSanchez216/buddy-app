@@ -102,14 +102,21 @@ export default function PaymentScheduleTab({ loanId, canEdit }) {
   // Running totals
   const totals = useMemo(() => {
     const yearStart = new Date(); yearStart.setMonth(0, 1); yearStart.setHours(0, 0, 0, 0)
-    let paidYTD = 0, skippedYTD = 0, remaining = 0
+    let paidYTD = 0, skippedYTD = 0, remaining = 0, pendingCount = 0
+    let nextDue = null  // { due_date, scheduled_amount } — earliest pending/partial row
     for (const r of rows) {
       const due = r.due_date ? new Date(`${r.due_date}T00:00:00`) : null
       if (r.status === 'paid' && due >= yearStart) paidYTD += Number(r.paid_amount || r.scheduled_amount || 0)
       if (r.status === 'skipped' && due >= yearStart) skippedYTD += Number(r.scheduled_amount || 0)
-      if (r.status === 'pending' || r.status === 'partial') remaining += Number(r.scheduled_amount || 0) - Number(r.paid_amount || 0)
+      if (r.status === 'pending' || r.status === 'partial') {
+        remaining += Number(r.scheduled_amount || 0) - Number(r.paid_amount || 0)
+        pendingCount++
+        if (r.due_date && (!nextDue || r.due_date < nextDue.due_date)) {
+          nextDue = { due_date: r.due_date, scheduled_amount: Number(r.scheduled_amount || 0) }
+        }
+      }
     }
-    return { paidYTD, skippedYTD, remaining }
+    return { paidYTD, skippedYTD, remaining, pendingCount, nextDue }
   }, [rows])
 
   // Apply quick filter + sort
@@ -148,10 +155,21 @@ export default function PaymentScheduleTab({ loanId, canEdit }) {
   return (
     <div className="space-y-4">
       {/* Totals */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Stat label="Paid YTD" value={fmtMoney(totals.paidYTD)} accent="green" />
         <Stat label="Skipped YTD" value={fmtMoney(totals.skippedYTD)} accent="red" />
-        <Stat label="Remaining" value={fmtMoney(totals.remaining)} accent="orange" />
+        <Stat
+          label="Remaining To Pay"
+          value={fmtMoney(totals.remaining)}
+          subtitle={`${totals.pendingCount} payment${totals.pendingCount === 1 ? '' : 's'}`}
+          accent="orange"
+        />
+        <Stat
+          label="Next Payment Due"
+          value={totals.nextDue ? fmtDate(totals.nextDue.due_date) : 'Fully paid'}
+          subtitle={totals.nextDue ? fmtMoney(totals.nextDue.scheduled_amount) : null}
+          accent={totals.nextDue ? 'cyan' : 'gray'}
+        />
       </div>
 
       {/* Quick filter pills + sort toggle */}
@@ -283,16 +301,21 @@ export default function PaymentScheduleTab({ loanId, canEdit }) {
   )
 }
 
-function Stat({ label, value, accent }) {
+function Stat({ label, value, subtitle, accent }) {
   const colors = {
-    green: 'text-emerald-600 dark:text-emerald-400',
-    red: 'text-red-600 dark:text-red-400',
+    green:  'text-emerald-600 dark:text-emerald-400',
+    red:    'text-red-600 dark:text-red-400',
     orange: 'text-orange-600 dark:text-orange-400',
+    cyan:   'text-cyan-600 dark:text-cyan-400',
+    gray:   'text-gray-500 dark:text-slate-400',
   }
   return (
     <div className={`${S.card} p-4`}>
       <p className="text-[11px] font-medium text-gray-500 dark:text-slate-500 uppercase tracking-wide mb-1">{label}</p>
       <p className={`text-lg font-bold font-mono ${colors[accent]}`}>{value}</p>
+      {subtitle && (
+        <p className="text-[11px] text-gray-500 dark:text-slate-500 mt-0.5">{subtitle}</p>
+      )}
     </div>
   )
 }

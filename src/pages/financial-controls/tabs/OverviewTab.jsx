@@ -5,7 +5,7 @@ import { useAuth } from '../../../contexts/AuthContext'
 import { S } from '../../../lib/styles'
 import Modal from '../../../components/Modal'
 import Select from '../../../components/Select'
-import { FC, LOAN_STATUSES, STATUS_LABELS } from '../loanUtils'
+import { FC } from '../loanUtils'
 
 export default function OverviewTab({ loan, canEdit, onChange }) {
   const { user } = useAuth()
@@ -49,7 +49,6 @@ export default function OverviewTab({ loan, canEdit, onChange }) {
       first_payment_date: loan.first_payment_date || '',
       maturity_date: loan.maturity_date || '',
       status: loan.status || 'active',
-      payment_status_notes: loan.payment_status_notes || '',
       cfo_flag: !!loan.cfo_flag,
     })
   }, [loan])
@@ -87,7 +86,6 @@ export default function OverviewTab({ loan, canEdit, onChange }) {
       first_payment_date: form.first_payment_date || null,
       maturity_date: form.maturity_date || null,
       status: form.status,
-      payment_status_notes: form.payment_status_notes.trim() || null,
       cfo_flag: !!form.cfo_flag,
       updated_at: new Date().toISOString(),
     }
@@ -218,10 +216,16 @@ export default function OverviewTab({ loan, canEdit, onChange }) {
             <input className={S.input} type="number" min="1" max="31" disabled={!canEdit} value={form.due_day} onChange={e => update('due_day', e.target.value)} />
           </Field>
           <Field label="Autopay">
-            <label className="flex items-center gap-2 mt-2">
-              <input type="checkbox" disabled={!canEdit} checked={form.autopay} onChange={e => update('autopay', e.target.checked)} className="rounded" />
-              <span className="text-sm text-gray-600 dark:text-slate-400">Enabled</span>
-            </label>
+            <div className="mt-2 space-y-1.5">
+              <label className="flex items-center gap-2">
+                <input type="checkbox" disabled={!canEdit} checked={form.autopay} onChange={e => update('autopay', e.target.checked)} className="rounded" />
+                <span className="text-sm text-gray-600 dark:text-slate-400">Enabled</span>
+              </label>
+              <label className="flex items-center gap-2" title="Flag this loan for CFO review">
+                <input type="checkbox" disabled={!canEdit} checked={form.cfo_flag} onChange={e => update('cfo_flag', e.target.checked)} className="rounded" />
+                <span className="text-sm text-gray-600 dark:text-slate-400">CFO Flag</span>
+              </label>
+            </div>
           </Field>
           <Field label="Start Date">
             <input className={S.input} type="date" disabled={!canEdit} value={form.start_date} onChange={e => update('start_date', e.target.value)} />
@@ -233,25 +237,6 @@ export default function OverviewTab({ loan, canEdit, onChange }) {
             <input className={S.input} type="date" disabled={!canEdit} value={form.maturity_date} onChange={e => update('maturity_date', e.target.value)} />
           </Field>
         </Grid>
-      </Section>
-
-      <Section title="Status">
-        <Grid>
-          <Field label="Status">
-            <Select value={form.status} onChange={e => update('status', e.target.value)} disabled={!canEdit}>
-              {LOAN_STATUSES.map(s => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}
-            </Select>
-          </Field>
-          <Field label="CFO Flag">
-            <label className="flex items-center gap-2 mt-2">
-              <input type="checkbox" disabled={!canEdit} checked={form.cfo_flag} onChange={e => update('cfo_flag', e.target.checked)} className="rounded" />
-              <span className="text-sm text-gray-600 dark:text-slate-400">Flag for CFO review</span>
-            </label>
-          </Field>
-        </Grid>
-        <Field label="Payment Status Notes">
-          <input className={S.input} disabled={!canEdit} value={form.payment_status_notes} onChange={e => update('payment_status_notes', e.target.value)} />
-        </Field>
       </Section>
 
       {canEdit && (

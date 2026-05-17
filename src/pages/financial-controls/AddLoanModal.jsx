@@ -17,7 +17,7 @@ const emptyForm = {
   loan_amount: '', current_balance: '', interest_rate: '', monthly_payment: '',
   due_day: '', autopay: false,
   start_date: '', first_payment_date: '', maturity_date: '',
-  status: 'active', payment_status_notes: '', description: '', cfo_flag: false,
+  status: 'active', description: '', cfo_flag: false,
 }
 
 export default function AddLoanModal({ open, onClose, onCreated }) {
@@ -84,7 +84,6 @@ export default function AddLoanModal({ open, onClose, onCreated }) {
       first_payment_date: form.first_payment_date || null,
       maturity_date: form.maturity_date || null,
       status: form.status,
-      payment_status_notes: form.payment_status_notes.trim() || null,
       description: form.description.trim() || null,
       cfo_flag: !!form.cfo_flag,
       created_by: user?.id || null,
@@ -265,9 +264,6 @@ export default function AddLoanModal({ open, onClose, onCreated }) {
               </label>
             </Field>
           </div>
-          <Field label="Payment Status Notes">
-            <input className={S.input} value={form.payment_status_notes} onChange={e => update('payment_status_notes', e.target.value)} />
-          </Field>
           <Field label="Description / Notes">
             <textarea className={S.textarea} rows={3} value={form.description} onChange={e => update('description', e.target.value)} />
           </Field>
