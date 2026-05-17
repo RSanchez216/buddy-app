@@ -142,17 +142,37 @@ export default function ChipDetailPanel({ event, canEdit = true, onClose, onChan
 
   async function markPaid() {
     if (!details || details.kind !== 'custom_outflow') return
-    const today = toISO(new Date())
-    // paid_at stamps the moment of marking so the time-aware projection can
-    // decide whether to include the cash impact on the anchor day.
+    const row = details.row
+    // From the Payment Calendar surface: prefer the planned pay date, then
+    // the due date, then today — never default to today when a planned/due
+    // date exists. paid_at stamps the moment of marking for time-aware
+    // projection. Audit log entry tagged surface='payment_calendar'.
+    const nowIso = new Date().toISOString()
+    const defaultPaidDate = row.planned_pay_date || row.due_date || toISO(new Date())
     const res = await supabase.from('custom_outflows').update({
       status: 'paid',
-      paid_date: today,
-      paid_at: new Date().toISOString(),
-      paid_amount: Number(details.row.amount || 0),
-      updated_at: new Date().toISOString(),
-    }).eq('id', details.row.id)
+      paid_date: defaultPaidDate,
+      paid_at: nowIso,
+      paid_amount: Number(row.amount || 0),
+      updated_at: nowIso,
+    }).eq('id', row.id)
     if (res.error) { alert(res.error.message); return }
+    await supabase.from('audit_log').insert({
+      table_name: 'custom_outflows',
+      record_id: row.id,
+      action: 'paid_status_set',
+      performed_by: user?.id || null,
+      performed_by_email: profile?.email || null,
+      metadata: {
+        surface: 'payment_calendar',
+        due_date: row.due_date || null,
+        planned_pay_date: row.planned_pay_date || null,
+        paid_date: defaultPaidDate,
+        paid_at: nowIso,
+        paid_amount: Number(row.amount || 0),
+        description: row.description || null,
+      },
+    })
     onChange?.()
     onClose?.()
   }
@@ -167,13 +187,15 @@ export default function ChipDetailPanel({ event, canEdit = true, onClose, onChan
   async function unmarkAsPaid() {
     if (!details) return
     const kind = details.kind
-    if (kind !== 'custom_outflow' && kind !== 'invoice') return
+    if (kind !== 'custom_outflow' && kind !== 'invoice' && kind !== 'loan_payment') return
     const row = details.row
     const scheduledDate = row.planned_pay_date || row.due_date
     const scheduledLabel = scheduledDate ? fmtDate(scheduledDate) : 'its scheduled date'
     const itemLabel = kind === 'invoice'
       ? (row.invoice_number ? `Invoice #${row.invoice_number}` : 'this invoice')
-      : (row.description || 'this row')
+      : kind === 'loan_payment'
+        ? `${row.loan?.lender?.name || 'Loan'} payment for ${fmtDate(row.due_date)}`
+        : (row.description || 'this row')
     const ok = confirm(
       `Unmark this as paid?\n\n` +
       `It will return to planned status and reappear on the calendar on its scheduled date (${scheduledLabel}). ` +
@@ -181,22 +203,31 @@ export default function ChipDetailPanel({ event, canEdit = true, onClose, onChan
     )
     if (!ok) return
 
-    const tableName = kind === 'invoice' ? 'invoices' : 'custom_outflows'
-    const revertStatus = kind === 'invoice' ? 'Pending' : 'planned'
-    // Schema differences: custom_outflows has updated_at but no
-    // payment_method column. Invoices have payment_method but no updated_at.
-    // paid_at is on both; cleared on revert so the time-aware projection
-    // stops treating the row as a post-anchor paid event.
+    // Per-table schema differences:
+    //   custom_outflows: has updated_at, no payment_method column on revert payload
+    //   invoices: has payment_method, no updated_at column
+    //   loan_payments: has both updated_at and payment_method
+    const tableName = kind === 'invoice' ? 'invoices'
+                    : kind === 'loan_payment' ? 'loan_payments'
+                    : 'custom_outflows'
+    const revertStatus = kind === 'invoice' ? 'Pending'
+                       : kind === 'loan_payment' ? 'pending'
+                       : 'planned'
     const before = {
       status: row.status,
       paid_date: row.paid_date || null,
       paid_at: row.paid_at || null,
       paid_amount: row.paid_amount != null ? Number(row.paid_amount) : null,
-      payment_method: kind === 'invoice' ? (row.payment_method || null) : undefined,
+      payment_method: (kind === 'invoice' || kind === 'loan_payment') ? (row.payment_method || null) : undefined,
     }
-    const update = kind === 'invoice'
-      ? { status: revertStatus, paid_date: null, paid_at: null, paid_amount: null, payment_method: null }
-      : { status: revertStatus, paid_date: null, paid_at: null, paid_amount: null, updated_at: new Date().toISOString() }
+    let update
+    if (kind === 'invoice') {
+      update = { status: revertStatus, paid_date: null, paid_at: null, paid_amount: null, payment_method: null }
+    } else if (kind === 'loan_payment') {
+      update = { status: revertStatus, paid_date: null, paid_at: null, paid_amount: null, payment_method: null, reference_number: null, updated_at: new Date().toISOString() }
+    } else {
+      update = { status: revertStatus, paid_date: null, paid_at: null, paid_amount: null, updated_at: new Date().toISOString() }
+    }
 
     const { error: e } = await supabase.from(tableName).update(update).eq('id', row.id)
     if (e) { setError(e.message); return }
@@ -208,10 +239,13 @@ export default function ChipDetailPanel({ event, canEdit = true, onClose, onChan
       performed_by: user?.id || null,
       performed_by_email: profile?.email || null,
       metadata: {
+        surface: 'payment_calendar',
         ...(kind === 'invoice'
-          ? { invoice_number: row.invoice_number, vendor: row.vendor?.name || null }
-          : { description: row.description }),
-        amount: Number(row.amount || 0),
+            ? { invoice_number: row.invoice_number, vendor: row.vendor?.name || null }
+            : kind === 'loan_payment'
+              ? { loan_id: row.loan_id, lender: row.loan?.lender?.name || null, loan_id_external: row.loan?.loan_id_external || null }
+              : { description: row.description }),
+        amount: Number(row.scheduled_amount || row.amount || 0),
         funding_account_name: event?.funding_account_name || null,
         planned_pay_date: row.planned_pay_date || null,
         due_date: row.due_date || null,
@@ -221,7 +255,7 @@ export default function ChipDetailPanel({ event, canEdit = true, onClose, onChan
           paid_date: null,
           paid_at: null,
           paid_amount: null,
-          payment_method: kind === 'invoice' ? null : undefined,
+          payment_method: (kind === 'invoice' || kind === 'loan_payment') ? null : undefined,
         },
       },
     })
@@ -399,7 +433,7 @@ export default function ChipDetailPanel({ event, canEdit = true, onClose, onChan
                   Mark as paid
                 </button>
               )}
-              {(details?.kind === 'custom_outflow' || details?.kind === 'invoice') && isPaidStatus(details.row.status) && (
+              {(details?.kind === 'custom_outflow' || details?.kind === 'invoice' || details?.kind === 'loan_payment') && isPaidStatus(details.row.status) && (
                 <button
                   onClick={unmarkAsPaid}
                   className="text-xs font-medium text-orange-600 dark:text-orange-400 hover:underline"
@@ -440,6 +474,7 @@ export default function ChipDetailPanel({ event, canEdit = true, onClose, onChan
         open={!!markPaidConfig}
         kind={markPaidConfig?.kind}
         mode={markPaidConfig?.mode}
+        surface="payment_calendar"
         record={
           markPaidConfig?.kind === 'loan' && details?.kind === 'loan_payment'
             ? details.row

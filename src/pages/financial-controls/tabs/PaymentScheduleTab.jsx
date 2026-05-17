@@ -33,17 +33,52 @@ export default function PaymentScheduleTab({ loanId, loan, canEdit, onChange }) 
     setLoading(false)
   }
 
+  // Quick inline status change from the Payment Schedule row. Default
+  // paid_date on this surface is the row's due_date — the user's mental
+  // model is "marking from the Debt Schedule means it was paid on the
+  // agreed day." Stamps paid_at on transition to paid; clears it on
+  // transition away. Writes an audit_log entry tagged surface=debt_schedule.
   async function quickStatus(row, status) {
     if (!canEdit) return
+    const nowIso = new Date().toISOString()
+    const wasPaid = row.status === 'paid' || row.status === 'partial'
+    const goingPaid = status === 'paid' || status === 'partial'
     const patch = {
       status,
-      updated_at: new Date().toISOString(),
+      updated_at: nowIso,
     }
-    if (status === 'paid' && !row.paid_amount) {
-      patch.paid_amount = row.scheduled_amount
-      patch.paid_date = new Date().toISOString().slice(0, 10)
+    if (goingPaid) {
+      if (!row.paid_amount) patch.paid_amount = row.scheduled_amount
+      if (!row.paid_date) patch.paid_date = row.due_date || nowIso.slice(0, 10)
+      patch.paid_at = nowIso
+    } else {
+      // Leaving paid/partial — clear the paid metadata so time-aware
+      // projection and the dashboard don't read a stale anchor.
+      patch.paid_date = null
+      patch.paid_at = null
+      patch.paid_amount = null
     }
-    await supabase.from('loan_payments').update(patch).eq('id', row.id)
+    const { error: upErr } = await supabase.from('loan_payments').update(patch).eq('id', row.id)
+    if (upErr) { alert('Status change failed: ' + upErr.message); return }
+
+    await supabase.from('audit_log').insert({
+      table_name: 'loan_payments',
+      record_id: row.id,
+      action: goingPaid ? 'paid_status_set' : (wasPaid ? 'paid_status_reverted' : 'status_changed'),
+      performed_by: user?.id || null,
+      performed_by_email: profile?.email || null,
+      metadata: {
+        surface: 'debt_schedule',
+        from_status: row.status,
+        to_status: status,
+        due_date: row.due_date || null,
+        paid_date: goingPaid ? (patch.paid_date || row.paid_date) : null,
+        paid_at: goingPaid ? nowIso : null,
+        paid_amount: goingPaid ? (patch.paid_amount ?? row.paid_amount ?? row.scheduled_amount) : null,
+        loan_id: row.loan_id,
+      },
+    })
+
     load()
   }
 
@@ -63,7 +98,10 @@ export default function PaymentScheduleTab({ loanId, loan, canEdit, onChange }) 
 
   async function saveEdit() {
     setSaving(true)
-    await supabase.from('loan_payments').update({
+    const nowIso = new Date().toISOString()
+    const wasPaid = editRow.status === 'paid' || editRow.status === 'partial'
+    const goingPaid = form.status === 'paid' || form.status === 'partial'
+    const patch = {
       due_date: form.due_date || null,
       scheduled_amount: form.scheduled_amount === '' ? null : Number(form.scheduled_amount),
       status: form.status,
@@ -72,8 +110,38 @@ export default function PaymentScheduleTab({ loanId, loan, canEdit, onChange }) 
       payment_method: form.payment_method.trim() || null,
       reference_number: form.reference_number.trim() || null,
       notes: form.notes.trim() || null,
-      updated_at: new Date().toISOString(),
-    }).eq('id', editRow.id)
+      updated_at: nowIso,
+    }
+    // paid_at follows the same rules as quickStatus: stamp on transition to
+    // paid/partial, clear on transition away. Existing paid_at is preserved
+    // when status stays paid (no churn).
+    if (goingPaid && !wasPaid) patch.paid_at = nowIso
+    else if (!goingPaid && wasPaid) patch.paid_at = null
+
+    const { error: upErr } = await supabase.from('loan_payments').update(patch).eq('id', editRow.id)
+    if (upErr) { setSaving(false); alert('Save failed: ' + upErr.message); return }
+
+    // Only log when status transitioned. Edits that just touch notes or
+    // payment method don't need a dedicated audit row (updated_at captures it).
+    if (goingPaid !== wasPaid) {
+      await supabase.from('audit_log').insert({
+        table_name: 'loan_payments',
+        record_id: editRow.id,
+        action: goingPaid ? 'paid_status_set' : 'paid_status_reverted',
+        performed_by: user?.id || null,
+        performed_by_email: profile?.email || null,
+        metadata: {
+          surface: 'debt_schedule',
+          from_status: editRow.status,
+          to_status: form.status,
+          due_date: editRow.due_date || null,
+          paid_date: form.paid_date || null,
+          paid_at: goingPaid ? nowIso : null,
+          paid_amount: form.paid_amount === '' ? null : Number(form.paid_amount),
+          loan_id: editRow.loan_id,
+        },
+      })
+    }
     setSaving(false); setEditRow(null); load()
   }
 
@@ -257,14 +325,14 @@ export default function PaymentScheduleTab({ loanId, loan, canEdit, onChange }) 
           <table className="w-full text-sm">
             <thead className={S.tableHead}>
               <tr>
-                {['Month', 'Due Date', 'Scheduled', 'Status', 'Paid', 'Paid Date', 'Notes', canEdit && ''].filter(h => h !== false).map((h, i) => (
+                {['Month', 'Due Date', 'Scheduled', 'Status', 'Paid', 'Paid Date', 'Notes', 'Last Updated', canEdit && ''].filter(h => h !== false).map((h, i) => (
                   <th key={i} className={S.th}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {visibleRows.length === 0 ? (
-                <tr><td colSpan={8} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">{rows.length === 0 ? 'No payments scheduled' : 'No payments match this filter'}</td></tr>
+                <tr><td colSpan={9} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">{rows.length === 0 ? 'No payments scheduled' : 'No payments match this filter'}</td></tr>
               ) : visibleRows.map(r => (
                 <tr key={r.id} className={S.tableRow}>
                   <td className={`${S.td} text-gray-700 dark:text-slate-300 font-medium whitespace-nowrap`}>
@@ -295,6 +363,9 @@ export default function PaymentScheduleTab({ loanId, loan, canEdit, onChange }) 
                   <td className={`${S.td} font-mono text-gray-700 dark:text-slate-300 whitespace-nowrap`}>{r.paid_amount != null ? fmtMoney(r.paid_amount) : '—'}</td>
                   <td className={`${S.td} text-gray-600 dark:text-slate-400 whitespace-nowrap`}>{fmtDate(r.paid_date)}</td>
                   <td className={`${S.td} text-xs text-gray-500 dark:text-slate-400 max-w-[180px] truncate`} title={r.notes || ''}>{r.notes || '—'}</td>
+                  <td className={`${S.td} text-xs text-gray-500 dark:text-slate-400 whitespace-nowrap`} title={r.updated_at ? new Date(r.updated_at).toLocaleString('en-US') : ''}>
+                    {fmtRelativeDate(r.updated_at)}
+                  </td>
                   {canEdit && (
                     <td className={`${S.td} text-right whitespace-nowrap`}>
                       <button onClick={() => openEdit(r)} className="text-gray-400 hover:text-orange-600 dark:hover:text-orange-400 mr-3" title="Edit">
@@ -417,6 +488,22 @@ function Field({ label, children }) {
       {children}
     </div>
   )
+}
+
+// Relative-date label for the Last Updated column. Within a week we say
+// "Today" / "Yesterday" / "N days ago"; further back we fall to the
+// absolute short date. Tooltip on the cell shows the full timestamp.
+function fmtRelativeDate(iso) {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '—'
+  const now = new Date()
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const days = Math.floor((startOfToday - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 86_400_000)
+  if (days <= 0) return 'Today'
+  if (days === 1) return 'Yesterday'
+  if (days < 7) return `${days} days ago`
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 function FilterPill({ active, onClick, label, count, tone = 'gray' }) {

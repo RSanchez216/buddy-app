@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from '../../lib/supabase'
+import { useAuth } from '../../contexts/AuthContext'
 import { S } from '../../lib/styles'
 import Select from '../../components/Select'
 import { CF, fmtMoney, toISO } from './calendarUtils'
@@ -10,10 +11,14 @@ const PAYMENT_METHODS = ['ACH', 'Wire', 'Check', 'Auto-pay', 'Other']
 // Shared "Mark as paid / partial" modal for loan_payments and invoices.
 // kind: 'loan' | 'invoice'; mode: 'paid' | 'partial' (partial only used for loans).
 //
-// `record` is the underlying row from the DB:
-//   - loan: row from loan_payments (with optional joined loan/lender for header)
-//   - invoice: row from invoices (with optional joined vendor)
-export default function MarkPaidModal({ open, kind, mode = 'paid', record, headerSubtitle, onClose, onSaved }) {
+// surface ∈ 'debt_schedule' | 'payment_calendar' — selects the paid_date
+// default. Debt Schedule defaults to record.due_date (the row's agreed due
+// date — the user's mental model is "if I mark paid here without changing
+// anything, it was paid on time"). Payment Calendar defaults to
+// record.planned_pay_date ?? record.due_date. User can override either way
+// before save. Captured in audit_log so we can reconstruct intent later.
+export default function MarkPaidModal({ open, kind, mode = 'paid', record, headerSubtitle, surface = 'payment_calendar', onClose, onSaved }) {
+  const { user, profile } = useAuth()
   const [paidAmount, setPaidAmount] = useState('')
   const [paidDate, setPaidDate] = useState('')
   const [method, setMethod] = useState('ACH')
@@ -22,19 +27,29 @@ export default function MarkPaidModal({ open, kind, mode = 'paid', record, heade
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
-  // Reset form whenever the modal opens for a new record
+  // Reset form whenever the modal opens for a new record. paid_date default
+  // is surface-aware so the user's mental model maps to the right date:
+  //   - debt_schedule: due_date (agreed schedule; the row was paid on time)
+  //   - payment_calendar: planned_pay_date ?? due_date (planned-then-paid)
+  // Falls through to today only when neither date is available. An existing
+  // paid_date on the record always wins (re-opening to edit).
   useEffect(() => {
     if (!open || !record) return
     const defaultAmount = kind === 'loan'
       ? (record.scheduled_amount ?? '')
       : (record.amount ?? '')
     setPaidAmount(record.paid_amount ?? defaultAmount)
-    setPaidDate(record.paid_date || toISO(new Date()))
+    const defaultDate = record.paid_date
+      || (surface === 'debt_schedule'
+            ? record.due_date
+            : (record.planned_pay_date || record.due_date))
+      || toISO(new Date())
+    setPaidDate(defaultDate)
     setMethod(record.payment_method || 'ACH')
     setReference(record.reference_number || '')
     setNotes(record.notes || '')
     setError('')
-  }, [open, record, kind])
+  }, [open, record, kind, surface])
 
   // Lock body scroll while modal is open
   useEffect(() => {
@@ -56,33 +71,60 @@ export default function MarkPaidModal({ open, kind, mode = 'paid', record, heade
     setSaving(true); setError('')
 
     try {
+      const nowIso = new Date().toISOString()
       let res
+      let tableName
       if (kind === 'loan') {
-        // loan_payments status uses lowercase ('paid' | 'partial')
+        // loan_payments status uses lowercase ('paid' | 'partial'). paid_at
+        // stamps the moment of marking so the time-aware projection works.
+        tableName = 'loan_payments'
         res = await supabase.from('loan_payments').update({
           status: isPartial ? 'partial' : 'paid',
           paid_amount: Number(paidAmount),
           paid_date: paidDate,
+          paid_at: nowIso,
           payment_method: method || null,
           reference_number: reference.trim() || null,
           notes: notes.trim() || null,
-          updated_at: new Date().toISOString(),
+          updated_at: nowIso,
         }).eq('id', record.id)
       } else {
-        // invoices status check constraint requires Pascal-case. paid_at
-        // stamps the moment of marking so the time-aware projection can
-        // decide whether to include the cash impact on the anchor day.
+        // invoices status check constraint requires Pascal-case.
+        tableName = 'invoices'
         res = await supabase.from('invoices').update({
           status: 'Paid',
           paid_amount: Number(paidAmount),
           paid_date: paidDate,
-          paid_at: new Date().toISOString(),
+          paid_at: nowIso,
           payment_method: method || null,
           reference_number: reference.trim() || null,
           notes: notes.trim() || null,
         }).eq('id', record.id)
       }
       if (res?.error) throw new Error(res.error.message)
+
+      // Audit log entry with surface tag. Identifying label varies by kind.
+      const label = kind === 'loan'
+        ? `${record.loan?.lender?.name || 'Loan'} · ${record.loan?.loan_id_external || record.id}`
+        : `${record.vendor?.name || 'Vendor'} · ${record.invoice_number || 'no #'}`
+      await supabase.from('audit_log').insert({
+        table_name: tableName,
+        record_id: record.id,
+        action: 'paid_status_set',
+        performed_by: user?.id || null,
+        performed_by_email: profile?.email || null,
+        metadata: {
+          surface,
+          mode: isPartial ? 'partial' : 'paid',
+          due_date: record.due_date || null,
+          planned_pay_date: record.planned_pay_date || null,
+          paid_date: paidDate,
+          paid_at: nowIso,
+          paid_amount: Number(paidAmount),
+          label,
+        },
+      })
+
       console.log(`[MarkPaid:${kind}] success`)
       setSaving(false)
       onSaved?.()
@@ -141,6 +183,11 @@ export default function MarkPaidModal({ open, kind, mode = 'paid', record, heade
               </Field>
               <Field label="Paid date *">
                 <input type="date" className={S.input} value={paidDate} onChange={e => setPaidDate(e.target.value)} />
+                <p className="text-[11px] text-gray-500 dark:text-slate-500 mt-1">
+                  {surface === 'debt_schedule'
+                    ? 'Defaulted to due date — change if it was paid on a different day.'
+                    : 'Defaulted to planned pay date — change if it was paid on a different day.'}
+                </p>
               </Field>
               <Field label="Payment method">
                 <Select value={method} onChange={e => setMethod(e.target.value)}>
