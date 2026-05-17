@@ -62,7 +62,10 @@ export default function DebtSchedule() {
   const [search, setSearch] = useState('')
   const [filterEntity, setFilterEntity] = useState('')
   const [filterLender, setFilterLender] = useState('')
-  const [filterStatus, setFilterStatus] = useState('')
+  // Default to Active — paid_off / cancelled / etc. are historical and
+  // surface separately (e.g., the AWAITING TITLE RELEASE panel). User can
+  // switch to "All Statuses" any time.
+  const [filterStatus, setFilterStatus] = useState('active')
   const [filterEquipType, setFilterEquipType] = useState('')
   const [pastDueOnly, setPastDueOnly] = useState(false)
   const [titlePendingOnly, setTitlePendingOnly] = useState(false)
@@ -223,7 +226,10 @@ export default function DebtSchedule() {
             Financial Controls
           </div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Debt Schedule</h1>
-          <p className="text-sm text-gray-500 dark:text-slate-500 mt-0.5">{loans.length} total loans • {kpis.activeLoans} active</p>
+          <p className="text-sm text-gray-500 dark:text-slate-500 mt-0.5">
+            {filtered.length} {filterStatus ? (STATUS_LABELS[filterStatus] || filterStatus).toLowerCase() : ''} loan{filtered.length === 1 ? '' : 's'}
+            <span className="text-gray-400 dark:text-slate-600"> · {loans.length} total</span>
+          </p>
         </div>
         {canEdit && (
           <button onClick={() => setShowAdd(true)} className={FC.btnPrimary}>
