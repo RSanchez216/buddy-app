@@ -7,6 +7,7 @@ import Select from '../../../components/Select'
 import DriverPicker from './DriverPicker'
 import VinMatch from './VinMatch'
 import { logEvent, diffFields } from '../utils/events'
+import { formatEquipmentLabel } from '../../../hooks/useEquipmentTypes'
 
 const PURCHASE_TYPES = [
   { v: 'cash',              l: 'Cash' },
@@ -590,5 +591,5 @@ function prettifyField(k) {
 
 function buildLinkedLabel(p) {
   // best-effort during hydration — full label resolves once VinMatch fetches
-  return p.equipment_type || p.truck_number || 'Equipment'
+  return (p.equipment_type ? formatEquipmentLabel(p.equipment_type) : null) || p.truck_number || 'Equipment'
 }

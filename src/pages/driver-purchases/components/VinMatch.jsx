@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../../../lib/supabase'
+import { useEquipmentTypes } from '../../../hooks/useEquipmentTypes'
 
 // Subcomponent that watches a VIN string and surfaces a match against
 // loan_equipment when one exists. Parent handles the actual linking by
@@ -9,6 +10,7 @@ import { supabase } from '../../../lib/supabase'
 export default function VinMatch({ vin, linked, onLink, onUnlink }) {
   const [match, setMatch] = useState(null)
   const [searching, setSearching] = useState(false)
+  const { formatLabel: formatEqLabel } = useEquipmentTypes()
 
   useEffect(() => {
     setMatch(null)
@@ -62,7 +64,7 @@ export default function VinMatch({ vin, linked, onLink, onUnlink }) {
 
   if (!match) return null
 
-  const desc = [match.year, match.make, match.model].filter(Boolean).join(' ') || match.equipment_type || match.unit_number || 'Equipment'
+  const desc = [match.year, match.make, match.model].filter(Boolean).join(' ') || (match.equipment_type ? formatEqLabel(match.equipment_type) : null) || match.unit_number || 'Equipment'
   const loanLabel = match.loans?.loan_id_external || match.loans?.contract_number || ''
 
   // Two-row layout: header (label + Link button) on top, body (equipment +

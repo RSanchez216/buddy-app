@@ -14,6 +14,7 @@ import PurchaseFormModal from './components/PurchaseFormModal'
 import DeletePurchaseModal from './components/DeletePurchaseModal'
 import { logEvent } from './utils/events'
 import { fmtDate, fmtMoney, fmtFreq, purchaseTypeLabel } from './utils/format'
+import { useEquipmentTypes } from '../../hooks/useEquipmentTypes'
 
 // Derive the unit-label noun from equipment_type. Falls back to neutral
 // "Unit" when type is null/empty/anything other than truck or trailer
@@ -40,6 +41,7 @@ export default function DriverPurchaseDetail() {
   const openRecordOnMount = searchParams.get('record') === '1'
   const { user, profile } = useAuth()
   const canEdit = profile?.role === 'admin' || profile?.role === 'manager'
+  const { formatLabel: formatEqLabel } = useEquipmentTypes()
 
   const [summary, setSummary] = useState(null)        // v_driver_purchase_summary row
   const [purchase, setPurchase] = useState(null)      // raw driver_purchases row (for edit form)
@@ -370,7 +372,7 @@ export default function DriverPurchaseDetail() {
               <Fact label="Downpayment" value={fmtMoney(summary.downpayment)} mono />
               <Fact label="VIN" value={summary.vin} mono />
               <Fact label="Current balance" value={fmtMoney(summary.current_balance)} mono />
-              <Fact label="Equipment type" value={summary.equipment_type} />
+              <Fact label="Equipment type" value={summary.equipment_type ? formatEqLabel(summary.equipment_type) : null} />
               <Fact
                 label="Linked equipment"
                 value={equipment ? (
@@ -378,7 +380,7 @@ export default function DriverPurchaseDetail() {
                     to={`/financial-controls/debt-schedule/${equipment.loan_id}`}
                     className="text-cyan-600 dark:text-cyan-400 hover:underline"
                   >
-                    {[equipment.year, equipment.make, equipment.model].filter(Boolean).join(' ') || equipment.equipment_type || equipment.unit_number || 'View loan'}
+                    {[equipment.year, equipment.make, equipment.model].filter(Boolean).join(' ') || (equipment.equipment_type ? formatEqLabel(equipment.equipment_type) : null) || equipment.unit_number || 'View loan'}
                   </Link>
                 ) : null}
               />

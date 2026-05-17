@@ -179,6 +179,17 @@ export default function DebtSchedule() {
     setSortKey(null); setSortDir('asc')
   }
 
+  // equipment_types.name → display_label lookup. Falls back to uppercase
+  // raw name for orphans so we never render the lowercase internal key.
+  const formatEqLabel = useMemo(() => {
+    const m = new Map()
+    for (const t of equipmentTypes) m.set(t.name, t.display_label)
+    return (name) => {
+      if (!name) return '—'
+      return m.get(name) || String(name).toUpperCase()
+    }
+  }, [equipmentTypes])
+
   // Loans paid off but still missing one or more equipment titles.
   // Sorted oldest paid-off first so Rebeca works the longest-pending
   // ones from the top.
@@ -321,6 +332,7 @@ export default function DebtSchedule() {
                   entityName={entityName}
                   rows={rows}
                   equipmentByLoan={equipmentByLoan}
+                  formatEqLabel={formatEqLabel}
                 />
               ))
             ) : (
@@ -328,7 +340,7 @@ export default function DebtSchedule() {
                 {sorted.length === 0 ? (
                   <tr><td colSpan={9} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">No loans found</td></tr>
                 ) : sorted.map(l => (
-                  <LoanRow key={l.id} loan={l} equipment={equipmentByLoan[l.id] || []} />
+                  <LoanRow key={l.id} loan={l} equipment={equipmentByLoan[l.id] || []} formatEqLabel={formatEqLabel} />
                 ))}
               </tbody>
             )}
@@ -341,7 +353,7 @@ export default function DebtSchedule() {
   )
 }
 
-function GroupedBody({ entityName, rows, equipmentByLoan }) {
+function GroupedBody({ entityName, rows, equipmentByLoan, formatEqLabel }) {
   const [open, setOpen] = useState(true)
   return (
     <>
@@ -363,14 +375,14 @@ function GroupedBody({ entityName, rows, equipmentByLoan }) {
       </thead>
       {open && (
         <tbody>
-          {rows.map(l => <LoanRow key={l.id} loan={l} equipment={equipmentByLoan[l.id] || []} />)}
+          {rows.map(l => <LoanRow key={l.id} loan={l} equipment={equipmentByLoan[l.id] || []} formatEqLabel={formatEqLabel} />)}
         </tbody>
       )}
     </>
   )
 }
 
-function LoanRow({ loan, equipment }) {
+function LoanRow({ loan, equipment, formatEqLabel }) {
   const days = Number(loan.days_behind) || 0
   const eqCount = equipment.length
   const primaryType = (() => {
@@ -380,6 +392,7 @@ function LoanRow({ loan, equipment }) {
     const best = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]
     return best?.[0] || null
   })()
+  const primaryTypeLabel = primaryType ? formatEqLabel(primaryType) : null
 
   return (
     <tr className={S.tableRow}>
@@ -402,7 +415,7 @@ function LoanRow({ loan, equipment }) {
         {eqCount > 0 ? (
           <span>
             <span className="font-medium text-gray-700 dark:text-slate-300">{eqCount}</span>
-            {primaryType && <span className="text-gray-400 dark:text-slate-500 ml-1">({primaryType})</span>}
+            {primaryTypeLabel && <span className="text-gray-400 dark:text-slate-500 ml-1">({primaryTypeLabel})</span>}
           </span>
         ) : <span className="text-gray-300 dark:text-slate-600">—</span>}
       </td>

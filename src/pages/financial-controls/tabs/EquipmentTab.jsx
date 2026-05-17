@@ -6,6 +6,7 @@ import Modal from '../../../components/Modal'
 import Select from '../../../components/Select'
 import { FC, EQUIPMENT_STATUSES, STATUS_LABELS, equipmentStatusPill, fmtMoney, fmtDate } from '../loanUtils'
 import SoldToDriverSection from '../components/SoldToDriverSection'
+import { useEquipmentTypes } from '../../../hooks/useEquipmentTypes'
 
 const empty = {
   unit_number: '', vin: '', equipment_type: '', make: '', model: '', year: '',
@@ -15,7 +16,10 @@ const empty = {
 export default function EquipmentTab({ loanId, canEdit }) {
   const { user } = useAuth()
   const [rows, setRows] = useState([])
-  const [equipmentTypes, setEquipmentTypes] = useState([])
+  // All types (active + inactive) so legacy rows still resolve to a label.
+  // Dropdown options filter to is_active at render time.
+  const { types: allEquipmentTypes, formatLabel: formatEqLabel } = useEquipmentTypes()
+  const equipmentTypes = useMemo(() => allEquipmentTypes.filter(t => t.is_active), [allEquipmentTypes])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
   const [editItem, setEditItem] = useState(null)
@@ -31,13 +35,11 @@ export default function EquipmentTab({ loanId, canEdit }) {
 
   async function load() {
     setLoading(true)
-    const [eqRes, typeRes, loanRes] = await Promise.all([
+    const [eqRes, loanRes] = await Promise.all([
       supabase.from('loan_equipment').select('*').eq('loan_id', loanId).order('unit_number', { ascending: true }),
-      supabase.from('equipment_types').select('id, name, display_label, sort_order').eq('is_active', true).order('sort_order').order('display_label'),
       supabase.from('loans').select('monthly_payment').eq('id', loanId).maybeSingle(),
     ])
     setRows(eqRes.data || [])
-    setEquipmentTypes(typeRes.data || [])
     setContractTotal(loanRes.data?.monthly_payment != null ? String(loanRes.data.monthly_payment) : '')
     setLoading(false)
   }
@@ -166,9 +168,9 @@ export default function EquipmentTab({ loanId, canEdit }) {
     if (!rows.length) return ''
     const counts = {}
     rows.forEach(r => { if (r.equipment_type) counts[r.equipment_type] = (counts[r.equipment_type] || 0) + 1 })
-    const parts = Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([t, n]) => `${n} ${t}${n !== 1 ? 's' : ''}`)
+    const parts = Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([t, n]) => `${n} ${formatEqLabel(t)}`)
     return `${rows.length} equipment${rows.length !== 1 ? '' : ''} (${parts.join(', ')})`
-  }, [rows])
+  }, [rows, formatEqLabel])
 
   if (loading) return <div className="flex items-center justify-center h-32"><div className="animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500" /></div>
 
@@ -245,7 +247,7 @@ export default function EquipmentTab({ loanId, canEdit }) {
                 <tr key={r.id} className={S.tableRow}>
                   <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>{r.unit_number || '—'}</td>
                   <td className={`${S.td} font-mono text-xs text-gray-500 dark:text-slate-400`}>{r.vin || '—'}</td>
-                  <td className={`${S.td} text-gray-600 dark:text-slate-400`}>{r.equipment_type || '—'}</td>
+                  <td className={`${S.td} text-gray-600 dark:text-slate-400`}>{r.equipment_type ? formatEqLabel(r.equipment_type) : '—'}</td>
                   <td className={`${S.td} text-gray-600 dark:text-slate-400`}>{r.make || '—'}</td>
                   <td className={`${S.td} text-gray-600 dark:text-slate-400`}>{r.model || '—'}</td>
                   <td className={`${S.td} text-gray-600 dark:text-slate-400`}>{r.year || '—'}</td>
@@ -352,7 +354,7 @@ export default function EquipmentTab({ loanId, canEdit }) {
                 {equipmentTypes.map(t => <option key={t.id} value={t.name}>{t.display_label || t.name}</option>)}
                 {/* Preserve legacy/free-text value if it's not in the active list */}
                 {form.equipment_type && !equipmentTypes.some(t => t.name === form.equipment_type) && (
-                  <option value={form.equipment_type}>{form.equipment_type} (legacy)</option>
+                  <option value={form.equipment_type}>{formatEqLabel(form.equipment_type)} (legacy)</option>
                 )}
               </Select>
             </Field>
