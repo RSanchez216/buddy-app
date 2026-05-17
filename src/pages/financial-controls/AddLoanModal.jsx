@@ -16,8 +16,24 @@ const emptyForm = {
   entity_id: '', lender_id: '', funding_account_id: '',
   loan_amount: '', current_balance: '', interest_rate: '', monthly_payment: '',
   due_day: '', autopay: false,
-  start_date: '', first_payment_date: '', maturity_date: '',
+  start_date: '', first_payment_date: '', term_months: '', maturity_date: '',
+  maturity_manual_override: false,
   status: 'active', description: '', cfo_flag: false,
+}
+
+// Maturity = first_payment_date + (term-1) months. Matches the regenerate
+// function's i in 0..(term-1) loop, so last payment row = maturity_date.
+function computeMaturity(firstPaymentDate, termMonths) {
+  if (!firstPaymentDate || !termMonths) return ''
+  const n = Number(termMonths)
+  if (!Number.isFinite(n) || n <= 0) return ''
+  const d = new Date(`${firstPaymentDate}T00:00:00`)
+  if (Number.isNaN(d.getTime())) return ''
+  d.setMonth(d.getMonth() + (n - 1))
+  const yyyy = d.getFullYear()
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${yyyy}-${mm}-${dd}`
 }
 
 export default function AddLoanModal({ open, onClose, onCreated }) {
@@ -48,6 +64,23 @@ export default function AddLoanModal({ open, onClose, onCreated }) {
   }, [open])
 
   function update(field, value) { setForm(f => ({ ...f, [field]: value })) }
+  function updateFirstPaymentDate(value) {
+    setForm(f => {
+      const next = { ...f, first_payment_date: value }
+      if (!f.maturity_manual_override) next.maturity_date = computeMaturity(value, f.term_months) || f.maturity_date
+      return next
+    })
+  }
+  function updateTermMonths(value) {
+    setForm(f => {
+      const next = { ...f, term_months: value }
+      if (!f.maturity_manual_override) next.maturity_date = computeMaturity(f.first_payment_date, value) || f.maturity_date
+      return next
+    })
+  }
+  function updateMaturityDateManually(value) {
+    setForm(f => ({ ...f, maturity_date: value, maturity_manual_override: true }))
+  }
 
   function updateEquipment(i, field, value) {
     setEquipmentRows(rows => rows.map((r, idx) => idx === i ? { ...r, [field]: value } : r))
@@ -82,6 +115,7 @@ export default function AddLoanModal({ open, onClose, onCreated }) {
       autopay: !!form.autopay,
       start_date: form.start_date || null,
       first_payment_date: form.first_payment_date || null,
+      term_months: form.term_months === '' ? null : Number(form.term_months),
       maturity_date: form.maturity_date || null,
       status: form.status,
       description: form.description.trim() || null,
@@ -115,17 +149,25 @@ export default function AddLoanModal({ open, onClose, onCreated }) {
       if (eqRes.error) { setError('Loan saved, but equipment failed: ' + eqRes.error.message); setSaving(false); return }
     }
 
-    // Auto-generate payment schedule
-    const schedule = generatePaymentSchedule({
-      loan_id: loanId,
-      first_payment_date: form.first_payment_date,
-      maturity_date: form.maturity_date,
-      due_day: form.due_day,
-      monthly_payment: form.monthly_payment,
-    })
-    if (schedule.length) {
-      const payRes = await supabase.from('loan_payments').insert(schedule)
-      if (payRes.error) { setError('Loan saved, but payment schedule failed: ' + payRes.error.message); setSaving(false); return }
+    // Auto-generate payment schedule. Prefer the term_months-driven SQL
+    // function (idempotent, matches manual Regenerate); fall back to the
+    // older client-side generator when term_months isn't set so loans
+    // created without a term still get their original schedule shape.
+    if (form.term_months !== '' && form.first_payment_date && form.monthly_payment !== '') {
+      const { error: rpcErr } = await supabase.rpc('regenerate_loan_schedule', { p_loan_id: loanId })
+      if (rpcErr) { setError('Loan saved, but schedule generation failed: ' + rpcErr.message); setSaving(false); return }
+    } else {
+      const schedule = generatePaymentSchedule({
+        loan_id: loanId,
+        first_payment_date: form.first_payment_date,
+        maturity_date: form.maturity_date,
+        due_day: form.due_day,
+        monthly_payment: form.monthly_payment,
+      })
+      if (schedule.length) {
+        const payRes = await supabase.from('loan_payments').insert(schedule)
+        if (payRes.error) { setError('Loan saved, but payment schedule failed: ' + payRes.error.message); setSaving(false); return }
+      }
     }
 
     setSaving(false)
@@ -203,10 +245,32 @@ export default function AddLoanModal({ open, onClose, onCreated }) {
               <input className={S.input} type="date" value={form.start_date} onChange={e => update('start_date', e.target.value)} />
             </Field>
             <Field label="First Payment Date">
-              <input className={S.input} type="date" value={form.first_payment_date} onChange={e => update('first_payment_date', e.target.value)} />
+              <input className={S.input} type="date" value={form.first_payment_date} onChange={e => updateFirstPaymentDate(e.target.value)} />
+            </Field>
+            <Field label="Term (months)">
+              <input
+                className={S.input}
+                type="number"
+                min="1"
+                max="600"
+                value={form.term_months}
+                onChange={e => updateTermMonths(e.target.value)}
+                placeholder="e.g. 72"
+              />
+              <p className="text-[11px] text-gray-500 dark:text-slate-500 mt-1">
+                Schedule auto-generates on save.
+              </p>
             </Field>
             <Field label="Maturity Date">
-              <input className={S.input} type="date" value={form.maturity_date} onChange={e => update('maturity_date', e.target.value)} />
+              <input
+                className={S.input}
+                type="date"
+                value={form.maturity_date}
+                onChange={e => updateMaturityDateManually(e.target.value)}
+                title={form.maturity_manual_override
+                  ? 'Manually edited — change term to recompute.'
+                  : 'Derived from term — edit term to recompute, or type to override.'}
+              />
             </Field>
           </div>
         </Section>

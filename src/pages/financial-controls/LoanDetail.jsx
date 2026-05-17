@@ -251,7 +251,7 @@ export default function LoanDetail() {
       <div>
         {activeTab === 'overview' && <OverviewTab loan={loan} canEdit={canEdit} onChange={loadLoan} />}
         {activeTab === 'equipment' && <EquipmentTab loanId={loanId} canEdit={canEdit} onChange={loadLoan} />}
-        {activeTab === 'payments' && <PaymentScheduleTab loanId={loanId} canEdit={canEdit} onChange={loadLoan} />}
+        {activeTab === 'payments' && <PaymentScheduleTab loanId={loanId} loan={loan} canEdit={canEdit} onChange={loadLoan} />}
         {activeTab === 'documents' && <DocumentsTab loanId={loanId} canEdit={canEdit} userRole={profile?.role} onChange={loadLoan} />}
         {activeTab === 'events' && <EventsTab loanId={loanId} canEdit={canEdit} onChange={loadLoan} />}
         {activeTab === 'notes' && <NotesTab loan={loan} canEdit={canEdit} onChange={loadLoan} />}

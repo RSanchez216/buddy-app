@@ -1,15 +1,20 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../../../lib/supabase'
+import { useAuth } from '../../../contexts/AuthContext'
 import { S } from '../../../lib/styles'
 import Modal from '../../../components/Modal'
 import { FC, PAYMENT_STATUSES, STATUS_LABELS, paymentStatusPill, fmtMoney, fmtDate } from '../loanUtils'
 
-export default function PaymentScheduleTab({ loanId, canEdit }) {
+export default function PaymentScheduleTab({ loanId, loan, canEdit, onChange }) {
+  const { user, profile } = useAuth()
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [editRow, setEditRow] = useState(null)
   const [form, setForm] = useState({})
   const [saving, setSaving] = useState(false)
+  const [showRegen, setShowRegen] = useState(false)
+  const [regenRunning, setRegenRunning] = useState(false)
+  const [regenToast, setRegenToast] = useState('')
 
   // Sort: 'asc' (oldest first, default) or 'desc' (newest first)
   const [sortDir, setSortDir] = useState('asc')
@@ -98,6 +103,40 @@ export default function PaymentScheduleTab({ loanId, canEdit }) {
     })
     load()
   }
+
+  async function runRegenerate() {
+    if (!canRegen || regenRunning) return
+    setRegenRunning(true)
+    const { data, error } = await supabase.rpc('regenerate_loan_schedule', { p_loan_id: loanId })
+    setRegenRunning(false)
+    if (error) { alert('Regenerate failed: ' + error.message); return }
+    const result = Array.isArray(data) ? data[0] : data
+    const inserted = result?.rows_inserted ?? 0
+    const total = result?.total_rows ?? 0
+    await supabase.from('audit_log').insert({
+      table_name: 'loans',
+      record_id: loanId,
+      action: 'loan_schedule_regenerated',
+      performed_by: user?.id || null,
+      performed_by_email: profile?.email || null,
+      metadata: {
+        loan_id: loanId,
+        rows_inserted: inserted,
+        total_rows: total,
+        term_months: loan?.term_months || null,
+      },
+    })
+    setShowRegen(false)
+    setRegenToast(`Added ${inserted} pending row${inserted === 1 ? '' : 's'}. Schedule now has ${total} payment${total === 1 ? '' : 's'}.`)
+    setTimeout(() => setRegenToast(''), 5000)
+    await load()
+    onChange?.()
+  }
+
+  const canRegen = !!(loan?.first_payment_date && loan?.term_months && loan?.monthly_payment)
+  const projectedAdd = loan?.term_months && rows.length >= 0
+    ? Math.max(0, Number(loan.term_months) - rows.length)
+    : 0
 
   // Running totals
   const totals = useMemo(() => {
@@ -189,7 +228,23 @@ export default function PaymentScheduleTab({ loanId, canEdit }) {
       </div>
 
       {canEdit && (
-        <div className="flex justify-end">
+        <div className="flex justify-end gap-2 items-center">
+          {regenToast && (
+            <span className="text-xs text-emerald-700 dark:text-emerald-400 mr-auto">✓ {regenToast}</span>
+          )}
+          <button
+            onClick={() => setShowRegen(true)}
+            disabled={!canRegen || regenRunning}
+            className="flex items-center gap-2 px-3 py-2 text-sm font-medium border border-gray-300 dark:border-slate-700 text-gray-700 dark:text-slate-300 rounded-xl hover:bg-gray-50 dark:hover:bg-white/5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title={canRegen
+              ? 'Fill in any missing pending months — existing rows untouched.'
+              : 'Set term (months), first payment date, and monthly payment on the Overview tab first.'}
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            Regenerate Schedule
+          </button>
           <button onClick={addBlankRow} className={FC.btnPrimary}>
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
             Add Payment Row
@@ -256,6 +311,41 @@ export default function PaymentScheduleTab({ loanId, canEdit }) {
           </table>
         </div>
       </div>
+
+      <Modal open={showRegen} onClose={() => !regenRunning && setShowRegen(false)} title="Regenerate Schedule" size="md">
+        <div className={S.modalBody}>
+          <p className="text-sm text-gray-700 dark:text-slate-300">
+            Regenerate schedule for <span className="font-semibold">{loan?.task_name || loan?.loan_id_external || 'this loan'}</span>?
+          </p>
+          <p className="text-xs text-gray-500 dark:text-slate-400">
+            Fills in any missing monthly payment rows between <strong>{fmtDate(loan?.first_payment_date)}</strong> and the term's last month.
+            Existing paid, partial, and skipped rows are not touched.
+          </p>
+          <div className="grid grid-cols-3 gap-2 text-xs">
+            <div className={`${S.card} p-3`}>
+              <p className="text-[10px] uppercase tracking-wide text-gray-500 dark:text-slate-500 mb-1">Expected after</p>
+              <p className="text-base font-bold font-mono text-gray-900 dark:text-slate-200">{loan?.term_months ?? '—'}</p>
+            </div>
+            <div className={`${S.card} p-3`}>
+              <p className="text-[10px] uppercase tracking-wide text-gray-500 dark:text-slate-500 mb-1">Current rows</p>
+              <p className="text-base font-bold font-mono text-gray-900 dark:text-slate-200">{rows.length}</p>
+            </div>
+            <div className={`${S.card} p-3`}>
+              <p className="text-[10px] uppercase tracking-wide text-gray-500 dark:text-slate-500 mb-1">Will add (est.)</p>
+              <p className="text-base font-bold font-mono text-emerald-700 dark:text-emerald-400">{projectedAdd}</p>
+            </div>
+          </div>
+          <p className="text-[11px] text-gray-500 dark:text-slate-500">
+            Estimate is based on the count gap. Actual inserts depend on which specific dates are already present.
+          </p>
+          <div className={S.modalFooter}>
+            <button onClick={() => setShowRegen(false)} disabled={regenRunning} className={S.btnCancel}>Cancel</button>
+            <button onClick={runRegenerate} disabled={regenRunning} className={FC.btnSave}>
+              {regenRunning ? 'Regenerating…' : 'Regenerate'}
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal open={!!editRow} onClose={() => setEditRow(null)} title="Edit Payment" size="md">
         {editRow && (

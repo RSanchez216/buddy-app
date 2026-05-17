@@ -47,15 +47,58 @@ export default function OverviewTab({ loan, canEdit, onChange }) {
       autopay: !!loan.autopay,
       start_date: loan.start_date || '',
       first_payment_date: loan.first_payment_date || '',
+      term_months: loan.term_months ?? '',
       maturity_date: loan.maturity_date || '',
+      maturity_manual_override: false,
       status: loan.status || 'active',
       cfo_flag: !!loan.cfo_flag,
     })
   }, [loan])
 
+  // Maturity derivation: when first_payment_date AND term_months are set and
+  // the user hasn't manually overridden the date, recompute as
+  // first_payment_date + (term-1) months. Matches the regenerate function's
+  // i in 0..(term-1) loop convention.
+  function computeMaturity(firstPaymentDate, termMonths) {
+    if (!firstPaymentDate || !termMonths) return ''
+    const n = Number(termMonths)
+    if (!Number.isFinite(n) || n <= 0) return ''
+    const d = new Date(`${firstPaymentDate}T00:00:00`)
+    if (Number.isNaN(d.getTime())) return ''
+    d.setMonth(d.getMonth() + (n - 1))
+    const yyyy = d.getFullYear()
+    const mm = String(d.getMonth() + 1).padStart(2, '0')
+    const dd = String(d.getDate()).padStart(2, '0')
+    return `${yyyy}-${mm}-${dd}`
+  }
+
   if (!form) return null
 
   function update(field, value) { setForm(f => ({ ...f, [field]: value })) }
+
+  // When first_payment_date or term_months changes, recompute maturity_date
+  // unless the user has manually edited the maturity field this session.
+  function updateFirstPaymentDate(value) {
+    setForm(f => {
+      const next = { ...f, first_payment_date: value }
+      if (!f.maturity_manual_override) {
+        next.maturity_date = computeMaturity(value, f.term_months) || f.maturity_date
+      }
+      return next
+    })
+  }
+  function updateTermMonths(value) {
+    setForm(f => {
+      const next = { ...f, term_months: value }
+      if (!f.maturity_manual_override) {
+        next.maturity_date = computeMaturity(f.first_payment_date, value) || f.maturity_date
+      }
+      return next
+    })
+  }
+  function updateMaturityDateManually(value) {
+    setForm(f => ({ ...f, maturity_date: value, maturity_manual_override: true }))
+  }
 
   async function handleSave() {
     // Block save when funding_account_id is empty. Spec rule: UI
@@ -84,6 +127,7 @@ export default function OverviewTab({ loan, canEdit, onChange }) {
       autopay: !!form.autopay,
       start_date: form.start_date || null,
       first_payment_date: form.first_payment_date || null,
+      term_months: form.term_months === '' ? null : Number(form.term_months),
       maturity_date: form.maturity_date || null,
       status: form.status,
       cfo_flag: !!form.cfo_flag,
@@ -231,10 +275,34 @@ export default function OverviewTab({ loan, canEdit, onChange }) {
             <input className={S.input} type="date" disabled={!canEdit} value={form.start_date} onChange={e => update('start_date', e.target.value)} />
           </Field>
           <Field label="First Payment Date">
-            <input className={S.input} type="date" disabled={!canEdit} value={form.first_payment_date} onChange={e => update('first_payment_date', e.target.value)} />
+            <input className={S.input} type="date" disabled={!canEdit} value={form.first_payment_date} onChange={e => updateFirstPaymentDate(e.target.value)} />
+          </Field>
+          <Field label="Term (months)">
+            <input
+              className={S.input}
+              type="number"
+              min="1"
+              max="600"
+              disabled={!canEdit}
+              value={form.term_months}
+              onChange={e => updateTermMonths(e.target.value)}
+              placeholder="e.g. 72"
+            />
+            <p className="text-[11px] text-gray-500 dark:text-slate-500 mt-1">
+              Total number of monthly payments. Maturity date calculated automatically.
+            </p>
           </Field>
           <Field label="Maturity Date">
-            <input className={S.input} type="date" disabled={!canEdit} value={form.maturity_date} onChange={e => update('maturity_date', e.target.value)} />
+            <input
+              className={S.input}
+              type="date"
+              disabled={!canEdit}
+              value={form.maturity_date}
+              onChange={e => updateMaturityDateManually(e.target.value)}
+              title={form.maturity_manual_override
+                ? 'Manually edited — change term to recompute.'
+                : 'Derived from term — edit term to recompute, or type to override.'}
+            />
           </Field>
         </Grid>
       </Section>
