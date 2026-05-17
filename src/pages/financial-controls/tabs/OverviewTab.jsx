@@ -6,6 +6,7 @@ import { S } from '../../../lib/styles'
 import Modal from '../../../components/Modal'
 import Select from '../../../components/Select'
 import { FC } from '../loanUtils'
+import LoanBalanceEditModal from '../components/LoanBalanceEditModal'
 
 export default function OverviewTab({ loan, canEdit, onChange }) {
   const { user } = useAuth()
@@ -18,6 +19,7 @@ export default function OverviewTab({ loan, canEdit, onChange }) {
   const [pendingEvent, setPendingEvent] = useState(null) // { type, oldVal, newVal }
   const [eventDescription, setEventDescription] = useState('')
   const [showSuccess, setShowSuccess] = useState(false)
+  const [showBalanceEdit, setShowBalanceEdit] = useState(false)
 
   useEffect(() => {
     Promise.all([
@@ -40,7 +42,6 @@ export default function OverviewTab({ loan, canEdit, onChange }) {
       lender_id: loan.lender_id || '',
       funding_account_id: loan.funding_account_id || '',
       loan_amount: loan.loan_amount ?? '',
-      current_balance: loan.current_balance ?? '',
       interest_rate: loan.interest_rate ?? '',
       monthly_payment: loan.monthly_payment ?? '',
       due_day: loan.due_day ?? '',
@@ -120,7 +121,6 @@ export default function OverviewTab({ loan, canEdit, onChange }) {
       lender_id: form.lender_id || null,
       funding_account_id: form.funding_account_id || null,
       loan_amount: form.loan_amount === '' ? null : Number(form.loan_amount),
-      current_balance: form.current_balance === '' ? null : Number(form.current_balance),
       interest_rate: form.interest_rate === '' ? null : Number(form.interest_rate),
       monthly_payment: form.monthly_payment === '' ? null : Number(form.monthly_payment),
       due_day: form.due_day === '' ? null : Number(form.due_day),
@@ -134,18 +134,16 @@ export default function OverviewTab({ loan, canEdit, onChange }) {
       updated_at: new Date().toISOString(),
     }
 
-    // Detect changes that warrant a logged event
-    const balanceChanged = Number(loan.current_balance ?? 0) !== Number(payload.current_balance ?? 0) && payload.current_balance !== null
+    // Balance changes flow through the dedicated Edit Balance modal (with
+    // anchor date + audit log). Save Changes here only logs an event for
+    // interest-rate changes.
     const rateChanged = Number(loan.interest_rate ?? 0) !== Number(payload.interest_rate ?? 0) && payload.interest_rate !== null
 
     const { error: updErr } = await supabase.from('loans').update(payload).eq('id', loan.id)
     if (updErr) { setError(updErr.message); setSaving(false); return }
     setSaving(false)
 
-    if (balanceChanged) {
-      setPendingEvent({ type: 'balance_correction', oldVal: loan.current_balance, newVal: payload.current_balance })
-      setEventDescription(`Balance changed from ${loan.current_balance ?? '—'} to ${payload.current_balance}`)
-    } else if (rateChanged) {
+    if (rateChanged) {
       setPendingEvent({ type: 'rate_change', oldVal: loan.interest_rate, newVal: payload.interest_rate })
       setEventDescription(`Rate changed from ${loan.interest_rate ?? '—'}% to ${payload.interest_rate}%`)
     } else {
@@ -247,9 +245,9 @@ export default function OverviewTab({ loan, canEdit, onChange }) {
           <Field label="Loan Amount ($)">
             <input className={S.input} type="number" step="0.01" disabled={!canEdit} value={form.loan_amount} onChange={e => update('loan_amount', e.target.value)} />
           </Field>
-          <Field label="Current Balance ($)">
-            <input className={S.input} type="number" step="0.01" disabled={!canEdit} value={form.current_balance} onChange={e => update('current_balance', e.target.value)} />
-          </Field>
+          <div className="md:col-span-2">
+            <LoanBalanceBlock loan={loan} canEdit={canEdit} onEdit={() => setShowBalanceEdit(true)} />
+          </div>
           <Field label="Interest Rate (%)">
             <input className={S.input} type="number" step="0.001" disabled={!canEdit} value={form.interest_rate} onChange={e => update('interest_rate', e.target.value)} />
           </Field>
@@ -315,6 +313,13 @@ export default function OverviewTab({ loan, canEdit, onChange }) {
         </div>
       )}
 
+      <LoanBalanceEditModal
+        open={showBalanceEdit}
+        loan={loan}
+        onClose={() => setShowBalanceEdit(false)}
+        onSaved={() => { setShowBalanceEdit(false); onChange?.() }}
+      />
+
       {/* Confirm event modal */}
       <Modal open={!!pendingEvent} onClose={dismissEvent} title="Log this change as an event?" size="sm">
         <div className={S.modalBody}>
@@ -353,6 +358,117 @@ function Field({ label, children }) {
     <div>
       <label className={S.label}>{label}</label>
       {children}
+    </div>
+  )
+}
+
+// ── Balance helpers ─────────────────────────────────────────────────────
+function fmtMoney(n) {
+  if (n == null || n === '') return '—'
+  const num = Number(n)
+  if (Number.isNaN(num)) return '—'
+  return num.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 })
+}
+
+function chicagoTodayISO() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date())
+}
+
+function daysSince(iso) {
+  if (!iso) return null
+  const d = new Date(`${iso}T00:00:00`)
+  const today = new Date(`${chicagoTodayISO()}T00:00:00`)
+  return Math.max(0, Math.floor((today - d) / 86_400_000))
+}
+
+// Full months elapsed since the anchor (America/Chicago today). 1 if the
+// anchor was exactly one calendar month ago today. Used for the estimated
+// balance and the "N payments elapsed" subtitle.
+function monthsElapsed(iso) {
+  if (!iso) return 0
+  const anchor = new Date(`${iso}T00:00:00`)
+  const today = new Date(`${chicagoTodayISO()}T00:00:00`)
+  if (today < anchor) return 0
+  let m = (today.getFullYear() - anchor.getFullYear()) * 12 + (today.getMonth() - anchor.getMonth())
+  if (today.getDate() < anchor.getDate()) m -= 1
+  return Math.max(0, m)
+}
+
+// Loan-specific staleness tiers (slower cadence than funding accounts):
+//   0d → green, 1-7 neutral, 8-30 amber, 31+ red.
+function loanBalanceTone(days) {
+  if (days == null)    return { dot: 'bg-gray-300 dark:bg-slate-600', text: 'text-gray-500 dark:text-slate-500', label: 'No anchor — set balance' }
+  if (days === 0)      return { dot: 'bg-emerald-500',                text: 'text-emerald-700 dark:text-emerald-400', label: '0d old' }
+  if (days <= 7)       return { dot: 'bg-slate-400 dark:bg-slate-500', text: 'text-slate-500 dark:text-slate-400',    label: `${days}d old` }
+  if (days <= 30)      return { dot: 'bg-amber-500',                  text: 'text-amber-700 dark:text-amber-400',    label: `${days}d old` }
+  return                  { dot: 'bg-rose-500',                       text: 'text-rose-700 dark:text-rose-400',      label: `${days}d old` }
+}
+
+function fmtAnchorDate(iso) {
+  if (!iso) return ''
+  return new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function LoanBalanceBlock({ loan, canEdit, onEdit }) {
+  const anchor = loan?.current_balance != null ? Number(loan.current_balance) : null
+  const asOf = loan?.current_balance_as_of_date || null
+  const monthly = loan?.monthly_payment != null ? Number(loan.monthly_payment) : null
+
+  const days = daysSince(asOf)
+  const tone = loanBalanceTone(days)
+  const months = monthsElapsed(asOf)
+  const estimated = anchor != null && monthly != null
+    ? Math.max(0, anchor - monthly * months)
+    : anchor
+
+  const delta = estimated != null && anchor != null ? estimated - anchor : 0
+
+  return (
+    <div className="grid grid-cols-2 gap-4">
+      {/* Last confirmed */}
+      <div>
+        <div className="flex items-baseline justify-between">
+          <label className={S.label}>Last Confirmed</label>
+          {canEdit && (
+            <button onClick={onEdit} className="text-[11px] text-orange-600 dark:text-orange-400 hover:underline">
+              {anchor != null ? 'Edit' : 'Set balance'}
+            </button>
+          )}
+        </div>
+        <p className="text-base font-mono font-bold text-gray-900 dark:text-slate-200">
+          {anchor != null ? fmtMoney(anchor) : <span className="text-gray-400 dark:text-slate-600">—</span>}
+        </p>
+        <div className={`text-[11px] mt-0.5 inline-flex items-center gap-1.5 ${tone.text}`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${tone.dot}`} />
+          {asOf
+            ? <>as of {fmtAnchorDate(asOf)} · {tone.label}</>
+            : tone.label}
+        </div>
+      </div>
+
+      {/* Estimated today */}
+      <div>
+        <label className={S.label}>Estimated Today</label>
+        {anchor == null ? (
+          <p className="text-base font-mono font-bold text-gray-400 dark:text-slate-600">—</p>
+        ) : monthly == null ? (
+          <>
+            <p className="text-base font-mono font-bold text-gray-900 dark:text-slate-200">{fmtMoney(anchor)}</p>
+            <p className="text-[11px] text-gray-500 dark:text-slate-500 mt-0.5 italic">monthly payment not set</p>
+          </>
+        ) : (
+          <>
+            <p className="text-base font-mono font-bold text-gray-900 dark:text-slate-200">{fmtMoney(estimated)}</p>
+            <p className="text-[11px] text-gray-500 dark:text-slate-500 mt-0.5">
+              {months === 0
+                ? 'matches confirmed (anchor is today’s month)'
+                : <>{months} payment{months === 1 ? '' : 's'} elapsed · {delta < 0 ? '−' : ''}{fmtMoney(Math.abs(delta))} from confirmed</>}
+            </p>
+          </>
+        )}
+      </div>
     </div>
   )
 }
