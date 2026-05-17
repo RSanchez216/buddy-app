@@ -3,10 +3,12 @@ import { supabase } from '../../../lib/supabase'
 import { S } from '../../../lib/styles'
 import Modal from '../../../components/Modal'
 import { fmtMoney } from '../utils/format'
+import { useToast } from '../../../contexts/ToastContext'
 
 const BUCKET = 'driver-documents'
 
 export default function DeletePurchaseModal({ open, onClose, purchase, onDeleted }) {
+  const toast = useToast()
   const [counts, setCounts] = useState({ payments: 0, events: 0, docs: 0 })
   const [docPaths, setDocPaths] = useState([])
   const [busy, setBusy] = useState(false)
@@ -44,7 +46,8 @@ export default function DeletePurchaseModal({ open, onClose, purchase, onDeleted
     }
     const { error: e } = await supabase.from('driver_purchases').delete().eq('id', purchase.id)
     setBusy(false)
-    if (e) { setError(e.message); return }
+    if (e) { setError(e.message); toast.error("Couldn't delete purchase", e); return }
+    toast.success('Driver purchase deleted')
     onDeleted?.()
   }
 

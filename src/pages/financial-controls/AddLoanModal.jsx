@@ -5,6 +5,7 @@ import { S } from '../../lib/styles'
 import Modal from '../../components/Modal'
 import Select from '../../components/Select'
 import { FC, LOAN_STATUSES, STATUS_LABELS, generatePaymentSchedule } from './loanUtils'
+import { useToast } from '../../contexts/ToastContext'
 
 const emptyEquipment = () => ({
   unit_number: '', vin: '', equipment_type: '', make: '', model: '', year: '',
@@ -38,6 +39,7 @@ function computeMaturity(firstPaymentDate, termMonths) {
 
 export default function AddLoanModal({ open, onClose, onCreated }) {
   const { user } = useAuth()
+  const toast = useToast()
   const [entities, setEntities] = useState([])
   const [lenders, setLenders] = useState([])
   const [accounts, setAccounts] = useState([])
@@ -124,7 +126,11 @@ export default function AddLoanModal({ open, onClose, onCreated }) {
     }
 
     const loanRes = await supabase.from('loans').insert(loanPayload).select('id').single()
-    if (loanRes.error) { setError(loanRes.error.message); setSaving(false); return }
+    if (loanRes.error) {
+      setError(loanRes.error.message); setSaving(false)
+      toast.error("Couldn't create loan", loanRes.error)
+      return
+    }
     const loanId = loanRes.data.id
 
     // Insert equipment rows (skip empty ones)
@@ -146,7 +152,11 @@ export default function AddLoanModal({ open, onClose, onCreated }) {
       }))
     if (eqPayload.length) {
       const eqRes = await supabase.from('loan_equipment').insert(eqPayload)
-      if (eqRes.error) { setError('Loan saved, but equipment failed: ' + eqRes.error.message); setSaving(false); return }
+      if (eqRes.error) {
+        setError('Loan saved, but equipment failed: ' + eqRes.error.message); setSaving(false)
+        toast.error('Loan saved, but equipment failed', eqRes.error)
+        return
+      }
     }
 
     // Auto-generate payment schedule. Prefer the term_months-driven SQL
@@ -155,7 +165,11 @@ export default function AddLoanModal({ open, onClose, onCreated }) {
     // created without a term still get their original schedule shape.
     if (form.term_months !== '' && form.first_payment_date && form.monthly_payment !== '') {
       const { error: rpcErr } = await supabase.rpc('regenerate_loan_schedule', { p_loan_id: loanId })
-      if (rpcErr) { setError('Loan saved, but schedule generation failed: ' + rpcErr.message); setSaving(false); return }
+      if (rpcErr) {
+        setError('Loan saved, but schedule generation failed: ' + rpcErr.message); setSaving(false)
+        toast.error('Loan saved, but schedule generation failed', rpcErr)
+        return
+      }
     } else {
       const schedule = generatePaymentSchedule({
         loan_id: loanId,
@@ -166,11 +180,16 @@ export default function AddLoanModal({ open, onClose, onCreated }) {
       })
       if (schedule.length) {
         const payRes = await supabase.from('loan_payments').insert(schedule)
-        if (payRes.error) { setError('Loan saved, but payment schedule failed: ' + payRes.error.message); setSaving(false); return }
+        if (payRes.error) {
+          setError('Loan saved, but payment schedule failed: ' + payRes.error.message); setSaving(false)
+          toast.error('Loan saved, but payment schedule failed', payRes.error)
+          return
+        }
       }
     }
 
     setSaving(false)
+    toast.success(`Loan created — ${loanPayload.loan_id_external}`)
     onCreated?.(loanId)
     onClose()
   }

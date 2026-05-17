@@ -3,10 +3,12 @@ import { supabase } from '../../lib/supabase'
 import { S } from '../../lib/styles'
 import Modal from '../../components/Modal'
 import { pmLabel } from '../../lib/deptUtils'
+import { useToast } from '../../contexts/ToastContext'
 
 const emptyForm = { name: '', account_reference: '' }
 
 export default function SettingsPaymentMethods() {
+  const toast = useToast()
   const [methods, setMethods] = useState([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
@@ -33,14 +35,22 @@ export default function SettingsPaymentMethods() {
     const res = editItem
       ? await supabase.from('payment_methods').update(payload).eq('id', editItem.id)
       : await supabase.from('payment_methods').insert(payload)
-    if (res.error) setError(res.error.message)
-    else { setShowModal(false); loadData() }
+    if (res.error) {
+      setError(res.error.message)
+      toast.error(editItem ? "Couldn't update payment method" : "Couldn't create payment method", res.error)
+    } else {
+      toast.success(editItem ? `Payment method updated — ${payload.name}` : `Payment method created — ${payload.name}`)
+      setShowModal(false); loadData()
+    }
     setSaving(false)
   }
 
   async function handleDelete(m) {
-    if (!confirm(`Delete "${pmLabel(m)}"?`)) return
-    await supabase.from('payment_methods').delete().eq('id', m.id)
+    const label = pmLabel(m)
+    if (!confirm(`Delete "${label}"?`)) return
+    const { error } = await supabase.from('payment_methods').delete().eq('id', m.id)
+    if (error) toast.error("Couldn't delete payment method", error)
+    else toast.success(`Payment method deleted — ${label}`)
     loadData()
   }
 

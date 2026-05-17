@@ -7,9 +7,11 @@ import Modal from '../../../components/Modal'
 import Select from '../../../components/Select'
 import { FC } from '../loanUtils'
 import LoanBalanceEditModal from '../components/LoanBalanceEditModal'
+import { useToast } from '../../../contexts/ToastContext'
 
 export default function OverviewTab({ loan, canEdit, onChange }) {
   const { user } = useAuth()
+  const toast = useToast()
   const [entities, setEntities] = useState([])
   const [lenders, setLenders] = useState([])
   const [accounts, setAccounts] = useState([])
@@ -140,8 +142,13 @@ export default function OverviewTab({ loan, canEdit, onChange }) {
     const rateChanged = Number(loan.interest_rate ?? 0) !== Number(payload.interest_rate ?? 0) && payload.interest_rate !== null
 
     const { error: updErr } = await supabase.from('loans').update(payload).eq('id', loan.id)
-    if (updErr) { setError(updErr.message); setSaving(false); return }
+    if (updErr) {
+      setError(updErr.message); setSaving(false)
+      toast.error("Couldn't update loan", updErr)
+      return
+    }
     setSaving(false)
+    toast.success(`Loan updated — ${payload.loan_id_external || loan.loan_id_external || 'changes saved'}`)
 
     if (rateChanged) {
       setPendingEvent({ type: 'rate_change', oldVal: loan.interest_rate, newVal: payload.interest_rate })
@@ -165,7 +172,8 @@ export default function OverviewTab({ loan, canEdit, onChange }) {
       created_by: user?.id || null,
     })
     setPendingEvent(null); setEventDescription('')
-    if (evErr) { alert('Loan saved, but event log failed: ' + evErr.message); return }
+    if (evErr) { toast.error('Loan saved, but event log failed', evErr); return }
+    toast.success('Event logged')
     setShowSuccess(true); setTimeout(() => setShowSuccess(false), 2000)
   }
 
@@ -176,7 +184,8 @@ export default function OverviewTab({ loan, canEdit, onChange }) {
       status: 'paid_off',
       updated_at: new Date().toISOString(),
     }).eq('id', loan.id)
-    if (err) { alert('Failed: ' + err.message); return }
+    if (err) { toast.error("Couldn't mark loan paid off", err); return }
+    toast.success('Loan marked paid off')
     onChange?.()
   }
 

@@ -4,11 +4,13 @@ import { useAuth } from '../../../contexts/AuthContext'
 import { S } from '../../../lib/styles'
 import Modal from '../../../components/Modal'
 import { logEvent } from '../utils/events'
+import { useToast } from '../../../contexts/ToastContext'
 
 // Same simplified field set as NewDriverModal — see comment there.
 
 export default function EditDriverModal({ open, onClose, driver, purchaseId, onSaved }) {
   const { user } = useAuth()
+  const toast = useToast()
   const [form, setForm] = useState({})
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -39,7 +41,8 @@ export default function EditDriverModal({ open, onClose, driver, purchaseId, onS
     }
     const { error: e } = await supabase.from('drivers').update(payload).eq('id', driver.id)
     setSaving(false)
-    if (e) { setError(e.message); return }
+    if (e) { setError(e.message); toast.error("Couldn't update driver", e); return }
+    toast.success(`Driver updated — ${form.full_name}`)
     if (purchaseId) {
       await logEvent(purchaseId, 'driver_updated', `Updated driver ${form.full_name}`, {}, user?.id)
     }

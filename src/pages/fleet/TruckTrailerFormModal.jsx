@@ -5,6 +5,7 @@ import { S } from '../../lib/styles'
 import Modal from '../../components/Modal'
 import Select from '../../components/Select'
 import { OWNERSHIP_STAGES, TRAILER_TYPES } from './fleetUtils'
+import { useToast } from '../../contexts/ToastContext'
 
 // Shared add/edit modal for trucks AND trailers. `kind` selects the table
 // + extra trailer-only fields. On a fresh insert with ownership_stage set
@@ -30,6 +31,7 @@ const emptyTrailer = {
 
 export default function TruckTrailerFormModal({ kind, open, editItem, onClose, onSaved }) {
   const { user } = useAuth()
+  const toast = useToast()
   const table = kind === 'trailer' ? 'trailers' : 'trucks'
   const isTrailer = kind === 'trailer'
 
@@ -129,11 +131,11 @@ export default function TruckTrailerFormModal({ kind, open, editItem, onClose, o
     if (res.error || !res.data) {
       setSaving(false)
       // Friendly message for the UNIQUE(vin) constraint violation
-      if (res.error?.message?.match(/duplicate.*vin|unique.*vin/i)) {
-        setError(`A ${kind} with VIN "${form.vin}" already exists.`)
-      } else {
-        setError(res.error?.message || 'Save failed')
-      }
+      const msg = res.error?.message?.match(/duplicate.*vin|unique.*vin/i)
+        ? `A ${kind} with VIN "${form.vin}" already exists.`
+        : (res.error?.message || 'Save failed')
+      setError(msg)
+      toast.error(editItem ? `Couldn't update ${kind}` : `Couldn't create ${kind}`, msg)
       return
     }
 
@@ -153,6 +155,8 @@ export default function TruckTrailerFormModal({ kind, open, editItem, onClose, o
     }
 
     setSaving(false)
+    const noun = kind === 'trailer' ? 'Trailer' : 'Truck'
+    toast.success(editItem ? `${noun} updated — ${payload.unit_number || payload.vin}` : `${noun} added — ${payload.unit_number || payload.vin}`)
     onSaved?.(res.data.id)
     onClose?.()
   }

@@ -5,12 +5,14 @@ import { useAuth } from '../../../contexts/AuthContext'
 import { S } from '../../../lib/styles'
 import Select from '../../../components/Select'
 import { ROLES, ROLE_LABEL, rolePill, statusPill, fmtDateTime } from './userUtils'
+import { useToast } from '../../../contexts/ToastContext'
 
 const ORANGE_BTN = 'px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 disabled:bg-gray-200 dark:disabled:bg-slate-700 disabled:text-gray-400 dark:disabled:text-slate-500 text-white rounded-xl transition-all'
 const ACTION_BTN = 'px-3 py-1.5 text-xs font-medium border border-gray-300 dark:border-slate-700 text-gray-600 dark:text-slate-300 rounded-lg hover:bg-gray-50 dark:hover:bg-white/5 transition-colors'
 
 export default function EditUserDrawer({ open, user, onClose, onChange, onSuccess, allUsers }) {
   const { profile: me } = useAuth()
+  const toast = useToast()
   const isSelf = me && user && me.id === user.id
 
   const [fullName, setFullName] = useState('')
@@ -46,7 +48,7 @@ export default function EditUserDrawer({ open, user, onClose, onChange, onSucces
       role,
     }).eq('id', user.id)
     setSaving(false)
-    if (updErr) { setError(updErr.message); return }
+    if (updErr) { setError(updErr.message); toast.error("Couldn't update user", updErr); return }
     onSuccess?.('User updated')
     onChange?.()
   }
@@ -62,6 +64,7 @@ export default function EditUserDrawer({ open, user, onClose, onChange, onSucces
       onSuccess?.('Invite resent')
     } catch (e) {
       setError('Resend failed: ' + (e?.message || 'unknown error'))
+      toast.error("Couldn't resend invite", e)
     } finally {
       setBusy(false)
     }
@@ -73,7 +76,7 @@ export default function EditUserDrawer({ open, user, onClose, onChange, onSucces
       redirectTo: `${window.location.origin}/auth/set-password`,
     })
     setBusy(false)
-    if (rpErr) { setError('Reset failed: ' + rpErr.message); return }
+    if (rpErr) { setError('Reset failed: ' + rpErr.message); toast.error("Couldn't send password reset", rpErr); return }
     onSuccess?.('Password reset email sent')
   }
 
@@ -86,7 +89,7 @@ export default function EditUserDrawer({ open, user, onClose, onChange, onSucces
       deactivated_at: new Date().toISOString(),
     }).eq('id', user.id)
     setBusy(false)
-    if (dErr) { setError(dErr.message); return }
+    if (dErr) { setError(dErr.message); toast.error("Couldn't deactivate user", dErr); return }
     onSuccess?.('User deactivated')
     onChange?.()
     onClose?.()
@@ -99,7 +102,7 @@ export default function EditUserDrawer({ open, user, onClose, onChange, onSucces
       deactivated_at: null,
     }).eq('id', user.id)
     setBusy(false)
-    if (rErr) { setError(rErr.message); return }
+    if (rErr) { setError(rErr.message); toast.error("Couldn't reactivate user", rErr); return }
     onSuccess?.('User reactivated')
     onChange?.()
   }

@@ -10,6 +10,7 @@ import { S } from '../../lib/styles'
 import Modal from '../../components/Modal'
 import Select from '../../components/Select'
 import { CF, fmtMoney, toISO } from './calendarUtils'
+import { useToast } from '../../contexts/ToastContext'
 
 function fmtAccountOption(a) {
   return a.bank_name ? `${a.name} (${a.bank_name})` : a.name
@@ -44,6 +45,7 @@ export default function AddIncomeModal({
   defaultEntityId,
 }) {
   const { user } = useAuth()
+  const toast = useToast()
   const [entities, setEntities] = useState([])
   const [accounts, setAccounts] = useState([])
   const [factors, setFactors] = useState([])
@@ -322,6 +324,7 @@ export default function AddIncomeModal({
       // The factor fee in custom_outflows is auto-managed by the trigger.
 
       setSaving(false)
+      toast.success(isEdit ? 'Income updated' : 'Income added')
       onSaved?.(inflowId)
       onClose()
     } catch (e) {
@@ -336,6 +339,7 @@ export default function AddIncomeModal({
         // the error and let the user sort it.
       }
       setError(e?.message || 'Save failed')
+      toast.error(isEdit ? "Couldn't update income" : "Couldn't add income", e)
       setSaving(false)
     }
   }

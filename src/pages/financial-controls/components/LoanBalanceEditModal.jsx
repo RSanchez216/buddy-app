@@ -3,6 +3,7 @@ import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../contexts/AuthContext'
 import { S } from '../../../lib/styles'
 import Modal from '../../../components/Modal'
+import { useToast } from '../../../contexts/ToastContext'
 
 // Edit / set the anchor balance for a loan. Three fields: new balance,
 // as-of date (defaults Chicago today, must be <= today), optional notes.
@@ -17,6 +18,7 @@ function chicagoToday() {
 
 export default function LoanBalanceEditModal({ open, loan, onClose, onSaved }) {
   const { user, profile } = useAuth()
+  const toast = useToast()
   const [balance, setBalance] = useState('')
   const [asOfDate, setAsOfDate] = useState('')
   const [notes, setNotes] = useState('')
@@ -53,7 +55,7 @@ export default function LoanBalanceEditModal({ open, loan, onClose, onSaved }) {
         updated_at: new Date().toISOString(),
       })
       .eq('id', loan.id)
-    if (upErr) { setSaving(false); setError(upErr.message); return }
+    if (upErr) { setSaving(false); setError(upErr.message); toast.error("Couldn't update loan balance", upErr); return }
 
     await supabase.from('audit_log').insert({
       table_name: 'loans',
@@ -71,6 +73,7 @@ export default function LoanBalanceEditModal({ open, loan, onClose, onSaved }) {
     })
 
     setSaving(false)
+    toast.success('Loan balance updated')
     onSaved?.()
     onClose?.()
   }

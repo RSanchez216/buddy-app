@@ -15,6 +15,7 @@ import EventsTab from './tabs/EventsTab'
 import NotesTab from './tabs/NotesTab'
 import MergeLoanModal from './components/MergeLoanModal'
 import Modal from '../../components/Modal'
+import { useToast } from '../../contexts/ToastContext'
 
 const TABS = [
   { id: 'overview', label: 'Overview' },
@@ -47,6 +48,7 @@ export default function LoanDetail() {
   const { loanId } = useParams()
   const navigate = useNavigate()
   const { profile, user } = useAuth()
+  const toast = useToast()
   const canEdit = profile?.role === 'admin' || profile?.role === 'manager'
 
   const [loan, setLoan] = useState(null)
@@ -104,7 +106,8 @@ export default function LoanDetail() {
     setStatusSaving(true)
     const { error } = await supabase.from('loans').update({ status: newStatus, updated_at: new Date().toISOString() }).eq('id', loanId)
     setStatusSaving(false)
-    if (error) { alert('Failed: ' + error.message); return }
+    if (error) { toast.error("Couldn't change loan status", error); return }
+    toast.success(`Loan status — ${STATUS_LABELS[newStatus] || newStatus}`)
     await loadLoan()
   }
 
@@ -120,14 +123,14 @@ export default function LoanDetail() {
       .select('id, unit_number, vin')
       .eq('loan_id', loanId)
       .eq('has_title', false)
-    if (pendErr) { setBulkTitleSaving(false); alert('Could not read equipment: ' + pendErr.message); return }
+    if (pendErr) { setBulkTitleSaving(false); toast.error("Couldn't read equipment", pendErr); return }
     const ids = (pending || []).map(r => r.id)
     if (ids.length === 0) { setBulkTitleSaving(false); setShowBulkTitle(false); return }
     const { error: updErr } = await supabase
       .from('loan_equipment')
       .update({ has_title: true, updated_at: new Date().toISOString() })
       .in('id', ids)
-    if (updErr) { setBulkTitleSaving(false); alert('Could not mark titles received: ' + updErr.message); return }
+    if (updErr) { setBulkTitleSaving(false); toast.error("Couldn't mark titles received", updErr); return }
     const summary = (pending || [])
       .map(r => r.unit_number || r.vin || 'equipment')
       .join(', ')
@@ -140,6 +143,7 @@ export default function LoanDetail() {
     })
     setBulkTitleSaving(false)
     setShowBulkTitle(false)
+    toast.success(`Titles received — ${ids.length} item${ids.length === 1 ? '' : 's'}`)
     await loadLoan()
   }
 

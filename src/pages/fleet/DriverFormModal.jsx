@@ -5,6 +5,7 @@ import { S } from '../../lib/styles'
 import Modal from '../../components/Modal'
 import Select from '../../components/Select'
 import { DRIVER_TYPES, DRIVER_STATUSES } from './fleetUtils'
+import { useToast } from '../../contexts/ToastContext'
 
 // Add / edit modal for a single driver. UNIQUE(internal_id) is enforced by
 // the DB partial index; we surface a friendly error on the conflict.
@@ -29,6 +30,7 @@ const empty = {
 
 export default function DriverFormModal({ open, editItem, onClose, onSaved }) {
   const { user } = useAuth()
+  const toast = useToast()
   const [form, setForm] = useState(empty)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -94,11 +96,11 @@ export default function DriverFormModal({ open, editItem, onClose, onSaved }) {
     }
     if (res.error || !res.data) {
       setSaving(false)
-      if (res.error?.message?.match(/duplicate.*internal_id|unique.*internal_id/i)) {
-        setError(`A driver with internal_id "${form.internal_id}" already exists.`)
-      } else {
-        setError(res.error?.message || 'Save failed')
-      }
+      const msg = res.error?.message?.match(/duplicate.*internal_id|unique.*internal_id/i)
+        ? `A driver with internal_id "${form.internal_id}" already exists.`
+        : (res.error?.message || 'Save failed')
+      setError(msg)
+      toast.error(editItem ? "Couldn't update driver" : "Couldn't create driver", msg)
       return
     }
 
@@ -124,6 +126,7 @@ export default function DriverFormModal({ open, editItem, onClose, onSaved }) {
     }
 
     setSaving(false)
+    toast.success(editItem ? `Driver updated — ${payload.full_name}` : `Driver added — ${payload.full_name}`)
     onSaved?.(res.data.id)
     onClose?.()
   }

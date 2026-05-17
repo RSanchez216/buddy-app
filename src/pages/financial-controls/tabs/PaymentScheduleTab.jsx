@@ -5,9 +5,11 @@ import { S } from '../../../lib/styles'
 import Modal from '../../../components/Modal'
 import MarkPaidModal from '../../cash-flow/MarkPaidModal'
 import { FC, PAYMENT_STATUSES, STATUS_LABELS, paymentStatusPill, fmtMoney, fmtDate } from '../loanUtils'
+import { useToast } from '../../../contexts/ToastContext'
 
 export default function PaymentScheduleTab({ loanId, loan, canEdit, onChange }) {
   const { user, profile } = useAuth()
+  const toast = useToast()
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [editRow, setEditRow] = useState(null)
@@ -65,7 +67,15 @@ export default function PaymentScheduleTab({ loanId, loan, canEdit, onChange }) 
       patch.paid_amount = null
     }
     const { error: upErr } = await supabase.from('loan_payments').update(patch).eq('id', row.id)
-    if (upErr) { alert('Status change failed: ' + upErr.message); return }
+    if (upErr) { toast.error("Couldn't change payment status", upErr); return }
+
+    toast.success(
+      status === 'paid' ? 'Payment marked paid'
+      : status === 'partial' ? 'Payment marked partial'
+      : status === 'skipped' ? 'Payment skipped'
+      : status === 'pending' ? (wasPaid ? 'Payment reverted to pending' : 'Payment set to pending')
+      : `Payment status — ${STATUS_LABELS[status] || status}`
+    )
 
     await supabase.from('audit_log').insert({
       table_name: 'loan_payments',
@@ -125,7 +135,8 @@ export default function PaymentScheduleTab({ loanId, loan, canEdit, onChange }) 
     else if (!goingPaid && wasPaid) patch.paid_at = null
 
     const { error: upErr } = await supabase.from('loan_payments').update(patch).eq('id', editRow.id)
-    if (upErr) { setSaving(false); alert('Save failed: ' + upErr.message); return }
+    if (upErr) { setSaving(false); toast.error("Couldn't update payment", upErr); return }
+    toast.success('Payment updated')
 
     // Only log when status transitioned. Edits that just touch notes or
     // payment method don't need a dedicated audit row (updated_at captures it).
@@ -153,7 +164,9 @@ export default function PaymentScheduleTab({ loanId, loan, canEdit, onChange }) 
 
   async function deleteRow(row) {
     if (!confirm(`Delete payment for ${fmtDate(row.due_date)}?`)) return
-    await supabase.from('loan_payments').delete().eq('id', row.id)
+    const { error } = await supabase.from('loan_payments').delete().eq('id', row.id)
+    if (error) toast.error("Couldn't delete payment", error)
+    else toast.success(`Payment deleted — ${fmtDate(row.due_date)}`)
     load()
   }
 
@@ -168,13 +181,15 @@ export default function PaymentScheduleTab({ loanId, loan, canEdit, onChange }) 
         })()
       : today.toISOString().slice(0, 10)
     const nextDueMonth = `${nextDate.slice(0, 7)}-01`
-    await supabase.from('loan_payments').insert({
+    const { error } = await supabase.from('loan_payments').insert({
       loan_id: loanId,
       due_month: nextDueMonth,
       due_date: nextDate,
       scheduled_amount: last?.scheduled_amount ?? 0,
       status: 'pending',
     })
+    if (error) toast.error("Couldn't add payment row", error)
+    else toast.success(`Payment row added — ${fmtDate(nextDate)}`)
     load()
   }
 
@@ -183,7 +198,7 @@ export default function PaymentScheduleTab({ loanId, loan, canEdit, onChange }) 
     setRegenRunning(true)
     const { data, error } = await supabase.rpc('regenerate_loan_schedule', { p_loan_id: loanId })
     setRegenRunning(false)
-    if (error) { alert('Regenerate failed: ' + error.message); return }
+    if (error) { toast.error("Couldn't regenerate schedule", error); return }
     const result = Array.isArray(data) ? data[0] : data
     const inserted = result?.rows_inserted ?? 0
     const total = result?.total_rows ?? 0
@@ -201,6 +216,9 @@ export default function PaymentScheduleTab({ loanId, loan, canEdit, onChange }) 
       },
     })
     setShowRegen(false)
+    toast.success(`Schedule updated — ${inserted} row${inserted === 1 ? '' : 's'} added`, {
+      description: `Schedule now has ${total} payment${total === 1 ? '' : 's'}.`,
+    })
     setRegenToast(`Added ${inserted} pending row${inserted === 1 ? '' : 's'}. Schedule now has ${total} payment${total === 1 ? '' : 's'}.`)
     setTimeout(() => setRegenToast(''), 5000)
     await load()

@@ -6,6 +6,7 @@ import { S } from '../../lib/styles'
 import { CF, chipPalette, fmtMoney, fmtMoneySigned, toISO, isPaidStatus } from './calendarUtils'
 import ConvertToInvoiceModal from './ConvertToInvoiceModal'
 import MarkPaidModal from './MarkPaidModal'
+import { useToast } from '../../contexts/ToastContext'
 
 function fmtDate(d) {
   if (!d) return '—'
@@ -14,6 +15,7 @@ function fmtDate(d) {
 
 export default function ChipDetailPanel({ event, canEdit = true, onClose, onChange, onOpenAdjustLoan, onOpenManageRecurring, onOpenEditInflow, onSuccess }) {
   const { user, profile } = useAuth()
+  const toast = useToast()
   const [details, setDetails] = useState(null)
   const [editing, setEditing] = useState(false)
   const [form, setForm] = useState({})
@@ -117,7 +119,12 @@ export default function ChipDetailPanel({ event, canEdit = true, onClose, onChan
       }).eq('id', details.row.id)
     }
     setSaving(false)
-    if (res?.error) { setError(res.error.message); return }
+    if (res?.error) { setError(res.error.message); toast.error("Couldn't save changes", res.error); return }
+    toast.success(
+      details.kind === 'inflow' ? 'Income updated'
+      : details.kind === 'invoice' ? 'Invoice updated'
+      : 'Outflow updated'
+    )
     setEditing(false)
     await loadDetails()
     onChange?.()
@@ -132,10 +139,11 @@ export default function ChipDetailPanel({ event, canEdit = true, onClose, onChan
     } else if (details.kind === 'custom_outflow') {
       res = await supabase.from('custom_outflows').update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('id', details.row.id)
     } else {
-      alert('Loan payments and invoices can only be cancelled in their own modules.')
+      toast.error('Loan payments and invoices can only be cancelled in their own modules.')
       return
     }
-    if (res?.error) { alert(res.error.message); return }
+    if (res?.error) { toast.error("Couldn't cancel event", res.error); return }
+    toast.success(details.kind === 'inflow' ? 'Income cancelled' : 'Outflow cancelled')
     onChange?.()
     onClose?.()
   }
@@ -156,7 +164,8 @@ export default function ChipDetailPanel({ event, canEdit = true, onClose, onChan
       paid_amount: Number(row.amount || 0),
       updated_at: nowIso,
     }).eq('id', row.id)
-    if (res.error) { alert(res.error.message); return }
+    if (res.error) { toast.error("Couldn't mark paid", res.error); return }
+    toast.success(`Outflow marked paid — ${row.description || ''}`)
     await supabase.from('audit_log').insert({
       table_name: 'custom_outflows',
       record_id: row.id,
@@ -230,7 +239,8 @@ export default function ChipDetailPanel({ event, canEdit = true, onClose, onChan
     }
 
     const { error: e } = await supabase.from(tableName).update(update).eq('id', row.id)
-    if (e) { setError(e.message); return }
+    if (e) { setError(e.message); toast.error("Couldn't unmark as paid", e); return }
+    toast.success('Reverted to pending')
 
     await supabase.from('audit_log').insert({
       table_name: tableName,
@@ -285,7 +295,8 @@ export default function ChipDetailPanel({ event, canEdit = true, onClose, onChan
       updated_at: new Date().toISOString(),
     }).eq('id', details.row.id)
     setSaving(false)
-    if (res.error) { setError(res.error.message); return }
+    if (res.error) { setError(res.error.message); toast.error("Couldn't mark income received", res.error); return }
+    toast.success(`Income marked received — ${fmtMoney(amt)}`)
     setReceivingMode('idle')
     onChange?.()
     onClose?.()

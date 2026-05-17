@@ -4,6 +4,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import { S } from '../../lib/styles'
 import Modal from '../../components/Modal'
 import Select from '../../components/Select'
+import { useToast } from '../../contexts/ToastContext'
 
 // Create / edit / delete a single inter-account transfer.
 // Two-date model: debit_date is when money leaves source, credit_date is when
@@ -41,6 +42,7 @@ export default function AddTransferModal({
   onSaved,
 }) {
   const { user, profile } = useAuth()
+  const toast = useToast()
   const [accounts, setAccounts] = useState([])
   const [fromId, setFromId] = useState('')
   const [toId, setToId] = useState('')
@@ -176,7 +178,12 @@ export default function AddTransferModal({
         .single()
     }
     setSaving(false)
-    if (res.error || !res.data) { setError(res.error?.message || 'Save failed'); return }
+    if (res.error || !res.data) {
+      setError(res.error?.message || 'Save failed')
+      toast.error(isEdit ? "Couldn't update transfer" : "Couldn't create transfer", res.error)
+      return
+    }
+    toast.success(isEdit ? 'Transfer updated' : `Transfer created — ${fromAcc?.name || '?'} → ${toAcc?.name || '?'}`)
 
     const metadata = {
       from_funding_account_id: fromId,
@@ -209,7 +216,8 @@ export default function AddTransferModal({
       .delete()
       .eq('id', transferId)
     setRemoving(false); setConfirmRemove(false)
-    if (e) { setError(e.message); return }
+    if (e) { setError(e.message); toast.error("Couldn't delete transfer", e); return }
+    toast.success('Transfer deleted')
     await writeAuditLog('transfer_deleted', transferId, {
       from_funding_account_id: originalRow.from_funding_account_id,
       to_funding_account_id: originalRow.to_funding_account_id,

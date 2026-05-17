@@ -2,11 +2,13 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { S } from '../../lib/styles'
 import Modal from '../../components/Modal'
+import { useToast } from '../../contexts/ToastContext'
 
 const HEX_RX = /^#[0-9A-Fa-f]{6}$/
 const empty = { name: '', description: '', color_hex: '#5F5E5A', is_active_state: false, is_terminal: false, sort_order: 0 }
 
 export default function DriverPurchaseStatusesSettings() {
+  const toast = useToast()
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
@@ -60,16 +62,19 @@ export default function DriverPurchaseStatusesSettings() {
       : await supabase.from('driver_purchase_statuses').insert(payload)
     setSaving(false)
     if (res.error) {
-      if (res.error.code === '23505') setError('A status with that name already exists')
-      else setError(res.error.message)
+      const msg = res.error.code === '23505' ? 'A status with that name already exists' : res.error.message
+      setError(msg)
+      toast.error(editItem ? "Couldn't update status" : "Couldn't create status", msg)
       return
     }
+    toast.success(editItem ? `Status updated — ${payload.name}` : `Status created — ${payload.name}`)
     setShowModal(false); load()
   }
 
   async function bumpOrder(it, delta) {
     const next = (it.sort_order || 0) + delta
-    await supabase.from('driver_purchase_statuses').update({ sort_order: next }).eq('id', it.id)
+    const { error } = await supabase.from('driver_purchase_statuses').update({ sort_order: next }).eq('id', it.id)
+    if (error) toast.error("Couldn't reorder status", error)
     load()
   }
 
@@ -80,15 +85,17 @@ export default function DriverPurchaseStatusesSettings() {
       .select('id', { count: 'exact', head: true })
       .eq('status_id', it.id)
     if ((count || 0) > 0) {
-      alert(`Cannot delete "${it.name}" — ${count} driver purchase${count === 1 ? '' : 's'} use this status. Reassign them first.`)
+      const msg = `${count} driver purchase${count === 1 ? '' : 's'} use this status. Reassign them first.`
+      toast.error(`Cannot delete "${it.name}"`, msg)
       return
     }
     const { error: e } = await supabase.from('driver_purchase_statuses').delete().eq('id', it.id)
     if (e) {
-      if (e.code === '23503') alert(`Cannot delete "${it.name}" — driver purchases reference this status.`)
-      else alert(e.message)
+      if (e.code === '23503') toast.error(`Cannot delete "${it.name}"`, 'Driver purchases reference this status.')
+      else toast.error("Couldn't delete status", e)
       return
     }
+    toast.success(`Status deleted — ${it.name}`)
     load()
   }
 

@@ -7,6 +7,7 @@ import Select from '../../../components/Select'
 import { FC, EQUIPMENT_STATUSES, STATUS_LABELS, equipmentStatusPill, fmtMoney, fmtDate } from '../loanUtils'
 import SoldToDriverSection from '../components/SoldToDriverSection'
 import { useEquipmentTypes } from '../../../hooks/useEquipmentTypes'
+import { useToast } from '../../../contexts/ToastContext'
 
 const empty = {
   unit_number: '', vin: '', equipment_type: '', make: '', model: '', year: '',
@@ -15,6 +16,7 @@ const empty = {
 
 export default function EquipmentTab({ loanId, canEdit }) {
   const { user } = useAuth()
+  const toast = useToast()
   const [rows, setRows] = useState([])
   // All types (active + inactive) so legacy rows still resolve to a label.
   // Dropdown options filter to is_active at render time.
@@ -54,17 +56,21 @@ export default function EquipmentTab({ loanId, canEdit }) {
       .from('loan_equipment')
       .update({ monthly_payment: num, monthly_payment_override: true, updated_at: new Date().toISOString() })
       .eq('id', row.id)
-    if (error) { alert(error.message); return }
+    if (error) { toast.error("Couldn't update monthly payment", error); return }
+    toast.success('Monthly payment updated')
     load()
   }
 
   async function resetRowToAuto(row) {
     if (!canEdit) return
-    await supabase
+    const { error: e1 } = await supabase
       .from('loan_equipment')
       .update({ monthly_payment_override: false, updated_at: new Date().toISOString() })
       .eq('id', row.id)
-    await supabase.rpc('auto_split_contract_monthly_payment', { p_loan_id: loanId })
+    if (e1) { toast.error("Couldn't reset row to auto", e1); load(); return }
+    const { error: e2 } = await supabase.rpc('auto_split_contract_monthly_payment', { p_loan_id: loanId })
+    if (e2) toast.error('Reset, but auto-split failed', e2)
+    else toast.success('Reset to auto-split')
     load()
   }
 
@@ -72,16 +78,20 @@ export default function EquipmentTab({ loanId, canEdit }) {
     if (!canEdit) return
     setContractTotalSaving(true)
     const num = contractTotal === '' ? null : Number(contractTotal)
-    await supabase.from('loans').update({ monthly_payment: num }).eq('id', loanId)
+    const { error } = await supabase.from('loans').update({ monthly_payment: num }).eq('id', loanId)
     setContractTotalSaving(false)
+    if (error) toast.error("Couldn't save contract total", error)
+    else toast.success('Contract monthly payment saved')
     load()
   }
 
   async function runAutoSplit() {
     if (!canEdit) return
     setSplitting(true)
-    await supabase.rpc('auto_split_contract_monthly_payment', { p_loan_id: loanId })
+    const { error } = await supabase.rpc('auto_split_contract_monthly_payment', { p_loan_id: loanId })
     setSplitting(false)
+    if (error) toast.error("Couldn't auto-split contract", error)
+    else toast.success('Auto-split applied to equipment')
     load()
   }
 
@@ -121,14 +131,22 @@ export default function EquipmentTab({ loanId, canEdit }) {
     const res = editItem
       ? await supabase.from('loan_equipment').update(payload).eq('id', editItem.id)
       : await supabase.from('loan_equipment').insert(payload)
-    if (res.error) setError(res.error.message)
-    else { setShowModal(false); load() }
+    if (res.error) {
+      setError(res.error.message)
+      toast.error(editItem ? "Couldn't update equipment" : "Couldn't add equipment", res.error)
+    } else {
+      const label = payload.unit_number || payload.vin || payload.make || 'equipment'
+      toast.success(editItem ? `Equipment updated — ${label}` : `Equipment added — ${label}`)
+      setShowModal(false); load()
+    }
     setSaving(false)
   }
 
   async function quickStatusChange(row, status) {
     if (!canEdit) return
-    await supabase.from('loan_equipment').update({ current_status: status, updated_at: new Date().toISOString() }).eq('id', row.id)
+    const { error } = await supabase.from('loan_equipment').update({ current_status: status, updated_at: new Date().toISOString() }).eq('id', row.id)
+    if (error) toast.error("Couldn't change equipment status", error)
+    else toast.success(`Equipment status — ${STATUS_LABELS[status] || status}`)
     load()
   }
 
@@ -145,7 +163,7 @@ export default function EquipmentTab({ loanId, canEdit }) {
       .eq('id', row.id)
     if (error) {
       setRows(rs => rs.map(r => r.id === row.id ? { ...r, has_title: false } : r))
-      alert('Could not mark title received: ' + error.message)
+      toast.error("Couldn't mark title received", error)
       return
     }
     const label = row.unit_number || row.vin || 'equipment'
@@ -156,11 +174,15 @@ export default function EquipmentTab({ loanId, canEdit }) {
       description: `Title received for ${label}`,
       created_by: user?.id || null,
     })
+    toast.success(`Title received — ${label}`)
   }
 
   async function handleDelete(row) {
+    const label = row.unit_number || row.vin || 'equipment'
     if (!confirm(`Delete equipment ${row.unit_number || row.vin || ''}?`)) return
-    await supabase.from('loan_equipment').delete().eq('id', row.id)
+    const { error } = await supabase.from('loan_equipment').delete().eq('id', row.id)
+    if (error) toast.error("Couldn't delete equipment", error)
+    else toast.success(`Equipment deleted — ${label}`)
     load()
   }
 

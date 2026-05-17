@@ -4,10 +4,12 @@ import { S } from '../../lib/styles'
 import Modal from '../../components/Modal'
 import { buildDeptOptions } from '../../lib/deptUtils'
 import Select from '../../components/Select'
+import { useToast } from '../../contexts/ToastContext'
 
 const emptyForm = { name: '', parent_id: '' }
 
 export default function SettingsDepartments() {
+  const toast = useToast()
   const [departments, setDepartments] = useState([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
@@ -38,13 +40,20 @@ export default function SettingsDepartments() {
     const res = editItem
       ? await supabase.from('departments').update(payload).eq('id', editItem.id)
       : await supabase.from('departments').insert(payload)
-    if (res.error) setError(res.error.message)
-    else { setShowModal(false); loadData() }
+    if (res.error) {
+      setError(res.error.message)
+      toast.error(editItem ? "Couldn't update department" : "Couldn't create department", res.error)
+    } else {
+      toast.success(editItem ? `Department updated — ${payload.name}` : `Department created — ${payload.name}`)
+      setShowModal(false); loadData()
+    }
     setSaving(false)
   }
 
   async function toggleActive(d) {
-    await supabase.from('departments').update({ is_active: !d.is_active }).eq('id', d.id)
+    const { error } = await supabase.from('departments').update({ is_active: !d.is_active }).eq('id', d.id)
+    if (error) toast.error(d.is_active ? "Couldn't deactivate department" : "Couldn't activate department", error)
+    else toast.success(d.is_active ? `Department deactivated — ${d.name}` : `Department activated — ${d.name}`)
     loadData()
   }
 

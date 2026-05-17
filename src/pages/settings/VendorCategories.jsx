@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { S } from '../../lib/styles'
 import Modal from '../../components/Modal'
+import { useToast } from '../../contexts/ToastContext'
 
 export default function SettingsVendorCategories() {
+  const toast = useToast()
   const [categories, setCategories] = useState([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
@@ -26,17 +28,25 @@ export default function SettingsVendorCategories() {
   async function handleSave() {
     if (!name.trim()) return setError('Category name is required')
     setSaving(true); setError('')
+    const trimmed = name.trim()
     const res = editItem
-      ? await supabase.from('vendor_categories').update({ name: name.trim() }).eq('id', editItem.id)
-      : await supabase.from('vendor_categories').insert({ name: name.trim() })
-    if (res.error) setError(res.error.message)
-    else { setShowModal(false); loadData() }
+      ? await supabase.from('vendor_categories').update({ name: trimmed }).eq('id', editItem.id)
+      : await supabase.from('vendor_categories').insert({ name: trimmed })
+    if (res.error) {
+      setError(res.error.message)
+      toast.error(editItem ? "Couldn't update category" : "Couldn't create category", res.error)
+    } else {
+      toast.success(editItem ? `Category updated — ${trimmed}` : `Category created — ${trimmed}`)
+      setShowModal(false); loadData()
+    }
     setSaving(false)
   }
 
   async function handleDelete(c) {
     if (!confirm(`Delete category "${c.name}"? This cannot be undone.`)) return
-    await supabase.from('vendor_categories').delete().eq('id', c.id)
+    const { error } = await supabase.from('vendor_categories').delete().eq('id', c.id)
+    if (error) toast.error("Couldn't delete category", error)
+    else toast.success(`Category deleted — ${c.name}`)
     loadData()
   }
 

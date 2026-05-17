@@ -27,6 +27,7 @@ import { useAccountsNeedingBalanceUpdate } from './useAccountsNeedingBalanceUpda
 import RecordBalanceEntryModal from '../settings/funding/RecordBalanceEntryModal'
 import AdjustmentDetailsModal from '../settings/funding/AdjustmentDetailsModal'
 import AddTransferModal from './AddTransferModal'
+import { useToast } from '../../contexts/ToastContext'
 
 const SHOW_PAID_KEY = 'cf-show-paid'
 const GROUP_BY_BANK_KEY = 'cf-group-by-bank'
@@ -34,6 +35,7 @@ const RAIL_MODE_KEY = 'cf-rail-mode'
 
 export default function PaymentCalendar() {
   const { canEdit } = useAuth()
+  const globalToast = useToast()
   const today = new Date()
   const [view, setView] = useState('week') // 'week' | 'month'
   const [anchor, setAnchor] = useState(today)         // any date inside the visible week (week view) or month (month view)
@@ -438,7 +440,8 @@ export default function PaymentCalendar() {
     } else {
       return
     }
-    if (res.error) { alert('Reschedule failed: ' + res.error.message); return }
+    if (res.error) { globalToast.error("Couldn't reschedule", res.error); return }
+    globalToast.success(`Rescheduled to ${newDateISO}`)
     loadData()
   }
 

@@ -4,8 +4,10 @@ import { supabase } from '../../lib/supabase'
 import { S } from '../../lib/styles'
 import Select from '../../components/Select'
 import { CF, fmtMoney, toISO } from './calendarUtils'
+import { useToast } from '../../contexts/ToastContext'
 
 export default function ConvertToInvoiceModal({ open, planned, onClose, onConverted }) {
+  const toast = useToast()
   // `planned` is the custom_outflows row (from ChipDetailPanel's loaded row)
   const [vendors, setVendors] = useState([])
   const [vendorId, setVendorId] = useState('')
@@ -113,10 +115,12 @@ export default function ConvertToInvoiceModal({ open, planned, onClose, onConver
 
       console.log('[Convert→Invoice] success — refetching calendar + closing UI')
       setSaving(false)
+      toast.success('Planned expense converted to invoice')
       onConverted?.(inv.id)
     } catch (err) {
       console.error('[Convert→Invoice] aborted:', err)
       setError(err?.message || 'Conversion failed')
+      toast.error("Couldn't convert to invoice", err)
       setSaving(false)
     }
   }

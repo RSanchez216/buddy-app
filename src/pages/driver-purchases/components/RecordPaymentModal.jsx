@@ -6,6 +6,7 @@ import Modal from '../../../components/Modal'
 import Select from '../../../components/Select'
 import { logEvent } from '../utils/events'
 import { fmtMoney, fmtDate } from '../utils/format'
+import { useToast } from '../../../contexts/ToastContext'
 
 const PAYMENT_METHODS = [
   { v: 'manual',  l: 'Manual / cash' },
@@ -48,6 +49,7 @@ export default function RecordPaymentModal({
   onRecorded,                // (info) => void
   reconcilerMap = {},        // { user_id → display name } for audit display
 }) {
+  const toast = useToast()
   const { user } = useAuth()
   const isEdit = !!existingPayment
 
@@ -285,7 +287,8 @@ export default function RecordPaymentModal({
         .select('id')
         .single()
       setBusy(false)
-      if (res.error) { setError(res.error.message); return }
+      if (res.error) { setError(res.error.message); toast.error("Couldn't skip payment", res.error); return }
+      toast.success('Payment skipped')
       await logEvent(
         purchase.id,
         'payment_skipped',
@@ -403,7 +406,12 @@ export default function RecordPaymentModal({
     }
 
     setBusy(false)
-    if (opError) { setError(opError.message); return }
+    if (opError) { setError(opError.message); toast.error(isEdit ? "Couldn't edit payment" : "Couldn't record payment", opError); return }
+    toast.success(
+      isReversal ? `Reversal recorded — ${fmtMoney(Math.abs(signedAmount))}`
+      : isEdit ? 'Payment updated'
+      : `Payment recorded — ${fmtMoney(signedAmount)}`
+    )
 
     // Audit event. Distinct event_type for edits so the activity feed
     // and audit query can tell record-from-scratch from edit-after-the-fact.

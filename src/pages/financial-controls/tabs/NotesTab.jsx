@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../../../lib/supabase'
 import { S } from '../../../lib/styles'
+import { useToast } from '../../../contexts/ToastContext'
 
 export default function NotesTab({ loan, canEdit, onChange }) {
+  const toast = useToast()
   const [description, setDescription] = useState(loan.description || '')
   const [cfoFlag, setCfoFlag] = useState(!!loan.cfo_flag)
   const [savedAt, setSavedAt] = useState(null)
@@ -19,7 +21,8 @@ export default function NotesTab({ loan, canEdit, onChange }) {
       updated_at: new Date().toISOString(),
     }).eq('id', loan.id)
     setSaving(false)
-    if (!error) { setSavedAt(new Date()); onChange?.() }
+    if (error) toast.error("Couldn't save notes", error)
+    else { setSavedAt(new Date()); toast.success('Notes saved'); onChange?.() }
   }
 
   async function toggleCfo(checked) {
@@ -29,7 +32,8 @@ export default function NotesTab({ loan, canEdit, onChange }) {
       cfo_flag: checked,
       updated_at: new Date().toISOString(),
     }).eq('id', loan.id)
-    if (!error) { setSavedAt(new Date()); onChange?.() }
+    if (error) toast.error("Couldn't update CFO flag", error)
+    else { setSavedAt(new Date()); toast.success(checked ? 'CFO flag set' : 'CFO flag cleared'); onChange?.() }
   }
 
   return (

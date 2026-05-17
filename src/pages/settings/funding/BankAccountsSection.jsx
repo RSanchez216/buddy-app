@@ -13,6 +13,7 @@ import Modal from '../../../components/Modal'
 import RecordBalanceEntryModal from './RecordBalanceEntryModal'
 import AdjustmentDetailsModal from './AdjustmentDetailsModal'
 import NeedsReviewPill from './NeedsReviewPill'
+import { useToast } from '../../../contexts/ToastContext'
 
 // Account-metadata form (everything BUT balance — balance now lives in
 // funding_account_balance_entries via the Record Balance modal).
@@ -53,6 +54,7 @@ function fmtAsOfShort(iso) {
 
 export default function BankAccountsSection() {
   const { isAdmin } = useAuth()
+  const toast = useToast()
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
@@ -113,21 +115,29 @@ export default function BankAccountsSection() {
     const res = editItem
       ? await supabase.from('funding_accounts').update(payload).eq('id', editItem.id)
       : await supabase.from('funding_accounts').insert(payload)
-    if (res.error) setError(res.error.message)
-    else { setShowModal(false); load() }
+    if (res.error) {
+      setError(res.error.message)
+      toast.error(editItem ? "Couldn't update account" : "Couldn't create account", res.error)
+    } else {
+      toast.success(editItem ? `Account updated — ${payload.name}` : `Account created — ${payload.name}`)
+      setShowModal(false); load()
+    }
     setSaving(false)
   }
 
   async function toggleActive(it) {
-    await supabase.from('funding_accounts').update({ is_active: !it.is_active }).eq('id', it.id)
+    const { error } = await supabase.from('funding_accounts').update({ is_active: !it.is_active }).eq('id', it.id)
+    if (error) toast.error(it.is_active ? "Couldn't deactivate account" : "Couldn't reactivate account", error)
+    else toast.success(it.is_active ? `Account deactivated — ${it.name}` : `Account reactivated — ${it.name}`)
     load()
   }
 
   async function remove(it) {
     if (!confirm(`Delete "${it.name}"? This will fail if loans reference it.`)) return
     const { error: e } = await supabase.from('funding_accounts').delete().eq('id', it.id)
-    if (e) alert(e.message)
-    else load()
+    if (e) toast.error("Couldn't delete account", e)
+    else toast.success(`Account deleted — ${it.name}`)
+    load()
   }
 
   if (loading) {

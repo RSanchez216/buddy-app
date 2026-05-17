@@ -6,17 +6,18 @@ import { S } from '../../../lib/styles'
 import { ROLE_LABEL, rolePill, statusPill, fmtDateTime } from './userUtils'
 import InviteUserModal from './InviteUserModal'
 import EditUserDrawer from './EditUserDrawer'
+import { useToast } from '../../../contexts/ToastContext'
 
 const ORANGE_BTN = 'flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 text-white rounded-xl transition-all shadow-lg shadow-orange-500/20'
 
 export default function Users() {
   const { profile, loading: authLoading, isAdmin } = useAuth()
+  const toast = useToast()
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [showInvite, setShowInvite] = useState(false)
   const [editUser, setEditUser] = useState(null)
   const [openMenuId, setOpenMenuId] = useState(null)
-  const [toast, setToast] = useState(null)
 
   useEffect(() => { load() }, [])
 
@@ -34,11 +35,6 @@ export default function Users() {
   // Must be evaluated AFTER all hooks above so the hook count stays stable
   // across renders (otherwise React error #300).
   if (!authLoading && !isAdmin) return <Navigate to="/" replace />
-
-  function showToast(message) {
-    setToast({ message })
-    setTimeout(() => setToast(null), 4000)
-  }
 
   async function load() {
     setLoading(true)
@@ -79,9 +75,9 @@ export default function Users() {
         body: { email: u.email, full_name: u.full_name || u.email, role: u.role },
       })
       if (error || data?.error) throw new Error(error?.message || data?.error)
-      showToast(`Invite resent to ${u.email}`)
+      toast.success(`Invite resent to ${u.email}`)
     } catch (e) {
-      alert('Resend failed: ' + (e?.message || ''))
+      toast.error("Couldn't resend invite", e)
     }
   }
 
@@ -90,19 +86,19 @@ export default function Users() {
     const { error } = await supabase.auth.resetPasswordForEmail(u.email, {
       redirectTo: `${window.location.origin}/auth/set-password`,
     })
-    if (error) { alert('Reset failed: ' + error.message); return }
-    showToast(`Password reset email sent to ${u.email}`)
+    if (error) { toast.error("Couldn't send password reset", error); return }
+    toast.success(`Password reset email sent to ${u.email}`)
   }
 
   async function deactivate(u) {
     setOpenMenuId(null)
-    if (u.id === profile?.id) { alert('You cannot deactivate your own account.'); return }
+    if (u.id === profile?.id) { toast.error('You cannot deactivate your own account.'); return }
     if (!confirm(`Deactivate ${u.full_name || u.email}? They will be unable to sign in.`)) return
     const { error } = await supabase.from('users').update({
       status: 'deactivated', deactivated_at: new Date().toISOString(),
     }).eq('id', u.id)
-    if (error) { alert(error.message); return }
-    showToast('User deactivated')
+    if (error) { toast.error("Couldn't deactivate user", error); return }
+    toast.success(`User deactivated — ${u.full_name || u.email}`)
     load()
   }
 
@@ -111,8 +107,8 @@ export default function Users() {
     const { error } = await supabase.from('users').update({
       status: 'active', deactivated_at: null,
     }).eq('id', u.id)
-    if (error) { alert(error.message); return }
-    showToast('User reactivated')
+    if (error) { toast.error("Couldn't reactivate user", error); return }
+    toast.success(`User reactivated — ${u.full_name || u.email}`)
     load()
   }
 
@@ -213,7 +209,7 @@ export default function Users() {
       <InviteUserModal
         open={showInvite}
         onClose={() => setShowInvite(false)}
-        onInvited={({ email }) => { showToast(`Invite sent to ${email}`); load() }}
+        onInvited={({ email }) => { toast.success(`Invite sent to ${email}`); load() }}
       />
       <EditUserDrawer
         open={!!editUser}
@@ -221,20 +217,8 @@ export default function Users() {
         allUsers={users}
         onClose={() => setEditUser(null)}
         onChange={load}
-        onSuccess={showToast}
+        onSuccess={(msg) => toast.success(msg)}
       />
-
-      {toast && (
-        <div className="fixed bottom-6 right-6 z-[110] max-w-sm bg-white dark:bg-[#0d0d1f] border border-emerald-200 dark:border-emerald-500/30 rounded-2xl shadow-2xl px-4 py-3 flex items-start gap-3">
-          <div className="w-2 h-2 rounded-full bg-emerald-500 mt-1.5 shrink-0" />
-          <div className="flex-1 text-sm text-gray-700 dark:text-slate-300">{toast.message}</div>
-          <button onClick={() => setToast(null)} className="text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 shrink-0">
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-      )}
     </div>
   )
 }

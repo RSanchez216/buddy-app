@@ -5,6 +5,7 @@ import { S } from '../../../lib/styles'
 import Modal from '../../../components/Modal'
 import Select from '../../../components/Select'
 import { FC, EVENT_TYPES, STATUS_LABELS, fmtMoney, fmtDate } from '../loanUtils'
+import { useToast } from '../../../contexts/ToastContext'
 
 const empty = { event_date: '', event_type: 'note', amount: '', description: '' }
 
@@ -47,6 +48,7 @@ function mergeCountsSummary(meta) {
 
 export default function EventsTab({ loanId, canEdit }) {
   const { user } = useAuth()
+  const toast = useToast()
   const [events, setEvents] = useState([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
@@ -99,14 +101,16 @@ export default function EventsTab({ loanId, canEdit }) {
     const res = editItem
       ? await supabase.from('loan_events').update(payload).eq('id', editItem.id)
       : await supabase.from('loan_events').insert({ ...payload, created_by: user?.id || null })
-    if (res.error) setError(res.error.message)
-    else { setShowModal(false); load() }
+    if (res.error) { setError(res.error.message); toast.error(editItem ? "Couldn't update event" : "Couldn't add event", res.error) }
+    else { toast.success(editItem ? 'Event updated' : 'Event added'); setShowModal(false); load() }
     setSaving(false)
   }
 
   async function remove(e) {
     if (!confirm('Delete this event?')) return
-    await supabase.from('loan_events').delete().eq('id', e.id)
+    const { error } = await supabase.from('loan_events').delete().eq('id', e.id)
+    if (error) toast.error("Couldn't delete event", error)
+    else toast.success('Event deleted')
     load()
   }
 

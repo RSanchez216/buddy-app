@@ -6,6 +6,7 @@ import Modal from '../../../components/Modal'
 import RecordPaymentModal from './RecordPaymentModal'
 import { logEvent } from '../utils/events'
 import { fmtMoney, fmtDate } from '../utils/format'
+import { useToast } from '../../../contexts/ToastContext'
 
 const SOURCE_LABEL = {
   generated:      'Generated',
@@ -97,6 +98,7 @@ function rowTint(status) {
 
 export default function PaymentHistorySection({ purchase, canEdit, onChange, openSignal = 0 }) {
   const { user, profile } = useAuth()
+  const toast = useToast()
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
@@ -264,7 +266,7 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
       .from('driver_purchase_payments')
       .update(revert)
       .eq('id', paymentId)
-    if (error) { alert('Undo failed: ' + error.message); load(); return }
+    if (error) { toast.error("Couldn't undo", error); load(); return }
     await logEvent(
       purchase.id,
       'payment_skip_undone',
@@ -286,7 +288,8 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
         updated_at: new Date().toISOString(),
       })
       .eq('id', p.id)
-    if (error) { alert('Could not unskip: ' + error.message); return }
+    if (error) { toast.error("Couldn't unskip", error); return }
+    toast.success('Skip undone')
     await logEvent(
       purchase.id,
       'payment_skip_undone',
@@ -309,7 +312,7 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
         .from('driver_purchase_payments')
         .delete()
         .eq('id', paymentId)
-      if (error) { alert('Undo failed: ' + error.message); load(); return }
+      if (error) { toast.error("Couldn't undo", error); load(); return }
     } else {
       // Pre-generated row was updated. Revert to whatever was there
       // before (typically actual=0, no method, not reconciled). Trigger
@@ -331,7 +334,7 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
         .from('driver_purchase_payments')
         .update(revert)
         .eq('id', paymentId)
-      if (error) { alert('Undo failed: ' + error.message); load(); return }
+      if (error) { toast.error("Couldn't undo", error); load(); return }
     }
     await logEvent(
       purchase.id,
@@ -401,7 +404,7 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
       const expected = Number(p.expected_amount || 0)
       if (expected <= 0) {
         setReconcileBusy(false)
-        alert('No expected amount on this row — use Edit to record a custom amount.')
+        toast.error('No expected amount on this row', 'Use Edit to record a custom amount.')
         return
       }
       // Smart payment_method default: payroll for generated rows
@@ -427,7 +430,7 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
       if (error) {
         setRows(rs => rs.map(r => r.id === p.id ? { ...r, ...prev } : r))
         setReconcileBusy(false)
-        alert('Could not reconcile: ' + error.message)
+        toast.error("Couldn't reconcile", error)
         return
       }
       // Two events in order: record first, then reconcile. Keeps the
@@ -464,7 +467,7 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
     if (error) {
       setRows(rs => rs.map(r => r.id === p.id ? { ...r, ...prev } : r))
       setReconcileBusy(false)
-      alert('Could not reconcile: ' + error.message)
+      toast.error("Couldn't reconcile", error)
       return
     }
     await logEvent(
@@ -505,7 +508,7 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
       .update(revert)
       .eq('id', paymentId)
     setReconcileBusy(false)
-    if (error) { alert('Undo failed: ' + error.message); load(); return }
+    if (error) { toast.error("Couldn't undo", error); load(); return }
     if (isCombo) {
       // Symmetric to the combo action: two events, in reverse order
       // (unreconcile first, then record-undone) so the activity feed
@@ -544,7 +547,7 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
     setReconcileBusy(false)
     if (error) {
       setRows(rs => rs.map(r => r.id === p.id ? { ...r, ...prev } : r))
-      alert('Could not unreconcile: ' + error.message)
+      toast.error("Couldn't unreconcile", error)
       return
     }
     await logEvent(
@@ -589,7 +592,7 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
     setReconcileBusy(false)
     if (error) {
       setRows(rs => rs.map(r => r.id === p.id ? { ...r, ...prev } : r))
-      alert('Could not undo payment: ' + error.message)
+      toast.error("Couldn't undo payment", error)
       return
     }
     await logEvent(purchase.id, 'payment_unreconciled',
@@ -611,14 +614,15 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
   async function saveTrackingStart() {
     const next = trackingDraft || null
     const today = new Date().toISOString().slice(0, 10)
-    if (next && next > today) { alert('Tracking start date cannot be in the future.'); return }
+    if (next && next > today) { toast.error('Tracking start date cannot be in the future.'); return }
     setSavingTracking(true)
     const { error } = await supabase
       .from('driver_purchases')
       .update({ payment_tracking_start_date: next, updated_by: user?.id || null })
       .eq('id', purchase.id)
     setSavingTracking(false)
-    if (error) { alert('Save failed: ' + error.message); return }
+    if (error) { toast.error("Couldn't save tracking start date", error); return }
+    toast.success('Tracking start date saved')
     setTrackingStart(next)
     setShowTrackingEdit(false)
     onChange?.()

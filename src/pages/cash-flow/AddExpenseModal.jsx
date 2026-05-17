@@ -5,6 +5,7 @@ import { S } from '../../lib/styles'
 import Modal from '../../components/Modal'
 import Select from '../../components/Select'
 import { CF, EXPENSE_CATEGORIES, FREQUENCIES, WEEKDAYS, fmtMoney, toISO } from './calendarUtils'
+import { useToast } from '../../contexts/ToastContext'
 
 const emptyOneTime = (defaults = {}) => ({
   due_date: defaults.due_date || toISO(new Date()),
@@ -36,6 +37,7 @@ function fmtAccountOption(a) {
 
 export default function AddExpenseModal({ open, onClose, onSaved, defaultDate, defaultEntityId }) {
   const { user } = useAuth()
+  const toast = useToast()
   const [mode, setMode] = useState('one-time') // 'one-time' | 'recurring'
   const [entities, setEntities] = useState([])
   const [accounts, setAccounts] = useState([])
@@ -84,7 +86,8 @@ export default function AddExpenseModal({ open, onClose, onSaved, defaultDate, d
     }))
     const res = await supabase.from('custom_outflows').insert(payload)
     setSaving(false)
-    if (res.error) { setError(res.error.message); return }
+    if (res.error) { setError(res.error.message); toast.error("Couldn't add expense", res.error); return }
+    toast.success(payload.length === 1 ? 'Expense added' : `${payload.length} expenses added`)
     onSaved?.()
     onClose()
   }
@@ -115,7 +118,7 @@ export default function AddExpenseModal({ open, onClose, onSaved, defaultDate, d
     }
 
     const tplRes = await supabase.from('recurring_expense_templates').insert(payload).select('id').single()
-    if (tplRes.error) { setError(tplRes.error.message); setSaving(false); return }
+    if (tplRes.error) { setError(tplRes.error.message); setSaving(false); toast.error("Couldn't create recurring expense", tplRes.error); return }
 
     // Materialize 12 months of instances
     const through = new Date(); through.setFullYear(through.getFullYear() + 1)
@@ -125,9 +128,11 @@ export default function AddExpenseModal({ open, onClose, onSaved, defaultDate, d
     })
     if (genRes.error) {
       setError('Template saved, but instance generation failed: ' + genRes.error.message)
+      toast.error('Template saved, but instance generation failed', genRes.error)
       setSaving(false); return
     }
     setSaving(false)
+    toast.success(`Recurring expense added — ${payload.name}`)
     onSaved?.()
     onClose()
   }

@@ -9,6 +9,7 @@ import DeptBadge from '../components/DeptBadge'
 import Select from '../components/Select'
 import MultiSelect from '../components/MultiSelect'
 import { buildDeptOptions, pmLabel } from '../lib/deptUtils'
+import { useToast } from '../contexts/ToastContext'
 
 const FREQUENCIES = ['Weekly', 'Bi-Weekly', 'Monthly', 'Yearly', 'One-Time']
 
@@ -19,6 +20,7 @@ const emptyForm = {
 
 export default function VendorMaster() {
   const { profile } = useAuth()
+  const toast = useToast()
   const [vendors, setVendors] = useState([])
   const [departments, setDepartments] = useState([])
   const [categories, setCategories] = useState([])
@@ -92,13 +94,17 @@ export default function VendorMaster() {
   async function addAlias() {
     const trimmed = newAlias.trim()
     if (!trimmed || !editVendor) return
-    await supabase.from('vendor_aliases').insert({ vendor_id: editVendor.id, alias: trimmed })
+    const { error } = await supabase.from('vendor_aliases').insert({ vendor_id: editVendor.id, alias: trimmed })
+    if (error) toast.error("Couldn't add alias", error)
+    else toast.success(`Alias added — ${trimmed}`)
     setNewAlias('')
     loadAliases(editVendor.id)
   }
 
   async function deleteAlias(id) {
-    await supabase.from('vendor_aliases').delete().eq('id', id)
+    const { error } = await supabase.from('vendor_aliases').delete().eq('id', id)
+    if (error) toast.error("Couldn't delete alias", error)
+    else toast.success('Alias deleted')
     setAliases(prev => prev.filter(a => a.id !== id))
   }
 
@@ -122,13 +128,20 @@ export default function VendorMaster() {
     const res = editVendor
       ? await supabase.from('vendors').update(payload).eq('id', editVendor.id)
       : await supabase.from('vendors').insert(payload)
-    if (res.error) setError(res.error.message)
-    else { setShowModal(false); loadData() }
+    if (res.error) {
+      setError(res.error.message)
+      toast.error(editVendor ? "Couldn't update vendor" : "Couldn't create vendor", res.error)
+    } else {
+      toast.success(editVendor ? `Vendor updated — ${payload.name}` : `Vendor created — ${payload.name}`)
+      setShowModal(false); loadData()
+    }
     setSaving(false)
   }
 
   async function toggleActive(v) {
-    await supabase.from('vendors').update({ is_active: !v.is_active }).eq('id', v.id)
+    const { error } = await supabase.from('vendors').update({ is_active: !v.is_active }).eq('id', v.id)
+    if (error) toast.error(v.is_active ? "Couldn't deactivate vendor" : "Couldn't reactivate vendor", error)
+    else toast.success(v.is_active ? `Vendor deactivated — ${v.name}` : `Vendor reactivated — ${v.name}`)
     loadData()
   }
 
@@ -163,11 +176,11 @@ export default function VendorMaster() {
       const ws = wb.Sheets[wb.SheetNames[0]]
       const rows = XLSX.utils.sheet_to_json(ws)
 
-      if (!rows.length) { alert('The file appears to be empty.'); return }
+      if (!rows.length) { toast.error('The file appears to be empty.'); return }
 
       const firstRow = Object.keys(rows[0])
       const missing = REQUIRED_COLS.filter(c => !firstRow.includes(c))
-      if (missing.length) { alert(`Missing required columns: ${missing.join(', ')}\n\nDownload the template to see the expected format.`); return }
+      if (missing.length) { toast.error('Missing required columns', `${missing.join(', ')} — see the template for the expected format.`); return }
 
       setImportRows(rows.map((r, i) => {
         const deptName = r['Department'] || ''
@@ -211,9 +224,13 @@ export default function VendorMaster() {
       payment_method,
     }))
     const res = await supabase.from('vendors').insert(payload)
-    if (res.error) alert('Import error: ' + res.error.message)
+    if (res.error) toast.error('Import failed', res.error)
     else {
-      alert(`Successfully imported ${valid.length} vendor${valid.length > 1 ? 's' : ''}${importRows.filter(r => r._error).length ? `, ${importRows.filter(r => r._error).length} skipped.` : '.'}`)
+      const skipped = importRows.filter(r => r._error).length
+      toast.success(
+        `Imported ${valid.length} vendor${valid.length > 1 ? 's' : ''}`,
+        skipped ? { description: `${skipped} row${skipped === 1 ? '' : 's'} skipped due to errors.` } : undefined
+      )
       setShowImport(false); loadData()
     }
   }

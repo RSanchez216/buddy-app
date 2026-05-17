@@ -8,6 +8,7 @@ import DriverPicker from './DriverPicker'
 import VinMatch from './VinMatch'
 import { logEvent, diffFields } from '../utils/events'
 import { formatEquipmentLabel } from '../../../hooks/useEquipmentTypes'
+import { useToast } from '../../../contexts/ToastContext'
 
 const PURCHASE_TYPES = [
   { v: 'cash',              l: 'Cash' },
@@ -47,6 +48,7 @@ function emptyForm(defaultStatusId) {
 // driver_purchases) for edit mode; omit for new.
 export default function PurchaseFormModal({ open, onClose, purchase, onSaved }) {
   const { user } = useAuth()
+  const toast = useToast()
   const isEdit = !!purchase
 
   const [statuses, setStatuses] = useState([])
@@ -275,7 +277,8 @@ export default function PurchaseFormModal({ open, onClose, purchase, onSaved }) 
     if (isEdit) {
       const { error: e } = await supabase.from('driver_purchases').update(payload).eq('id', purchase.id)
       setSaving(false)
-      if (e) { setError(e.message); return }
+      if (e) { setError(e.message); toast.error("Couldn't update purchase", e); return }
+      toast.success('Driver purchase updated')
 
       // Recording side-effects after update
       const changes = diffFields(originalForm || {}, form, TRACKED)
@@ -321,7 +324,8 @@ export default function PurchaseFormModal({ open, onClose, purchase, onSaved }) 
       .select('id')
       .single()
     setSaving(false)
-    if (e) { setError(e.message); return }
+    if (e) { setError(e.message); toast.error("Couldn't create purchase", e); return }
+    toast.success('Driver purchase created')
     await logEvent(data.id, 'created', 'Contract created', {
       driver_id: payload.driver_id,
       purchase_type: payload.purchase_type,

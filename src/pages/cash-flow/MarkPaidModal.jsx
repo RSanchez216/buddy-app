@@ -5,6 +5,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import { S } from '../../lib/styles'
 import Select from '../../components/Select'
 import { CF, fmtMoney, toISO } from './calendarUtils'
+import { useToast } from '../../contexts/ToastContext'
 
 const PAYMENT_METHODS = ['ACH', 'Wire', 'Check', 'Auto-pay', 'Other']
 
@@ -19,6 +20,7 @@ const PAYMENT_METHODS = ['ACH', 'Wire', 'Check', 'Auto-pay', 'Other']
 // before save. Captured in audit_log so we can reconstruct intent later.
 export default function MarkPaidModal({ open, kind, mode = 'paid', record, headerSubtitle, surface = 'payment_calendar', onClose, onSaved }) {
   const { user, profile } = useAuth()
+  const toast = useToast()
   const [paidAmount, setPaidAmount] = useState('')
   const [paidDate, setPaidDate] = useState('')
   const [method, setMethod] = useState('ACH')
@@ -127,10 +129,12 @@ export default function MarkPaidModal({ open, kind, mode = 'paid', record, heade
 
       console.log(`[MarkPaid:${kind}] success`)
       setSaving(false)
+      toast.success(isPartial ? 'Payment marked partial' : 'Payment marked paid')
       onSaved?.()
     } catch (err) {
       console.error(`[MarkPaid:${kind}] failed:`, err)
       setError(err?.message || 'Save failed')
+      toast.error(isPartial ? "Couldn't mark partial" : "Couldn't mark paid", err)
       setSaving(false)
     }
   }

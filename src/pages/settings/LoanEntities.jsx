@@ -2,10 +2,12 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { S } from '../../lib/styles'
 import Modal from '../../components/Modal'
+import { useToast } from '../../contexts/ToastContext'
 
 const empty = { name: '' }
 
 export default function SettingsLoanEntities() {
+  const toast = useToast()
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
@@ -31,21 +33,28 @@ export default function SettingsLoanEntities() {
     const res = editItem
       ? await supabase.from('loan_entities').update(payload).eq('id', editItem.id)
       : await supabase.from('loan_entities').insert(payload)
-    if (res.error) setError(res.error.message)
-    else { setShowModal(false); load() }
+    if (res.error) {
+      setError(res.error.message)
+      toast.error(editItem ? "Couldn't update entity" : "Couldn't create entity", res.error)
+    } else {
+      toast.success(editItem ? `Entity updated — ${payload.name}` : `Entity created — ${payload.name}`)
+      setShowModal(false); load()
+    }
     setSaving(false)
   }
 
   async function toggleActive(it) {
-    await supabase.from('loan_entities').update({ is_active: !it.is_active }).eq('id', it.id)
+    const { error } = await supabase.from('loan_entities').update({ is_active: !it.is_active }).eq('id', it.id)
+    if (error) toast.error(it.is_active ? "Couldn't deactivate entity" : "Couldn't activate entity", error)
+    else toast.success(it.is_active ? `Entity deactivated — ${it.name}` : `Entity activated — ${it.name}`)
     load()
   }
 
   async function remove(it) {
     if (!confirm(`Delete "${it.name}"? This will fail if loans reference it.`)) return
     const { error: e } = await supabase.from('loan_entities').delete().eq('id', it.id)
-    if (e) alert(e.message)
-    else load()
+    if (e) toast.error("Couldn't delete entity", e)
+    else { toast.success(`Entity deleted — ${it.name}`); load() }
   }
 
   if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500" /></div>

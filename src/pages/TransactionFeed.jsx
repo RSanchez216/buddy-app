@@ -7,9 +7,11 @@ import StatusBadge from '../components/StatusBadge'
 import DeptBadge from '../components/DeptBadge'
 import { buildDeptOptions } from '../lib/deptUtils'
 import Select from '../components/Select'
+import { useToast } from '../contexts/ToastContext'
 
 export default function TransactionFeed() {
   const { profile } = useAuth()
+  const toast = useToast()
   const [transactions, setTransactions] = useState([])
   const [vendors, setVendors] = useState([])
   const [departments, setDepartments] = useState([])
@@ -118,8 +120,9 @@ export default function TransactionFeed() {
     setSaving(true)
     const payload = importRows.map(({ _row, _overrideVendor, vendor_name_matched, ...rest }) => ({ ...rest, status: 'Unmatched' }))
     const { data: inserted, error } = await supabase.from('transactions').insert(payload).select()
-    if (error) { alert('Import error: ' + error.message); setSaving(false); return }
+    if (error) { toast.error('Import failed', error); setSaving(false); return }
     await runAutoMatch(inserted)
+    toast.success(`Imported ${inserted.length} transaction${inserted.length === 1 ? '' : 's'}`)
     setSaving(false); setShowImport(false); loadData()
   }
 
@@ -140,13 +143,17 @@ export default function TransactionFeed() {
 
   async function manualMatch(t) {
     const { data: invoices } = await supabase.from('invoices').select('*').eq('status', 'Approved').eq('vendor_id', t.vendor_id).is('deleted_at', null)
-    if (!invoices?.length) { alert('No approved invoices found for this vendor.'); return }
-    await supabase.from('transactions').update({ status: 'Matched', matched_invoice_id: invoices[0].id }).eq('id', t.id)
+    if (!invoices?.length) { toast.error('No approved invoices found for this vendor.'); return }
+    const { error } = await supabase.from('transactions').update({ status: 'Matched', matched_invoice_id: invoices[0].id }).eq('id', t.id)
+    if (error) toast.error("Couldn't match transaction", error)
+    else toast.success('Transaction matched')
     loadData()
   }
 
   async function disputeTxn(t) {
-    await supabase.from('transactions').update({ status: 'Disputed' }).eq('id', t.id)
+    const { error } = await supabase.from('transactions').update({ status: 'Disputed' }).eq('id', t.id)
+    if (error) toast.error("Couldn't mark disputed", error)
+    else toast.success('Transaction marked disputed')
     loadData()
   }
 

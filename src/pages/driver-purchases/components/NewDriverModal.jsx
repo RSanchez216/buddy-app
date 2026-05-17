@@ -3,6 +3,7 @@ import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../contexts/AuthContext'
 import { S } from '../../../lib/styles'
 import Modal from '../../../components/Modal'
+import { useToast } from '../../../contexts/ToastContext'
 
 // ID type / number / issuing authority / expiration / DOB are intentionally
 // omitted from this modal (and EditDriverModal). Driver ID info is captured
@@ -13,6 +14,7 @@ const empty = {
 }
 
 export default function NewDriverModal({ open, onClose, onCreated, prefillName = '' }) {
+  const toast = useToast()
   const { user } = useAuth()
   const [form, setForm] = useState(empty)
   const [saving, setSaving] = useState(false)
@@ -42,7 +44,8 @@ export default function NewDriverModal({ open, onClose, onCreated, prefillName =
       .select('id, full_name, internal_id, phone')
       .single()
     setSaving(false)
-    if (e) { setError(e.message); return }
+    if (e) { setError(e.message); toast.error("Couldn't create driver", e); return }
+    toast.success(`Driver created — ${data.full_name}`)
     onCreated?.(data)
   }
 

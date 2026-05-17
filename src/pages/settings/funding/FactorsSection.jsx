@@ -8,6 +8,7 @@ import { useAuth } from '../../../contexts/AuthContext'
 import { S } from '../../../lib/styles'
 import Modal from '../../../components/Modal'
 import Select from '../../../components/Select'
+import { useToast } from '../../../contexts/ToastContext'
 
 const empty = {
   name: '',
@@ -29,6 +30,7 @@ function fmtFeePct(decimalRate) {
 
 export default function FactorsSection() {
   const { isAdmin } = useAuth()
+  const toast = useToast()
   const [items, setItems] = useState([])
   const [accounts, setAccounts] = useState([])
   const [loading, setLoading] = useState(true)
@@ -100,21 +102,29 @@ export default function FactorsSection() {
     const res = editItem
       ? await supabase.from('factors').update(payload).eq('id', editItem.id)
       : await supabase.from('factors').insert(payload)
-    if (res.error) setError(res.error.message)
-    else { setShowModal(false); load() }
+    if (res.error) {
+      setError(res.error.message)
+      toast.error(editItem ? "Couldn't update factor" : "Couldn't create factor", res.error)
+    } else {
+      toast.success(editItem ? `Factor updated — ${payload.name}` : `Factor created — ${payload.name}`)
+      setShowModal(false); load()
+    }
     setSaving(false)
   }
 
   async function toggleActive(it) {
-    await supabase.from('factors').update({ is_active: !it.is_active }).eq('id', it.id)
+    const { error } = await supabase.from('factors').update({ is_active: !it.is_active }).eq('id', it.id)
+    if (error) toast.error(it.is_active ? "Couldn't deactivate factor" : "Couldn't reactivate factor", error)
+    else toast.success(it.is_active ? `Factor deactivated — ${it.name}` : `Factor reactivated — ${it.name}`)
     load()
   }
 
   async function remove(it) {
     if (!confirm(`Delete "${it.name}"?`)) return
     const { error: e } = await supabase.from('factors').delete().eq('id', it.id)
-    if (e) alert(e.message)
-    else load()
+    if (e) toast.error("Couldn't delete factor", e)
+    else toast.success(`Factor deleted — ${it.name}`)
+    load()
   }
 
   if (loading) {

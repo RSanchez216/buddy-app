@@ -8,6 +8,7 @@ import { useAuth } from '../../../contexts/AuthContext'
 import { S } from '../../../lib/styles'
 import { mentionSuggestion } from '../utils/mentionSuggestion'
 import { extractText, extractMentions, isEmptyDoc } from '../utils/comments'
+import { useToast } from '../../../contexts/ToastContext'
 // NOTE: intentionally NOT importing 'tippy.js/dist/tippy.css'. See
 // src/index.css for the buddy-naked theme override.
 
@@ -50,6 +51,7 @@ export default function CommentComposer({
   placeholder = 'Write a comment…  (@ to mention, paste/drop images, Cmd/Ctrl+Enter to send)',
 }) {
   const { user } = useAuth()
+  const toast = useToast()
   const isEdit = !!commentId
 
   const [busy, setBusy] = useState(false)
@@ -256,7 +258,7 @@ export default function CommentComposer({
         .eq('id', commentId)
         .select('id')
         .single()
-      if (e) { setError(e.message); setBusy(false); return }
+      if (e) { setError(e.message); setBusy(false); toast.error(isEdit ? "Couldn't update comment" : "Couldn't post comment", e); return }
       row = data
     } else {
       const { data, error: e } = await supabase
@@ -270,7 +272,7 @@ export default function CommentComposer({
         })
         .select('id')
         .single()
-      if (e) { setError(e.message); setBusy(false); return }
+      if (e) { setError(e.message); setBusy(false); toast.error(isEdit ? "Couldn't update comment" : "Couldn't post comment", e); return }
       row = data
     }
 
@@ -298,6 +300,7 @@ export default function CommentComposer({
     setBusy(false)
     setPending([])
     if (!isEdit) editor.commands.clearContent()
+    toast.success(isEdit ? 'Comment updated' : 'Comment posted')
     onSubmitted?.(row.id)
   }
 

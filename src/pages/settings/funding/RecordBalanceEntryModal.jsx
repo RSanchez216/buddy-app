@@ -3,6 +3,7 @@ import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../contexts/AuthContext'
 import { S } from '../../../lib/styles'
 import Modal from '../../../components/Modal'
+import { useToast } from '../../../contexts/ToastContext'
 
 // Record (create or update) a balance entry on funding_account_balance_entries.
 // Single modal handles both cases via the (funding_account_id, as_of_date)
@@ -20,6 +21,7 @@ function chicagoToday() {
 
 export default function RecordBalanceEntryModal({ open, account, onClose, onSaved }) {
   const { user, profile } = useAuth()
+  const toast = useToast()
   const [date, setDate] = useState(chicagoToday())
   const [balance, setBalance] = useState('')
   const [notes, setNotes] = useState('')
@@ -119,7 +121,12 @@ export default function RecordBalanceEntryModal({ open, account, onClose, onSave
       .select('id')
       .single()
     setSaving(false)
-    if (e || !data) { setError(e?.message || 'Save failed'); return }
+    if (e || !data) {
+      setError(e?.message || 'Save failed')
+      toast.error("Couldn't record balance", e)
+      return
+    }
+    toast.success(`Balance recorded — ${account.name}`)
     await writeAuditLog(
       existingEntry ? 'balance_entry_updated' : 'balance_entry_created',
       {
@@ -156,7 +163,8 @@ export default function RecordBalanceEntryModal({ open, account, onClose, onSave
       .delete()
       .eq('id', existingEntry.id)
     setRemoving(false); setConfirmRemove(false)
-    if (e) { setError(e.message); return }
+    if (e) { setError(e.message); toast.error("Couldn't remove balance entry", e); return }
+    toast.success(`Balance entry removed — ${account.name}`)
     await writeAuditLog('balance_entry_deleted', {
       record_id: existingEntry.id,
       as_of_date: date,

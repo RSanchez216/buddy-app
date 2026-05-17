@@ -2,10 +2,13 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { S } from '../../lib/styles'
 import Modal from '../../components/Modal'
+import { useToast } from '../../contexts/ToastContext'
+import { invalidateEquipmentTypes } from '../../hooks/useEquipmentTypes'
 
 const empty = { display_label: '', name: '', sort_order: 100, is_active: true }
 
 export default function SettingsEquipmentTypes() {
+  const toast = useToast()
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
@@ -46,21 +49,33 @@ export default function SettingsEquipmentTypes() {
     const res = editItem
       ? await supabase.from('equipment_types').update(payload).eq('id', editItem.id)
       : await supabase.from('equipment_types').insert(payload)
-    if (res.error) setError(res.error.message)
-    else { setShowModal(false); load() }
+    if (res.error) {
+      setError(res.error.message)
+      toast.error(editItem ? "Couldn't update equipment type" : "Couldn't create equipment type", res.error)
+    } else {
+      invalidateEquipmentTypes()
+      toast.success(editItem ? `Equipment type updated — ${payload.display_label}` : `Equipment type created — ${payload.display_label}`)
+      setShowModal(false); load()
+    }
     setSaving(false)
   }
 
   async function toggleActive(it) {
-    await supabase.from('equipment_types').update({ is_active: !it.is_active }).eq('id', it.id)
+    const { error } = await supabase.from('equipment_types').update({ is_active: !it.is_active }).eq('id', it.id)
+    if (error) toast.error(it.is_active ? "Couldn't deactivate equipment type" : "Couldn't activate equipment type", error)
+    else {
+      invalidateEquipmentTypes()
+      toast.success(it.is_active ? `Equipment type deactivated — ${it.display_label || it.name}` : `Equipment type activated — ${it.display_label || it.name}`)
+    }
     load()
   }
 
   async function remove(it) {
-    if (!confirm(`Delete "${it.display_label || it.name}"?\n\nLoans currently using this type will keep the text value, but it will no longer appear in dropdowns.`)) return
+    const label = it.display_label || it.name
+    if (!confirm(`Delete "${label}"?\n\nLoans currently using this type will keep the text value, but it will no longer appear in dropdowns.`)) return
     const { error: e } = await supabase.from('equipment_types').delete().eq('id', it.id)
-    if (e) alert(e.message)
-    else load()
+    if (e) toast.error("Couldn't delete equipment type", e)
+    else { invalidateEquipmentTypes(); toast.success(`Equipment type deleted — ${label}`); load() }
   }
 
   if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500" /></div>

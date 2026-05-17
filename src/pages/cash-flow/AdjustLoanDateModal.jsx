@@ -3,8 +3,10 @@ import { createPortal } from 'react-dom'
 import { supabase } from '../../lib/supabase'
 import { S } from '../../lib/styles'
 import { CF, fmtMoney } from './calendarUtils'
+import { useToast } from '../../contexts/ToastContext'
 
 export default function AdjustLoanDateModal({ open, onClose, event, onSaved }) {
+  const toast = useToast()
   const [details, setDetails] = useState(null) // joined loan_payment + loan + lender
   const [plannedDate, setPlannedDate] = useState('')
   const [saving, setSaving] = useState(false)
@@ -43,7 +45,8 @@ export default function AdjustLoanDateModal({ open, onClose, event, onSaved }) {
       updated_at: new Date().toISOString(),
     }).eq('id', details.id)
     setSaving(false)
-    if (res.error) { setError(res.error.message); return }
+    if (res.error) { setError(res.error.message); toast.error("Couldn't save planned pay date", res.error); return }
+    toast.success('Planned pay date saved')
     onSaved?.()
     onClose()
   }
@@ -56,7 +59,8 @@ export default function AdjustLoanDateModal({ open, onClose, event, onSaved }) {
       updated_at: new Date().toISOString(),
     }).eq('id', details.id)
     setSaving(false)
-    if (res.error) { setError(res.error.message); return }
+    if (res.error) { setError(res.error.message); toast.error("Couldn't reset planned pay date", res.error); return }
+    toast.success('Planned pay date reset to due date')
     onSaved?.()
     onClose()
   }

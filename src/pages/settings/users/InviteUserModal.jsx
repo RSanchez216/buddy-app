@@ -4,12 +4,14 @@ import { supabase } from '../../../lib/supabase'
 import { S } from '../../../lib/styles'
 import Select from '../../../components/Select'
 import { ROLES, ROLE_LABEL, ROLE_DESCRIPTION } from './userUtils'
+import { useToast } from '../../../contexts/ToastContext'
 
 const ORANGE_BTN = 'px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 disabled:bg-gray-200 dark:disabled:bg-slate-700 disabled:text-gray-400 dark:disabled:text-slate-500 text-white rounded-xl transition-all'
 
 function isEmail(s) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s) }
 
 export default function InviteUserModal({ open, onClose, onInvited }) {
+  const toast = useToast()
   const [email, setEmail] = useState('')
   const [fullName, setFullName] = useState('')
   const [role, setRole] = useState('manager')
@@ -44,6 +46,7 @@ export default function InviteUserModal({ open, onClose, onInvited }) {
       onClose()
     } catch (e) {
       setError(e?.message || 'Invite failed')
+      toast.error("Couldn't send invite", e)
     } finally {
       setSubmitting(false)
     }

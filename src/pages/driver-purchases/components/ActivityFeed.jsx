@@ -6,6 +6,7 @@ import CommentComposer from './CommentComposer'
 import CommentItem from './CommentItem'
 import { formatEventType } from '../utils/events'
 import { fmtDateTime, fmtRelative } from '../utils/format'
+import { useToast } from '../../../contexts/ToastContext'
 
 const EVENT_DOT = {
   created:           'bg-emerald-500',
@@ -34,17 +35,16 @@ const EVENT_DOT = {
 export default function ActivityFeed({ purchaseId, focusCommentId }) {
   const { profile, user } = useAuth()
   const isAdmin = profile?.role === 'admin'
+  const toast = useToast()
 
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
-  // Lightweight toast surfaced after edit/delete actions on a comment.
-  // Lives at the feed level so the toast survives the comment row
-  // unmounting after a delete.
-  const [toast, setToast] = useState(null)
+  // Bridge for child CommentItem's onToast({ kind, text }) callback —
+  // forwards into the global toast system.
   function emitToast(t) {
-    setToast(t)
-    if (emitToast._timer) clearTimeout(emitToast._timer)
-    emitToast._timer = setTimeout(() => setToast(null), 3000)
+    if (!t?.text) return
+    if (t.kind === 'error') toast.error(t.text)
+    else toast.success(t.text)
   }
 
   const load = useCallback(async () => {
@@ -134,23 +134,6 @@ export default function ActivityFeed({ purchaseId, focusCommentId }) {
         </ul>
       )}
 
-      {toast && (
-        <div
-          role="status"
-          className="fixed bottom-6 right-6 z-[110] max-w-sm bg-white dark:bg-[#0d0d1f] border rounded-2xl shadow-2xl px-4 py-3 flex items-start gap-3"
-          style={{
-            borderColor: toast.kind === 'success' ? 'rgb(110 231 183 / 0.4)' : 'rgb(252 165 165 / 0.6)',
-          }}
-        >
-          <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${toast.kind === 'success' ? 'bg-emerald-500' : 'bg-red-500'}`} />
-          <div className="flex-1 text-sm text-gray-700 dark:text-slate-300">{toast.text}</div>
-          <button onClick={() => setToast(null)} className="text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 shrink-0">
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-      )}
     </div>
   )
 }

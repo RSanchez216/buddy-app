@@ -11,6 +11,7 @@ import ComboBox from '../components/ComboBox'
 import Select from '../components/Select'
 import { buildDeptOptions } from '../lib/deptUtils'
 import AttachmentsPopover from '../components/AttachmentsPopover'
+import { useToast } from '../contexts/ToastContext'
 
 const emptyForm = {
   invoice_number: '', vendor_id: '', amount: '',
@@ -51,6 +52,7 @@ function normInvoiceNum(num) {
 
 export default function InvoiceInbox() {
   const { profile } = useAuth()
+  const toast = useToast()
   const [invoices, setInvoices] = useState([])
   const [vendors, setVendors] = useState([])
   const [departments, setDepartments] = useState([])
@@ -276,7 +278,7 @@ export default function InvoiceInbox() {
     if (editInvoice) {
       // ── UPDATE ──
       const { error: updErr } = await supabase.from('invoices').update(payload).eq('id', editInvoice.id)
-      if (updErr) { setError(updErr.message); setSaving(false); return }
+      if (updErr) { setError(updErr.message); setSaving(false); toast.error("Couldn't update invoice", updErr); return }
 
       // Sync invoice_departments: add new depts, keep existing ones intact
       const existingDeptIds = editInvoice.invoice_departments?.map(d => d.department_id) || []
@@ -297,7 +299,7 @@ export default function InvoiceInbox() {
       const { data: inv, error: invErr } = await supabase.from('invoices').insert({
         ...payload, source: 'manual', status: 'Pending',
       }).select().single()
-      if (invErr) { setError(invErr.message); setSaving(false); return }
+      if (invErr) { setError(invErr.message); setSaving(false); toast.error("Couldn't create invoice", invErr); return }
 
       await supabase.from('invoice_departments').insert(
         form.department_ids.map(dept_id => ({ invoice_id: inv.id, department_id: dept_id, status: 'Pending' }))
@@ -307,6 +309,7 @@ export default function InvoiceInbox() {
       await writeAudit('create', inv)
     }
 
+    toast.success(editInvoice ? `Invoice updated — #${payload.invoice_number || ''}` : `Invoice created — #${payload.invoice_number || ''}`)
     setShowModal(false); setNewFiles([]); loadData(); setSaving(false)
   }
 
@@ -356,6 +359,7 @@ export default function InvoiceInbox() {
       notes: actionNotes || null,
     })
 
+    toast.success(newStatus === 'Approved' ? `Invoice approved — ${actionDeptRecord.departments?.name || ''}` : `Invoice disputed — ${actionDeptRecord.departments?.name || ''}`)
     setActionInvoice(null); setActionDeptRecord(null); setActionNotes(''); loadData()
   }
 
@@ -379,10 +383,12 @@ export default function InvoiceInbox() {
   async function handleDelete() {
     if (!deleteInvoice) return
     setDeleting(true)
-    await supabase.from('invoices').update({
+    const { error } = await supabase.from('invoices').update({
       deleted_at: new Date().toISOString(),
       deleted_by: profile?.id || null,
     }).eq('id', deleteInvoice.id)
+    if (error) toast.error("Couldn't delete invoice", error)
+    else toast.success(`Invoice deleted — #${deleteInvoice.invoice_number || ''}`)
     await writeAudit('delete', deleteInvoice)
     setDeleteInvoice(null)
     setDeleting(false)
@@ -428,6 +434,7 @@ export default function InvoiceInbox() {
       vendor_name: vendor?.name,
       alias_saved: assignSaveAlias ? assignInvoice.vendor_name_raw : null,
     })
+    toast.success(`Vendor assigned — ${vendor?.name || ''}`)
     setAssignInvoice(null); setAssignVendorId(''); setAssignSaveAlias(false); setAssigning(false); loadData()
   }
 
@@ -442,7 +449,9 @@ export default function InvoiceInbox() {
 
   async function handleRestore(inv) {
     setRestoring(inv.id)
-    await supabase.from('invoices').update({ deleted_at: null, deleted_by: null }).eq('id', inv.id)
+    const { error } = await supabase.from('invoices').update({ deleted_at: null, deleted_by: null }).eq('id', inv.id)
+    if (error) toast.error("Couldn't restore invoice", error)
+    else toast.success(`Invoice restored — #${inv.invoice_number || ''}`)
     await writeAudit('restore', inv)
     await loadDeletedInvoices()
     setRestoring(null)
@@ -455,11 +464,13 @@ export default function InvoiceInbox() {
     const today = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit',
     }).format(new Date())
-    await supabase.from('invoices').update({
+    const { error } = await supabase.from('invoices').update({
       status: 'Paid',
       paid_date: today,
       paid_at: new Date().toISOString(),
     }).eq('id', inv.id)
+    if (error) toast.error("Couldn't mark invoice paid", error)
+    else toast.success(`Invoice marked paid — #${inv.invoice_number || ''}`)
     await writeAudit('mark_paid', inv)
     loadData()
   }
@@ -494,10 +505,10 @@ export default function InvoiceInbox() {
     reader.onload = (evt) => {
       const wb = XLSX.read(evt.target.result, { type: 'array' })
       const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]])
-      if (!rows.length) { alert('The file appears to be empty.'); return }
+      if (!rows.length) { toast.error('The file appears to be empty.'); return }
       const firstRow = Object.keys(rows[0])
       const missing = REQUIRED_COLS.filter(c => !firstRow.includes(c))
-      if (missing.length) { alert(`Missing required columns: ${missing.join(', ')}\n\nDownload the template first.`); return }
+      if (missing.length) { toast.error('Missing required columns', `${missing.join(', ')} — download the template first.`); return }
       setImportRows(rows.map((r, i) => {
         const vendorName = r['Vendor Name'] || ''
         const deptName = r['Department(s)'] || r['Department'] || ''
@@ -538,7 +549,7 @@ export default function InvoiceInbox() {
     if (!importable.length) return
     const payload = importable.map(({ _row, _status, _issues, vendor_name, department_name, department_ids, ...rest }) => rest)
     const { data: inserted, error: impErr } = await supabase.from('invoices').insert(payload).select()
-    if (impErr) { alert('Import error: ' + impErr.message); return }
+    if (impErr) { toast.error('Import failed', impErr); return }
     const deptRecords = []
     inserted.forEach((inv, idx) => {
       const row = importable[idx]
@@ -546,7 +557,10 @@ export default function InvoiceInbox() {
     })
     if (deptRecords.length) await supabase.from('invoice_departments').insert(deptRecords)
     const skipped = importRows.filter(r => r._status === 'error').length
-    alert(`Imported ${inserted.length} invoice${inserted.length !== 1 ? 's' : ''}${skipped ? `, ${skipped} skipped.` : '.'}`)
+    toast.success(
+      `Imported ${inserted.length} invoice${inserted.length !== 1 ? 's' : ''}`,
+      skipped ? { description: `${skipped} skipped due to errors.` } : undefined
+    )
     setShowImport(false); loadData()
   }
 

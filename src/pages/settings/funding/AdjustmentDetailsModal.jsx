@@ -3,6 +3,7 @@ import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../contexts/AuthContext'
 import { S } from '../../../lib/styles'
 import Modal from '../../../components/Modal'
+import { useToast } from '../../../contexts/ToastContext'
 
 // Detail / classification modal for a single reconciliation adjustment.
 // Opened from the calendar chip click router OR from the Bank Accounts
@@ -39,6 +40,7 @@ function fmtDate(iso) {
 
 export default function AdjustmentDetailsModal({ open, adjustmentId, onClose, onSaved }) {
   const { user, profile } = useAuth()
+  const toast = useToast()
   const [loading, setLoading] = useState(false)
   const [row, setRow] = useState(null) // full adjustment + joined entry + account
   const [classification, setClassification] = useState('')
@@ -109,7 +111,8 @@ export default function AdjustmentDetailsModal({ open, adjustmentId, onClose, on
       .update(payload)
       .eq('id', row.id)
     setSaving(false)
-    if (e) { setError(e.message); return }
+    if (e) { setError(e.message); toast.error("Couldn't save classification", e); return }
+    toast.success(cls ? 'Adjustment classified' : 'Classification cleared')
     await writeAuditLog('adjustment_classified', {
       previous_classification: row.classification,
       new_classification: cls,
@@ -126,7 +129,8 @@ export default function AdjustmentDetailsModal({ open, adjustmentId, onClose, on
       .delete()
       .eq('id', row.id)
     setRemoving(false); setConfirmRemove(false)
-    if (e) { setError(e.message); return }
+    if (e) { setError(e.message); toast.error("Couldn't remove adjustment", e); return }
+    toast.success('Adjustment removed')
     await writeAuditLog('adjustment_removed', {
       previous_classification: row.classification,
     })

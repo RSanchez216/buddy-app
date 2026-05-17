@@ -5,6 +5,7 @@ import { S } from '../../../lib/styles'
 import Modal from '../../../components/Modal'
 import Select from '../../../components/Select'
 import { FC, DOCUMENT_TYPES, fmtDate } from '../loanUtils'
+import { useToast } from '../../../contexts/ToastContext'
 
 const BUCKET = 'loan-documents'
 
@@ -18,6 +19,7 @@ function fmtSize(bytes) {
 
 export default function DocumentsTab({ loanId, canEdit, userRole, onChange }) {
   const { user } = useAuth()
+  const toast = useToast()
   const [docs, setDocs] = useState([])
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
@@ -29,13 +31,6 @@ export default function DocumentsTab({ loanId, canEdit, userRole, onChange }) {
   const [confirmDoc, setConfirmDoc] = useState(null)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState('')
-
-  // Lightweight toast (auto-dismisses after 3s)
-  const [toast, setToast] = useState(null)         // { kind: 'success'|'error', text }
-  function showToast(kind, text) {
-    setToast({ kind, text })
-    setTimeout(() => setToast(t => (t && t.text === text ? null : t)), 3000)
-  }
 
   useEffect(() => { load() /* eslint-disable-line */ }, [loanId])
 
@@ -62,7 +57,7 @@ export default function DocumentsTab({ loanId, canEdit, userRole, onChange }) {
         cacheControl: '3600',
         upsert: false,
       })
-      if (up.error) { setError('Upload failed: ' + up.error.message); break }
+      if (up.error) { setError('Upload failed: ' + up.error.message); toast.error("Couldn't upload document", up.error); break }
       const ins = await supabase.from('loan_documents').insert({
         loan_id: loanId,
         file_name: file.name,
@@ -72,7 +67,8 @@ export default function DocumentsTab({ loanId, canEdit, userRole, onChange }) {
         document_type: 'other',
         uploaded_by: user?.id || null,
       })
-      if (ins.error) { setError('DB insert failed: ' + ins.error.message); break }
+      if (ins.error) { setError('DB insert failed: ' + ins.error.message); toast.error("Couldn't save document record", ins.error); break }
+      toast.success(`Document uploaded — ${file.name}`)
     }
     setUploading(false)
     load()
@@ -86,13 +82,15 @@ export default function DocumentsTab({ loanId, canEdit, userRole, onChange }) {
 
   async function changeType(doc, type) {
     if (!canEdit) return
-    await supabase.from('loan_documents').update({ document_type: type }).eq('id', doc.id)
+    const { error } = await supabase.from('loan_documents').update({ document_type: type }).eq('id', doc.id)
+    if (error) toast.error("Couldn't change document type", error)
+    else toast.success('Document type updated')
     load()
   }
 
   async function downloadDoc(doc) {
     const { data, error: e } = await supabase.storage.from(BUCKET).createSignedUrl(doc.file_path, 60)
-    if (e) { showToast('error', 'Download failed: ' + e.message); return }
+    if (e) { toast.error("Couldn't download document", e); return }
     window.open(data.signedUrl, '_blank')
   }
 
@@ -104,7 +102,7 @@ export default function DocumentsTab({ loanId, canEdit, userRole, onChange }) {
     const { data, error: e } = await supabase.storage.from(BUCKET).createSignedUrl(doc.file_path, 3600)
     if (e) {
       console.error('Couldn\'t open document:', e)
-      showToast('error', "Couldn't open document")
+      toast.error("Couldn't open document", e)
       return
     }
     window.open(data.signedUrl, '_blank', 'noopener,noreferrer')
@@ -123,7 +121,7 @@ export default function DocumentsTab({ loanId, canEdit, userRole, onChange }) {
     if (dbErr) {
       setDeleting(false)
       setDeleteError(dbErr.message)
-      showToast('error', 'Delete failed: ' + dbErr.message)
+      toast.error("Couldn't delete document", dbErr)
       return
     }
 
@@ -134,7 +132,7 @@ export default function DocumentsTab({ loanId, canEdit, userRole, onChange }) {
 
     setDeleting(false)
     setConfirmDoc(null)
-    showToast('success', 'Document deleted')
+    toast.success('Document deleted')
     load()
     onChange?.()
   }
@@ -252,22 +250,6 @@ export default function DocumentsTab({ loanId, canEdit, userRole, onChange }) {
         </div>
       </Modal>
 
-      {/* Toast */}
-      {toast && (
-        <div className="fixed bottom-6 right-6 z-[110] max-w-sm bg-white dark:bg-[#0d0d1f] border rounded-2xl shadow-2xl px-4 py-3 flex items-start gap-3"
-             role="status"
-             style={{
-               borderColor: toast.kind === 'success' ? 'rgb(110 231 183 / 0.4)' : 'rgb(252 165 165 / 0.6)',
-             }}>
-          <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${toast.kind === 'success' ? 'bg-emerald-500' : 'bg-red-500'}`} />
-          <div className="flex-1 text-sm text-gray-700 dark:text-slate-300">{toast.text}</div>
-          <button onClick={() => setToast(null)} className="text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 shrink-0">
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-      )}
     </div>
   )
 }

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useReducer, useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { fmtMoneyExact } from './calendarUtils'
+import { useToast } from '../../contexts/ToastContext'
 
 // Warning panel listing actionable items that lack a funding_account_id.
 // Lives above the Payment Calendar grid. Mirrors the Underwater
@@ -44,6 +45,7 @@ function fmtDate(iso) {
 
 export default function UnassignedItemsPanel({ onAssigned }) {
   const { user, profile, canEdit } = useAuth()
+  const globalToast = useToast()
   const [items, setItems] = useState([])
   const [accounts, setAccounts] = useState([])
   const [loading, setLoading] = useState(true)
@@ -149,7 +151,7 @@ export default function UnassignedItemsPanel({ onAssigned }) {
         .eq('id', item.source_id)
       if (error) {
         setBusyIds(s => { const next = new Set(s); next.delete(item.source_id); return next })
-        alert('Could not assign: ' + error.message)
+        globalToast.error("Couldn't assign account", error)
         return
       }
       metadata.cascaded_payment_count = Number(item.pending_count || 0)
@@ -161,7 +163,7 @@ export default function UnassignedItemsPanel({ onAssigned }) {
         .eq('id', item.source_id)
       if (error) {
         setBusyIds(s => { const next = new Set(s); next.delete(item.source_id); return next })
-        alert('Could not assign: ' + error.message)
+        globalToast.error("Couldn't assign account", error)
         return
       }
       undoPayload = { kind: 'unset_custom_outflow' }
@@ -172,7 +174,7 @@ export default function UnassignedItemsPanel({ onAssigned }) {
         .eq('id', item.source_id)
       if (error) {
         setBusyIds(s => { const next = new Set(s); next.delete(item.source_id); return next })
-        alert('Could not assign: ' + error.message)
+        globalToast.error("Couldn't assign account", error)
         return
       }
       undoPayload = { kind: 'unset_invoice' }
@@ -191,7 +193,7 @@ export default function UnassignedItemsPanel({ onAssigned }) {
         .single()
       if (error || !data) {
         setBusyIds(s => { const next = new Set(s); next.delete(item.source_id); return next })
-        alert('Could not assign: ' + (error?.message || 'no row returned'))
+        globalToast.error("Couldn't assign account", error || 'no row returned')
         return
       }
       undoPayload = { kind: 'delete_deposit', depositId: data.id }
@@ -246,7 +248,8 @@ export default function UnassignedItemsPanel({ onAssigned }) {
       const r = await supabase.from('expected_inflow_deposits').delete().eq('id', t.undoPayload.depositId)
       error = r.error
     }
-    if (error) { alert('Undo failed: ' + error.message); load(); onAssigned?.(); return }
+    if (error) { globalToast.error("Couldn't undo assignment", error); load(); onAssigned?.(); return }
+    globalToast.success('Assignment reverted')
     await writeAuditLog({
       sourceType: t.sourceType,
       sourceId: t.sourceId,

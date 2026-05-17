@@ -15,6 +15,7 @@ import DeletePurchaseModal from './components/DeletePurchaseModal'
 import { logEvent } from './utils/events'
 import { fmtDate, fmtMoney, fmtFreq, purchaseTypeLabel } from './utils/format'
 import { useEquipmentTypes } from '../../hooks/useEquipmentTypes'
+import { useToast } from '../../contexts/ToastContext'
 
 // Derive the unit-label noun from equipment_type. Falls back to neutral
 // "Unit" when type is null/empty/anything other than truck or trailer
@@ -42,6 +43,7 @@ export default function DriverPurchaseDetail() {
   const { user, profile } = useAuth()
   const canEdit = profile?.role === 'admin' || profile?.role === 'manager'
   const { formatLabel: formatEqLabel } = useEquipmentTypes()
+  const toast = useToast()
 
   const [summary, setSummary] = useState(null)        // v_driver_purchase_summary row
   const [purchase, setPurchase] = useState(null)      // raw driver_purchases row (for edit form)
@@ -58,9 +60,6 @@ export default function DriverPurchaseDetail() {
 
   const [savingNotes, setSavingNotes] = useState(false)
   const [markingTitle, setMarkingTitle] = useState(false)
-  // Shared toast for header-level actions (title transfer + quick status
-  // change). { kind: 'success'|'error', text: string }.
-  const [toast, setToast] = useState(null)
   const [statuses, setStatuses] = useState([])
   const [savingStatus, setSavingStatus] = useState(false)
   // Bumped by the header "+ Record payment" button. PaymentHistorySection
@@ -131,7 +130,8 @@ export default function DriverPurchaseDetail() {
       .update({ notes: next, updated_by: user?.id || null })
       .eq('id', id)
     setSavingNotes(false)
-    if (error) { alert('Save failed: ' + error.message); return }
+    if (error) { toast.error("Couldn't save notes", error); return }
+    toast.success('Notes saved')
     await logEvent(id, 'updated', 'Updated notes',
       { fields: { notes: { old: before, new: next || '' } } }, user?.id)
     load()
@@ -159,16 +159,14 @@ export default function DriverPurchaseDetail() {
       setSummary(s => s ? { ...s, title_transferred: false, title_release_pending: true } : s)
       setPurchase(p => p ? { ...p, title_transferred: false } : p)
       setMarkingTitle(false)
-      setToast({ kind: 'error', text: 'Could not mark title transferred: ' + error.message })
-      setTimeout(() => setToast(null), 4000)
+      toast.error("Couldn't mark title transferred", error)
       return
     }
 
     const userName = profile?.full_name || profile?.email || 'a user'
     await logEvent(id, 'title_released', `Title marked as transferred by ${userName}`, {}, user?.id)
     setMarkingTitle(false)
-    setToast({ kind: 'success', text: 'Title marked as transferred' })
-    setTimeout(() => setToast(null), 3000)
+    toast.success('Title marked as transferred')
     load()
   }
 
@@ -224,16 +222,14 @@ export default function DriverPurchaseDetail() {
         is_terminal: oldTerminal,
       } : s)
       setSavingStatus(false)
-      setToast({ kind: 'error', text: 'Could not change status: ' + error.message })
-      setTimeout(() => setToast(null), 4000)
+      toast.error("Couldn't change status", error)
       return
     }
 
     await logEvent(id, 'status_changed', `Status changed from ${oldName} to ${newStatus.name}`,
       { old: oldName, new: newStatus.name }, user?.id)
     setSavingStatus(false)
-    setToast({ kind: 'success', text: `Status changed to ${newStatus.name}` })
-    setTimeout(() => setToast(null), 3000)
+    toast.success(`Status changed to ${newStatus.name}`)
     load()
   }
 
@@ -491,24 +487,6 @@ export default function DriverPurchaseDetail() {
         onDeleted={() => { setShowDelete(false); navigate('/financial-controls/driver-purchases') }}
       />
 
-      {/* Header-level toast — used by title-transfer + quick status change */}
-      {toast && (
-        <div
-          role="status"
-          className="fixed bottom-6 right-6 z-[110] max-w-sm bg-white dark:bg-[#0d0d1f] border rounded-2xl shadow-2xl px-4 py-3 flex items-start gap-3"
-          style={{
-            borderColor: toast.kind === 'success' ? 'rgb(110 231 183 / 0.4)' : 'rgb(252 165 165 / 0.6)',
-          }}
-        >
-          <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${toast.kind === 'success' ? 'bg-emerald-500' : 'bg-red-500'}`} />
-          <div className="flex-1 text-sm text-gray-700 dark:text-slate-300">{toast.text}</div>
-          <button onClick={() => setToast(null)} className="text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 shrink-0">
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-      )}
     </div>
   )
 }

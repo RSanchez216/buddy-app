@@ -4,9 +4,11 @@ import { useAuth } from '../../contexts/AuthContext'
 import { S } from '../../lib/styles'
 import Modal from '../../components/Modal'
 import { CF, fmtMoney, startOfWeek, toISO } from './calendarUtils'
+import { useToast } from '../../contexts/ToastContext'
 
 export default function StartingCashModal({ open, onClose, onSaved, weekStart }) {
   const { user } = useAuth()
+  const toast = useToast()
   const [date, setDate] = useState('')
   const [amount, setAmount] = useState('')
   const [notes, setNotes] = useState('')
@@ -54,7 +56,8 @@ export default function StartingCashModal({ open, onClose, onSaved, weekStart })
       updated_by: user?.id || null,
     }, { onConflict: 'week_start_date' })
     setSaving(false)
-    if (res.error) { setError(res.error.message); return }
+    if (res.error) { setError(res.error.message); toast.error("Couldn't save starting cash", res.error); return }
+    toast.success(`Starting cash saved — week of ${date}`)
     onSaved?.()
     onClose()
   }

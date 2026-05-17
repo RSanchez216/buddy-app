@@ -4,6 +4,7 @@ import { S } from '../../lib/styles'
 import Modal from '../../components/Modal'
 import Select from '../../components/Select'
 import { CF, EXPENSE_CATEGORIES, FREQUENCIES, WEEKDAYS, fmtMoney, toISO } from './calendarUtils'
+import { useToast } from '../../contexts/ToastContext'
 
 const empty = (defaults = {}) => ({
   name: '',
@@ -27,6 +28,7 @@ function fmtAccountOption(a) {
 }
 
 export default function RecurringExpensesModal({ open, onClose, onSaved }) {
+  const toast = useToast()
   const [items, setItems] = useState([])
   const [entities, setEntities] = useState([])
   const [accounts, setAccounts] = useState([])
@@ -120,15 +122,17 @@ export default function RecurringExpensesModal({ open, onClose, onSaved }) {
     }
 
     let templateId = null
-    if (editing === 'new') {
+    const isNew = editing === 'new'
+    if (isNew) {
       const res = await supabase.from('recurring_expense_templates').insert(payload).select('id').single()
-      if (res.error) { setError(res.error.message); setSaving(false); return }
+      if (res.error) { setError(res.error.message); setSaving(false); toast.error("Couldn't create recurring expense", res.error); return }
       templateId = res.data.id
     } else {
       const res = await supabase.from('recurring_expense_templates').update(payload).eq('id', editing.id)
-      if (res.error) { setError(res.error.message); setSaving(false); return }
+      if (res.error) { setError(res.error.message); setSaving(false); toast.error("Couldn't update recurring expense", res.error); return }
       templateId = editing.id
     }
+    toast.success(isNew ? `Recurring expense added — ${payload.name}` : `Recurring expense updated — ${payload.name}`)
 
     if (form.is_active) {
       await regenerate(templateId)
@@ -148,11 +152,13 @@ export default function RecurringExpensesModal({ open, onClose, onSaved }) {
 
   async function toggleActive(it) {
     const next = !it.is_active
-    await supabase.from('recurring_expense_templates').update({ is_active: next, updated_at: new Date().toISOString() }).eq('id', it.id)
+    const { error } = await supabase.from('recurring_expense_templates').update({ is_active: next, updated_at: new Date().toISOString() }).eq('id', it.id)
+    if (error) { toast.error(it.is_active ? "Couldn't deactivate recurring expense" : "Couldn't reactivate recurring expense", error); return }
     if (next) await regenerate(it.id)
     else await supabase
       .from('custom_outflows').update({ status: 'cancelled' })
       .eq('recurring_template_id', it.id).gte('due_date', toISO(new Date())).eq('status', 'planned')
+    toast.success(next ? `Recurring expense reactivated — ${it.name}` : `Recurring expense deactivated — ${it.name}`)
     load(); onSaved?.()
   }
 
@@ -160,7 +166,8 @@ export default function RecurringExpensesModal({ open, onClose, onSaved }) {
     if (!confirm(`Delete "${it.name}"?\n\nFuture planned instances will be removed too.`)) return
     await supabase.from('custom_outflows').delete().eq('recurring_template_id', it.id).gte('due_date', toISO(new Date())).eq('status', 'planned')
     const res = await supabase.from('recurring_expense_templates').delete().eq('id', it.id)
-    if (res.error) { alert(res.error.message); return }
+    if (res.error) { toast.error("Couldn't delete recurring expense", res.error); return }
+    toast.success(`Recurring expense deleted — ${it.name}`)
     load(); onSaved?.()
   }
 
