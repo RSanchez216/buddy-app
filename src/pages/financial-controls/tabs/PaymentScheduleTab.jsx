@@ -3,6 +3,7 @@ import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../contexts/AuthContext'
 import { S } from '../../../lib/styles'
 import Modal from '../../../components/Modal'
+import MarkPaidModal from '../../cash-flow/MarkPaidModal'
 import { FC, PAYMENT_STATUSES, STATUS_LABELS, paymentStatusPill, fmtMoney, fmtDate } from '../loanUtils'
 
 export default function PaymentScheduleTab({ loanId, loan, canEdit, onChange }) {
@@ -15,14 +16,19 @@ export default function PaymentScheduleTab({ loanId, loan, canEdit, onChange }) 
   const [showRegen, setShowRegen] = useState(false)
   const [regenRunning, setRegenRunning] = useState(false)
   const [regenToast, setRegenToast] = useState('')
+  // Mark Paid modal target — the loan_payments row to mark when the user
+  // clicks the action button inside the NEXT PAYMENT DUE tile.
+  const [markPaidRow, setMarkPaidRow] = useState(null)
 
-  // Sort: 'asc' (oldest first, default) or 'desc' (newest first)
-  const [sortDir, setSortDir] = useState('asc')
+  // Sort: 'asc' (oldest first) or 'desc' (most recent first, default).
+  // Loans approaching maturity have many paid rows; recent + current months
+  // sit at the top so the user doesn't scroll past historical entries.
+  const [sortDir, setSortDir] = useState('desc')
   // Quick filter: 'all' | 'past_due' | 'pending' | 'paid'
   const [quickFilter, setQuickFilter] = useState('all')
 
   // Reset per-loan visit
-  useEffect(() => { setSortDir('asc'); setQuickFilter('all') }, [loanId])
+  useEffect(() => { setSortDir('desc'); setQuickFilter('all') }, [loanId])
 
   useEffect(() => { load() /* eslint-disable-line */ }, [loanId])
 
@@ -210,7 +216,8 @@ export default function PaymentScheduleTab({ loanId, loan, canEdit, onChange }) 
   const totals = useMemo(() => {
     const yearStart = new Date(); yearStart.setMonth(0, 1); yearStart.setHours(0, 0, 0, 0)
     let paidYTD = 0, skippedYTD = 0, remaining = 0, pendingCount = 0
-    let nextDue = null  // { due_date, scheduled_amount } — earliest pending/partial row
+    let nextDue = null  // earliest pending/partial row — keep the full row
+                        // so the tile button + the table highlight share an id.
     for (const r of rows) {
       const due = r.due_date ? new Date(`${r.due_date}T00:00:00`) : null
       if (r.status === 'paid' && due >= yearStart) paidYTD += Number(r.paid_amount || r.scheduled_amount || 0)
@@ -219,7 +226,7 @@ export default function PaymentScheduleTab({ loanId, loan, canEdit, onChange }) 
         remaining += Number(r.scheduled_amount || 0) - Number(r.paid_amount || 0)
         pendingCount++
         if (r.due_date && (!nextDue || r.due_date < nextDue.due_date)) {
-          nextDue = { due_date: r.due_date, scheduled_amount: Number(r.scheduled_amount || 0) }
+          nextDue = r
         }
       }
     }
@@ -271,11 +278,10 @@ export default function PaymentScheduleTab({ loanId, loan, canEdit, onChange }) 
           subtitle={`${totals.pendingCount} payment${totals.pendingCount === 1 ? '' : 's'}`}
           accent="orange"
         />
-        <Stat
-          label="Next Payment Due"
-          value={totals.nextDue ? fmtDate(totals.nextDue.due_date) : 'Fully paid'}
-          subtitle={totals.nextDue ? fmtMoney(totals.nextDue.scheduled_amount) : null}
-          accent={totals.nextDue ? 'cyan' : 'gray'}
+        <NextPaymentDueTile
+          nextDue={totals.nextDue}
+          canEdit={canEdit}
+          onMarkPaid={() => totals.nextDue && setMarkPaidRow(totals.nextDue)}
         />
       </div>
 
@@ -291,7 +297,7 @@ export default function PaymentScheduleTab({ loanId, loan, canEdit, onChange }) 
           onClick={() => setSortDir(d => d === 'asc' ? 'desc' : 'asc')}
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-xl border border-gray-200 dark:border-slate-700/50 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors"
         >
-          {sortDir === 'asc' ? 'Sort: Oldest first ↓' : 'Sort: Newest first ↑'}
+          {sortDir === 'asc' ? 'Sort: Oldest first ↓' : 'Sort: Most recent first ↑'}
         </button>
       </div>
 
@@ -334,7 +340,14 @@ export default function PaymentScheduleTab({ loanId, loan, canEdit, onChange }) 
               {visibleRows.length === 0 ? (
                 <tr><td colSpan={9} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">{rows.length === 0 ? 'No payments scheduled' : 'No payments match this filter'}</td></tr>
               ) : visibleRows.map(r => (
-                <tr key={r.id} className={S.tableRow}>
+                <tr
+                  key={r.id}
+                  className={`${S.tableRow} ${
+                    totals.nextDue && r.id === totals.nextDue.id
+                      ? 'bg-amber-50/60 dark:bg-amber-500/[0.07]'
+                      : ''
+                  }`}
+                >
                   <td className={`${S.td} text-gray-700 dark:text-slate-300 font-medium whitespace-nowrap`}>
                     {r.due_month ? new Date(`${r.due_month}T00:00:00`).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : '—'}
                   </td>
@@ -418,6 +431,25 @@ export default function PaymentScheduleTab({ loanId, loan, canEdit, onChange }) 
         </div>
       </Modal>
 
+      <MarkPaidModal
+        open={!!markPaidRow}
+        kind="loan"
+        mode="paid"
+        surface="debt_schedule"
+        record={markPaidRow
+          ? {
+              ...markPaidRow,
+              loan: {
+                loan_id_external: loan?.loan_id_external || null,
+                lender: { name: loan?.lender_name || null },
+              },
+            }
+          : null}
+        headerSubtitle={loan ? `${loan.lender_name || 'Loan'} · ${loan.loan_id_external || ''}` : undefined}
+        onClose={() => setMarkPaidRow(null)}
+        onSaved={() => { setMarkPaidRow(null); load(); onChange?.() }}
+      />
+
       <Modal open={!!editRow} onClose={() => setEditRow(null)} title="Edit Payment" size="md">
         {editRow && (
           <div className={S.modalBody}>
@@ -458,6 +490,38 @@ export default function PaymentScheduleTab({ loanId, loan, canEdit, onChange }) 
           </div>
         )}
       </Modal>
+    </div>
+  )
+}
+
+// NEXT PAYMENT DUE — actionable tile. Shares the Stat shell but the subtitle
+// row holds the scheduled amount + a primary Mark Paid button. Empty state
+// (no pending rows) shows "Fully paid" in gray with no button.
+function NextPaymentDueTile({ nextDue, canEdit, onMarkPaid }) {
+  if (!nextDue) {
+    return (
+      <div className={`${S.card} p-4`}>
+        <p className="text-[11px] font-medium text-gray-500 dark:text-slate-500 uppercase tracking-wide mb-1">Next Payment Due</p>
+        <p className="text-lg font-bold font-mono text-gray-500 dark:text-slate-400">Fully paid</p>
+      </div>
+    )
+  }
+  return (
+    <div className={`${S.card} p-4`}>
+      <p className="text-[11px] font-medium text-gray-500 dark:text-slate-500 uppercase tracking-wide mb-1">Next Payment Due</p>
+      <p className="text-lg font-bold font-mono text-cyan-600 dark:text-cyan-400">{fmtDate(nextDue.due_date)}</p>
+      <div className="flex items-center justify-between gap-2 mt-1">
+        <p className="text-[11px] text-gray-500 dark:text-slate-500 font-mono">{fmtMoney(nextDue.scheduled_amount)}</p>
+        {canEdit && (
+          <button
+            onClick={onMarkPaid}
+            className="px-2.5 py-1 text-[11px] font-semibold bg-orange-500 hover:bg-orange-400 text-white rounded-lg transition-colors whitespace-nowrap"
+            title={`Mark the ${fmtDate(nextDue.due_date)} payment paid (defaulted to due date)`}
+          >
+            Mark Paid
+          </button>
+        )}
+      </div>
     </div>
   )
 }
