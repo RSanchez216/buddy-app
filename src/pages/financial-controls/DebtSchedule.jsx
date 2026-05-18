@@ -7,26 +7,71 @@ import Select from '../../components/Select'
 import {
   FC, STATUS_LABELS, LOAN_STATUSES,
   loanStatusPill, daysBehindCellClass,
-  fmtMoney, fmtMoneyCompact, fmtDate,
+  fmtMoney, fmtDate,
 } from './loanUtils'
 import AddLoanModal from './AddLoanModal'
 import TitleReleasePanel from './components/TitleReleasePanel'
 
-function KpiCard({ label, value, accent = 'orange' }) {
-  const accents = {
-    orange: 'text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-500/10',
-    cyan:   'text-cyan-600 dark:text-cyan-400 bg-cyan-50 dark:bg-cyan-500/10',
-    red:    'text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10',
-    green:  'text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10',
-    gray:   'text-gray-600 dark:text-slate-400 bg-gray-50 dark:bg-slate-700/40',
-  }
+// Compact money formatter for the KPI tiles. Under $10k shows the raw
+// integer with commas; $10k–$999k as $XXX.Xk; ≥ $1M as $X.XM. Matches the
+// spec's "tight enough that the tile width doesn't explode but still
+// reads clearly" rule.
+function fmtMoneyTile(n) {
+  const num = Number(n || 0)
+  if (!Number.isFinite(num)) return '—'
+  const abs = Math.abs(num)
+  const sign = num < 0 ? '-' : ''
+  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(1)}M`
+  if (abs >= 10_000)    return `${sign}$${(abs / 1_000).toFixed(1)}k`
+  return `${sign}$${Math.round(abs).toLocaleString('en-US')}`
+}
+
+// One mini-tile inside a capsule. `valueColor` is a Tailwind class for the
+// number (label/subtitle colors are fixed for the band layout). Min-height
+// on the label keeps two-line labels aligned across the row of three.
+function MiniTile({ label, value, subtitle, valueColor }) {
   return (
-    <div className="bg-white dark:bg-[#0d0d1f] border border-gray-200 dark:border-white/5 rounded-2xl p-4 hover:border-gray-300 dark:hover:border-white/10 transition-colors">
-      <div className="flex items-start justify-between mb-2">
-        <p className="text-[11px] font-medium text-gray-500 dark:text-slate-500 uppercase tracking-wide">{label}</p>
-        <span className={`w-2 h-2 rounded-full ${accents[accent].split(' ').filter(c => c.startsWith('bg-')).join(' ')}`} />
+    <div className="flex-1 min-w-0">
+      <p
+        className="text-[11px] font-medium uppercase text-gray-500 dark:text-slate-500 leading-[1.3]"
+        style={{ letterSpacing: '0.04em', minHeight: '28px' }}
+      >
+        {label}
+      </p>
+      <p className={`text-[20px] font-medium leading-[1.1] mt-1 ${valueColor}`}>{value}</p>
+      {subtitle && (
+        <p className="text-[11px] font-normal text-gray-500 dark:text-slate-500 mt-0.5">{subtitle}</p>
+      )}
+    </div>
+  )
+}
+
+// One capsule containing 3 mini-tiles with a colored-dot header above.
+// Capsule styling per spec: white bg, 0.5px border, 18px radius, 16px 18px
+// padding. Header dot + uppercase label with 0.04em tracking.
+function KpiBand({ dotColor, label, children }) {
+  return (
+    <div className="flex flex-col">
+      <div className="flex items-center gap-2 mb-2 px-0.5">
+        <span className="w-[7px] h-[7px] rounded-full" style={{ background: dotColor }} />
+        <span
+          className="text-[13px] font-semibold uppercase text-gray-700 dark:text-slate-300"
+          style={{ letterSpacing: '0.04em' }}
+        >
+          {label}
+        </span>
       </div>
-      <p className={`text-xl font-bold ${accents[accent].split(' ').filter(c => c.startsWith('text-')).join(' ')}`}>{value}</p>
+      <div
+        className="bg-white dark:bg-[#0d0d1f] border-gray-200 dark:border-white/5"
+        style={{
+          borderWidth: '0.5px',
+          borderStyle: 'solid',
+          borderRadius: '18px',
+          padding: '16px 18px',
+        }}
+      >
+        <div className="flex gap-3">{children}</div>
+      </div>
     </div>
   )
 }
@@ -55,7 +100,7 @@ export default function DebtSchedule() {
   const [entities, setEntities] = useState([])
   const [lenders, setLenders] = useState([])
   const [equipmentTypes, setEquipmentTypes] = useState([])
-  const [pastDueAmount, setPastDueAmount] = useState(0)
+  const [kpiSummary, setKpiSummary] = useState(null)
   const [loading, setLoading] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
 
@@ -79,17 +124,13 @@ export default function DebtSchedule() {
 
   async function loadData() {
     setLoading(true)
-    const today = new Date().toISOString().slice(0, 10)
-    const [loanRes, eqRes, entRes, lndRes, etRes, pastDueRes] = await Promise.all([
+    const [loanRes, eqRes, entRes, lndRes, etRes, kpiRes] = await Promise.all([
       supabase.from('v_loans_summary').select('*').order('next_due_date', { ascending: true, nullsFirst: false }),
       supabase.from('loan_equipment').select('id, loan_id, unit_number, vin, equipment_type, make, model, year'),
       supabase.from('loan_entities').select('id, name').eq('is_active', true).order('name'),
       supabase.from('loan_lenders').select('id, name').eq('is_active', true).order('name'),
       supabase.from('equipment_types').select('id, name, display_label, sort_order').eq('is_active', true).order('sort_order').order('display_label'),
-      supabase.from('loan_payments')
-        .select('scheduled_amount, paid_amount')
-        .in('status', ['pending', 'partial'])
-        .lt('due_date', today),
+      supabase.rpc('debt_schedule_kpi_summary').single(),
     ])
     setLoans(loanRes.data || [])
     const grouped = {}
@@ -101,11 +142,7 @@ export default function DebtSchedule() {
     setEntities(entRes.data || [])
     setLenders(lndRes.data || [])
     setEquipmentTypes(etRes.data || [])
-
-    const total = (pastDueRes.data || []).reduce(
-      (s, r) => s + (Number(r.scheduled_amount || 0) - Number(r.paid_amount || 0)), 0
-    )
-    setPastDueAmount(total)
+    setKpiSummary(kpiRes?.data || null)
     setLoading(false)
   }
 
@@ -199,18 +236,6 @@ export default function DebtSchedule() {
       .sort((a, b) => (a.updated_at || '').localeCompare(b.updated_at || ''))
   ), [loans])
 
-  // KPIs
-  const kpis = useMemo(() => {
-    const yearStart = new Date(); yearStart.setMonth(0, 1); yearStart.setHours(0, 0, 0, 0)
-    return {
-      activeDebt: loans.filter(l => l.status === 'active').reduce((s, l) => s + Number(l.current_balance || 0), 0),
-      monthlyService: loans.filter(l => l.status === 'active').reduce((s, l) => s + Number(l.monthly_payment || 0), 0),
-      activeLoans: loans.filter(l => l.status === 'active').length,
-      pastDue: loans.filter(l => l.status === 'active' && Number(l.days_behind) > 0).length,
-      paidOffYTD: loans.filter(l => l.status === 'paid_off' && l.updated_at && new Date(l.updated_at) >= yearStart).length,
-    }
-  }, [loans])
-
   // Group view: by entity
   const grouped = useMemo(() => {
     if (!groupByEntity) return null
@@ -250,14 +275,67 @@ export default function DebtSchedule() {
         )}
       </div>
 
-      {/* KPI strip — 6 tiles, responsive */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <KpiCard label="Total Active Debt" value={fmtMoneyCompact(kpis.activeDebt)} accent="orange" />
-        <KpiCard label="Monthly Debt Service" value={fmtMoneyCompact(kpis.monthlyService)} accent="cyan" />
-        <KpiCard label="# Active Loans" value={kpis.activeLoans} accent="green" />
-        <KpiCard label="# Past Due" value={kpis.pastDue} accent="red" />
-        <KpiCard label="Past Due Amount" value={fmtMoneyCompact(pastDueAmount)} accent="red" />
-        <KpiCard label="Paid Off YTD" value={kpis.paidOffYTD} accent="gray" />
+      {/* KPI bands — 3 capsules, each with 3 mini-tiles. Hydrates from
+          public.debt_schedule_kpi_summary() (single RPC call). Colors
+          per spec; values fall back to zero / em-dash while loading. */}
+      <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
+        <KpiBand dotColor="#E24B4A" label="Act Now">
+          <MiniTile
+            label="Past Due Loans"
+            value={kpiSummary?.past_due_loans_count ?? 0}
+            valueColor="text-[#E24B4A]"
+          />
+          <MiniTile
+            label="Past Due Amount"
+            value={fmtMoneyTile(kpiSummary?.past_due_amount ?? 0)}
+            valueColor="text-[#E24B4A]"
+          />
+          <MiniTile
+            label="Skipped Unresolved"
+            value={fmtMoneyTile(kpiSummary?.skipped_unresolved_amount ?? 0)}
+            subtitle={`${kpiSummary?.skipped_unresolved_count ?? 0} payments`}
+            valueColor="text-[#BA7517]"
+          />
+        </KpiBand>
+
+        <KpiBand dotColor="#F97316" label="Upcoming">
+          <MiniTile
+            label="Due Next 30 Days"
+            value={fmtMoneyTile(kpiSummary?.due_next_30d_amount ?? 0)}
+            subtitle={`${kpiSummary?.due_next_30d_count ?? 0} payments`}
+            valueColor="text-[#F97316]"
+          />
+          <MiniTile
+            label="Due 31–60 Days"
+            value={fmtMoneyTile(kpiSummary?.due_31_60d_amount ?? 0)}
+            subtitle={`${kpiSummary?.due_31_60d_count ?? 0} payments`}
+            valueColor="text-gray-900 dark:text-slate-100"
+          />
+          <MiniTile
+            label="Due 61–90 Days"
+            value={fmtMoneyTile(kpiSummary?.due_61_90d_amount ?? 0)}
+            subtitle={`${kpiSummary?.due_61_90d_count ?? 0} payments`}
+            valueColor="text-gray-900 dark:text-slate-100"
+          />
+        </KpiBand>
+
+        <KpiBand dotColor="#888780" label="Overview">
+          <MiniTile
+            label="Total Active Debt"
+            value={fmtMoneyTile(kpiSummary?.total_active_debt ?? 0)}
+            valueColor="text-gray-900 dark:text-slate-100"
+          />
+          <MiniTile
+            label="Active Loans"
+            value={kpiSummary?.active_loans_count ?? 0}
+            valueColor="text-gray-900 dark:text-slate-100"
+          />
+          <MiniTile
+            label="Paid Off YTD"
+            value={kpiSummary?.paid_off_ytd_count ?? 0}
+            valueColor="text-[#639922]"
+          />
+        </KpiBand>
       </div>
 
       {/* Awaiting title release — paid-off loans with equipment titles still pending */}
