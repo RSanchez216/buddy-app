@@ -119,6 +119,10 @@ export default function DebtSchedule() {
   const [filterEquipType, setFilterEquipType] = useState('')
   const [pastDueOnly, setPastDueOnly] = useState(false)
   const [titlePendingOnly, setTitlePendingOnly] = useState(false)
+  // Filter chip — show only active loans with ≥1 status='skipped' past-due
+  // row (v_loans_summary.unresolved_skipped_count > 0). Stacks with the
+  // entity/lender/equipment-type/past-due filters.
+  const [skippedUnresolvedOnly, setSkippedUnresolvedOnly] = useState(false)
   const [groupByEntity, setGroupByEntity] = useState(false)
 
   // null = default order (entity, then loan_id)
@@ -180,6 +184,7 @@ export default function DebtSchedule() {
         if (filterStatus && l.status !== filterStatus) return null
         if (pastDueOnly && (!l.days_behind || l.days_behind <= 0)) return null
         if (titlePendingOnly && !l.title_release_pending) return null
+        if (skippedUnresolvedOnly && (!l.unresolved_skipped_count || l.unresolved_skipped_count <= 0)) return null
         if (filterEquipType) {
           const eq = equipmentByLoan[l.id] || []
           if (!eq.some(e => e.equipment_type === filterEquipType)) return null
@@ -187,7 +192,7 @@ export default function DebtSchedule() {
         return { ...l, _hit: hit }
       })
       .filter(Boolean)
-  }, [loans, equipmentByLoan, search, filterEntity, filterLender, filterStatus, filterEquipType, pastDueOnly, titlePendingOnly])
+  }, [loans, equipmentByLoan, search, filterEntity, filterLender, filterStatus, filterEquipType, pastDueOnly, titlePendingOnly, skippedUnresolvedOnly])
 
   // Apply column sort (client-side, after filters)
   const sorted = useMemo(() => {
@@ -197,6 +202,7 @@ export default function DebtSchedule() {
       switch (key) {
         case 'next_due':       return l.next_due_date || ''
         case 'days_behind':    return Number(l.days_behind || 0)
+        case 'skipped':        return Number(l.unresolved_skipped_count || 0)
         case 'monthly_pmt':    return Number(l.monthly_payment || 0)
         case 'balance':        return Number(l.current_balance || 0)
         case 'loan_id':        return (l.loan_id_external || '').toLowerCase()
@@ -378,6 +384,13 @@ export default function DebtSchedule() {
           Past Due Only
         </button>
         <button
+          onClick={() => setSkippedUnresolvedOnly(v => !v)}
+          className={S.filterBtn(skippedUnresolvedOnly)}
+          title="Show only active loans with skipped past-due rows"
+        >
+          Skipped Unresolved
+        </button>
+        <button
           onClick={() => setTitlePendingOnly(v => !v)}
           className={S.filterBtn(titlePendingOnly)}
         >
@@ -405,6 +418,7 @@ export default function DebtSchedule() {
                 <SortHeader label="Balance"     columnKey="balance"     sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
                 <SortHeader label="Next Due"    columnKey="next_due"    sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
                 <SortHeader label="Days Behind" columnKey="days_behind" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+                <SortHeader label="Skipped"     columnKey="skipped"     sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
                 <th className={S.th}>Status</th>
               </tr>
             </thead>
@@ -421,7 +435,7 @@ export default function DebtSchedule() {
             ) : (
               <tbody>
                 {sorted.length === 0 ? (
-                  <tr><td colSpan={9} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">No loans found</td></tr>
+                  <tr><td colSpan={10} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">No loans found</td></tr>
                 ) : sorted.map(l => (
                   <LoanRow key={l.id} loan={l} equipment={equipmentByLoan[l.id] || []} formatEqLabel={formatEqLabel} />
                 ))}
@@ -445,7 +459,7 @@ function GroupedBody({ entityName, rows, equipmentByLoan, formatEqLabel }) {
           className="bg-gray-50 dark:bg-white/[0.02] border-b border-gray-100 dark:border-white/5 cursor-pointer"
           onClick={() => setOpen(o => !o)}
         >
-          <td colSpan={9} className="px-4 py-2">
+          <td colSpan={10} className="px-4 py-2">
             <div className="flex items-center gap-2 text-xs font-semibold text-gray-700 dark:text-slate-300 uppercase tracking-wide">
               <svg className={`w-3 h-3 transition-transform ${open ? '' : '-rotate-90'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -507,6 +521,20 @@ function LoanRow({ loan, equipment, formatEqLabel }) {
       <td className={`${S.td} text-gray-600 dark:text-slate-400 whitespace-nowrap`}>{fmtDate(loan.next_due_date)}</td>
       <td className={`${S.td} font-semibold whitespace-nowrap ${daysBehindCellClass(days)}`}>
         {days > 0 ? `${days}d` : '0'}
+      </td>
+      <td
+        className={`${S.td} font-semibold whitespace-nowrap`}
+        title={
+          loan.unresolved_skipped_count > 0
+            ? `${loan.unresolved_skipped_count} skipped payment${loan.unresolved_skipped_count === 1 ? '' : 's'} past due · ${fmtMoney(loan.unresolved_skipped_amount)}`
+            : 'No unresolved skipped payments'
+        }
+      >
+        {loan.unresolved_skipped_count > 0 ? (
+          <span style={{ color: '#BA7517' }}>{loan.unresolved_skipped_count}</span>
+        ) : (
+          <span className="text-gray-300 dark:text-slate-600">—</span>
+        )}
       </td>
       <td className={S.td}>
         <div className="flex items-center gap-1.5 flex-wrap">
