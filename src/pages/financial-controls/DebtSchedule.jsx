@@ -50,12 +50,13 @@ function MiniTile({ label, value, subtitle, valueColor }) {
 // Capsule styling per spec: white bg, 0.5px border, 18px radius, 16px 18px
 // padding. Header dot + uppercase label with 0.04em tracking.
 function KpiBand({ dotColor, label, children }) {
-  // w-full + min-w-0 on the grid item and the inner capsule keep all 3
-  // bands at identical width regardless of inner content length. Without
-  // min-w-0, the grid item's default min-width: auto can let short-content
-  // capsules render narrower than the column track.
+  // Equal widths via flex: 1 1 0 + min-width: 0. Using flex (not grid) on
+  // the parent because CSS Grid's column tracks were resolving unequal
+  // for the short-content OVERVIEW capsule even with minmax(0, 1fr).
+  // flex-basis: 0 forces every capsule to start from zero and grow by the
+  // same factor, so content length stops influencing the final width.
   return (
-    <div className="flex flex-col w-full min-w-0">
+    <div className="flex flex-col min-w-0" style={{ flex: '1 1 0' }}>
       <div className="flex items-center gap-2 mb-2 px-0.5">
         <span className="w-[7px] h-[7px] rounded-full" style={{ background: dotColor }} />
         <span
@@ -282,7 +283,7 @@ export default function DebtSchedule() {
       {/* KPI bands — 3 capsules, each with 3 mini-tiles. Hydrates from
           public.debt_schedule_kpi_summary() (single RPC call). Colors
           per spec; values fall back to zero / em-dash while loading. */}
-      <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
+      <div className="flex gap-3 items-stretch">
         <KpiBand dotColor="#E24B4A" label="Act Now">
           <MiniTile
             label="Past Due Loans"
