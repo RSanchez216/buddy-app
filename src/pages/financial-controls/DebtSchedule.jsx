@@ -50,8 +50,12 @@ function MiniTile({ label, value, subtitle, valueColor }) {
 // Capsule styling per spec: white bg, 0.5px border, 18px radius, 16px 18px
 // padding. Header dot + uppercase label with 0.04em tracking.
 function KpiBand({ dotColor, label, children }) {
+  // w-full + min-w-0 on the grid item and the inner capsule keep all 3
+  // bands at identical width regardless of inner content length. Without
+  // min-w-0, the grid item's default min-width: auto can let short-content
+  // capsules render narrower than the column track.
   return (
-    <div className="flex flex-col">
+    <div className="flex flex-col w-full min-w-0">
       <div className="flex items-center gap-2 mb-2 px-0.5">
         <span className="w-[7px] h-[7px] rounded-full" style={{ background: dotColor }} />
         <span
@@ -62,7 +66,7 @@ function KpiBand({ dotColor, label, children }) {
         </span>
       </div>
       <div
-        className="bg-white dark:bg-[#0d0d1f] border-gray-200 dark:border-white/5"
+        className="bg-white dark:bg-[#0d0d1f] border-gray-200 dark:border-white/5 w-full min-w-0"
         style={{
           borderWidth: '0.5px',
           borderStyle: 'solid',
@@ -70,7 +74,7 @@ function KpiBand({ dotColor, label, children }) {
           padding: '16px 18px',
         }}
       >
-        <div className="flex gap-3">{children}</div>
+        <div className="flex gap-3 w-full min-w-0">{children}</div>
       </div>
     </div>
   )
