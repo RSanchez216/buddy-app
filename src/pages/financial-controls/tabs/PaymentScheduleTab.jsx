@@ -7,6 +7,15 @@ import MarkPaidModal from '../../cash-flow/MarkPaidModal'
 import { FC, PAYMENT_STATUSES, STATUS_LABELS, paymentStatusPill, fmtMoney, fmtDate } from '../loanUtils'
 import { useToast } from '../../../contexts/ToastContext'
 
+// America/Chicago today as ISO date — the app-wide reference for "is this
+// row past due?". UTC slice would roll over at 7pm CST, surfacing rows as
+// past-due 5 hours before they actually are by Chicago wall time.
+function chicagoTodayISO() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date())
+}
+
 export default function PaymentScheduleTab({ loanId, loan, canEdit, onChange }) {
   const { user, profile } = useAuth()
   const toast = useToast()
@@ -19,8 +28,11 @@ export default function PaymentScheduleTab({ loanId, loan, canEdit, onChange }) 
   const [regenRunning, setRegenRunning] = useState(false)
   const [regenToast, setRegenToast] = useState('')
   // Mark Paid modal target — the loan_payments row to mark when the user
-  // clicks the action button inside the NEXT PAYMENT DUE tile.
+  // clicks the action button inside the NEXT PAYMENT DUE tile or the
+  // Skipped-past-due banner card. `surface` tracks which entry point
+  // opened the modal so the audit_log metadata reflects intent.
   const [markPaidRow, setMarkPaidRow] = useState(null)
+  const [markPaidSurface, setMarkPaidSurface] = useState('debt_schedule')
 
   // Sort: 'asc' (oldest first) or 'desc' (most recent first, default).
   // Loans approaching maturity have many paid rows; recent + current months
@@ -251,6 +263,57 @@ export default function PaymentScheduleTab({ loanId, loan, canEdit, onChange }) 
     return { paidYTD, skippedYTD, remaining, pendingCount, nextDue }
   }, [rows])
 
+  // Skipped past-due rows feed the amber banner above the table. Cards
+  // are sorted oldest first so the longest-unresolved month sits at the
+  // top of the list, matching the Awaiting Title Release convention.
+  const pastDueSkipped = useMemo(() => {
+    const today = chicagoTodayISO()
+    return rows
+      .filter(r => r.status === 'skipped' && r.due_date && r.due_date < today)
+      .sort((a, b) => (a.due_date || '').localeCompare(b.due_date || ''))
+  }, [rows])
+
+  const pastDueSkippedTotal = useMemo(() => (
+    pastDueSkipped.reduce((s, r) => s + Number(r.scheduled_amount || 0), 0)
+  ), [pastDueSkipped])
+
+  // Resume a skipped row back to pending. Clears paid_*, sets status,
+  // writes an audit_log entry with action='resume_from_skipped' so the
+  // intent is queryable separately from generic status changes.
+  async function resumeFromSkipped(row) {
+    if (!canEdit) return
+    const nowIso = new Date().toISOString()
+    const beforeStatus = row.status
+    const { error } = await supabase.from('loan_payments').update({
+      status: 'pending',
+      paid_date: null,
+      paid_amount: null,
+      paid_at: null,
+      updated_at: nowIso,
+    }).eq('id', row.id)
+    if (error) { toast.error("Couldn't resume payment — try again", error); return }
+    const label = row.due_month
+      ? new Date(`${row.due_month}T00:00:00`).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+      : 'Payment'
+    toast.success(`${label} resumed to pending`)
+    await supabase.from('audit_log').insert({
+      table_name: 'loan_payments',
+      record_id: row.id,
+      action: 'resume_from_skipped',
+      performed_by: user?.id || null,
+      performed_by_email: profile?.email || null,
+      metadata: {
+        surface: 'loan_detail_skipped_banner',
+        before_status: beforeStatus,
+        paid_date_cleared: row.paid_date || null,
+        paid_amount_cleared: row.paid_amount != null ? Number(row.paid_amount) : null,
+        loan_id: row.loan_id,
+        due_date: row.due_date || null,
+      },
+    })
+    load()
+  }
+
   // Apply quick filter + sort
   const visibleRows = useMemo(() => {
     const today = new Date().toISOString().slice(0, 10)
@@ -302,6 +365,68 @@ export default function PaymentScheduleTab({ loanId, loan, canEdit, onChange }) 
           onMarkPaid={() => totals.nextDue && setMarkPaidRow(totals.nextDue)}
         />
       </div>
+
+      {/* Skipped past-due banner — shown only when ≥1 row is status='skipped'
+          and past its due_date by America/Chicago today. Soft amber bg with
+          a left accent strip; per-row cards inside expose Mark Paid + Resume
+          to Pending. Future-dated skipped rows are tinted in the table but
+          not surfaced here (banner is action-required only). */}
+      {pastDueSkipped.length > 0 && (
+        <div className="flex bg-amber-50 dark:bg-amber-500/[0.08] border border-amber-200 dark:border-amber-500/20 rounded-2xl overflow-hidden">
+          <div className="w-1 bg-amber-400 dark:bg-amber-500/60 shrink-0" />
+          <div className="flex-1 p-4 space-y-3">
+            <div className="flex items-center gap-2 text-amber-800 dark:text-amber-300">
+              <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                <line x1="12" y1="9"  x2="12" y2="13" />
+                <line x1="12" y1="17" x2="12.01" y2="17" />
+              </svg>
+              <p className="text-sm font-semibold">
+                {pastDueSkipped.length} skipped payment{pastDueSkipped.length === 1 ? '' : 's'} past due
+                <span className="font-mono ml-2">· {fmtMoney(pastDueSkippedTotal)}</span>
+              </p>
+            </div>
+            <ul className="space-y-2">
+              {pastDueSkipped.map(r => (
+                <li
+                  key={r.id}
+                  className="flex items-center gap-3 flex-wrap rounded-xl bg-white/70 dark:bg-white/[0.03] border border-amber-100 dark:border-amber-500/15 px-3 py-2"
+                >
+                  <div className="flex-1 min-w-0 flex items-baseline gap-2 flex-wrap text-sm">
+                    <span className="font-medium text-gray-900 dark:text-slate-200">
+                      {r.due_month
+                        ? new Date(`${r.due_month}T00:00:00`).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+                        : '—'}
+                    </span>
+                    <span className="text-gray-400 dark:text-slate-600">·</span>
+                    <span className="text-gray-600 dark:text-slate-400 whitespace-nowrap">{fmtDate(r.due_date)}</span>
+                    <span className="text-gray-400 dark:text-slate-600">·</span>
+                    <span className="font-mono text-gray-700 dark:text-slate-300 whitespace-nowrap">{fmtMoney(r.scheduled_amount)}</span>
+                  </div>
+                  {canEdit && (
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={() => { setMarkPaidSurface('loan_detail_skipped_banner'); setMarkPaidRow(r) }}
+                        className="px-2.5 py-1 text-xs font-semibold bg-orange-500 hover:bg-orange-400 text-white rounded-lg transition-colors"
+                        title={`Mark the ${fmtDate(r.due_date)} payment paid`}
+                      >
+                        Mark Paid
+                      </button>
+                      <button
+                        onClick={() => resumeFromSkipped(r)}
+                        className="px-2.5 py-1 text-xs font-medium border border-amber-300 dark:border-amber-500/30 text-amber-800 dark:text-amber-300 rounded-lg hover:bg-amber-100/60 dark:hover:bg-amber-500/15 transition-colors"
+                        title="Revert this row to pending — paid date and amount will be cleared."
+                      >
+                        Resume to Pending
+                      </button>
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
 
       {/* Quick filter pills + sort toggle */}
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -361,9 +486,11 @@ export default function PaymentScheduleTab({ loanId, loan, canEdit, onChange }) 
                 <tr
                   key={r.id}
                   className={`${S.tableRow} ${
-                    totals.nextDue && r.id === totals.nextDue.id
-                      ? 'bg-amber-50/60 dark:bg-amber-500/[0.07]'
-                      : ''
+                    r.status === 'skipped'
+                      ? 'bg-amber-50 dark:bg-amber-500/[0.08] hover:bg-amber-100 dark:hover:bg-amber-500/15 border-l-2 border-amber-400 dark:border-amber-500/60'
+                      : totals.nextDue && r.id === totals.nextDue.id
+                        ? 'bg-amber-50/60 dark:bg-amber-500/[0.07]'
+                        : ''
                   }`}
                 >
                   <td className={`${S.td} text-gray-700 dark:text-slate-300 font-medium whitespace-nowrap`}>
@@ -453,7 +580,7 @@ export default function PaymentScheduleTab({ loanId, loan, canEdit, onChange }) 
         open={!!markPaidRow}
         kind="loan"
         mode="paid"
-        surface="debt_schedule"
+        surface={markPaidSurface}
         record={markPaidRow
           ? {
               ...markPaidRow,
@@ -464,8 +591,8 @@ export default function PaymentScheduleTab({ loanId, loan, canEdit, onChange }) 
             }
           : null}
         headerSubtitle={loan ? `${loan.lender_name || 'Loan'} · ${loan.loan_id_external || ''}` : undefined}
-        onClose={() => setMarkPaidRow(null)}
-        onSaved={() => { setMarkPaidRow(null); load(); onChange?.() }}
+        onClose={() => { setMarkPaidRow(null); setMarkPaidSurface('debt_schedule') }}
+        onSaved={() => { setMarkPaidRow(null); setMarkPaidSurface('debt_schedule'); load(); onChange?.() }}
       />
 
       <Modal open={!!editRow} onClose={() => setEditRow(null)} title="Edit Payment" size="md">
