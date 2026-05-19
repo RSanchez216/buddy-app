@@ -21,6 +21,11 @@ import { S } from '../../lib/styles'
 import Modal from '../../components/Modal'
 import Select from '../../components/Select'
 import { CF, fmtMoneyExact } from './calendarUtils'
+import {
+  mergeCategoriesWithData,
+  isValidCategoryName,
+  dedupeCategory,
+} from '../../constants/expenseCategories'
 
 const SURFACE = 'payment_calendar_batch_modal'
 
@@ -60,9 +65,17 @@ export default function BatchDetailModal({
   const [failedIds, setFailedIds] = useState(() => new Set())
   const [statusFilter, setStatusFilter] = useState('all')
   const [saving, setSaving] = useState(false)
-  // Categories distinct list (Expenses only) and sources distinct list
-  // (Inflows only). Cached once per modal open. Empty for the other kinds.
-  const [knownCategories, setKnownCategories] = useState([])
+  // Category list (Expenses only) is the canonical list merged with any
+  // distinct values present in custom_outflows.category right now. New
+  // values added inline via "+ Add new category" push into the cache so
+  // they appear in subsequent rows in the same session.
+  const [knownCategories, setKnownCategories] = useState(() => mergeCategoriesWithData([]))
+  // Per-row inline "add new category" state — when set, the category cell
+  // for this row renders a text input with Save / Cancel inline instead
+  // of the picker.
+  const [addingCategoryForRowId, setAddingCategoryForRowId] = useState(null)
+  // Sources distinct list (Inflows only — datalist autocomplete on the
+  // free-text source field).
   const [knownSources, setKnownSources] = useState([])
 
   const meta = kind ? KIND_META[kind] : null
@@ -77,15 +90,19 @@ export default function BatchDetailModal({
     let cancelled = false
     setLoading(true); setRows([]); setEdits({}); setInserts([]); setDeletes(new Set())
     setEditingId(null); setFailedIds(new Set()); setStatusFilter('all')
-    setKnownCategories([]); setKnownSources([])
+    setAddingCategoryForRowId(null)
+    setKnownCategories(mergeCategoriesWithData([])); setKnownSources([])
     ;(async () => {
       const fetched = await fetchRowsForKind(kind, dayISO)
       if (cancelled) return
       setRows(fetched)
-      // Side fetches for autocomplete (one-shot)
+      // Side fetches: distinct data values feed the picker. For Expenses,
+      // merged with the canonical list so users always see the full
+      // starter set even when production data only has a few values.
       if (kind === 'expenses') {
         const { data } = await supabase.from('custom_outflows').select('category').not('category', 'is', null)
-        if (!cancelled) setKnownCategories([...new Set((data || []).map(r => r.category).filter(Boolean))].sort())
+        const distinct = [...new Set((data || []).map(r => r.category).filter(Boolean))]
+        if (!cancelled) setKnownCategories(mergeCategoriesWithData(distinct))
       } else if (kind === 'inflows') {
         const { data } = await supabase.from('expected_inflows').select('source').not('source', 'is', null)
         if (!cancelled) setKnownSources([...new Set((data || []).map(r => r.source).filter(Boolean))].sort())
@@ -296,6 +313,9 @@ export default function BatchDetailModal({
             saving={saving}
             accounts={activeAccounts}
             knownCategories={knownCategories}
+            setKnownCategories={setKnownCategories}
+            addingCategoryForRowId={addingCategoryForRowId}
+            setAddingCategoryForRowId={setAddingCategoryForRowId}
             knownSources={knownSources}
             dayISO={dayISO}
           />
@@ -372,7 +392,10 @@ function BatchTable(props) {
 // Expenses table — single underlying table (custom_outflows), simplest case
 // ─────────────────────────────────────────────────────────────────────────
 
-function ExpensesTable({ visibleRows, getRow, deletes, failedIds, editingId, setEditingId, setField, toggleDelete, saving, accounts, knownCategories }) {
+function ExpensesTable({
+  visibleRows, getRow, deletes, failedIds, editingId, setEditingId, setField, toggleDelete, saving, accounts,
+  knownCategories, setKnownCategories, addingCategoryForRowId, setAddingCategoryForRowId,
+}) {
   if (visibleRows.length === 0) return <EmptyState label="No expense lines on this day" />
   return (
     <div className="border border-gray-200 dark:border-white/5 rounded-xl overflow-x-auto">
@@ -424,7 +447,32 @@ function ExpensesTable({ visibleRows, getRow, deletes, failedIds, editingId, set
                 </td>
                 <td className="px-2 py-1">
                   {isEditing && !isDel ? (
-                    <input list="batchmodal-categories" className={S.input} value={row.category || ''} onChange={e => setField(id, 'category', e.target.value)} />
+                    addingCategoryForRowId === id ? (
+                      <AddCategoryInput
+                        onSave={(value) => {
+                          const final = dedupeCategory(value, knownCategories)
+                          if (!knownCategories.includes(final)) setKnownCategories(prev => [...prev, final])
+                          setField(id, 'category', final)
+                          setAddingCategoryForRowId(null)
+                        }}
+                        onCancel={() => setAddingCategoryForRowId(null)}
+                      />
+                    ) : (
+                      <Select
+                        value={row.category || ''}
+                        onChange={e => {
+                          if (e.target.value === '__add_new__') {
+                            setAddingCategoryForRowId(id)
+                          } else {
+                            setField(id, 'category', e.target.value)
+                          }
+                        }}
+                      >
+                        <option value="">— Select —</option>
+                        {knownCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                        <option value="__add_new__">+ Add new category</option>
+                      </Select>
+                    )
                   ) : (row.category || <span className="text-gray-400 italic">—</span>)}
                 </td>
                 <td className="px-2 py-1 max-w-0">
@@ -463,9 +511,6 @@ function ExpensesTable({ visibleRows, getRow, deletes, failedIds, editingId, set
           })}
         </tbody>
       </table>
-      <datalist id="batchmodal-categories">
-        {knownCategories.map(c => <option key={c} value={c} />)}
-      </datalist>
     </div>
   )
 }
@@ -660,6 +705,63 @@ function InflowsTable({ visibleRows, getRow, deletes, failedIds, editingId, setE
 // Shared row sub-components
 // ─────────────────────────────────────────────────────────────────────────
 
+// Inline "add new category" text input — appears in the Category cell
+// when the user picks the "+ Add new category" sentinel from the Select.
+// Save validates against isValidCategoryName; the parent's onSave passes
+// the value through dedupeCategory() to fold case-variants into the
+// existing list. Esc cancels, Enter saves.
+function AddCategoryInput({ onSave, onCancel }) {
+  const [value, setValue] = useState('')
+  const [error, setError] = useState('')
+
+  function attemptSave() {
+    const v = value.trim()
+    if (!v) { onCancel(); return }
+    if (!isValidCategoryName(v)) {
+      setError('Lowercase letters / digits / underscores, max 30')
+      return
+    }
+    onSave(v)
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      <input
+        autoFocus
+        className={`${S.input} ${error ? 'ring-2 ring-red-400/60 border-red-400/60' : ''}`}
+        value={value}
+        onChange={e => { setValue(e.target.value); if (error) setError('') }}
+        onKeyDown={e => {
+          if (e.key === 'Enter')      { e.preventDefault(); attemptSave() }
+          else if (e.key === 'Escape') { e.preventDefault(); onCancel() }
+        }}
+        placeholder="new_category"
+        maxLength={30}
+        title={error || ''}
+      />
+      <button
+        type="button"
+        onClick={attemptSave}
+        title="Save category"
+        className="shrink-0 text-emerald-600 hover:text-emerald-500"
+      >
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        onClick={onCancel}
+        title="Cancel"
+        className="shrink-0 text-gray-400 hover:text-gray-600 dark:hover:text-slate-300"
+      >
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+  )
+}
 function StatusPill({ status, failed }) {
   if (failed) return <span className="text-[9px] font-semibold uppercase tracking-wide text-red-700 dark:text-red-400">Failed — retry</span>
   if (!status) return <span className="text-gray-400 italic">—</span>
