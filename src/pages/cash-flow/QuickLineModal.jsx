@@ -17,7 +17,7 @@ import { S } from '../../lib/styles'
 import Modal from '../../components/Modal'
 import Select from '../../components/Select'
 import SuggestInput from '../../components/SuggestInput'
-import { CF, fmtMoney, fmtMoneyExact } from './calendarUtils'
+import { CF, fmtMoney, fmtMoneyExact, FREQUENCIES, WEEKDAYS } from './calendarUtils'
 import { useFactors, formatFeeRate } from '../../hooks/useFactors'
 import {
   useExpenseCategories,
@@ -73,6 +73,134 @@ function fmtAccountOption(a) {
 }
 
 function round2(n) { return Math.round((Number(n) || 0) * 100) / 100 }
+
+// ── Recurring tab — pure helpers and constants ─────────────────────────────
+
+const FREQUENCY_LABEL = {
+  weekly:       'Weekly',
+  biweekly:     'Biweekly (every 2 weeks)',
+  semimonthly:  'Semimonthly (twice a month)',
+  monthly:      'Monthly',
+  quarterly:    'Quarterly',
+  annually:     'Annually',
+}
+
+const WEEKLY_FREQS    = new Set(['weekly', 'biweekly'])
+const MONTHLY_FREQS   = new Set(['semimonthly', 'monthly', 'quarterly', 'annually'])
+
+function emptyRecurringForm() {
+  return {
+    name: '',
+    amount: '',
+    category: '',
+    funding_account_id: '',
+    frequency: 'monthly',
+    day_of_week: 4,         // Thursday — common payroll/transfer day
+    day_of_month: 1,
+    second_day_of_month: 15,
+    start_date: '',
+    end_date: '',
+    notes: '',
+  }
+}
+
+// Chicago-local YYYY-MM-DD. Same idea as the helper in AddTransferModal —
+// we never let `new Date()` drive a date field directly because it would
+// silently shift on UTC-evening edits.
+function chicagoTodayISO() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Chicago',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date())
+}
+
+function _parseISODate(iso) {
+  if (!iso) return null
+  const d = new Date(`${iso}T00:00:00`)
+  return Number.isNaN(d.getTime()) ? null : d
+}
+
+function daysInMonth(year, monthIdx) {
+  return new Date(year, monthIdx + 1, 0).getDate()
+}
+
+// Next future date matching the chosen weekday (0 Sun … 6 Sat). If today
+// matches, today qualifies — the brief says "next future occurrence" with
+// the example of Tue → Thu landing on the immediate Thursday, implying
+// inclusive-of-today.
+function nextDateForWeekday(targetDow) {
+  const todayISO = chicagoTodayISO()
+  const today = _parseISODate(todayISO)
+  const diff = (Number(targetDow) - today.getDay() + 7) % 7
+  const target = new Date(today)
+  target.setDate(today.getDate() + diff)
+  return toISOLocal(target)
+}
+
+// Next future date matching the chosen day-of-month (1–31). If today's
+// day-of-month is on/before the target, use this month; otherwise roll
+// to next month. Day-of-month clamps to the month's actual length when
+// the target exceeds the month (e.g., 31 in February).
+function nextDateForDayOfMonth(targetDom) {
+  const todayISO = chicagoTodayISO()
+  const today = _parseISODate(todayISO)
+  const day = Math.max(1, Math.min(31, Number(targetDom) || 1))
+  let year = today.getFullYear()
+  let month = today.getMonth()
+  if (today.getDate() > day) {
+    month += 1
+    if (month > 11) { month = 0; year += 1 }
+  }
+  const clamped = Math.min(day, daysInMonth(year, month))
+  return toISOLocal(new Date(year, month, clamped))
+}
+
+function toISOLocal(d) {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+// Smart start_date suggestion based on the current frequency + day fields.
+// Returns null when the relevant day field isn't filled in yet.
+function suggestStartDate(form) {
+  if (WEEKLY_FREQS.has(form.frequency))  return nextDateForWeekday(form.day_of_week)
+  if (MONTHLY_FREQS.has(form.frequency)) {
+    if (form.frequency === 'semimonthly') {
+      // Earliest of the two days that's on/after today.
+      const a = nextDateForDayOfMonth(form.day_of_month)
+      const b = nextDateForDayOfMonth(form.second_day_of_month)
+      return a < b ? a : b
+    }
+    return nextDateForDayOfMonth(form.day_of_month)
+  }
+  return null
+}
+
+// Returns a warning string when the picked start_date doesn't line up with
+// the chosen day pattern. Empty string when consistent or unanswerable.
+function startDateWarning(form) {
+  if (!form.start_date) return ''
+  const d = _parseISODate(form.start_date)
+  if (!d) return ''
+  if (WEEKLY_FREQS.has(form.frequency)) {
+    if (d.getDay() !== Number(form.day_of_week)) {
+      const dayName = d.toLocaleDateString('en-US', { weekday: 'long' })
+      return `Start date is a ${dayName} — recurrences will follow this date, not the selected day.`
+    }
+  } else if (MONTHLY_FREQS.has(form.frequency)) {
+    const dom = d.getDate()
+    if (form.frequency === 'semimonthly') {
+      if (dom !== Number(form.day_of_month) && dom !== Number(form.second_day_of_month)) {
+        return `Start date day-of-month (${dom}) doesn't match either of the selected days — recurrences will follow this date.`
+      }
+    } else if (dom !== Number(form.day_of_month)) {
+      return `Start date day-of-month (${dom}) doesn't match the selected day (${form.day_of_month}) — recurrences will follow this date.`
+    }
+  }
+  return ''
+}
 
 // Per-row validation. Returns { isValid, errors } where errors is keyed by
 // the field name that failed. Field names match the row keys so the render
@@ -134,6 +262,16 @@ export default function QuickLineModal({ open, kind, focusedDate, onClose, onSav
   // Category cell renders a small text input with Save / Cancel instead
   // of the dropdown.
   const [addingCategoryForRowIdx, setAddingCategoryForRowIdx] = useState(null)
+  // Sub-tab for the expense kind: 'one-time' (existing multi-row form) or
+  // 'recurring' (single template form). Income / transfer ignore this state.
+  const [expenseSubTab, setExpenseSubTab] = useState('one-time')
+  const [recurringForm, setRecurringForm] = useState(emptyRecurringForm())
+  const [recurringErrors, setRecurringErrors] = useState({})
+  // User-edited flag — once the user has touched start_date, stop auto-
+  // recomputing it from the frequency / day inputs so we don't stomp on
+  // an intentional pick.
+  const [recurringStartTouched, setRecurringStartTouched] = useState(false)
+
   const [rows, setRows] = useState([])
   const [accounts, setAccounts] = useState([])
   const [knownSources, setKnownSources] = useState([])
@@ -148,6 +286,14 @@ export default function QuickLineModal({ open, kind, focusedDate, onClose, onSav
     setRowErrors({})
     setAddingCategoryForRowIdx(null)
     setError('')
+    // Expense tabs + recurring form reset together with the rest. The
+    // recurring form is only rendered when kind === 'expense' but we
+    // reset anyway so re-opening the modal in the same session starts
+    // fresh.
+    setExpenseSubTab('one-time')
+    setRecurringForm(emptyRecurringForm())
+    setRecurringErrors({})
+    setRecurringStartTouched(false)
     let cancelled = false
     ;(async () => {
       const tasks = [
@@ -180,6 +326,25 @@ export default function QuickLineModal({ open, kind, focusedDate, onClose, onSav
     })()
     return () => { cancelled = true }
   }, [open, kind, focusedDate])
+
+  // Smart start_date suggestion for the recurring tab. Re-runs when
+  // frequency / day fields change, but never overrides a user-typed
+  // start_date — recurringStartTouched flips the first time the user
+  // edits the field directly.
+  useEffect(() => {
+    if (!open || kind !== 'expense' || expenseSubTab !== 'recurring') return
+    if (recurringStartTouched) return
+    const suggested = suggestStartDate(recurringForm)
+    if (!suggested || suggested === recurringForm.start_date) return
+    setRecurringForm(f => ({ ...f, start_date: suggested }))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    open, kind, expenseSubTab, recurringStartTouched,
+    recurringForm.frequency,
+    recurringForm.day_of_week,
+    recurringForm.day_of_month,
+    recurringForm.second_day_of_month,
+  ])
 
   const meta = kind ? KIND_LABEL[kind] : null
 
@@ -359,7 +524,118 @@ export default function QuickLineModal({ open, kind, focusedDate, onClose, onSav
     return ids
   }
 
+  // Per-field validation for the recurring template form. Mirrors the
+  // brief's validation table; warnings (start_date weekday / day-of-month
+  // mismatch) are surfaced inline via startDateWarning() and NOT
+  // blocking.
+  function validateRecurring(form) {
+    const errors = {}
+    if (!form.name?.trim())            errors.name = 'Required'
+    const amt = Number(form.amount)
+    if (!form.amount || Number.isNaN(amt) || amt <= 0) errors.amount = 'Amount must be > 0'
+    if (!form.category?.trim())        errors.category = 'Required'
+    if (!form.funding_account_id)      errors.funding_account_id = 'Required'
+    if (!form.frequency)               errors.frequency = 'Required'
+    if (WEEKLY_FREQS.has(form.frequency)) {
+      const dow = Number(form.day_of_week)
+      if (!(dow >= 0 && dow <= 6))     errors.day_of_week = 'Required'
+    } else if (MONTHLY_FREQS.has(form.frequency)) {
+      const dom = Number(form.day_of_month)
+      if (!(dom >= 1 && dom <= 31))    errors.day_of_month = '1–31'
+      if (form.frequency === 'semimonthly') {
+        const dom2 = Number(form.second_day_of_month)
+        if (!(dom2 >= 1 && dom2 <= 31)) errors.second_day_of_month = '1–31'
+        if (dom === dom2)               errors.second_day_of_month = 'Must differ from the first day'
+      }
+    }
+    if (!form.start_date)              errors.start_date = 'Required'
+    if (form.start_date && form.end_date && form.end_date < form.start_date) {
+      errors.end_date = 'End date must be on or after start date'
+    }
+    return { isValid: Object.keys(errors).length === 0, errors }
+  }
+
+  async function saveRecurring() {
+    const { isValid, errors } = validateRecurring(recurringForm)
+    if (!isValid) {
+      setRecurringErrors(errors)
+      setError('Fix the highlighted fields before saving.')
+      return
+    }
+    setError('')
+    setSaving(true)
+    try {
+      const f = recurringForm
+      const payload = {
+        name: f.name.trim(),
+        amount: Number(f.amount),
+        category: f.category.trim(),
+        funding_account_id: f.funding_account_id,
+        frequency: f.frequency,
+        day_of_week:   WEEKLY_FREQS.has(f.frequency)  ? Number(f.day_of_week)   : null,
+        day_of_month:  MONTHLY_FREQS.has(f.frequency) ? Number(f.day_of_month)  : null,
+        second_day_of_month: f.frequency === 'semimonthly' ? Number(f.second_day_of_month) : null,
+        start_date: f.start_date,
+        end_date: f.end_date || null,
+        notes: f.notes?.trim() || null,
+        is_active: true,
+        entity_id: null,
+        created_by: user?.id || null,
+      }
+      const { data: tpl, error: insErr } = await supabase
+        .from('recurring_expense_templates')
+        .insert(payload)
+        .select('id, name')
+        .single()
+      if (insErr || !tpl) throw new Error(insErr?.message || 'Template insert failed')
+
+      // Materialize instances. Default horizon (now+1y) is set by the
+      // function — we don't pass p_through_date.
+      const { data: instanceCount, error: rpcErr } = await supabase
+        .rpc('generate_recurring_instances', { p_template_id: tpl.id })
+
+      // One audit_log entry per template, separate from any per-instance
+      // audit handled by future surfaces. Surface name follows the
+      // existing quick-line-add convention.
+      await supabase.from('audit_log').insert({
+        table_name: 'recurring_expense_templates',
+        record_id: tpl.id,
+        action: 'insert',
+        performed_by: user?.id || null,
+        performed_by_email: profile?.email || null,
+        metadata: {
+          surface: SURFACE,
+          variant: 'recurring',
+          name: tpl.name,
+          frequency: payload.frequency,
+          instance_count: rpcErr ? null : Number(instanceCount || 0),
+        },
+      }).then(({ error: aErr }) => {
+        if (aErr) console.warn('[QuickLineModal] audit_log insert failed', aErr.message)
+      })
+
+      setSaving(false)
+      if (rpcErr) {
+        toast.error('Recurring expense saved, but instance generation failed. You can regenerate from settings.', rpcErr)
+      } else {
+        toast.success(`Recurring expense created. ${Number(instanceCount || 0)} instance${Number(instanceCount) === 1 ? '' : 's'} scheduled.`)
+      }
+      onSaved?.()
+      onClose?.()
+    } catch (e) {
+      console.error('[QuickLineModal] saveRecurring failed:', e)
+      setError(e?.message || 'Save failed')
+      toast.error("Couldn't save recurring expense", e)
+      setSaving(false)
+    }
+  }
+
   async function handleSave() {
+    // Route the expense kind's recurring tab to its own save path. All
+    // other tabs / kinds go through the row-based validation + save.
+    if (kind === 'expense' && expenseSubTab === 'recurring') {
+      return saveRecurring()
+    }
     setError('')
     // All-or-nothing validation: collect errors for every row, abort if any.
     const allErrors = {}
@@ -396,6 +672,39 @@ export default function QuickLineModal({ open, kind, focusedDate, onClose, onSav
       <div className={S.modalBody}>
         {error && <div className={S.errorBox}>{error}</div>}
 
+        {/* Expense kind only — pair of tabs above the body content.
+            Switching tabs preserves both panes' state for the modal's
+            lifetime; reset happens on modal open via the useEffect
+            above. Income / transfer kinds skip the tab strip. */}
+        {kind === 'expense' && (
+          <div className="flex gap-1 p-1 bg-gray-100 dark:bg-white/5 rounded-xl w-fit">
+            <SubTabButton active={expenseSubTab === 'one-time'} onClick={() => setExpenseSubTab('one-time')}>One-time</SubTabButton>
+            <SubTabButton active={expenseSubTab === 'recurring'} onClick={() => setExpenseSubTab('recurring')}>Recurring</SubTabButton>
+          </div>
+        )}
+
+        {kind === 'expense' && expenseSubTab === 'recurring' ? (
+          <RecurringExpenseForm
+            form={recurringForm}
+            errors={recurringErrors}
+            accounts={accounts}
+            activeCategories={activeCategories}
+            archivedCategories={archivedCategories}
+            categoryLabelByName={categoryLabelByName}
+            warning={startDateWarning(recurringForm)}
+            onChange={(field, value) => {
+              setRecurringForm(prev => ({ ...prev, [field]: value }))
+              if (field === 'start_date') setRecurringStartTouched(true)
+              if (recurringErrors[field]) {
+                setRecurringErrors(prev => {
+                  const { [field]: _, ...rest } = prev
+                  return rest
+                })
+              }
+            }}
+          />
+        ) : (
+        <>
         <div className="space-y-2">
           {rows.map((row, i) => (
             <LineRow
@@ -470,23 +779,213 @@ export default function QuickLineModal({ open, kind, focusedDate, onClose, onSav
         >
           + Add another line
         </button>
+        </>
+        )}
 
+        {/* Footer — single shared row across kinds and tabs. Total / line
+            count only show for the row-based UIs; the recurring tab
+            replaces them with a small descriptive caption. Save button
+            label and disabled state branch on tab. */}
         <div className="flex items-baseline justify-between pt-3 border-t border-gray-100 dark:border-white/5">
-          <span className="text-sm text-gray-500 dark:text-slate-400">
-            <span className="font-semibold text-gray-700 dark:text-slate-300">Total:</span> {fmtMoney(totalAmount)}
-            <span className="ml-3 text-xs text-gray-400 dark:text-slate-500">
-              {rows.length} {rows.length === 1 ? 'line' : 'lines'}
+          {kind === 'expense' && expenseSubTab === 'recurring' ? (
+            <span className="text-xs text-gray-500 dark:text-slate-400">
+              Saving will create one template and materialize a year of instances.
             </span>
-          </span>
+          ) : (
+            <span className="text-sm text-gray-500 dark:text-slate-400">
+              <span className="font-semibold text-gray-700 dark:text-slate-300">Total:</span> {fmtMoney(totalAmount)}
+              <span className="ml-3 text-xs text-gray-400 dark:text-slate-500">
+                {rows.length} {rows.length === 1 ? 'line' : 'lines'}
+              </span>
+            </span>
+          )}
           <div className="flex gap-2">
             <button onClick={onClose} className={S.btnCancel}>Cancel</button>
             <button onClick={handleSave} disabled={saving} className={CF.btnSave}>
-              {saving ? 'Saving…' : `Save ${rows.length} ${meta.verb} line${rows.length === 1 ? '' : 's'}`}
+              {saving
+                ? 'Saving…'
+                : (kind === 'expense' && expenseSubTab === 'recurring'
+                    ? 'Save recurring expense'
+                    : `Save ${rows.length} ${meta.verb} line${rows.length === 1 ? '' : 's'}`)}
             </button>
           </div>
         </div>
       </div>
     </Modal>
+  )
+}
+
+// Small tab button used by the expense-kind sub-tab strip. Mirrors the
+// pill styling from the calendar header's view toggle so it's visually
+// consistent with other in-app tabs.
+function SubTabButton({ active, onClick, children }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`px-3 py-1 text-xs font-semibold rounded-lg transition-all ${
+        active
+          ? 'bg-white dark:bg-slate-800 text-orange-600 dark:text-orange-400 shadow-sm'
+          : 'text-gray-500 dark:text-slate-400'
+      }`}
+    >
+      {children}
+    </button>
+  )
+}
+
+// Recurring template form. Single-row layout in a two-column grid; day
+// fields are conditional on the selected frequency per the brief.
+function RecurringExpenseForm({
+  form, errors, accounts, activeCategories, archivedCategories, categoryLabelByName, warning, onChange,
+}) {
+  const isWeekly  = WEEKLY_FREQS.has(form.frequency)
+  const isMonthly = MONTHLY_FREQS.has(form.frequency)
+  const isSemi    = form.frequency === 'semimonthly'
+
+  // Pin archived current category at the top of the dropdown so a
+  // long-saved template's category doesn't disappear from the picker
+  // after its category gets archived in settings.
+  const archivedHit = form.category
+    && (archivedCategories || []).find(c => c.name === form.category)
+  const activeHit = form.category
+    && (activeCategories || []).find(c => c.name === form.category)
+
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      <Field label="Name *" error={errors.name} colSpan={2}>
+        <input
+          className={`${S.input} ${errClass(errors.name)}`}
+          value={form.name}
+          placeholder="e.g. Vanguard contribution"
+          onChange={e => onChange('name', e.target.value)}
+        />
+      </Field>
+      <Field label="Amount *" error={errors.amount}>
+        <input
+          type="number" step="0.01"
+          className={`${S.input} ${errClass(errors.amount)}`}
+          value={form.amount}
+          placeholder="0.00"
+          onChange={e => onChange('amount', e.target.value)}
+        />
+      </Field>
+      <Field label="Funding account *" error={errors.funding_account_id}>
+        <Select
+          value={form.funding_account_id}
+          onChange={e => onChange('funding_account_id', e.target.value)}
+          className={errors.funding_account_id ? errClass(true) : ''}
+        >
+          <option value="">— Select —</option>
+          {accounts.map(a => <option key={a.id} value={a.id}>{fmtAccountOption(a)}</option>)}
+        </Select>
+      </Field>
+      <Field label="Category *" error={errors.category}>
+        <Select
+          value={form.category || ''}
+          onChange={e => onChange('category', e.target.value)}
+          className={errors.category ? errClass(true) : ''}
+        >
+          <option value="">— Select —</option>
+          {archivedHit && !activeHit && (
+            <option value={archivedHit.name}>{archivedHit.display_label} (archived)</option>
+          )}
+          {(activeCategories || []).map(c => (
+            <option key={c.id} value={c.name}>{c.display_label}</option>
+          ))}
+        </Select>
+        {form.category && categoryLabelByName?.get(form.category) && !activeHit && !archivedHit && (
+          <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-0.5 truncate">
+            {categoryLabelByName.get(form.category)}
+          </p>
+        )}
+      </Field>
+      <Field label="Frequency *" error={errors.frequency}>
+        <Select
+          value={form.frequency}
+          onChange={e => onChange('frequency', e.target.value)}
+        >
+          {FREQUENCIES.map(f => <option key={f} value={f}>{FREQUENCY_LABEL[f] || f}</option>)}
+        </Select>
+      </Field>
+      {isWeekly && (
+        <Field label="Day of week *" error={errors.day_of_week}>
+          <Select value={form.day_of_week} onChange={e => onChange('day_of_week', e.target.value)}>
+            {WEEKDAYS.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
+          </Select>
+        </Field>
+      )}
+      {isMonthly && (
+        <Field label={isSemi ? 'First day of month *' : 'Day of month *'} error={errors.day_of_month}>
+          <input
+            type="number" min="1" max="31"
+            className={`${S.input} ${errClass(errors.day_of_month)}`}
+            value={form.day_of_month}
+            onChange={e => onChange('day_of_month', e.target.value)}
+            onBlur={e => {
+              const n = Number(e.target.value)
+              if (!Number.isNaN(n)) onChange('day_of_month', Math.max(1, Math.min(31, n)))
+            }}
+          />
+        </Field>
+      )}
+      {isSemi && (
+        <Field label="Second day of month *" error={errors.second_day_of_month}>
+          <input
+            type="number" min="1" max="31"
+            className={`${S.input} ${errClass(errors.second_day_of_month)}`}
+            value={form.second_day_of_month}
+            onChange={e => onChange('second_day_of_month', e.target.value)}
+            onBlur={e => {
+              const n = Number(e.target.value)
+              if (!Number.isNaN(n)) onChange('second_day_of_month', Math.max(1, Math.min(31, n)))
+            }}
+          />
+        </Field>
+      )}
+      <Field label="Start date *" error={errors.start_date}>
+        <input
+          type="date"
+          className={`${S.input} ${errClass(errors.start_date)}`}
+          value={form.start_date}
+          onChange={e => onChange('start_date', e.target.value)}
+        />
+        {warning && (
+          <p className="text-[10px] text-amber-700 dark:text-amber-400 mt-1 leading-snug">
+            {warning}
+          </p>
+        )}
+      </Field>
+      <Field label="End date" error={errors.end_date}>
+        <input
+          type="date"
+          className={`${S.input} ${errClass(errors.end_date)}`}
+          value={form.end_date}
+          placeholder="Optional"
+          onChange={e => onChange('end_date', e.target.value)}
+        />
+        <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-0.5">Leave blank for indefinite.</p>
+      </Field>
+      <Field label="Notes" colSpan={2}>
+        <textarea
+          className={S.textarea}
+          rows={2}
+          value={form.notes}
+          onChange={e => onChange('notes', e.target.value)}
+        />
+      </Field>
+    </div>
+  )
+}
+
+function Field({ label, error, colSpan, children }) {
+  const span = colSpan === 2 ? 'col-span-2' : ''
+  return (
+    <div className={span}>
+      <label className={S.label}>{label}</label>
+      {children}
+      {error && <p className="text-[10px] text-red-600 dark:text-red-400 mt-0.5">{error}</p>}
+    </div>
   )
 }
 
