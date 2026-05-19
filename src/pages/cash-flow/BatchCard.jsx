@@ -1,28 +1,32 @@
-import { useState } from 'react'
 import { fmtMoneyExact, fmtMoneySigned, isPaidStatus } from './calendarUtils'
 
-// One collapsible card per flow type per day.
-// Replaces per-row chip rendering for inflows / transfers / expenses.
-// Loans and adjustments stay individual.
+// One card per flow type per day. The header is a vertical stack:
+//   Row 1: title  (12px medium, type-colored)
+//   Row 2: total  (16px medium, type-colored)
+//   Row 3: "N lines" subtitle (10px secondary; appended mixed-status note
+//          when both paid/received and pending rows exist).
+//
+// Inline-expand was removed in this iteration. The follow-up BatchDetailModal
+// owns batch editing; for now clicking the card is inert. Other unused
+// props (tagFor, onChipClick, drag handles) are left on the signature so
+// WeekView's call site doesn't need to change in the same PR; they're
+// pruned when the modal lands.
 
 const TYPE_STYLE = {
   inflow: {
     accent: '#16A34A',
-    headerText: 'text-[#27500A] dark:text-emerald-300',
-    totalText:  'text-emerald-700 dark:text-emerald-400',
-    chevron:    'text-emerald-700/60 dark:text-emerald-400/70',
+    titleText: 'text-[#27500A] dark:text-emerald-300',
+    totalText: 'text-emerald-700 dark:text-emerald-400',
   },
   transfer: {
     accent: '#0E7490',
-    headerText: 'text-[#0E7490] dark:text-cyan-300',
-    totalText:  'text-cyan-700 dark:text-cyan-300',
-    chevron:    'text-cyan-700/60 dark:text-cyan-300/70',
+    titleText: 'text-[#0E7490] dark:text-cyan-300',
+    totalText: 'text-cyan-700 dark:text-cyan-300',
   },
   expense: {
     accent: '#B91C1C',
-    headerText: 'text-[#791F1F] dark:text-red-300',
-    totalText:  'text-red-700 dark:text-red-400',
-    chevron:    'text-red-700/60 dark:text-red-400/70',
+    titleText: 'text-[#791F1F] dark:text-red-300',
+    totalText: 'text-red-700 dark:text-red-400',
   },
 }
 
@@ -32,17 +36,12 @@ export default function BatchCard({
   events,                // pre-sorted array of v_cash_flow_events rows
   total,                 // signed number for the header total
   totalDirection = type, // 'inflow' renders + prefix, 'expense' renders − prefix, transfer renders unsigned
-  tagFor,                // (event) => string — small per-line category tag
-  onChipClick,
-  draggingId,
-  setDraggingId,
-  setDropTarget,
+  // eslint-disable-next-line no-unused-vars
+  tagFor, onChipClick, draggingId, setDraggingId, setDropTarget,
 }) {
-  const [expanded, setExpanded] = useState(false)
   if (!events || events.length === 0) return null
   const style = TYPE_STYLE[type] || TYPE_STYLE.expense
 
-  // Mixed-status subtitle: only shown when both paid/received and pending rows exist
   const paidCount = events.filter(e => isPaidStatus(e.status)).length
   const planCount = events.length - paidCount
   const mixed = paidCount > 0 && planCount > 0
@@ -56,101 +55,17 @@ export default function BatchCard({
 
   return (
     <div
-      className="rounded-lg bg-white dark:bg-[#0d0d1f] border border-gray-200 dark:border-white/5 overflow-hidden"
-      style={{ borderLeft: `3px solid ${style.accent}` }}
+      className="rounded-lg bg-white dark:bg-[#0d0d1f] border border-gray-200 dark:border-white/5 px-3 py-2.5"
+      style={{ borderLeft: `3px solid ${style.accent}`, minHeight: 70 }}
     >
-      <button
-        type="button"
-        onClick={() => setExpanded(v => !v)}
-        className="w-full px-2 py-1.5 flex items-start gap-1.5 hover:bg-gray-50 dark:hover:bg-white/[0.02] transition-colors text-left"
-      >
-        <span className={`text-[10px] leading-tight mt-0.5 shrink-0 ${style.chevron}`} aria-hidden>
-          {expanded ? '▾' : '▸'}
-        </span>
-        <div className="flex-1 min-w-0 leading-tight">
-          <div className={`text-[12px] font-medium truncate ${style.headerText}`}>{title}</div>
-          <div className="text-[10px] text-gray-500 dark:text-slate-500 truncate">
-            {events.length} {events.length === 1 ? 'line' : 'lines'}
-            {mixedLabel && <span className="italic ml-1">{mixedLabel}</span>}
-          </div>
-        </div>
-        <span className={`shrink-0 text-[13px] font-mono font-medium whitespace-nowrap leading-tight mt-0.5 ${style.totalText}`}>
-          {headerAmount}
-        </span>
-      </button>
-
-      {expanded && (
-        <ul className="divide-y divide-gray-100 dark:divide-white/5">
-          {events.map(ev => (
-            <BatchLine
-              key={ev.event_id}
-              event={ev}
-              tag={tagFor?.(ev)}
-              onClick={onChipClick}
-              draggingId={draggingId}
-              setDraggingId={setDraggingId}
-              setDropTarget={setDropTarget}
-            />
-          ))}
-        </ul>
-      )}
+      <div className={`text-[12px] font-medium leading-tight ${style.titleText}`}>{title}</div>
+      <div className={`mt-1 text-[16px] font-mono font-medium leading-tight whitespace-nowrap ${style.totalText}`}>
+        {headerAmount}
+      </div>
+      <div className="mt-1 text-[10px] text-gray-500 dark:text-slate-500 leading-tight">
+        {events.length} {events.length === 1 ? 'line' : 'lines'}
+        {mixedLabel && <span className="italic ml-1">{mixedLabel}</span>}
+      </div>
     </div>
-  )
-}
-
-// One line item inside an expanded batch.
-// Amount column is fixed-width tabular-nums so amounts line up.
-function BatchLine({ event, tag, onClick, draggingId, setDraggingId, setDropTarget }) {
-  const paid = isPaidStatus(event.status)
-  const draggable = !!event.is_draggable && !paid
-  const dragging = draggingId === event.event_id
-  const isInflow = event.direction === 'inflow'
-  // Transfers want unsigned amount on legs (the leg direction is conveyed
-  // by the tag — Debit / Credit). Other inflows/outflows show +/− prefix.
-  const isTransfer = event.reference_type === 'transfer_in'
-    || event.reference_type === 'transfer_out'
-    || event.reference_type === 'transfer'
-  const amountText = isTransfer
-    ? fmtMoneyExact(Math.abs(Number(event.amount || 0)))
-    : fmtMoneySigned(event.amount, event.direction)
-  const amountClass = isTransfer
-    ? 'text-cyan-700 dark:text-cyan-300'
-    : (isInflow ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400')
-
-  function handleDragStart(e) {
-    if (!draggable) return
-    e.dataTransfer.setData('text/plain', event.event_id)
-    e.dataTransfer.effectAllowed = 'move'
-    setDraggingId?.(event.event_id)
-  }
-
-  return (
-    <li
-      draggable={draggable}
-      onDragStart={handleDragStart}
-      onDragEnd={() => { setDraggingId?.(null); setDropTarget?.(null) }}
-      onClick={() => onClick?.(event)}
-      className={`flex items-baseline gap-1.5 px-2 py-1 text-[11px] ${
-        draggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
-      } hover:bg-gray-50 dark:hover:bg-white/[0.02] ${paid ? 'opacity-55' : ''} ${dragging ? 'opacity-30' : ''}`}
-      title={event.label || ''}
-    >
-      <span className={`font-mono font-semibold tabular-nums shrink-0 ${amountClass}`} style={{ minWidth: 72 }}>
-        {amountText}
-      </span>
-      <span className="flex-1 truncate text-gray-700 dark:text-slate-300">
-        {event.label || event.entity_name || ''}
-      </span>
-      {tag && (
-        <span className="shrink-0 text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/5 text-gray-500 dark:text-slate-400">
-          {tag}
-        </span>
-      )}
-      {paid && (
-        <svg className="w-3 h-3 shrink-0 text-gray-400 dark:text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.25}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-        </svg>
-      )}
-    </li>
   )
 }
