@@ -379,9 +379,24 @@ export default function DebtSchedule() {
             value={kpiSummary?.active_loans_count ?? 0}
             valueColor="text-gray-900 dark:text-slate-100"
           />
+          {/* PAID OFF YTD now paired with TOTAL PAID OFF so YTD progress
+              reads against the all-time baseline. YTD uses
+              last_updated_at >= year_start as the proxy — same as the
+              existing count — so the two YTD numbers stay consistent. */}
           <MiniTile
             label="Paid Off YTD"
             value={kpiSummary?.paid_off_ytd_count ?? 0}
+            subtitle={(kpiSummary?.paid_off_ytd_count ?? 0) === 0
+              ? '—'
+              : fmtMoneyTile(kpiSummary?.paid_off_ytd_amount ?? 0)}
+            valueColor="text-[#639922]"
+          />
+          <MiniTile
+            label="Total Paid Off"
+            value={kpiSummary?.total_paid_off_count ?? 0}
+            subtitle={(kpiSummary?.total_paid_off_count ?? 0) === 0
+              ? '—'
+              : fmtMoneyTile(kpiSummary?.total_paid_off_amount ?? 0)}
             valueColor="text-[#639922]"
           />
         </KpiBand>
