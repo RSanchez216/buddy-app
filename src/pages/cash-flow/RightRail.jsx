@@ -14,6 +14,10 @@ export default function RightRail({
   // needsUpdateIdSet is a Set<accountId> for O(1) row-level lookup;
   // onRecordBalance(account) opens the parent's modal.
   needsUpdateIdSet, onRecordBalance,
+  // Cover-with-transfer entry point. Called with
+  //   { mode: 'cover', targetAccountId } or { mode: 'list', targetAccountId: null }
+  // from the rail's cover block buttons. The parent owns modal state.
+  onCoverShortfall,
 }) {
   return (
     <aside className="space-y-3 sticky top-2 self-start">
@@ -66,6 +70,7 @@ export default function RightRail({
             dayProjections={dayProjections}
             needsUpdateIdSet={needsUpdateIdSet}
             onRecordBalance={onRecordBalance}
+            onCoverShortfall={onCoverShortfall}
           />
         )}
       </div>
@@ -179,7 +184,7 @@ function WeekPanel({
   )
 }
 
-function DayPanel({ weekStart, selectedDay, setSelectedDay, dayBucket, dayProjections, needsUpdateIdSet, onRecordBalance }) {
+function DayPanel({ weekStart, selectedDay, setSelectedDay, dayBucket, dayProjections, needsUpdateIdSet, onRecordBalance, onCoverShortfall }) {
   if (!selectedDay) {
     return (
       <p className="text-xs text-gray-500 dark:text-slate-400 py-4 text-center">
@@ -314,13 +319,13 @@ function DayPanel({ weekStart, selectedDay, setSelectedDay, dayBucket, dayProjec
         </div>
       )}
 
-      {/* Cover block — actionable shortfall summary. The "Cover with
-          transfer →" modal lands in a follow-up PR; for now this surface
-          shows the totals and biggest target so it's still useful at a
-          glance. */}
+      {/* Cover block — actionable shortfall summary.
+          "Cover with transfer →" opens the cover modal targeted at the
+          biggest shortfall; "View all" opens the same modal in list mode
+          so the user can pick which negative account to cover first. */}
       {negativeRows.length > 0 && (
         <div
-          className="rounded-xl p-3 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 text-xs"
+          className="rounded-xl p-3 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 text-xs space-y-2"
           style={{ borderLeft: '3px solid #B91C1C' }}
         >
           <p className="font-semibold text-red-700 dark:text-red-400 flex items-center gap-1.5">
@@ -333,17 +338,40 @@ function DayPanel({ weekStart, selectedDay, setSelectedDay, dayBucket, dayProjec
             </span>
           </p>
           {biggestShortfall && (
-            <p className="text-red-700/85 dark:text-red-400/85 mt-1 text-[11px]">
+            <p className="text-red-700/85 dark:text-red-400/85 text-[11px]">
               <span className="font-semibold">{biggestShortfall.account.name}</span>{' '}
               needs the largest cover:{' '}
               <span className="font-mono">{fmtMoney(Math.abs(biggestShortfall.projEod))}</span>
             </p>
           )}
-          <p className="mt-2 text-[10px] italic text-red-700/70 dark:text-red-400/70">
-            {surplusRows.length === 0
-              ? 'No accounts have surplus today.'
-              : 'Cover with transfer — coming in next release.'}
-          </p>
+          {surplusRows.length === 0 && (
+            <p className="text-[10px] italic text-red-700/70 dark:text-red-400/70">
+              No accounts have surplus today. Any transfer will move the shortfall.
+            </p>
+          )}
+          <div className="flex items-center gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => onCoverShortfall?.({ mode: 'cover', targetAccountId: biggestShortfall?.account?.id })}
+              className={
+                surplusRows.length === 0
+                  ? 'px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-gray-200 dark:bg-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-300 dark:hover:bg-slate-600 transition-colors'
+                  : 'px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-red-600 hover:bg-red-500 text-white transition-colors'
+              }
+              title={surplusRows.length === 0 ? 'No accounts have surplus today' : `Cover ${biggestShortfall?.account?.name || ''}`}
+            >
+              Cover with transfer →
+            </button>
+            {negativeRows.length > 1 && (
+              <button
+                type="button"
+                onClick={() => onCoverShortfall?.({ mode: 'list', targetAccountId: null })}
+                className="text-[11px] font-medium text-red-700 dark:text-red-400 hover:underline"
+              >
+                View all
+              </button>
+            )}
+          </div>
         </div>
       )}
     </>

@@ -28,6 +28,7 @@ import RecordBalanceEntryModal from '../settings/funding/RecordBalanceEntryModal
 import AdjustmentDetailsModal from '../settings/funding/AdjustmentDetailsModal'
 import AddTransferModal from './AddTransferModal'
 import QuickLineModal from './QuickLineModal'
+import CoverTransferModal from './CoverTransferModal'
 import { useToast } from '../../contexts/ToastContext'
 
 const SHOW_PAID_KEY = 'cf-show-paid'
@@ -91,6 +92,9 @@ export default function PaymentCalendar() {
   const [editInflowRow, setEditInflowRow] = useState(null) // expected_inflows row for edit, null for add
   const [showAddExpense, setShowAddExpense] = useState(false)
   const [quickLineKind, setQuickLineKind] = useState(null) // 'income' | 'expense' | 'transfer' | null
+  // Cover-with-transfer modal — null when closed. Shape:
+  //   { mode: 'cover'|'list', targetAccountId: uuid|null }
+  const [coverModalState, setCoverModalState] = useState(null)
   const [showRecurring, setShowRecurring] = useState(false)
   const [showStartingCash, setShowStartingCash] = useState(false)
   const [adjustLoanEvent, setAdjustLoanEvent] = useState(null) // event obj
@@ -658,6 +662,7 @@ export default function PaymentCalendar() {
               dayProjections={dayProjections}
               needsUpdateIdSet={needsUpdateIdSet}
               onRecordBalance={openRecordModal}
+              onCoverShortfall={(req) => setCoverModalState(req)}
             />
           </div>
 
@@ -728,6 +733,14 @@ export default function PaymentCalendar() {
         focusedDate={defaultDate || selectedDay || toISO(new Date())}
         onClose={() => setQuickLineKind(null)}
         onSaved={() => { setQuickLineKind(null); loadData(); setBalanceRefreshKey(k => k + 1) }}
+      />
+      <CoverTransferModal
+        open={!!coverModalState}
+        initialTargetId={coverModalState?.mode === 'cover' ? coverModalState.targetAccountId : null}
+        accountsWithEod={dayProjections.map(({ account, balance }) => ({ account, projEod: balance }))}
+        todayISO={toISO(new Date())}
+        onClose={() => setCoverModalState(null)}
+        onSaved={() => { setCoverModalState(null); loadData(); setBalanceRefreshKey(k => k + 1) }}
       />
       <ChipDetailPanel
         event={chipDetail}
