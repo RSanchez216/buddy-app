@@ -304,7 +304,11 @@ export default function DebtSchedule() {
           <MiniTile
             label="Skipped Unresolved"
             value={fmtMoneyTile(kpiSummary?.skipped_unresolved_amount ?? 0)}
-            subtitle={`${kpiSummary?.skipped_unresolved_count ?? 0} payments`}
+            subtitle={(() => {
+              const loans    = kpiSummary?.skipped_unresolved_loans_count ?? 0
+              const payments = kpiSummary?.skipped_unresolved_count ?? 0
+              return `${loans} ${loans === 1 ? 'loan' : 'loans'} · ${payments} ${payments === 1 ? 'payment' : 'payments'}`
+            })()}
             valueColor="text-[#BA7517]"
           />
         </KpiBand>
