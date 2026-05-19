@@ -45,7 +45,7 @@ function emptyIncomeRow(date)   {
     funding_account_id: '', expected_date: date || '', notes: '',
   }
 }
-function emptyExpenseRow(date)  { return { amount: '', description: '', category: '', funding_account_id: '', planned_pay_date: date || '', cash_impacting: true } }
+function emptyExpenseRow(date)  { return { amount: '', description: '', category: '', funding_account_id: '', planned_pay_date: date || '', cash_impacting: false } }
 function emptyTransferRow(date) { return { from_funding_account_id: '', to_funding_account_id: '', amount: '', debit_date: date || '', credit_date: date || '' } }
 
 function emptyRow(kind, date) {

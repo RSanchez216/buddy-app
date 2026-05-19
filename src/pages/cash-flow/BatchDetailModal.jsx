@@ -974,7 +974,7 @@ function blankRowForKind(kind, dayISO) {
   if (kind === 'expenses') {
     return {
       id: null, status: 'planned', amount: '', description: '', category: '',
-      funding_account_id: '', planned_pay_date: dayISO, due_date: dayISO, cash_impacting: true,
+      funding_account_id: '', planned_pay_date: dayISO, due_date: dayISO, cash_impacting: false,
     }
   }
   if (kind === 'transfers') {
