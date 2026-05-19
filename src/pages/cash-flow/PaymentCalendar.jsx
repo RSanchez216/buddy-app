@@ -27,6 +27,7 @@ import { useAccountsNeedingBalanceUpdate } from './useAccountsNeedingBalanceUpda
 import RecordBalanceEntryModal from '../settings/funding/RecordBalanceEntryModal'
 import AdjustmentDetailsModal from '../settings/funding/AdjustmentDetailsModal'
 import AddTransferModal from './AddTransferModal'
+import QuickLineModal from './QuickLineModal'
 import { useToast } from '../../contexts/ToastContext'
 
 const SHOW_PAID_KEY = 'cf-show-paid'
@@ -83,9 +84,13 @@ export default function PaymentCalendar() {
   const [loading, setLoading] = useState(true)
 
   // Modal state
+  // The original AddIncome/AddExpense/AddTransfer modals stay mounted for
+  // chip-edit flows; the toolbar uses QuickLineModal (kind='income'|'expense'|
+  // 'transfer') as the lighter quick line-add path. null = closed.
   const [showAddIncome, setShowAddIncome] = useState(false)
   const [editInflowRow, setEditInflowRow] = useState(null) // expected_inflows row for edit, null for add
   const [showAddExpense, setShowAddExpense] = useState(false)
+  const [quickLineKind, setQuickLineKind] = useState(null) // 'income' | 'expense' | 'transfer' | null
   const [showRecurring, setShowRecurring] = useState(false)
   const [showStartingCash, setShowStartingCash] = useState(false)
   const [adjustLoanEvent, setAdjustLoanEvent] = useState(null) // event obj
@@ -555,23 +560,15 @@ export default function PaymentCalendar() {
         </Select>
         {canEdit && (
           <>
-            <button onClick={() => { setDefaultDate(toISO(new Date())); setShowAddIncome(true) }} className={CF.btnPrimary}>
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
-              Add Income
-            </button>
-            <button onClick={() => { setDefaultDate(toISO(new Date())); setShowAddExpense(true) }} className={CF.btnPrimary}>
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
-              Add Expense
-            </button>
-            <button
-              onClick={() => setTransferTarget({ transferId: null })}
-              className="flex items-center gap-2 px-3 py-2 text-sm font-semibold bg-cyan-500 hover:bg-cyan-400 text-slate-900 rounded-xl transition-all shadow-lg shadow-cyan-500/20"
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
-              </svg>
-              Add Transfer
-            </button>
+            <QuickLineButton tone="income"   onClick={() => { setDefaultDate(selectedDay || toISO(new Date())); setQuickLineKind('income') }}>
+              + Income line
+            </QuickLineButton>
+            <QuickLineButton tone="expense"  onClick={() => { setDefaultDate(selectedDay || toISO(new Date())); setQuickLineKind('expense') }}>
+              + Expense line
+            </QuickLineButton>
+            <QuickLineButton tone="transfer" onClick={() => { setDefaultDate(selectedDay || toISO(new Date())); setQuickLineKind('transfer') }}>
+              + Transfer line
+            </QuickLineButton>
           </>
         )}
         {canEdit && (
@@ -725,6 +722,13 @@ export default function PaymentCalendar() {
         onClose={() => setTransferTarget(null)}
         onSaved={() => { setTransferTarget(null); loadData(); setBalanceRefreshKey(k => k + 1) }}
       />
+      <QuickLineModal
+        open={!!quickLineKind}
+        kind={quickLineKind}
+        focusedDate={defaultDate || selectedDay || toISO(new Date())}
+        onClose={() => setQuickLineKind(null)}
+        onSaved={() => { setQuickLineKind(null); loadData(); setBalanceRefreshKey(k => k + 1) }}
+      />
       <ChipDetailPanel
         event={chipDetail}
         canEdit={canEdit}
@@ -814,6 +818,27 @@ function LegendItem({ swatchClass, textClass, label }) {
       <span className={`inline-block w-3.5 h-3.5 rounded ${swatchClass}`} />
       <span className={`${textClass} font-medium`}>{label}</span>
     </span>
+  )
+}
+
+// Lighter-weight toolbar button for the three quick line-add entry points.
+// Tone controls the text accent only; the chrome is intentionally muted
+// vs. the old solid Add buttons, since each click is one row in a multi-row
+// form rather than a full standalone modal.
+function QuickLineButton({ tone, onClick, children }) {
+  const toneClass = {
+    income:   'text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-500/10 border-emerald-300/60 dark:border-emerald-500/30',
+    expense:  'text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 border-red-300/60 dark:border-red-500/30',
+    transfer: 'text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-500/10 border-amber-300/60 dark:border-amber-500/30',
+  }[tone] || ''
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold rounded-xl border bg-white dark:bg-[#0d0d1f] transition-colors ${toneClass}`}
+    >
+      {children}
+    </button>
   )
 }
 
