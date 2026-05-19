@@ -291,25 +291,48 @@ export default function DebtSchedule() {
           per spec; values fall back to zero / em-dash while loading. */}
       <div className="flex gap-3 items-stretch">
         <KpiBand dotColor="#E24B4A" label="Act Now">
+          {/* Tile 1 — PAST DUE LOANS. Loan count now combines pending +
+              skipped past-due payments (skipped here = missed, not
+              lender-approved deferral). Subtext breaks the payments
+              count out by status. */}
           <MiniTile
             label="Past Due Loans"
             value={kpiSummary?.past_due_loans_count ?? 0}
+            subtitle={(() => {
+              const payments = kpiSummary?.past_due_payments_count ?? 0
+              if (payments === 0) return 'No past-due payments'
+              const pending = kpiSummary?.past_due_pending_count ?? 0
+              const skipped = kpiSummary?.past_due_skipped_count ?? 0
+              return `${payments} ${payments === 1 ? 'payment' : 'payments'} · ${pending} pending · ${skipped} skipped`
+            })()}
             valueColor="text-[#E24B4A]"
           />
+          {/* Tile 2 — PAST DUE AMOUNT. Primary stays the combined dollar
+              total. Subtext splits skipped vs pending, dropping either
+              half when its amount is zero. */}
           <MiniTile
             label="Past Due Amount"
             value={fmtMoneyTile(kpiSummary?.past_due_amount ?? 0)}
+            subtitle={(() => {
+              const skippedAmt = Number(kpiSummary?.past_due_skipped_amount ?? 0)
+              const pendingAmt = Number(kpiSummary?.past_due_pending_amount ?? 0)
+              if (skippedAmt === 0 && pendingAmt === 0) return '—'
+              const parts = []
+              if (skippedAmt > 0) parts.push(`${fmtMoneyTile(skippedAmt)} from skipped`)
+              if (pendingAmt > 0) parts.push(`${fmtMoneyTile(pendingAmt)} pending`)
+              return parts.join(' · ')
+            })()}
             valueColor="text-[#E24B4A]"
           />
+          {/* Tile 3 — DAYS BEHIND. Replaces Skipped Unresolved. Shows
+              the worst case + the average across all past-due rows. */}
           <MiniTile
-            label="Skipped Unresolved"
-            value={fmtMoneyTile(kpiSummary?.skipped_unresolved_amount ?? 0)}
-            subtitle={(() => {
-              const loans    = kpiSummary?.skipped_unresolved_loans_count ?? 0
-              const payments = kpiSummary?.skipped_unresolved_count ?? 0
-              return `${loans} ${loans === 1 ? 'loan' : 'loans'} · ${payments} ${payments === 1 ? 'payment' : 'payments'}`
-            })()}
-            valueColor="text-[#BA7517]"
+            label="Days Behind"
+            value={`${kpiSummary?.days_behind_max ?? 0}d max`}
+            subtitle={(kpiSummary?.days_behind_max ?? 0) === 0
+              ? 'Nothing past due'
+              : `${kpiSummary?.days_behind_avg ?? 0}d avg`}
+            valueColor="text-[#E24B4A]"
           />
         </KpiBand>
 
