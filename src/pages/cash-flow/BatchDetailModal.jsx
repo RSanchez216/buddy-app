@@ -30,6 +30,7 @@ import {
   useExpenseCategories,
   invalidateExpenseCategories,
 } from '../../hooks/useExpenseCategories'
+import { useFactors, formatFeeRate } from '../../hooks/useFactors'
 
 const SURFACE = 'payment_calendar_batch_modal'
 
@@ -74,6 +75,7 @@ export default function BatchDetailModal({
   // only when the row already references one). The "+ Add new category"
   // path INSERTs into expense_categories then triggers a refetch.
   const { active: activeCategories, archived: archivedCategories, labelByName: categoryLabelByName, refetch: refetchCategories } = useExpenseCategories()
+  const { active: activeFactors, byId: factorsById } = useFactors()
   // Per-row inline "add new category" state — when set, the category cell
   // for this row renders a text input with Save / Cancel inline instead
   // of the picker.
@@ -209,14 +211,14 @@ export default function BatchDetailModal({
       if (deletes.has(rowId)) continue // delete takes precedence
       ops.push({
         kind: 'update', rowId,
-        run: () => runUpdate(kind, rowId, fields, rows),
+        run: () => runUpdate(kind, rowId, fields, rows, { factorsById }),
       })
     }
     // Inserts
     for (const i of inserts) {
       ops.push({
         kind: 'insert', rowId: i.tempId,
-        run: () => runInsert(kind, i),
+        run: () => runInsert(kind, i, { factorsById }),
       })
     }
     // Deletes
@@ -317,6 +319,8 @@ export default function BatchDetailModal({
             refetchCategories={refetchCategories}
             addingCategoryForRowId={addingCategoryForRowId}
             setAddingCategoryForRowId={setAddingCategoryForRowId}
+            activeFactors={activeFactors}
+            factorsById={factorsById}
             knownSources={knownSources}
             dayISO={dayISO}
             user={user}
@@ -667,7 +671,10 @@ function TransfersTable({ visibleRows, getRow, deletes, failedIds, editingId, se
 // parent_id so we don't fire the same UPDATE multiple times.
 // ─────────────────────────────────────────────────────────────────────────
 
-function InflowsTable({ visibleRows, getRow, deletes, failedIds, editingId, setEditingId, setField, toggleDelete, saving, accounts, knownSources }) {
+function InflowsTable({
+  visibleRows, getRow, deletes, failedIds, editingId, setEditingId, setField, toggleDelete, saving, accounts,
+  knownSources, activeFactors, factorsById,
+}) {
   if (visibleRows.length === 0) return <EmptyState label="No inflow lines on this day" />
   return (
     <div className="border border-gray-200 dark:border-white/5 rounded-xl overflow-x-auto">
@@ -691,6 +698,16 @@ function InflowsTable({ visibleRows, getRow, deletes, failedIds, editingId, setE
             const isDel = deletes.has(id)
             const isEditing = editingId === id
             const isFailed = failedIds.has(id)
+            const isFactor = row.source_type === 'factor'
+            const factor = isFactor && row.factor_id ? factorsById?.get(row.factor_id) : null
+            // For display: Net = row.amount (what hits the bank). Fee /
+            // Gross are pulled from the row's stored values + the
+            // factor's current rate (factor rate may have drifted since
+            // the row was saved; the row's actual fee comes from
+            // gross_amount - amount, but factor's rate is the canonical
+            // percentage display).
+            const grossDisplay = isFactor ? Number(row.gross_amount || 0) : null
+            const feeDisplay   = isFactor ? round2(grossDisplay - Number(row.amount || 0)) : null
             return (
               <tr
                 key={id}
@@ -707,17 +724,78 @@ function InflowsTable({ visibleRows, getRow, deletes, failedIds, editingId, setE
                 </td>
                 <td className="px-2 py-1 text-right font-mono text-emerald-700 dark:text-emerald-400">
                   {isEditing && !isDel ? (
-                    <input type="number" step="0.01" className={`${S.input} text-right`} value={row.amount ?? ''} onChange={e => setField(id, 'amount', e.target.value)} />
+                    isFactor ? (
+                      // Edit mode for factor: Gross input + live Net underneath.
+                      // amount itself is computed at save time from gross × (1 − fee).
+                      <FactorAmountEdit
+                        gross={row.gross_amount}
+                        factor={factor}
+                        onChange={v => setField(id, 'gross_amount', v)}
+                      />
+                    ) : (
+                      <input
+                        type="number" step="0.01"
+                        className={`${S.input} text-right`}
+                        value={row.amount ?? ''}
+                        onChange={e => setField(id, 'amount', e.target.value)}
+                      />
+                    )
                   ) : fmtMoneyExact(row.amount)}
                 </td>
                 <td className="px-2 py-1">
                   {isEditing && !isDel ? (
-                    <input list="batchmodal-sources" className={S.input} value={row.source || ''} onChange={e => setField(id, 'source', e.target.value)} />
-                  ) : (row.source || '—')}
+                    isFactor ? (
+                      <Select value={row.factor_id || ''} onChange={e => setField(id, 'factor_id', e.target.value)}>
+                        <option value="">— Select factor —</option>
+                        {activeFactors.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                        {row.factor_id
+                          && !activeFactors.find(f => f.id === row.factor_id)
+                          && factorsById?.get(row.factor_id) && (
+                          <option value={row.factor_id}>{factorsById.get(row.factor_id).name} (archived)</option>
+                        )}
+                      </Select>
+                    ) : (
+                      <SuggestInput
+                        value={row.source || ''}
+                        suggestions={knownSources}
+                        onChange={v => setField(id, 'source', v)}
+                        placeholder="e.g. Customer payment"
+                      />
+                    )
+                  ) : (
+                    isFactor ? (
+                      <div>
+                        <div className="font-medium text-gray-700 dark:text-slate-300">
+                          {row.source || (factor ? `Factor — ${factor.name}` : 'Factor')}
+                        </div>
+                        {grossDisplay > 0 && (
+                          <div className="text-[10px] text-gray-500 dark:text-slate-500">
+                            Gross {fmtMoneyExact(grossDisplay)} · Fee {fmtMoneyExact(feeDisplay)}
+                            {factor && ` (${formatFeeRate(factor.fee_rate)})`}
+                          </div>
+                        )}
+                      </div>
+                    ) : (row.source || '—')
+                  )}
                 </td>
                 <td className="px-2 py-1">
                   {isEditing && !isDel ? (
-                    <Select value={row.source_type || 'other'} onChange={e => setField(id, 'source_type', e.target.value)}>
+                    <Select
+                      value={row.source_type || 'other'}
+                      onChange={e => {
+                        // Toggle Type: clear the OTHER mode's fields so the
+                        // save payload is clean.
+                        const next = e.target.value
+                        if (next === 'factor') {
+                          setField(id, 'source_type', 'factor')
+                          setField(id, 'source', '')
+                        } else {
+                          setField(id, 'source_type', 'other')
+                          setField(id, 'factor_id', '')
+                          setField(id, 'gross_amount', '')
+                        }
+                      }}
+                    >
                       <option value="other">other</option>
                       <option value="factor">factor</option>
                     </Select>
@@ -754,9 +832,33 @@ function InflowsTable({ visibleRows, getRow, deletes, failedIds, editingId, setE
           })}
         </tbody>
       </table>
-      <datalist id="batchmodal-sources">
-        {knownSources.map(s => <option key={s} value={s} />)}
-      </datalist>
+    </div>
+  )
+}
+
+// Compact Gross input + live Net readout for the Amount cell of a
+// factor inflow in edit mode. The actual saved amount is computed by
+// runUpdate from gross × (1 − fee_rate), so this view is purely
+// informational below the input.
+function FactorAmountEdit({ gross, factor, onChange }) {
+  const grossNum = Number(gross || 0)
+  const feeRate = Number(factor?.fee_rate || 0)
+  const fee = grossNum > 0 ? round2(grossNum * feeRate) : 0
+  const net = grossNum > 0 ? round2(grossNum - fee) : 0
+  return (
+    <div className="space-y-0.5">
+      <input
+        type="number" step="0.01"
+        className={`${S.input} text-right`}
+        value={gross ?? ''}
+        onChange={e => onChange(e.target.value)}
+        placeholder="Gross"
+      />
+      {grossNum > 0 && factor && (
+        <div className="text-[10px] text-gray-500 dark:text-slate-500 text-right">
+          Net <span className="font-mono font-semibold text-emerald-700 dark:text-emerald-400">{fmtMoneyExact(net)}</span>
+        </div>
+      )}
     </div>
   )
 }
@@ -884,11 +986,14 @@ function blankRowForKind(kind, dayISO) {
   if (kind === 'inflows') {
     return {
       id: null, status: 'pending', amount: '', source: '', source_type: 'other',
+      factor_id: '', gross_amount: '',
       funding_account_id: '', expected_date: dayISO, notes: '',
     }
   }
   return {}
 }
+
+function round2(n) { return Math.round((Number(n) || 0) * 100) / 100 }
 
 async function fetchRowsForKind(kind, dayISO) {
   if (kind === 'expenses') {
@@ -921,7 +1026,7 @@ async function fetchRowsForKind(kind, dayISO) {
     // accept in this pass.
     const { data: parents } = await supabase
       .from('expected_inflows')
-      .select('id, source, source_type, status, expected_date, received_date, notes, description')
+      .select('id, source, source_type, factor_id, gross_amount, status, expected_date, received_date, notes, description')
       .or(`expected_date.eq.${dayISO},received_date.eq.${dayISO}`)
     if (!parents?.length) return []
     const parentIds = parents.map(p => p.id)
@@ -940,6 +1045,8 @@ async function fetchRowsForKind(kind, dayISO) {
           funding_account_id: d.funding_account_id,
           source: p.source,
           source_type: p.source_type,
+          factor_id: p.factor_id,
+          gross_amount: p.gross_amount,
           status: p.status,
           expected_date: p.expected_date,
           notes: p.notes || p.description || '',
@@ -950,12 +1057,7 @@ async function fetchRowsForKind(kind, dayISO) {
   return []
 }
 
-// Field partitions for inflows: which fields live on the parent table
-// vs. the deposit table.
-const INFLOW_PARENT_FIELDS = new Set(['source', 'source_type', 'status', 'expected_date', 'notes'])
-const INFLOW_DEPOSIT_FIELDS = new Set(['amount', 'funding_account_id'])
-
-async function runUpdate(kind, rowId, fields, rows) {
+async function runUpdate(kind, rowId, fields, rows, ctx = {}) {
   if (kind === 'expenses') {
     const payload = pickAllowed(fields, ['status', 'amount', 'description', 'category', 'funding_account_id', 'planned_pay_date', 'cash_impacting'])
     if ('amount' in payload) payload.amount = Number(payload.amount)
@@ -977,28 +1079,60 @@ async function runUpdate(kind, rowId, fields, rows) {
   if (kind === 'inflows') {
     const base = rows.find(r => r.id === rowId)
     if (!base) return { ok: false, error: new Error('row missing') }
-    const parentPayload = {}
-    const depositPayload = {}
-    for (const [k, v] of Object.entries(fields)) {
-      if (INFLOW_PARENT_FIELDS.has(k))  parentPayload[k]  = v
-      if (INFLOW_DEPOSIT_FIELDS.has(k)) depositPayload[k] = v
+    // Compose the final shape from the row's current values + this edit.
+    // Inflows are derived enough (factor → net = gross × (1 − fee)) that
+    // partial UPDATEs aren't safe: editing gross_amount must propagate
+    // to amount on both the parent and the deposit. So we rewrite the
+    // full pair from the merged state. Idempotent; over-shoots a touch
+    // when only one field changed but stays correct.
+    const merged = { ...base, ...fields }
+    let parentPayload
+    let depositPayload
+    if (merged.source_type === 'factor') {
+      const factor = ctx.factorsById?.get(merged.factor_id)
+      if (!factor) return { ok: false, error: new Error('Factor required for factor-type inflow') }
+      const gross = round2(Number(merged.gross_amount))
+      const net   = round2(gross * (1 - Number(factor.fee_rate || 0)))
+      parentPayload = {
+        source_type: 'factor',
+        factor_id: merged.factor_id,
+        gross_amount: gross,
+        amount: net,
+        source: `Factor — ${factor.name}`,
+        status: merged.status,
+        expected_date: merged.expected_date,
+        notes: merged.notes || null,
+        updated_at: new Date().toISOString(),
+      }
+      depositPayload = { amount: net, funding_account_id: merged.funding_account_id }
+    } else {
+      const amt = round2(Number(merged.amount))
+      parentPayload = {
+        source_type: 'other',
+        factor_id: null,
+        gross_amount: null,
+        amount: amt,
+        source: merged.source,
+        status: merged.status,
+        expected_date: merged.expected_date,
+        notes: merged.notes || null,
+        updated_at: new Date().toISOString(),
+      }
+      depositPayload = { amount: amt, funding_account_id: merged.funding_account_id }
     }
-    if ('amount' in depositPayload) depositPayload.amount = Number(depositPayload.amount)
     let lastError = null
-    if (Object.keys(depositPayload).length) {
-      const { error } = await supabase.from('expected_inflow_deposits').update(depositPayload).eq('id', rowId)
-      if (error) lastError = error
-    }
-    if (!lastError && Object.keys(parentPayload).length) {
-      const { error } = await supabase.from('expected_inflows').update({ ...parentPayload, updated_at: new Date().toISOString() }).eq('id', base._parent_id)
-      if (error) lastError = error
+    const { error: dErr } = await supabase.from('expected_inflow_deposits').update(depositPayload).eq('id', rowId)
+    if (dErr) lastError = dErr
+    if (!lastError) {
+      const { error: pErr } = await supabase.from('expected_inflows').update(parentPayload).eq('id', base._parent_id)
+      if (pErr) lastError = pErr
     }
     return { ok: !lastError, error: lastError, table: 'expected_inflows', recordId: base._parent_id }
   }
   return { ok: false, error: new Error('unknown kind') }
 }
 
-async function runInsert(kind, draft) {
+async function runInsert(kind, draft, ctx = {}) {
   if (kind === 'expenses') {
     const amt = Number(draft.amount)
     if (!amt || amt <= 0)             return { ok: false, error: new Error('Amount required') }
@@ -1042,31 +1176,54 @@ async function runInsert(kind, draft) {
     return { ok: !error && !!data, error, table: 'funding_account_transfers', recordId: data?.id }
   }
   if (kind === 'inflows') {
-    const amt = Number(draft.amount)
-    if (!draft.source?.trim())       return { ok: false, error: new Error('Source required') }
-    if (!amt || amt <= 0)            return { ok: false, error: new Error('Amount required') }
     if (!draft.funding_account_id)   return { ok: false, error: new Error('Funding account required') }
     if (!draft.expected_date)        return { ok: false, error: new Error('Expected date required') }
+    let parentPayload
+    let netAmount
+    if (draft.source_type === 'factor') {
+      const factor = ctx.factorsById?.get(draft.factor_id)
+      if (!factor) return { ok: false, error: new Error('Factor required') }
+      const gross = round2(Number(draft.gross_amount))
+      if (!gross || gross <= 0) return { ok: false, error: new Error('Gross must be > 0') }
+      netAmount = round2(gross * (1 - Number(factor.fee_rate || 0)))
+      parentPayload = {
+        source: `Factor — ${factor.name}`,
+        source_type: 'factor',
+        factor_id: draft.factor_id,
+        gross_amount: gross,
+        status: draft.status || 'pending',
+        expected_date: draft.expected_date,
+        amount: netAmount,
+        notes: draft.notes?.trim() || null,
+      }
+    } else {
+      const amt = round2(Number(draft.amount))
+      if (!draft.source?.trim()) return { ok: false, error: new Error('Source required') }
+      if (!amt || amt <= 0)      return { ok: false, error: new Error('Amount required') }
+      netAmount = amt
+      parentPayload = {
+        source: draft.source.trim(),
+        source_type: 'other',
+        factor_id: null,
+        gross_amount: null,
+        status: draft.status || 'pending',
+        expected_date: draft.expected_date,
+        amount: amt,
+        notes: draft.notes?.trim() || null,
+      }
+    }
     const { data: parent, error: pErr } = await supabase
       .from('expected_inflows')
-      .insert({
-        source:        draft.source.trim(),
-        source_type:   draft.source_type || 'other',
-        status:        draft.status || 'pending',
-        expected_date: draft.expected_date,
-        amount:        amt,
-        notes:         draft.notes?.trim() || null,
-      })
+      .insert(parentPayload)
       .select('id').single()
     if (pErr || !parent) return { ok: false, error: pErr, table: 'expected_inflows', recordId: null }
     const { error: dErr } = await supabase.from('expected_inflow_deposits').insert({
       expected_inflow_id: parent.id,
       funding_account_id: draft.funding_account_id,
-      amount: amt,
+      amount: netAmount,
       position: 0,
     })
     if (dErr) {
-      // Rollback the orphan parent so a retry doesn't pile up records.
       await supabase.from('expected_inflows').delete().eq('id', parent.id)
       return { ok: false, error: dErr, table: 'expected_inflows', recordId: parent.id }
     }
