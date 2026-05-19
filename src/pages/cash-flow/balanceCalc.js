@@ -64,31 +64,16 @@ export async function fetchProjectedBalances(accounts, viewEndISO) {
 }
 
 // ── Per-event "bank impacts" ────────────────────────────────────────────
-// Returns: { inflow_amount_by_account: {accountId|UNASSIGNED: number},
-//            outflow_amount_by_account: {accountId|UNASSIGNED: number} }
-// for a single event. Inflows look up deposits by reference_id (which is
-// the inflow's id for inflow events); fall back to the event's own
-// funding_account_id when no deposits exist.
-function eventImpacts(ev, depositsByInflow, accountsById) {
-  const out = {}
-  const isInflow = ev.direction === 'inflow'
-  const amount = Number(ev.amount || 0)
-
-  if (isInflow && ev.reference_type === 'inflow') {
-    const deposits = depositsByInflow[ev.reference_id]
-    if (deposits && deposits.length) {
-      for (const d of deposits) {
-        const key = d.funding_account_id || UNASSIGNED
-        out[key] = (out[key] || 0) + Number(d.amount || 0)
-      }
-      return { byAccount: out, isInflow: true }
-    }
-    // fall through — no deposits, use the inflow's own funding_account_id
-  }
-
+// v_cash_flow_events already exposes inflows at the deposit grain — one
+// row per expected_inflow_deposits row, with amount = d.amount and
+// funding_account_id = d.funding_account_id. So every event maps to a
+// single bank for a single amount; no parent-level re-aggregation here.
+function eventImpacts(ev) {
   const key = ev.funding_account_id || UNASSIGNED
-  out[key] = (out[key] || 0) + amount
-  return { byAccount: out, isInflow }
+  return {
+    byAccount: { [key]: Number(ev.amount || 0) },
+    isInflow: ev.direction === 'inflow',
+  }
 }
 
 // Pretty name for an account id, falling back through display sources.
@@ -101,10 +86,12 @@ function accountLabel(accountId, ev, accountsById) {
   return '—'
 }
 
-// Bucket events by day, then by bank, splitting inflow attribution via
-// deposits. Output shape:
+// Bucket events by day, then by bank. Each event row in v_cash_flow_events
+// already carries its own deposit-level funding_account_id and amount, so
+// attribution is one event → one bank.
+// Output shape:
 //   { [iso]: { totals: {inflow, outflow}, banks: { [accountId|UNASSIGNED]: { accountId, name, inflow, outflow, events } } } }
-export function bucketByDayAndBank(events, depositsByInflow, accounts) {
+export function bucketByDayAndBank(events, accounts) {
   const accountsById = Object.fromEntries((accounts || []).map(a => [a.id, a]))
   const byDay = {}
 
@@ -113,7 +100,7 @@ export function bucketByDayAndBank(events, depositsByInflow, accounts) {
     if (!iso) continue
     if (!byDay[iso]) byDay[iso] = { totals: { inflow: 0, outflow: 0 }, banks: {} }
 
-    const { byAccount, isInflow } = eventImpacts(ev, depositsByInflow, accountsById)
+    const { byAccount, isInflow } = eventImpacts(ev)
     for (const [key, amt] of Object.entries(byAccount)) {
       const bucket = byDay[iso].banks[key] || (byDay[iso].banks[key] = {
         accountId: key === UNASSIGNED ? null : key,
@@ -143,17 +130,17 @@ export function bucketByDayAndBank(events, depositsByInflow, accounts) {
   return byDay
 }
 
-// Sum events into per-bank totals for a date range (inclusive). Same
-// inflow-via-deposits attribution as bucketByDayAndBank.
+// Sum events into per-bank totals for a date range (inclusive). Uses the
+// same per-row attribution as bucketByDayAndBank (one event → one bank).
 // Returns array of { accountId, name, inflow, outflow, net }, sorted by |net| desc.
-export function sumByBankInRange(events, depositsByInflow, accounts, startISO, endISO) {
+export function sumByBankInRange(events, accounts, startISO, endISO) {
   const accountsById = Object.fromEntries((accounts || []).map(a => [a.id, a]))
   const acc = {}
 
   for (const ev of events) {
     if (!ev.event_date) continue
     if (ev.event_date < startISO || ev.event_date > endISO) continue
-    const { byAccount, isInflow } = eventImpacts(ev, depositsByInflow, accountsById)
+    const { byAccount, isInflow } = eventImpacts(ev)
     for (const [key, amt] of Object.entries(byAccount)) {
       if (!acc[key]) acc[key] = {
         accountId: key === UNASSIGNED ? null : key,
@@ -186,8 +173,7 @@ export function sumByBankInRange(events, depositsByInflow, accounts, startISO, e
 //     },
 //     shortfallDays: Set<`${accountId}:${iso}`>
 //   }
-export function computeBalanceProjections(accounts, events, depositsByInflow, viewEndISO) {
-  const accountsById = Object.fromEntries((accounts || []).map(a => [a.id, a]))
+export function computeBalanceProjections(accounts, events, viewEndISO) {
   const timelines = {}
   const shortfallDays = new Set()
 
@@ -196,7 +182,7 @@ export function computeBalanceProjections(accounts, events, depositsByInflow, vi
   const perAccountPerDay = {}
   for (const ev of events) {
     if (!ev.event_date) continue
-    const { byAccount, isInflow } = eventImpacts(ev, depositsByInflow, accountsById)
+    const { byAccount, isInflow } = eventImpacts(ev)
     for (const [key, amt] of Object.entries(byAccount)) {
       if (key === UNASSIGNED) continue // unassigned events excluded from projection
       if (!perAccountPerDay[key]) perAccountPerDay[key] = {}

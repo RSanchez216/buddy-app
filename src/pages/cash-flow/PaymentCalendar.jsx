@@ -74,7 +74,6 @@ export default function PaymentCalendar() {
 
   const [events, setEvents] = useState([])
   const [accounts, setAccounts] = useState([])
-  const [depositsByInflow, setDepositsByInflow] = useState({}) // { [inflow_id]: [{funding_account_id, amount}] }
   const [startingCashByWeek, setStartingCashByWeek] = useState({}) // iso(monday) -> number
   const [loading, setLoading] = useState(true)
 
@@ -159,26 +158,6 @@ export default function PaymentCalendar() {
     setEvents(allEvents)
     setAccounts(accRes.data || [])
 
-    // Fetch deposits for any inflow chips in the visible window so the
-    // by-bank breakdown reflects multi-bank splits.
-    const inflowIds = allEvents
-      .filter(e => e.reference_type === 'inflow')
-      .map(e => e.reference_id)
-    if (inflowIds.length) {
-      const { data: deposits } = await supabase
-        .from('expected_inflow_deposits')
-        .select('expected_inflow_id, funding_account_id, amount')
-        .in('expected_inflow_id', inflowIds)
-      const byInflow = {}
-      for (const d of (deposits || [])) {
-        if (!byInflow[d.expected_inflow_id]) byInflow[d.expected_inflow_id] = []
-        byInflow[d.expected_inflow_id].push(d)
-      }
-      setDepositsByInflow(byInflow)
-    } else {
-      setDepositsByInflow({})
-    }
-
     const cashMap = {}
     for (const c of (cashRes.data || [])) cashMap[c.week_start_date] = Number(c.starting_cash || 0)
     setStartingCashByWeek(cashMap)
@@ -230,8 +209,8 @@ export default function PaymentCalendar() {
   // Projections always use the FULL event set (not filtered) so paid events
   // continue to affect future cash flow even when hidden by the toggle.
   const dayBuckets = useMemo(
-    () => bucketByDayAndBank(visibleEvents, depositsByInflow, accounts),
-    [visibleEvents, depositsByInflow, accounts]
+    () => bucketByDayAndBank(visibleEvents, accounts),
+    [visibleEvents, accounts]
   )
 
   const viewEndISO = useMemo(() => toISO(fetchRange.end), [fetchRange.end])
@@ -252,7 +231,7 @@ export default function PaymentCalendar() {
       if (!cancelled) setProjections(p)
     })
     return () => { cancelled = true }
-  }, [accounts, viewEndISO, events, depositsByInflow, balanceRefreshKey])
+  }, [accounts, viewEndISO, events, balanceRefreshKey])
 
   // Day mode (selectedDay set) collapses start = end = that day.
   // Otherwise the window is the visible week (Mon..Sun). Month view
@@ -324,8 +303,8 @@ export default function PaymentCalendar() {
   const weekByBank = useMemo(() => {
     const wsISO = toISO(weekStart)
     const weISO = toISO(addDays(weekStart, 6))
-    return sumByBankInRange(visibleEvents, depositsByInflow, accounts, wsISO, weISO)
-  }, [visibleEvents, depositsByInflow, accounts, weekStart])
+    return sumByBankInRange(visibleEvents, accounts, wsISO, weISO)
+  }, [visibleEvents, accounts, weekStart])
 
   // Worst-affected account in the visible week (negative balance forecast).
   const weekShortfall = useMemo(() => {
