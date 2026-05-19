@@ -1,6 +1,10 @@
 import { useState } from 'react'
 import EventChip from './EventChip'
-import { addDays, fmtMoneyExact, isToday, toISO, consolidateTransfers } from './calendarUtils'
+import BatchCard from './BatchCard'
+import {
+  addDays, fmtMoneyExact, isToday, toISO,
+  groupEventsIntoBatches, tagForBatchLine,
+} from './calendarUtils'
 import { worstShortfallOnOrBefore } from './balanceCalc'
 
 const WEEK_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
@@ -10,6 +14,7 @@ export default function WeekView({
   eventsByDate,
   dayBuckets,                 // { [iso]: { totals, banks } }
   groupByBank,                // bool
+  customCategoryById = {},    // { [custom_outflow_id]: category } — feeds the line tag
   projectionTimelines = {},   // { accountId: { account, byDate, firstShortfall } }
   selectedDay,                // ISO string — column to highlight (day-mode rail)
   onSelectDay,                // (iso) => void — day header click
@@ -105,7 +110,14 @@ export default function WeekView({
                   onChipClick={onChipClick}
                 />
               ) : (
-                renderFlatChips(events, draggingId, setDraggingId, setDropTarget, onChipClick)
+                <BatchedDay
+                  events={events}
+                  customCategoryById={customCategoryById}
+                  draggingId={draggingId}
+                  setDraggingId={setDraggingId}
+                  setDropTarget={setDropTarget}
+                  onChipClick={onChipClick}
+                />
               )}
             </div>
 
@@ -118,24 +130,89 @@ export default function WeekView({
   )
 }
 
-function renderFlatChips(events, draggingId, setDraggingId, setDropTarget, onChipClick) {
-  // Dedupe paired transfer legs to a single "↔ Transfer: from → to" row.
-  // Grouped-by-bank view keeps both legs (each bank section shows its own).
-  const consolidated = consolidateTransfers(events)
-  const sorted = [...consolidated].sort((a, b) => {
-    if (a.direction === b.direction) return Number(b.amount) - Number(a.amount)
-    return a.direction === 'inflow' ? -1 : 1
-  })
-  return sorted.map(ev => (
-    <EventChip
-      key={ev.event_id}
-      event={ev}
-      draggingId={draggingId}
-      onClick={onChipClick}
-      onDragStart={() => setDraggingId(ev.event_id)}
-      onDragEnd={() => { setDraggingId(null); setDropTarget(null) }}
-    />
-  ))
+// Day column body, batched (default).
+//
+// Render order top → bottom:
+//   1. Loans (individual chips — atomic obligations)
+//   2. Inflows batch
+//   3. Transfers batch
+//   4. Expenses batch
+//   5. Adjustments (individual — rare, meaningful per row)
+//
+// Each batch is a single collapsible BatchCard. Empty batches don't render.
+function BatchedDay({ events, customCategoryById, draggingId, setDraggingId, setDropTarget, onChipClick }) {
+  const { loans, inflows, transfers, expenses, adjustments } = groupEventsIntoBatches(events)
+  const tagFor = (ev) => tagForBatchLine(ev, customCategoryById)
+
+  const inflowTotal = inflows.reduce((s, e) => s + Number(e.amount || 0), 0)
+  // Each transfer creates two leg rows (debit_date and credit_date). The
+  // batch shows them as +/− legs and the header total is just the gross
+  // movement (sum of |amount|) since net is zero for same-day round trips.
+  const transferTotal = transfers.reduce((s, e) => s + Math.abs(Number(e.amount || 0)), 0)
+  const expenseTotal = expenses.reduce((s, e) => s + Number(e.amount || 0), 0)
+
+  const sortedLoans = [...loans].sort((a, b) => Number(b.amount) - Number(a.amount))
+
+  return (
+    <>
+      {sortedLoans.map(ev => (
+        <EventChip
+          key={ev.event_id}
+          event={ev}
+          draggingId={draggingId}
+          onClick={onChipClick}
+          onDragStart={() => setDraggingId(ev.event_id)}
+          onDragEnd={() => { setDraggingId(null); setDropTarget(null) }}
+        />
+      ))}
+      <BatchCard
+        type="inflow"
+        title="Inflows"
+        events={inflows}
+        total={inflowTotal}
+        totalDirection="inflow"
+        tagFor={tagFor}
+        onChipClick={onChipClick}
+        draggingId={draggingId}
+        setDraggingId={setDraggingId}
+        setDropTarget={setDropTarget}
+      />
+      <BatchCard
+        type="transfer"
+        title="Transfers"
+        events={transfers}
+        total={transferTotal}
+        totalDirection="transfer"
+        tagFor={tagFor}
+        onChipClick={onChipClick}
+        draggingId={draggingId}
+        setDraggingId={setDraggingId}
+        setDropTarget={setDropTarget}
+      />
+      <BatchCard
+        type="expense"
+        title="Expenses"
+        events={expenses}
+        total={expenseTotal}
+        totalDirection="expense"
+        tagFor={tagFor}
+        onChipClick={onChipClick}
+        draggingId={draggingId}
+        setDraggingId={setDraggingId}
+        setDropTarget={setDropTarget}
+      />
+      {adjustments.map(ev => (
+        <EventChip
+          key={ev.event_id}
+          event={ev}
+          draggingId={draggingId}
+          onClick={onChipClick}
+          onDragStart={() => setDraggingId(ev.event_id)}
+          onDragEnd={() => { setDraggingId(null); setDropTarget(null) }}
+        />
+      ))}
+    </>
+  )
 }
 
 // Group chips under bank section headers, sorted by |net| desc.

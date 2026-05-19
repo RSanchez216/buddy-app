@@ -179,7 +179,7 @@ function WeekPanel({
   )
 }
 
-function DayPanel({ weekStart, selectedDay, setSelectedDay, dayBucket, dayShortfall, dayProjections, needsUpdateIdSet, onRecordBalance }) {
+function DayPanel({ weekStart, selectedDay, setSelectedDay, dayBucket, dayProjections, needsUpdateIdSet, onRecordBalance }) {
   if (!selectedDay) {
     return (
       <p className="text-xs text-gray-500 dark:text-slate-400 py-4 text-center">
@@ -207,22 +207,32 @@ function DayPanel({ weekStart, selectedDay, setSelectedDay, dayBucket, dayShortf
   const dateObj = new Date(`${selectedDay}T00:00:00`)
   const headerLabel = dateObj.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' }).toUpperCase()
 
-  const inflow = dayBucket?.totals?.inflow || 0
-  const outflow = dayBucket?.totals?.outflow || 0
-  const net = inflow - outflow
-  const positive = net >= 0
+  // Merge today's per-account net (from dayBucket) with projected end-of-day
+  // (from dayProjections) into one row per account. Sort: positives first
+  // (DESC by Proj EOD), negatives after (ASC — most negative last). Day
+  // column footer already shows Inflow / Outflow / Net, so the rail drops
+  // those redundant rows in favor of this combined per-account table.
+  const rows = (dayProjections || []).map(({ account, balance }) => {
+    const bank = dayBucket?.banks?.[account.id]
+    const today = bank ? (Number(bank.inflow || 0) - Number(bank.outflow || 0)) : 0
+    return { account, today, projEod: balance }
+  })
+  rows.sort((a, b) => {
+    const aNeg = a.projEod != null && a.projEod < 0
+    const bNeg = b.projEod != null && b.projEod < 0
+    if (aNeg !== bNeg) return aNeg ? 1 : -1
+    // Positives: DESC (biggest surplus first). Negatives: closer-to-zero
+    // first, most-negative LAST — the crescendo reads downward to the
+    // most painful shortfall. Nulls sink to the bottom of the positives.
+    if (aNeg) return (b.projEod ?? 0) - (a.projEod ?? 0)
+    return (b.projEod ?? -Infinity) - (a.projEod ?? -Infinity)
+  })
 
-  const banks = dayBucket
-    ? Object.entries(dayBucket.banks)
-        .map(([key, b]) => ({ key, ...b, net: b.inflow - b.outflow }))
-        .filter(b => b.events.length > 0)
-        .filter(b => b.accountId || (b.inflow !== 0 || b.outflow !== 0))
-        .sort((a, b) => {
-          if (!a.accountId && b.accountId) return 1
-          if (a.accountId && !b.accountId) return -1
-          return Math.abs(b.net) - Math.abs(a.net)
-        })
-    : []
+  const negativeRows = rows.filter(r => r.projEod != null && r.projEod < 0)
+  const totalShortfall = negativeRows.reduce((s, r) => s + Math.abs(r.projEod), 0)
+  // After the sort, the most-negative row sits at the end of negativeRows.
+  const biggestShortfall = negativeRows[negativeRows.length - 1]
+  const surplusRows = rows.filter(r => r.projEod != null && r.projEod > 0)
 
   return (
     <>
@@ -249,86 +259,91 @@ function DayPanel({ weekStart, selectedDay, setSelectedDay, dayBucket, dayShortf
         >›</button>
       </div>
 
-      <Row label="▲ Inflow"  value={fmtMoney(inflow)}  mono color="text-emerald-600 dark:text-emerald-400" />
-      <Row label="▼ Outflow" value={fmtMoney(outflow)} mono color="text-red-600 dark:text-red-400" />
-      <div className="border-t border-gray-100 dark:border-white/5 pt-3">
-        <Row
-          label="Net"
-          value={(positive ? '+ ' : '− ') + fmtMoney(Math.abs(net))}
-          mono
-          bold
-          color={positive ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}
-        />
-      </div>
-
-      {/* By bank — full list, no truncation */}
-      {banks.length > 0 && (
-        <div className="border-t border-gray-100 dark:border-white/5 pt-3 space-y-1.5">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500">By bank</p>
-          {banks.map(b => (
-            <div key={b.key} className="flex items-baseline justify-between gap-2 text-xs">
-              <span className="text-gray-500 dark:text-slate-400 truncate">{b.name}</span>
-              <span className={`font-mono font-semibold ${b.net >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-                {b.net >= 0 ? '+' : '−'}{fmtMoneyExact(Math.abs(b.net))}
-              </span>
-            </div>
-          ))}
+      {/* Single combined per-account table — Today + Proj EOD.
+          Inflow / Outflow / Net live in the day column footer (no need
+          to duplicate here). BY BANK and PROJECTED END OF DAY are
+          merged into this one block. */}
+      {rows.length > 0 && (
+        <div className="border-t border-gray-100 dark:border-white/5 pt-3">
+          <div className="grid grid-cols-[1fr_auto_auto] gap-x-3 gap-y-0 items-baseline">
+            <p className="text-[9px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500">Account</p>
+            <p className="text-[9px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500 text-right">Today</p>
+            <p className="text-[9px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500 text-right">Proj EOD</p>
+            {rows.map(({ account, today, projEod }) => {
+              const isNeg = projEod != null && projEod < 0
+              const needsUpdate = needsUpdateIdSet?.has?.(account.id)
+              const todayClass =
+                today > 0 ? 'text-emerald-600 dark:text-emerald-400'
+                : today < 0 ? 'text-red-600 dark:text-red-400'
+                : 'text-gray-400 dark:text-slate-500'
+              const eodClass =
+                projEod == null ? 'text-gray-400 dark:text-slate-600 italic'
+                : isNeg ? 'text-red-700 dark:text-red-400 font-bold'
+                : 'text-gray-700 dark:text-slate-300'
+              return (
+                <div key={account.id} className={`contents`}>
+                  {/* contents pseudo-row: 3 cells inherit grid placement.
+                      The red tint on negative rows is painted by absolutely
+                      positioning a background underlay through the row. We
+                      simulate by tinting the three cells with the same bg. */}
+                  <div className={`text-xs truncate py-1 -mx-2 px-2 rounded-l ${isNeg ? 'bg-red-50 dark:bg-red-500/10' : ''}`}>
+                    <span className="text-gray-600 dark:text-slate-400">{account.name}</span>
+                    {needsUpdate && onRecordBalance && (
+                      <button
+                        type="button"
+                        onClick={() => onRecordBalance(account)}
+                        className="ml-1.5 text-[10px] font-medium text-blue-600 dark:text-blue-400 hover:underline"
+                        title={`Record today's actual balance for ${account.name}`}
+                      >
+                        Update
+                      </button>
+                    )}
+                  </div>
+                  <div className={`text-xs font-mono font-semibold py-1 px-1 text-right ${isNeg ? 'bg-red-50 dark:bg-red-500/10' : ''} ${todayClass}`}>
+                    {today === 0 ? '—' : (today > 0 ? '+' : '−') + fmtMoneyExact(Math.abs(today))}
+                  </div>
+                  <div className={`text-xs font-mono py-1 px-1 -mr-2 pr-2 text-right rounded-r ${isNeg ? 'bg-red-50 dark:bg-red-500/10' : ''} ${eodClass}`}>
+                    {projEod == null
+                      ? 'not set'
+                      : (projEod < 0 ? '−' : '') + fmtMoney(Math.abs(projEod))}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
         </div>
       )}
 
-      {dayShortfall && (
-        <div className="rounded-xl p-3 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 text-xs">
+      {/* Cover block — actionable shortfall summary. The "Cover with
+          transfer →" modal lands in a follow-up PR; for now this surface
+          shows the totals and biggest target so it's still useful at a
+          glance. */}
+      {negativeRows.length > 0 && (
+        <div
+          className="rounded-xl p-3 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 text-xs"
+          style={{ borderLeft: '3px solid #B91C1C' }}
+        >
           <p className="font-semibold text-red-700 dark:text-red-400 flex items-center gap-1.5">
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4c-.77-1.33-2.69-1.33-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z" />
             </svg>
-            Shortfall on this day
+            <span className="truncate">
+              {negativeRows.length} account{negativeRows.length === 1 ? '' : 's'} negative EOD ·{' '}
+              <span className="font-mono">{fmtMoney(totalShortfall)}</span>
+            </span>
           </p>
-          <p className="text-red-700 dark:text-red-400 mt-1">
-            <span className="font-semibold">{dayShortfall.account.name}</span>{' '}
-            <span className="font-mono">−{fmtMoneyExact(Math.abs(dayShortfall.balance))}</span>
+          {biggestShortfall && (
+            <p className="text-red-700/85 dark:text-red-400/85 mt-1 text-[11px]">
+              <span className="font-semibold">{biggestShortfall.account.name}</span>{' '}
+              needs the largest cover:{' '}
+              <span className="font-mono">{fmtMoney(Math.abs(biggestShortfall.projEod))}</span>
+            </p>
+          )}
+          <p className="mt-2 text-[10px] italic text-red-700/70 dark:text-red-400/70">
+            {surplusRows.length === 0
+              ? 'No accounts have surplus today.'
+              : 'Cover with transfer — coming in next release.'}
           </p>
-        </div>
-      )}
-
-      {/* Projected end of day per bank */}
-      {dayProjections.length > 0 && (
-        <div className="border-t border-gray-100 dark:border-white/5 pt-3 space-y-1.5">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500">Projected end of day</p>
-          {dayProjections.map(({ account, balance }) => {
-            const hasBalance = balance != null
-            const positive = hasBalance && balance >= 0
-            // "Update" inline link surfaces when this account is in
-            // the staleness-and-has-movement set from Slice 2c. Same
-            // semantics as the banner above the calendar — opens the
-            // Record Balance modal for this specific account. Subtle
-            // blue so it doesn't compete with the balance number.
-            const needsUpdate = needsUpdateIdSet?.has?.(account.id)
-            return (
-              <div key={account.id} className="flex items-baseline justify-between gap-2 text-xs">
-                <span className="text-gray-500 dark:text-slate-400 truncate">{account.name}</span>
-                <div className="flex items-baseline gap-2 shrink-0">
-                  {needsUpdate && onRecordBalance && (
-                    <button
-                      type="button"
-                      onClick={() => onRecordBalance(account)}
-                      className="text-[10px] font-medium text-blue-600 dark:text-blue-400 hover:underline"
-                      title={`Record today's actual balance for ${account.name}`}
-                    >
-                      Update
-                    </button>
-                  )}
-                  {hasBalance ? (
-                    <span className={`font-mono font-semibold ${positive ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-                      {positive ? '' : '−'}{fmtMoney(Math.abs(balance))}
-                    </span>
-                  ) : (
-                    <span className="text-[10px] italic text-gray-400 dark:text-slate-600">balance not set</span>
-                  )}
-                </div>
-              </div>
-            )
-          })}
         </div>
       )}
     </>

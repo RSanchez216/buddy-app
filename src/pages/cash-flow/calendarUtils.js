@@ -266,6 +266,62 @@ export function consolidateTransfers(events) {
   return out
 }
 
+// ── Batch grouping ─────────────────────────────────────────────────────────
+// Group a day's v_cash_flow_events into the rendering buckets the batch UI
+// uses. Loans and adjustments stay individual (one chip per row); inflows,
+// transfers, and expenses fold into a single collapsible BatchCard each.
+// Each batch is sorted by |amount| desc to match the brief.
+//
+// Returns: { loans, inflows, transfers, expenses, adjustments } — each an
+// array of event rows. Empty arrays are fine (caller decides whether to
+// render). Amount-direction totals are NOT computed here; the caller sums
+// them once it knows the events.
+export function groupEventsIntoBatches(events) {
+  const loans = []
+  const adjustments = []
+  const inflows = []
+  const transfers = []
+  const expenses = []
+  for (const ev of (events || [])) {
+    const cat = ev.category
+    if (cat === 'loan') loans.push(ev)
+    else if (cat === 'adjustment') adjustments.push(ev)
+    else if (cat === 'expected_income' || cat === 'factor_advance') inflows.push(ev)
+    else if (cat === 'transfer') transfers.push(ev)
+    else if (cat === 'ap_bill' || cat === 'recurring' || cat === 'custom') expenses.push(ev)
+    else expenses.push(ev) // unknown -> fall into expenses so it's still visible
+  }
+  const byAbsAmountDesc = (a, b) => Math.abs(Number(b.amount || 0)) - Math.abs(Number(a.amount || 0))
+  inflows.sort(byAbsAmountDesc)
+  transfers.sort(byAbsAmountDesc)
+  expenses.sort(byAbsAmountDesc)
+  return { loans, inflows, transfers, expenses, adjustments }
+}
+
+// Small per-line tag for an event inside a BatchCard.
+// - custom / recurring → fine-grained category from custom_outflows (Payroll, etc.)
+// - inflows → Factor / Income based on view's category column
+// - invoices → "AP Bill"
+// - transfer legs → Debit / Credit
+// customCategoryById is { [custom_outflow_id]: category } from the parent.
+export function tagForBatchLine(event, customCategoryById = {}) {
+  if (!event) return null
+  if (event.reference_type === 'custom' || event.reference_type === 'recurring') {
+    const cat = customCategoryById[event.reference_id]
+    if (cat) {
+      const s = String(cat)
+      return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase()
+    }
+    return event.reference_type === 'recurring' ? 'Recurring' : 'Expense'
+  }
+  if (event.reference_type === 'invoice') return 'AP Bill'
+  if (event.reference_type === 'transfer_out') return 'Debit'
+  if (event.reference_type === 'transfer_in') return 'Credit'
+  if (event.category === 'factor_advance') return 'Factor'
+  if (event.category === 'expected_income') return 'Income'
+  return null
+}
+
 // Weekday label shortcuts for recurring patterns
 export const WEEKDAYS = [
   { value: 0, label: 'Sunday' },

@@ -75,6 +75,11 @@ export default function PaymentCalendar() {
   const [events, setEvents] = useState([])
   const [accounts, setAccounts] = useState([])
   const [startingCashByWeek, setStartingCashByWeek] = useState({}) // iso(monday) -> number
+  // Sub-category lookup for custom/recurring rows (Payroll / Insurance / etc.).
+  // The view exposes the high-level bucket ('custom' | 'recurring') but the
+  // batch line tag wants the fine-grained category — fetched once per load
+  // and keyed by custom_outflows.id.
+  const [customCategoryById, setCustomCategoryById] = useState({})
   const [loading, setLoading] = useState(true)
 
   // Modal state
@@ -157,6 +162,24 @@ export default function PaymentCalendar() {
     const allEvents = evRes.data || []
     setEvents(allEvents)
     setAccounts(accRes.data || [])
+
+    // Sub-category fetch for the BatchCard line tag (Payroll / Insurance /
+    // Telematics / etc.). v_cash_flow_events flattens this to 'custom' or
+    // 'recurring'; we want the fine grain. One-shot lookup by id.
+    const customIds = allEvents
+      .filter(e => e.reference_type === 'custom' || e.reference_type === 'recurring')
+      .map(e => e.reference_id)
+    if (customIds.length) {
+      const { data: cats } = await supabase
+        .from('custom_outflows')
+        .select('id, category')
+        .in('id', customIds)
+      const map = {}
+      for (const r of (cats || [])) map[r.id] = r.category
+      setCustomCategoryById(map)
+    } else {
+      setCustomCategoryById({})
+    }
 
     const cashMap = {}
     for (const c of (cashRes.data || [])) cashMap[c.week_start_date] = Number(c.starting_cash || 0)
@@ -610,6 +633,7 @@ export default function PaymentCalendar() {
               eventsByDate={eventsByDate}
               dayBuckets={dayBuckets}
               groupByBank={groupByBank}
+              customCategoryById={customCategoryById}
               projectionTimelines={projections.timelines}
               selectedDay={selectedDay}
               onSelectDay={setSelectedDay}
