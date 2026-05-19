@@ -62,21 +62,19 @@ export default function BatchCard({
       <button
         type="button"
         onClick={() => setExpanded(v => !v)}
-        className="w-full px-2 py-1.5 flex items-baseline gap-1.5 hover:bg-gray-50 dark:hover:bg-white/[0.02] transition-colors text-left"
+        className="w-full px-2 py-1.5 flex items-start gap-1.5 hover:bg-gray-50 dark:hover:bg-white/[0.02] transition-colors text-left"
       >
-        <span className={`text-[10px] leading-none mt-0.5 shrink-0 ${style.chevron}`} aria-hidden>
+        <span className={`text-[10px] leading-tight mt-0.5 shrink-0 ${style.chevron}`} aria-hidden>
           {expanded ? '▾' : '▸'}
         </span>
-        <span className={`text-[12px] font-semibold ${style.headerText}`}>{title}</span>
-        <span className="text-[10px] text-gray-400 dark:text-slate-500 font-medium">
-          · {events.length} {events.length === 1 ? 'line' : 'lines'}
-        </span>
-        {mixedLabel && (
-          <span className="text-[10px] text-gray-400 dark:text-slate-500 italic ml-1 truncate">
-            {mixedLabel}
-          </span>
-        )}
-        <span className={`ml-auto text-[12px] font-mono font-semibold ${style.totalText} shrink-0`}>
+        <div className="flex-1 min-w-0 leading-tight">
+          <div className={`text-[12px] font-medium truncate ${style.headerText}`}>{title}</div>
+          <div className="text-[10px] text-gray-500 dark:text-slate-500 truncate">
+            {events.length} {events.length === 1 ? 'line' : 'lines'}
+            {mixedLabel && <span className="italic ml-1">{mixedLabel}</span>}
+          </div>
+        </div>
+        <span className={`shrink-0 text-[13px] font-mono font-medium whitespace-nowrap leading-tight mt-0.5 ${style.totalText}`}>
           {headerAmount}
         </span>
       </button>

@@ -540,13 +540,14 @@ export default function CoverTransferModal({
                     <span className="flex items-center justify-end gap-1.5">
                       <input
                         type="number" step="0.01"
-                        className={`${S.input} text-right`}
+                        className={`${S.input} text-right ${split?.selected ? '' : 'opacity-40'}`}
                         style={{ width: 100, padding: '4px 8px' }}
-                        value={split?.amount ?? '0'}
+                        value={split?.selected ? (split?.amount ?? '') : ''}
+                        placeholder="—"
                         disabled={!split?.selected}
                         onChange={e => editSplitAmount(account.id, e.target.value)}
                       />
-                      {split?.locked && (
+                      {split?.selected && split?.locked && (
                         <button
                           type="button"
                           onClick={() => unlockSplitRow(account.id)}

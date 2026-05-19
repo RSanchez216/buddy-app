@@ -270,7 +270,7 @@ function DayPanel({ weekStart, selectedDay, setSelectedDay, dayBucket, dayProjec
           merged into this one block. */}
       {rows.length > 0 && (
         <div className="border-t border-gray-100 dark:border-white/5 pt-3">
-          <div className="grid grid-cols-[1fr_auto_auto] gap-x-3 gap-y-0 items-baseline">
+          <div className="grid grid-cols-[1.8fr_0.7fr_0.95fr] gap-x-2 gap-y-0 items-baseline">
             <p className="text-[9px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500">Account</p>
             <p className="text-[9px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500 text-right">Today</p>
             <p className="text-[9px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500 text-right">Proj EOD</p>
@@ -291,7 +291,7 @@ function DayPanel({ weekStart, selectedDay, setSelectedDay, dayBucket, dayProjec
                       The red tint on negative rows is painted by absolutely
                       positioning a background underlay through the row. We
                       simulate by tinting the three cells with the same bg. */}
-                  <div className={`text-xs truncate py-1 -mx-2 px-2 rounded-l ${isNeg ? 'bg-red-50 dark:bg-red-500/10' : ''}`}>
+                  <div className={`text-xs min-w-0 truncate py-1 -mx-2 px-2 rounded-l ${isNeg ? 'bg-red-50 dark:bg-red-500/10' : ''}`} title={account.name}>
                     <span className="text-gray-600 dark:text-slate-400">{account.name}</span>
                     {needsUpdate && onRecordBalance && (
                       <button
@@ -307,7 +307,10 @@ function DayPanel({ weekStart, selectedDay, setSelectedDay, dayBucket, dayProjec
                   <div className={`text-xs font-mono font-semibold py-1 px-1 text-right ${isNeg ? 'bg-red-50 dark:bg-red-500/10' : ''} ${todayClass}`}>
                     {today === 0 ? '—' : (today > 0 ? '+' : '−') + fmtMoneyExact(Math.abs(today))}
                   </div>
-                  <div className={`text-xs font-mono py-1 px-1 -mr-2 pr-2 text-right rounded-r ${isNeg ? 'bg-red-50 dark:bg-red-500/10' : ''} ${eodClass}`}>
+                  <div
+                    className={`text-xs font-mono py-1 px-1 -mr-2 pr-2 text-right whitespace-nowrap rounded-r ${isNeg ? 'bg-red-50 dark:bg-red-500/10' : ''} ${eodClass}`}
+                    title={projEod == null ? undefined : ((projEod < 0 ? '−' : '') + fmtMoney(Math.abs(projEod)))}
+                  >
                     {projEod == null
                       ? 'not set'
                       : (projEod < 0 ? '−' : '') + fmtMoney(Math.abs(projEod))}
