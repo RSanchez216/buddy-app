@@ -31,6 +31,14 @@ import {
 
 const SURFACE = 'payment_calendar_quick_line_add'
 
+// Verbatim per the rename brief. Reused on both the column header and
+// every row's checkbox so the canonical example ("factoring fees
+// deducted at source") is always one hover away.
+const BANK_IMPACT_TOOLTIP =
+  'Affects bank balance. Check for transactions that move money in or '
+  + 'out of a bank account. Uncheck only for items netted from another '
+  + 'transaction (e.g., factoring fees deducted at source).'
+
 const KIND_LABEL = {
   income:   { title: 'Add income lines',   verb: 'income',   accent: 'emerald' },
   expense:  { title: 'Add expense lines',  verb: 'expense',  accent: 'red'     },
@@ -45,7 +53,7 @@ function emptyIncomeRow(date)   {
     funding_account_id: '', expected_date: date || '', notes: '',
   }
 }
-function emptyExpenseRow(date)  { return { amount: '', description: '', category: '', funding_account_id: '', planned_pay_date: date || '', cash_impacting: false } }
+function emptyExpenseRow(date)  { return { amount: '', description: '', category: '', funding_account_id: '', planned_pay_date: date || '', cash_impacting: true } }
 function emptyTransferRow(date) { return { from_funding_account_id: '', to_funding_account_id: '', amount: '', debit_date: date || '', credit_date: date || '' } }
 
 function emptyRow(kind, date) {
@@ -819,21 +827,26 @@ function expenseFields({
           onChange={e => onChange('planned_pay_date', e.target.value)}
         />
       </div>
-      {/* Narrow Cash column. The checkbox wrapper matches the height of
+      {/* Bank-impact column. Column header rendered slightly smaller so
+          "BANK IMPACT" (two words + uppercase tracking) fits col-span-1
+          without truncation. The checkbox wrapper matches the height of
           a regular S.input so the parent grid's items-end lines the
-          checkbox up with the vertical centers of the inputs in the
-          adjacent cells. Horizontal centering keeps the checkbox under
-          its column header. */}
+          checkbox up with the inputs in the adjacent cells. */}
       <div className="col-span-1 flex flex-col items-center">
-        <FieldLabel show={showLabels}>
-          <span className="block text-center">Cash</span>
-        </FieldLabel>
+        {showLabels && (
+          <label
+            className="block text-[9px] font-semibold uppercase tracking-wide text-gray-500 dark:text-slate-400 mb-1.5 text-center whitespace-nowrap leading-tight"
+            title={BANK_IMPACT_TOOLTIP}
+          >
+            Bank impact
+          </label>
+        )}
         <div className="flex items-center justify-center w-full h-[38px]">
           <input
             type="checkbox"
             checked={!!row.cash_impacting}
             onChange={e => onChange('cash_impacting', e.target.checked)}
-            title="Affects cash flow projections"
+            title={BANK_IMPACT_TOOLTIP}
             className="rounded"
           />
         </div>

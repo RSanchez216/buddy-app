@@ -34,6 +34,14 @@ import { useFactors, formatFeeRate } from '../../hooks/useFactors'
 
 const SURFACE = 'payment_calendar_batch_modal'
 
+// Verbatim per the Cash → Bank impact rename brief. Same text on the
+// column header and every row's checkbox so the canonical example
+// ("factoring fees deducted at source") is always one hover away.
+const BANK_IMPACT_TOOLTIP =
+  'Affects bank balance. Check for transactions that move money in or '
+  + 'out of a bank account. Uncheck only for items netted from another '
+  + 'transaction (e.g., factoring fees deducted at source).'
+
 const KIND_META = {
   inflows:   { label: 'Inflows',   noun: 'inflow',   direction: 'inflow',   accent: 'text-emerald-700 dark:text-emerald-400' },
   transfers: { label: 'Transfers', noun: 'transfer', direction: 'transfer', accent: 'text-cyan-700 dark:text-cyan-300' },
@@ -417,7 +425,12 @@ function ExpensesTable({
             <th className="text-left  px-2 py-1.5 font-bold min-w-[150px]">Category</th>
             <th className="text-left  px-2 py-1.5 font-bold min-w-[210px]">Funding account</th>
             <th className="text-left  px-2 py-1.5 font-bold min-w-[140px]">Planned date</th>
-            <th className="text-center px-2 py-1.5 font-bold min-w-[60px]">Cash</th>
+            <th
+              className="text-center px-2 py-1.5 font-bold min-w-[100px]"
+              title={BANK_IMPACT_TOOLTIP}
+            >
+              Bank impact
+            </th>
             <th className="px-2 py-1.5 min-w-[50px]"></th>
           </tr>
         </thead>
@@ -564,6 +577,7 @@ function ExpensesTable({
                     disabled={!isEditing || isDel}
                     onChange={e => setField(id, 'cash_impacting', e.target.checked)}
                     onClick={e => e.stopPropagation()}
+                    title={BANK_IMPACT_TOOLTIP}
                     className="rounded"
                   />
                 </td>
@@ -974,7 +988,7 @@ function blankRowForKind(kind, dayISO) {
   if (kind === 'expenses') {
     return {
       id: null, status: 'planned', amount: '', description: '', category: '',
-      funding_account_id: '', planned_pay_date: dayISO, due_date: dayISO, cash_impacting: false,
+      funding_account_id: '', planned_pay_date: dayISO, due_date: dayISO, cash_impacting: true,
     }
   }
   if (kind === 'transfers') {
