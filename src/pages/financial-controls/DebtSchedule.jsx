@@ -291,10 +291,10 @@ export default function DebtSchedule() {
           per spec; values fall back to zero / em-dash while loading. */}
       <div className="flex gap-3 items-stretch">
         <KpiBand dotColor="#E24B4A" label="Act Now">
-          {/* Tile 1 — PAST DUE LOANS. Loan count now combines pending +
+          {/* Tile 1 — PAST DUE LOANS. Loan count combines pending +
               skipped past-due payments (skipped here = missed, not
-              lender-approved deferral). Subtext breaks the payments
-              count out by status. */}
+              lender-approved deferral). Subtext stacks the totals on
+              line 1 and the pending/skipped split on line 2. */}
           <MiniTile
             label="Past Due Loans"
             value={kpiSummary?.past_due_loans_count ?? 0}
@@ -303,13 +303,18 @@ export default function DebtSchedule() {
               if (payments === 0) return 'No past-due payments'
               const pending = kpiSummary?.past_due_pending_count ?? 0
               const skipped = kpiSummary?.past_due_skipped_count ?? 0
-              return `${payments} ${payments === 1 ? 'payment' : 'payments'} · ${pending} pending · ${skipped} skipped`
+              return (
+                <>
+                  <span className="block">{payments} {payments === 1 ? 'payment' : 'payments'}</span>
+                  <span className="block">{pending} pending · {skipped} skipped</span>
+                </>
+              )
             })()}
             valueColor="text-[#E24B4A]"
           />
           {/* Tile 2 — PAST DUE AMOUNT. Primary stays the combined dollar
-              total. Subtext splits skipped vs pending, dropping either
-              half when its amount is zero. */}
+              total. Subtext splits skipped vs pending across two lines,
+              collapsing to one line when only one half has a value. */}
           <MiniTile
             label="Past Due Amount"
             value={fmtMoneyTile(kpiSummary?.past_due_amount ?? 0)}
@@ -317,10 +322,16 @@ export default function DebtSchedule() {
               const skippedAmt = Number(kpiSummary?.past_due_skipped_amount ?? 0)
               const pendingAmt = Number(kpiSummary?.past_due_pending_amount ?? 0)
               if (skippedAmt === 0 && pendingAmt === 0) return '—'
-              const parts = []
-              if (skippedAmt > 0) parts.push(`${fmtMoneyTile(skippedAmt)} from skipped`)
-              if (pendingAmt > 0) parts.push(`${fmtMoneyTile(pendingAmt)} pending`)
-              return parts.join(' · ')
+              if (skippedAmt > 0 && pendingAmt > 0) {
+                return (
+                  <>
+                    <span className="block">{fmtMoneyTile(skippedAmt)} from skipped</span>
+                    <span className="block">{fmtMoneyTile(pendingAmt)} pending</span>
+                  </>
+                )
+              }
+              if (skippedAmt > 0) return `${fmtMoneyTile(skippedAmt)} from skipped`
+              return `${fmtMoneyTile(pendingAmt)} pending`
             })()}
             valueColor="text-[#E24B4A]"
           />
