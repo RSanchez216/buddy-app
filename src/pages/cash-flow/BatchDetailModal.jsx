@@ -22,10 +22,14 @@ import Modal from '../../components/Modal'
 import Select from '../../components/Select'
 import { CF, fmtMoneyExact } from './calendarUtils'
 import {
-  mergeCategoriesWithData,
   isValidCategoryName,
   dedupeCategory,
+  defaultDisplayLabelFor,
 } from '../../constants/expenseCategories'
+import {
+  useExpenseCategories,
+  invalidateExpenseCategories,
+} from '../../hooks/useExpenseCategories'
 
 const SURFACE = 'payment_calendar_batch_modal'
 
@@ -65,11 +69,11 @@ export default function BatchDetailModal({
   const [failedIds, setFailedIds] = useState(() => new Set())
   const [statusFilter, setStatusFilter] = useState('all')
   const [saving, setSaving] = useState(false)
-  // Category list (Expenses only) is the canonical list merged with any
-  // distinct values present in custom_outflows.category right now. New
-  // values added inline via "+ Add new category" push into the cache so
-  // they appear in subsequent rows in the same session.
-  const [knownCategories, setKnownCategories] = useState(() => mergeCategoriesWithData([]))
+  // Category options come from the expense_categories reference table
+  // via the shared hook (active rows for the dropdown; archived shown
+  // only when the row already references one). The "+ Add new category"
+  // path INSERTs into expense_categories then triggers a refetch.
+  const { active: activeCategories, archived: archivedCategories, labelByName: categoryLabelByName, refetch: refetchCategories } = useExpenseCategories()
   // Per-row inline "add new category" state — when set, the category cell
   // for this row renders a text input with Save / Cancel inline instead
   // of the picker.
@@ -91,19 +95,14 @@ export default function BatchDetailModal({
     setLoading(true); setRows([]); setEdits({}); setInserts([]); setDeletes(new Set())
     setEditingId(null); setFailedIds(new Set()); setStatusFilter('all')
     setAddingCategoryForRowId(null)
-    setKnownCategories(mergeCategoriesWithData([])); setKnownSources([])
+    setKnownSources([])
     ;(async () => {
       const fetched = await fetchRowsForKind(kind, dayISO)
       if (cancelled) return
       setRows(fetched)
-      // Side fetches: distinct data values feed the picker. For Expenses,
-      // merged with the canonical list so users always see the full
-      // starter set even when production data only has a few values.
-      if (kind === 'expenses') {
-        const { data } = await supabase.from('custom_outflows').select('category').not('category', 'is', null)
-        const distinct = [...new Set((data || []).map(r => r.category).filter(Boolean))]
-        if (!cancelled) setKnownCategories(mergeCategoriesWithData(distinct))
-      } else if (kind === 'inflows') {
+      // Side fetch for Inflows source autocomplete only — category options
+      // come from the useExpenseCategories hook (reference table).
+      if (kind === 'inflows') {
         const { data } = await supabase.from('expected_inflows').select('source').not('source', 'is', null)
         if (!cancelled) setKnownSources([...new Set((data || []).map(r => r.source).filter(Boolean))].sort())
       }
@@ -312,12 +311,16 @@ export default function BatchDetailModal({
             toggleDelete={toggleDelete}
             saving={saving}
             accounts={activeAccounts}
-            knownCategories={knownCategories}
-            setKnownCategories={setKnownCategories}
+            activeCategories={activeCategories}
+            archivedCategories={archivedCategories}
+            categoryLabelByName={categoryLabelByName}
+            refetchCategories={refetchCategories}
             addingCategoryForRowId={addingCategoryForRowId}
             setAddingCategoryForRowId={setAddingCategoryForRowId}
             knownSources={knownSources}
             dayISO={dayISO}
+            user={user}
+            profile={profile}
           />
         )}
 
@@ -394,7 +397,9 @@ function BatchTable(props) {
 
 function ExpensesTable({
   visibleRows, getRow, deletes, failedIds, editingId, setEditingId, setField, toggleDelete, saving, accounts,
-  knownCategories, setKnownCategories, addingCategoryForRowId, setAddingCategoryForRowId,
+  activeCategories, archivedCategories, categoryLabelByName, refetchCategories,
+  addingCategoryForRowId, setAddingCategoryForRowId,
+  user, profile,
 }) {
   if (visibleRows.length === 0) return <EmptyState label="No expense lines on this day" />
   return (
@@ -449,31 +454,86 @@ function ExpensesTable({
                   {isEditing && !isDel ? (
                     addingCategoryForRowId === id ? (
                       <AddCategoryInput
-                        onSave={(value) => {
-                          const final = dedupeCategory(value, knownCategories)
-                          if (!knownCategories.includes(final)) setKnownCategories(prev => [...prev, final])
+                        onSave={async (value) => {
+                          const known = [
+                            ...activeCategories.map(c => c.name),
+                            ...archivedCategories.map(c => c.name),
+                          ]
+                          const final = dedupeCategory(value, known)
+                          if (!known.includes(final)) {
+                            // Brand-new category — INSERT into the reference
+                            // table so it persists across sessions.
+                            const { data: inserted, error } = await supabase
+                              .from('expense_categories')
+                              .insert({
+                                name: final,
+                                display_label: defaultDisplayLabelFor(final),
+                                sort_order: 500,
+                                is_active: true,
+                              })
+                              .select('id, name, display_label')
+                              .single()
+                            if (error || !inserted) {
+                              console.error('[BatchDetailModal] add-new category insert failed', error)
+                              return
+                            }
+                            await supabase.from('audit_log').insert({
+                              table_name: 'expense_categories',
+                              record_id: inserted.id,
+                              action: 'insert',
+                              performed_by: user?.id || null,
+                              performed_by_email: profile?.email || null,
+                              metadata: {
+                                surface: 'batch_modal_add_new',
+                                name: inserted.name,
+                                display_label_after: inserted.display_label,
+                                is_active_after: true,
+                              },
+                            })
+                            invalidateExpenseCategories()
+                            await refetchCategories()
+                          }
                           setField(id, 'category', final)
                           setAddingCategoryForRowId(null)
                         }}
                         onCancel={() => setAddingCategoryForRowId(null)}
                       />
-                    ) : (
-                      <Select
-                        value={row.category || ''}
-                        onChange={e => {
-                          if (e.target.value === '__add_new__') {
-                            setAddingCategoryForRowId(id)
-                          } else {
-                            setField(id, 'category', e.target.value)
-                          }
-                        }}
-                      >
-                        <option value="">— Select —</option>
-                        {knownCategories.map(c => <option key={c} value={c}>{c}</option>)}
-                        <option value="__add_new__">+ Add new category</option>
-                      </Select>
-                    )
-                  ) : (row.category || <span className="text-gray-400 italic">—</span>)}
+                    ) : (() => {
+                      // If the row's current value is archived, pin it to
+                      // the top as an italic option so the user can keep
+                      // it or switch without losing visibility of the value.
+                      const archivedHit = row.category
+                        && archivedCategories.find(c => c.name === row.category)
+                      const activeHit = row.category
+                        && activeCategories.find(c => c.name === row.category)
+                      return (
+                        <Select
+                          value={row.category || ''}
+                          onChange={e => {
+                            if (e.target.value === '__add_new__') {
+                              setAddingCategoryForRowId(id)
+                            } else {
+                              setField(id, 'category', e.target.value)
+                            }
+                          }}
+                        >
+                          <option value="">— Select —</option>
+                          {archivedHit && !activeHit && (
+                            <option value={archivedHit.name}>
+                              {archivedHit.display_label} (archived)
+                            </option>
+                          )}
+                          {activeCategories.map(c => (
+                            <option key={c.id} value={c.name}>{c.display_label}</option>
+                          ))}
+                          <option value="__add_new__">+ Add new category</option>
+                        </Select>
+                      )
+                    })()
+                  ) : (row.category
+                      ? (categoryLabelByName.get(row.category) || defaultDisplayLabelFor(row.category))
+                      : <span className="text-gray-400 italic">—</span>
+                    )}
                 </td>
                 <td className="px-2 py-1 max-w-0">
                   {isEditing && !isDel ? (

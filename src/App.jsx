@@ -17,6 +17,7 @@ import SettingsLoanEntities from './pages/settings/LoanEntities'
 import SettingsLoanLenders from './pages/settings/LoanLenders'
 import SettingsFundingAccounts from './pages/settings/FundingAccounts'
 import SettingsEquipmentTypes from './pages/settings/EquipmentTypes'
+import SettingsExpenseCategories from './pages/settings/ExpenseCategories'
 import SettingsUsers from './pages/settings/users/Users'
 import DebtSchedule from './pages/financial-controls/DebtSchedule'
 import LoanDetail from './pages/financial-controls/LoanDetail'
@@ -75,6 +76,7 @@ export default function App() {
               <Route path="settings/loan-lenders" element={<SettingsLoanLenders />} />
               <Route path="settings/funding-accounts" element={<SettingsFundingAccounts />} />
               <Route path="settings/equipment-types" element={<SettingsEquipmentTypes />} />
+              <Route path="settings/expense-categories" element={<SettingsExpenseCategories />} />
               <Route path="settings/driver-purchase-statuses" element={<SettingsDriverPurchaseStatuses />} />
               <Route path="settings/users" element={<SettingsUsers />} />
             </Route>

@@ -3,7 +3,8 @@ import { supabase } from '../../lib/supabase'
 import { S } from '../../lib/styles'
 import Modal from '../../components/Modal'
 import Select from '../../components/Select'
-import { CF, EXPENSE_CATEGORIES, FREQUENCIES, WEEKDAYS, fmtMoney, toISO } from './calendarUtils'
+import { CF, FREQUENCIES, WEEKDAYS, fmtMoney, toISO } from './calendarUtils'
+import { useExpenseCategories } from '../../hooks/useExpenseCategories'
 import { useToast } from '../../contexts/ToastContext'
 
 const empty = (defaults = {}) => ({
@@ -32,6 +33,7 @@ export default function RecurringExpensesModal({ open, onClose, onSaved }) {
   const [items, setItems] = useState([])
   const [entities, setEntities] = useState([])
   const [accounts, setAccounts] = useState([])
+  const { active: activeCategories, archived: archivedCategories, formatLabel: formatCategoryLabel } = useExpenseCategories()
   const [loading, setLoading] = useState(false)
   const [editing, setEditing] = useState(null) // template object | 'new' | null
   const [form, setForm] = useState(empty())
@@ -271,8 +273,18 @@ export default function RecurringExpensesModal({ open, onClose, onSaved }) {
                 <input type="number" step="0.01" className={S.input} value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} />
               </Field>
               <Field label="Category">
-                <Select value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}>
-                  {EXPENSE_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                <Select value={form.category || ''} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}>
+                  <option value="">— Select —</option>
+                  {/* Pin the row's archived current value (if any) to the
+                      top so editors don't lose it on save. */}
+                  {form.category
+                    && !activeCategories.find(c => c.name === form.category)
+                    && archivedCategories.find(c => c.name === form.category) && (
+                    <option value={form.category}>
+                      {formatCategoryLabel(form.category)} (archived)
+                    </option>
+                  )}
+                  {activeCategories.map(c => <option key={c.id} value={c.name}>{c.display_label}</option>)}
                 </Select>
               </Field>
               <Field label="Entity">
