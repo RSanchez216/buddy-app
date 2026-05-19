@@ -19,6 +19,15 @@ import Select from '../../components/Select'
 import SuggestInput from '../../components/SuggestInput'
 import { CF, fmtMoney, fmtMoneyExact } from './calendarUtils'
 import { useFactors, formatFeeRate } from '../../hooks/useFactors'
+import {
+  useExpenseCategories,
+  invalidateExpenseCategories,
+} from '../../hooks/useExpenseCategories'
+import {
+  isValidCategoryName,
+  dedupeCategory,
+  defaultDisplayLabelFor,
+} from '../../constants/expenseCategories'
 
 const SURFACE = 'payment_calendar_quick_line_add'
 
@@ -107,10 +116,19 @@ export default function QuickLineModal({ open, kind, focusedDate, onClose, onSav
   const { user, profile } = useAuth()
   const toast = useToast()
   const { active: activeFactors, byId: factorsById } = useFactors()
+  const {
+    active: activeCategories,
+    archived: archivedCategories,
+    labelByName: categoryLabelByName,
+    refetch: refetchCategories,
+  } = useExpenseCategories()
+  // Per-row inline "+ Add new category" mode — when set, that row's
+  // Category cell renders a small text input with Save / Cancel instead
+  // of the dropdown.
+  const [addingCategoryForRowIdx, setAddingCategoryForRowIdx] = useState(null)
   const [rows, setRows] = useState([])
   const [accounts, setAccounts] = useState([])
   const [knownSources, setKnownSources] = useState([])
-  const [knownCategories, setKnownCategories] = useState([])
   const [rowErrors, setRowErrors] = useState({}) // { [index]: { field: msg } }
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -120,6 +138,7 @@ export default function QuickLineModal({ open, kind, focusedDate, onClose, onSav
     if (!open || !kind) return
     setRows([emptyRow(kind, focusedDate)])
     setRowErrors({})
+    setAddingCategoryForRowIdx(null)
     setError('')
     let cancelled = false
     ;(async () => {
@@ -141,21 +160,15 @@ export default function QuickLineModal({ open, kind, focusedDate, onClose, onSav
             .eq('source_type', 'other')
         )
       }
-      if (kind === 'expense') {
-        tasks.push(
-          supabase.from('custom_outflows').select('category').not('category', 'is', null)
-        )
-      }
       const results = await Promise.all(tasks)
       if (cancelled) return
       setAccounts(results[0].data || [])
       if (kind === 'income') {
         const sources = [...new Set((results[1].data || []).map(r => r.source).filter(Boolean))].sort()
         setKnownSources(sources)
-      } else if (kind === 'expense') {
-        const cats = [...new Set((results[1].data || []).map(r => r.category).filter(Boolean))].sort()
-        setKnownCategories(cats)
       }
+      // Expense categories now come from the useExpenseCategories hook
+      // (reference table) rather than DISTINCT-from-data; no fetch here.
     })()
     return () => { cancelled = true }
   }, [open, kind, focusedDate])
@@ -385,7 +398,51 @@ export default function QuickLineModal({ open, kind, focusedDate, onClose, onSav
               errors={rowErrors[i] || {}}
               accounts={accounts}
               knownSources={knownSources}
-              knownCategories={knownCategories}
+              activeCategories={activeCategories}
+              archivedCategories={archivedCategories}
+              categoryLabelByName={categoryLabelByName}
+              addingCategoryForThisRow={addingCategoryForRowIdx === i}
+              startAddingCategory={() => setAddingCategoryForRowIdx(i)}
+              finishAddingCategory={async (newName) => {
+                if (newName) {
+                  const known = [
+                    ...activeCategories.map(c => c.name),
+                    ...archivedCategories.map(c => c.name),
+                  ]
+                  const finalName = dedupeCategory(newName, known)
+                  if (!known.includes(finalName)) {
+                    const { data: inserted, error } = await supabase
+                      .from('expense_categories')
+                      .insert({
+                        name: finalName,
+                        display_label: defaultDisplayLabelFor(finalName),
+                        sort_order: 500,
+                        is_active: true,
+                      })
+                      .select('id, name, display_label')
+                      .single()
+                    if (!error && inserted) {
+                      await supabase.from('audit_log').insert({
+                        table_name: 'expense_categories',
+                        record_id: inserted.id,
+                        action: 'insert',
+                        performed_by: user?.id || null,
+                        performed_by_email: profile?.email || null,
+                        metadata: {
+                          surface: 'quick_line_add_add_new',
+                          name: inserted.name,
+                          display_label_after: inserted.display_label,
+                          is_active_after: true,
+                        },
+                      })
+                      invalidateExpenseCategories()
+                      await refetchCategories()
+                    }
+                  }
+                  updateRow(i, 'category', finalName)
+                }
+                setAddingCategoryForRowIdx(null)
+              }}
               activeFactors={activeFactors}
               factorsById={factorsById}
               isFirst={i === 0}
@@ -426,7 +483,9 @@ export default function QuickLineModal({ open, kind, focusedDate, onClose, onSav
 }
 
 function LineRow({
-  kind, index, row, errors, accounts, knownSources, knownCategories,
+  kind, index, row, errors, accounts, knownSources,
+  activeCategories, archivedCategories, categoryLabelByName,
+  addingCategoryForThisRow, startAddingCategory, finishAddingCategory,
   activeFactors, factorsById,
   isFirst, showLabels, canRemove, onChange, onChangeRow, onRemove,
 }) {
@@ -463,7 +522,11 @@ function LineRow({
       className="grid gap-2 items-end p-2 rounded-xl bg-gray-50 dark:bg-white/[0.02]"
       style={{ gridTemplateColumns: 'repeat(14, minmax(0, 1fr))' }}
     >
-      {kind === 'expense'  && expenseFields(row, errors, accounts, knownCategories, showLabels, onChange)}
+      {kind === 'expense'  && expenseFields({
+        row, errors, accounts, showLabels, onChange,
+        activeCategories, archivedCategories, categoryLabelByName,
+        addingCategoryForThisRow, startAddingCategory, finishAddingCategory,
+      })}
       {kind === 'transfer' && transferFields(row, errors, accounts, showLabels, onChange)}
       <div className="col-span-1 flex justify-end">{trashButton}</div>
     </div>
@@ -661,7 +724,21 @@ function TypePill({ active, onClick, children }) {
   )
 }
 
-function expenseFields(row, errors, accounts, knownCategories, showLabels, onChange) {
+function expenseFields({
+  row, errors, accounts, showLabels, onChange,
+  activeCategories, archivedCategories, categoryLabelByName,
+  addingCategoryForThisRow, startAddingCategory, finishAddingCategory,
+}) {
+  // The Category dropdown matches the Batch Detail modal: pulls from
+  // the expense_categories reference table, displays display_label,
+  // stores name. Archived current value is pinned at the top so users
+  // don't lose visibility of a retired category that this row already
+  // references.
+  const archivedHit = row.category
+    && (archivedCategories || []).find(c => c.name === row.category)
+  const activeHit = row.category
+    && (activeCategories || []).find(c => c.name === row.category)
+
   return (
     <>
       <div className="col-span-2">
@@ -685,16 +762,43 @@ function expenseFields(row, errors, accounts, knownCategories, showLabels, onCha
       </div>
       <div className="col-span-2">
         <FieldLabel show={showLabels}>Category *</FieldLabel>
-        <input
-          list="quickline-categories"
-          className={`${S.input} ${errClass(errors.category)}`}
-          value={row.category}
-          placeholder="Payroll / Insurance / …"
-          onChange={e => onChange('category', e.target.value)}
-        />
-        <datalist id="quickline-categories">
-          {knownCategories.map(c => <option key={c} value={c} />)}
-        </datalist>
+        {addingCategoryForThisRow ? (
+          <InlineAddCategoryInput
+            onSave={(v) => finishAddingCategory(v)}
+            onCancel={() => finishAddingCategory(null)}
+          />
+        ) : (
+          <Select
+            value={row.category || ''}
+            onChange={e => {
+              if (e.target.value === '__add_new__') {
+                startAddingCategory()
+              } else {
+                onChange('category', e.target.value)
+              }
+            }}
+            className={errors.category ? errClass(true) : ''}
+          >
+            <option value="">— Select —</option>
+            {archivedHit && !activeHit && (
+              <option value={archivedHit.name}>
+                {archivedHit.display_label} (archived)
+              </option>
+            )}
+            {(activeCategories || []).map(c => (
+              <option key={c.id} value={c.name}>{c.display_label}</option>
+            ))}
+            <option value="__add_new__">+ Add new category</option>
+          </Select>
+        )}
+        {/* Tiny readout when the row holds a value the dropdown didn't
+            render (e.g., an archived category) — keeps the display
+            label visible at a glance. */}
+        {row.category && categoryLabelByName?.get(row.category) && !activeHit && !archivedHit && (
+          <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-0.5 truncate">
+            {categoryLabelByName.get(row.category)}
+          </p>
+        )}
       </div>
       <div className="col-span-3">
         <FieldLabel show={showLabels}>Funding account *</FieldLabel>
@@ -715,19 +819,65 @@ function expenseFields(row, errors, accounts, knownCategories, showLabels, onCha
           onChange={e => onChange('planned_pay_date', e.target.value)}
         />
       </div>
-      <div className="col-span-1 flex items-center">
+      <div className="col-span-1 flex flex-col items-start">
         <FieldLabel show={showLabels}>Cash</FieldLabel>
-        <label className="flex items-center gap-1 mt-1">
-          <input
-            type="checkbox"
-            checked={!!row.cash_impacting}
-            onChange={e => onChange('cash_impacting', e.target.checked)}
-            className="rounded"
-          />
-          <span className="text-xs text-gray-500 dark:text-slate-400">impact</span>
-        </label>
+        <input
+          type="checkbox"
+          checked={!!row.cash_impacting}
+          onChange={e => onChange('cash_impacting', e.target.checked)}
+          title="Affects cash flow projections"
+          className="rounded mt-2"
+        />
       </div>
     </>
+  )
+}
+
+// Inline "+ Add new category" text input that takes over the Category
+// cell when the user picks the sentinel option. Save validates against
+// isValidCategoryName; the parent's finishAddingCategory passes through
+// dedupeCategory + the INSERT + audit + refetch flow. Esc cancels,
+// Enter saves.
+function InlineAddCategoryInput({ onSave, onCancel }) {
+  const [value, setValue] = useState('')
+  const [errMsg, setErrMsg] = useState('')
+
+  function attemptSave() {
+    const v = value.trim()
+    if (!v) { onCancel(); return }
+    if (!isValidCategoryName(v)) {
+      setErrMsg('lowercase / digits / underscores, max 30')
+      return
+    }
+    onSave(v)
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      <input
+        autoFocus
+        className={`${S.input} ${errMsg ? 'ring-2 ring-red-400/60 border-red-400/60' : ''}`}
+        value={value}
+        placeholder="new_category"
+        maxLength={30}
+        title={errMsg || ''}
+        onChange={e => { setValue(e.target.value); if (errMsg) setErrMsg('') }}
+        onKeyDown={e => {
+          if (e.key === 'Enter')        { e.preventDefault(); attemptSave() }
+          else if (e.key === 'Escape')  { e.preventDefault(); onCancel() }
+        }}
+      />
+      <button type="button" onClick={attemptSave} title="Save category" className="shrink-0 text-emerald-600 hover:text-emerald-500">
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+        </svg>
+      </button>
+      <button type="button" onClick={onCancel} title="Cancel" className="shrink-0 text-gray-400 hover:text-gray-600 dark:hover:text-slate-300">
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
   )
 }
 
