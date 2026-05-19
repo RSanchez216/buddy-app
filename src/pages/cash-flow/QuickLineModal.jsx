@@ -819,15 +819,24 @@ function expenseFields({
           onChange={e => onChange('planned_pay_date', e.target.value)}
         />
       </div>
-      <div className="col-span-1 flex flex-col items-start">
-        <FieldLabel show={showLabels}>Cash</FieldLabel>
-        <input
-          type="checkbox"
-          checked={!!row.cash_impacting}
-          onChange={e => onChange('cash_impacting', e.target.checked)}
-          title="Affects cash flow projections"
-          className="rounded mt-2"
-        />
+      {/* Narrow Cash column. The checkbox wrapper matches the height of
+          a regular S.input so the parent grid's items-end lines the
+          checkbox up with the vertical centers of the inputs in the
+          adjacent cells. Horizontal centering keeps the checkbox under
+          its column header. */}
+      <div className="col-span-1 flex flex-col items-center">
+        <FieldLabel show={showLabels}>
+          <span className="block text-center">Cash</span>
+        </FieldLabel>
+        <div className="flex items-center justify-center w-full h-[38px]">
+          <input
+            type="checkbox"
+            checked={!!row.cash_impacting}
+            onChange={e => onChange('cash_impacting', e.target.checked)}
+            title="Affects cash flow projections"
+            className="rounded"
+          />
+        </div>
       </div>
     </>
   )
