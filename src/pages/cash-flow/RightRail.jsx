@@ -362,15 +362,13 @@ function DayPanel({ weekStart, selectedDay, setSelectedDay, dayBucket, dayProjec
             >
               Cover with transfer →
             </button>
-            {negativeRows.length > 1 && (
-              <button
-                type="button"
-                onClick={() => onCoverShortfall?.({ mode: 'list', targetAccountId: null })}
-                className="text-[11px] font-medium text-red-700 dark:text-red-400 hover:underline"
-              >
-                View all
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={() => onCoverShortfall?.({ mode: 'list', targetAccountId: null })}
+              className="text-[11px] font-medium text-red-700 dark:text-red-400 hover:underline"
+            >
+              View all
+            </button>
           </div>
         </div>
       )}
