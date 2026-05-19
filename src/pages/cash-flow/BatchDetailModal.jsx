@@ -262,7 +262,7 @@ export default function BatchDetailModal({
   if (!open || !kind) return null
 
   return (
-    <Modal open={open} onClose={attemptClose} title={`${meta.label} · ${headerCount} ${headerCount === 1 ? 'line' : 'lines'} · ${headerTotalLabel(headerTotal, meta)}`} size="xl">
+    <Modal open={open} onClose={attemptClose} title={`${meta.label} · ${headerCount} ${headerCount === 1 ? 'line' : 'lines'} · ${headerTotalLabel(headerTotal, meta)}`} size="2xl">
       <div className={S.modalBody}>
         <p className="text-xs text-gray-500 dark:text-slate-400 -mt-2">{fmtFullDate(dayISO)}</p>
 
@@ -379,14 +379,14 @@ function ExpensesTable({ visibleRows, getRow, deletes, failedIds, editingId, set
       <table className="w-full text-xs">
         <thead className="bg-gray-50 dark:bg-white/[0.02] text-[9px] uppercase tracking-widest text-gray-400 dark:text-slate-500">
           <tr>
-            <th className="text-left px-2 py-1.5 font-bold">Status</th>
-            <th className="text-right px-2 py-1.5 font-bold">Amount</th>
-            <th className="text-left px-2 py-1.5 font-bold">Description</th>
-            <th className="text-left px-2 py-1.5 font-bold">Category</th>
-            <th className="text-left px-2 py-1.5 font-bold">Funding account</th>
-            <th className="text-left px-2 py-1.5 font-bold">Planned date</th>
-            <th className="text-center px-2 py-1.5 font-bold">Cash</th>
-            <th className="px-2 py-1.5"></th>
+            <th className="text-left  px-2 py-1.5 font-bold min-w-[100px]">Status</th>
+            <th className="text-right px-2 py-1.5 font-bold min-w-[110px]">Amount</th>
+            <th className="text-left  px-2 py-1.5 font-bold min-w-[180px]">Description</th>
+            <th className="text-left  px-2 py-1.5 font-bold min-w-[150px]">Category</th>
+            <th className="text-left  px-2 py-1.5 font-bold min-w-[210px]">Funding account</th>
+            <th className="text-left  px-2 py-1.5 font-bold min-w-[140px]">Planned date</th>
+            <th className="text-center px-2 py-1.5 font-bold min-w-[60px]">Cash</th>
+            <th className="px-2 py-1.5 min-w-[50px]"></th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100 dark:divide-white/5">
@@ -427,13 +427,18 @@ function ExpensesTable({ visibleRows, getRow, deletes, failedIds, editingId, set
                     <input list="batchmodal-categories" className={S.input} value={row.category || ''} onChange={e => setField(id, 'category', e.target.value)} />
                   ) : (row.category || <span className="text-gray-400 italic">—</span>)}
                 </td>
-                <td className="px-2 py-1">
+                <td className="px-2 py-1 max-w-0">
                   {isEditing && !isDel ? (
                     <Select value={row.funding_account_id || ''} onChange={e => setField(id, 'funding_account_id', e.target.value)}>
                       <option value="">— Select —</option>
                       {accounts.map(a => <option key={a.id} value={a.id}>{fmtAccountOption(a)}</option>)}
                     </Select>
-                  ) : (accounts.find(a => a.id === row.funding_account_id)?.name || <span className="text-gray-400 italic">unassigned</span>)}
+                  ) : (() => {
+                    const name = accounts.find(a => a.id === row.funding_account_id)?.name
+                    return name
+                      ? <span className="block truncate" title={name}>{name}</span>
+                      : <span className="text-gray-400 italic">unassigned</span>
+                  })()}
                 </td>
                 <td className="px-2 py-1">
                   {isEditing && !isDel ? (
@@ -476,13 +481,13 @@ function TransfersTable({ visibleRows, getRow, deletes, failedIds, editingId, se
       <table className="w-full text-xs">
         <thead className="bg-gray-50 dark:bg-white/[0.02] text-[9px] uppercase tracking-widest text-gray-400 dark:text-slate-500">
           <tr>
-            <th className="text-left px-2 py-1.5 font-bold">Status</th>
-            <th className="text-left px-2 py-1.5 font-bold">From</th>
-            <th className="text-left px-2 py-1.5 font-bold">To</th>
-            <th className="text-right px-2 py-1.5 font-bold">Amount</th>
-            <th className="text-left px-2 py-1.5 font-bold">Debit date</th>
-            <th className="text-left px-2 py-1.5 font-bold">Credit date</th>
-            <th className="px-2 py-1.5"></th>
+            <th className="text-left  px-2 py-1.5 font-bold min-w-[100px]">Status</th>
+            <th className="text-left  px-2 py-1.5 font-bold min-w-[210px]">From</th>
+            <th className="text-left  px-2 py-1.5 font-bold min-w-[210px]">To</th>
+            <th className="text-right px-2 py-1.5 font-bold min-w-[110px]">Amount</th>
+            <th className="text-left  px-2 py-1.5 font-bold min-w-[140px]">Debit date</th>
+            <th className="text-left  px-2 py-1.5 font-bold min-w-[140px]">Credit date</th>
+            <th className="px-2 py-1.5 min-w-[50px]"></th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100 dark:divide-white/5">
@@ -500,21 +505,27 @@ function TransfersTable({ visibleRows, getRow, deletes, failedIds, editingId, se
                 className={`${isDel ? 'opacity-50 line-through' : ''} ${isFailed ? 'bg-red-50/50 dark:bg-red-500/5' : ''} ${isEditing ? 'bg-orange-50/40 dark:bg-orange-500/5' : 'hover:bg-gray-50/60 dark:hover:bg-white/[0.02] cursor-pointer'}`}
               >
                 <td className="px-2 py-1"><StatusPill status={status} failed={isFailed} /></td>
-                <td className="px-2 py-1">
+                <td className="px-2 py-1 max-w-0">
                   {isEditing && !isDel ? (
                     <Select value={row.from_funding_account_id || ''} onChange={e => setField(id, 'from_funding_account_id', e.target.value)}>
                       <option value="">— Select —</option>
                       {accounts.filter(a => a.id !== row.to_funding_account_id).map(a => <option key={a.id} value={a.id}>{fmtAccountOption(a)}</option>)}
                     </Select>
-                  ) : (accounts.find(a => a.id === row.from_funding_account_id)?.name || '—')}
+                  ) : (() => {
+                    const name = accounts.find(a => a.id === row.from_funding_account_id)?.name
+                    return name ? <span className="block truncate" title={name}>{name}</span> : '—'
+                  })()}
                 </td>
-                <td className="px-2 py-1">
+                <td className="px-2 py-1 max-w-0">
                   {isEditing && !isDel ? (
                     <Select value={row.to_funding_account_id || ''} onChange={e => setField(id, 'to_funding_account_id', e.target.value)}>
                       <option value="">— Select —</option>
                       {accounts.filter(a => a.id !== row.from_funding_account_id).map(a => <option key={a.id} value={a.id}>{fmtAccountOption(a)}</option>)}
                     </Select>
-                  ) : (accounts.find(a => a.id === row.to_funding_account_id)?.name || '—')}
+                  ) : (() => {
+                    const name = accounts.find(a => a.id === row.to_funding_account_id)?.name
+                    return name ? <span className="block truncate" title={name}>{name}</span> : '—'
+                  })()}
                 </td>
                 <td className="px-2 py-1 text-right font-mono text-cyan-700 dark:text-cyan-300">
                   {isEditing && !isDel ? (
@@ -558,14 +569,14 @@ function InflowsTable({ visibleRows, getRow, deletes, failedIds, editingId, setE
       <table className="w-full text-xs">
         <thead className="bg-gray-50 dark:bg-white/[0.02] text-[9px] uppercase tracking-widest text-gray-400 dark:text-slate-500">
           <tr>
-            <th className="text-left px-2 py-1.5 font-bold">Status</th>
-            <th className="text-right px-2 py-1.5 font-bold">Amount</th>
-            <th className="text-left px-2 py-1.5 font-bold">Source</th>
-            <th className="text-left px-2 py-1.5 font-bold">Type</th>
-            <th className="text-left px-2 py-1.5 font-bold">Funding account</th>
-            <th className="text-left px-2 py-1.5 font-bold">Expected date</th>
-            <th className="text-left px-2 py-1.5 font-bold">Notes</th>
-            <th className="px-2 py-1.5"></th>
+            <th className="text-left  px-2 py-1.5 font-bold min-w-[100px]">Status</th>
+            <th className="text-right px-2 py-1.5 font-bold min-w-[110px]">Amount</th>
+            <th className="text-left  px-2 py-1.5 font-bold min-w-[180px]">Source</th>
+            <th className="text-left  px-2 py-1.5 font-bold min-w-[100px]">Type</th>
+            <th className="text-left  px-2 py-1.5 font-bold min-w-[210px]">Funding account</th>
+            <th className="text-left  px-2 py-1.5 font-bold min-w-[140px]">Expected date</th>
+            <th className="text-left  px-2 py-1.5 font-bold min-w-[180px]">Notes</th>
+            <th className="px-2 py-1.5 min-w-[50px]"></th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100 dark:divide-white/5">
@@ -607,13 +618,18 @@ function InflowsTable({ visibleRows, getRow, deletes, failedIds, editingId, setE
                     </Select>
                   ) : (row.source_type || 'other')}
                 </td>
-                <td className="px-2 py-1">
+                <td className="px-2 py-1 max-w-0">
                   {isEditing && !isDel ? (
                     <Select value={row.funding_account_id || ''} onChange={e => setField(id, 'funding_account_id', e.target.value)}>
                       <option value="">— Select —</option>
                       {accounts.map(a => <option key={a.id} value={a.id}>{fmtAccountOption(a)}</option>)}
                     </Select>
-                  ) : (accounts.find(a => a.id === row.funding_account_id)?.name || <span className="text-gray-400 italic">unassigned</span>)}
+                  ) : (() => {
+                    const name = accounts.find(a => a.id === row.funding_account_id)?.name
+                    return name
+                      ? <span className="block truncate" title={name}>{name}</span>
+                      : <span className="text-gray-400 italic">unassigned</span>
+                  })()}
                 </td>
                 <td className="px-2 py-1">
                   {isEditing && !isDel ? (
