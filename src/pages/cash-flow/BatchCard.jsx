@@ -36,6 +36,7 @@ export default function BatchCard({
   events,                // pre-sorted array of v_cash_flow_events rows
   total,                 // signed number for the header total
   totalDirection = type, // 'inflow' renders + prefix, 'expense' renders − prefix, transfer renders unsigned
+  onOpen,                // optional () => void — opens BatchDetailModal for editing
   // eslint-disable-next-line no-unused-vars
   tagFor, onChipClick, draggingId, setDraggingId, setDropTarget,
 }) {
@@ -53,9 +54,15 @@ export default function BatchCard({
     ? fmtMoneyExact(Math.abs(Number(total || 0)))
     : fmtMoneySigned(Math.abs(Number(total || 0)), totalDirection === 'inflow' ? 'inflow' : 'outflow')
 
+  const Tag = onOpen ? 'button' : 'div'
+  const interactiveProps = onOpen
+    ? { type: 'button', onClick: onOpen, className: 'w-full text-left hover:bg-gray-50 dark:hover:bg-white/[0.02] transition-colors cursor-pointer' }
+    : { className: '' }
+
   return (
-    <div
-      className="rounded-lg bg-white dark:bg-[#0d0d1f] border border-gray-200 dark:border-white/5 px-3 py-2.5"
+    <Tag
+      {...interactiveProps}
+      className={`block rounded-lg bg-white dark:bg-[#0d0d1f] border border-gray-200 dark:border-white/5 px-3 py-2.5 ${interactiveProps.className || ''}`}
       style={{ borderLeft: `3px solid ${style.accent}`, minHeight: 70 }}
     >
       <div className={`text-[12px] font-medium leading-tight ${style.titleText}`}>{title}</div>
@@ -66,6 +73,6 @@ export default function BatchCard({
         {events.length} {events.length === 1 ? 'line' : 'lines'}
         {mixedLabel && <span className="italic ml-1">{mixedLabel}</span>}
       </div>
-    </div>
+    </Tag>
   )
 }

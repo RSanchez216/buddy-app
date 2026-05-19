@@ -29,6 +29,7 @@ import AdjustmentDetailsModal from '../settings/funding/AdjustmentDetailsModal'
 import AddTransferModal from './AddTransferModal'
 import QuickLineModal from './QuickLineModal'
 import CoverTransferModal from './CoverTransferModal'
+import BatchDetailModal from './BatchDetailModal'
 import { useToast } from '../../contexts/ToastContext'
 
 const SHOW_PAID_KEY = 'cf-show-paid'
@@ -95,6 +96,9 @@ export default function PaymentCalendar() {
   // Cover-with-transfer modal — null when closed. Shape:
   //   { mode: 'cover'|'list', targetAccountId: uuid|null }
   const [coverModalState, setCoverModalState] = useState(null)
+  // Batch detail modal — null when closed. Shape:
+  //   { kind: 'inflows'|'transfers'|'expenses', dayISO: 'YYYY-MM-DD' }
+  const [batchModalState, setBatchModalState] = useState(null)
   const [showRecurring, setShowRecurring] = useState(false)
   const [showStartingCash, setShowStartingCash] = useState(false)
   const [adjustLoanEvent, setAdjustLoanEvent] = useState(null) // event obj
@@ -640,6 +644,7 @@ export default function PaymentCalendar() {
               onSelectDay={setSelectedDay}
               onChipClick={handleChipClick}
               onChipDrop={handleChipDrop}
+              onOpenBatch={(kind, dayISO) => setBatchModalState({ kind, dayISO })}
             />
             <RightRail
               mode={railMode}
@@ -741,6 +746,14 @@ export default function PaymentCalendar() {
         todayISO={toISO(new Date())}
         onClose={() => setCoverModalState(null)}
         onSaved={() => { setCoverModalState(null); loadData(); setBalanceRefreshKey(k => k + 1) }}
+      />
+      <BatchDetailModal
+        open={!!batchModalState}
+        kind={batchModalState?.kind}
+        dayISO={batchModalState?.dayISO}
+        accounts={accounts}
+        onClose={() => setBatchModalState(null)}
+        onSaved={() => { setBatchModalState(null); loadData(); setBalanceRefreshKey(k => k + 1) }}
       />
       <ChipDetailPanel
         event={chipDetail}

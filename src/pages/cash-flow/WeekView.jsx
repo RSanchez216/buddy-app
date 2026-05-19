@@ -20,6 +20,7 @@ export default function WeekView({
   onSelectDay,                // (iso) => void — day header click
   onChipClick,
   onChipDrop,
+  onOpenBatch,                // (kind, dayISO) => void — opens BatchDetailModal
 }) {
   const [draggingId, setDraggingId] = useState(null)
   const [dropTarget, setDropTarget] = useState(null)
@@ -112,11 +113,13 @@ export default function WeekView({
               ) : (
                 <BatchedDay
                   events={events}
+                  dayISO={iso}
                   customCategoryById={customCategoryById}
                   draggingId={draggingId}
                   setDraggingId={setDraggingId}
                   setDropTarget={setDropTarget}
                   onChipClick={onChipClick}
+                  onOpenBatch={onOpenBatch}
                 />
               )}
             </div>
@@ -140,7 +143,7 @@ export default function WeekView({
 //   5. Adjustments (individual — rare, meaningful per row)
 //
 // Each batch is a single collapsible BatchCard. Empty batches don't render.
-function BatchedDay({ events, customCategoryById, draggingId, setDraggingId, setDropTarget, onChipClick }) {
+function BatchedDay({ events, dayISO, customCategoryById, draggingId, setDraggingId, setDropTarget, onChipClick, onOpenBatch }) {
   const { loans, inflows, transfers, expenses, adjustments } = groupEventsIntoBatches(events)
   const tagFor = (ev) => tagForBatchLine(ev, customCategoryById)
 
@@ -176,6 +179,7 @@ function BatchedDay({ events, customCategoryById, draggingId, setDraggingId, set
         draggingId={draggingId}
         setDraggingId={setDraggingId}
         setDropTarget={setDropTarget}
+        onOpen={onOpenBatch ? () => onOpenBatch('inflows', dayISO) : undefined}
       />
       <BatchCard
         type="transfer"
@@ -188,6 +192,7 @@ function BatchedDay({ events, customCategoryById, draggingId, setDraggingId, set
         draggingId={draggingId}
         setDraggingId={setDraggingId}
         setDropTarget={setDropTarget}
+        onOpen={onOpenBatch ? () => onOpenBatch('transfers', dayISO) : undefined}
       />
       <BatchCard
         type="expense"
@@ -200,6 +205,7 @@ function BatchedDay({ events, customCategoryById, draggingId, setDraggingId, set
         draggingId={draggingId}
         setDraggingId={setDraggingId}
         setDropTarget={setDropTarget}
+        onOpen={onOpenBatch ? () => onOpenBatch('expenses', dayISO) : undefined}
       />
       {adjustments.map(ev => (
         <EventChip
