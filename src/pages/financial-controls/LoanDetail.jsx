@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useParams, Link, useNavigate, useLocation } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { S } from '../../lib/styles'
@@ -47,6 +47,20 @@ function NotesDot() {
 export default function LoanDetail() {
   const { loanId } = useParams()
   const navigate = useNavigate()
+  const location = useLocation()
+  // The Debt Schedule row link passes the originating URL via
+  // location.state so back-navigation restores the exact filtered view
+  // (and scroll, via the sessionStorage key on the other side). Falls
+  // back to a plain /debt-schedule push when state.from is absent —
+  // happens on hard refresh of this page or when someone deep-links in.
+  const handleBack = () => {
+    const from = location.state?.from
+    if (typeof from === 'string' && from.startsWith('/')) {
+      navigate(from)
+    } else {
+      navigate('/financial-controls/debt-schedule')
+    }
+  }
   const { profile, user } = useAuth()
   const toast = useToast()
   const canEdit = profile?.role === 'admin' || profile?.role === 'manager'
@@ -175,7 +189,7 @@ export default function LoanDetail() {
       {/* Breadcrumb + status */}
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div className="min-w-0">
-          <button onClick={() => navigate('/financial-controls/debt-schedule')}
+          <button onClick={handleBack}
             className="flex items-center gap-1 text-xs text-gray-500 dark:text-slate-500 hover:text-orange-600 dark:hover:text-orange-400 mb-2 transition-colors">
             <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
             Back to Debt Schedule

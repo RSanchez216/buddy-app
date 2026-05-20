@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { S } from '../../lib/styles'
@@ -109,27 +109,75 @@ export default function DebtSchedule() {
   const [loading, setLoading] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
 
-  const [search, setSearch] = useState('')
-  const [filterEntity, setFilterEntity] = useState('')
-  const [filterLender, setFilterLender] = useState('')
-  // Default to Active — paid_off / cancelled / etc. are historical and
-  // surface separately (e.g., the AWAITING TITLE RELEASE panel). User can
-  // switch to "All Statuses" any time.
-  const [filterStatus, setFilterStatus] = useState('active')
-  const [filterEquipType, setFilterEquipType] = useState('')
-  const [pastDueOnly, setPastDueOnly] = useState(false)
-  const [titlePendingOnly, setTitlePendingOnly] = useState(false)
-  // Filter chip — show only active loans with ≥1 status='skipped' past-due
-  // row (v_loans_summary.unresolved_skipped_count > 0). Stacks with the
-  // entity/lender/equipment-type/past-due filters.
-  const [skippedUnresolvedOnly, setSkippedUnresolvedOnly] = useState(false)
-  const [groupByEntity, setGroupByEntity] = useState(false)
+  // ── Filter + sort state lives in the URL search params, not local
+  // React state. This way: copy-pasting / bookmarking the URL preserves
+  // the view, and the back-from-detail flow lands users right back where
+  // they were. Defaults are absent from the URL so a clean /debt-schedule
+  // URL still means "everything default."
+  //
+  // Status defaults to 'active' (matches the prior local-state default).
+  // The "All Statuses" Select option uses the explicit value 'all' so
+  // the absent-param case can keep meaning "active" without ambiguity.
+  const location = useLocation()
+  const [searchParams, setSearchParams] = useSearchParams()
 
-  // null = default order (entity, then loan_id)
-  const [sortKey, setSortKey] = useState(null)
-  const [sortDir, setSortDir] = useState('asc')
+  const search                = searchParams.get('q')             ?? ''
+  const filterEntity          = searchParams.get('entity')        ?? ''
+  const filterLender          = searchParams.get('lender')        ?? ''
+  const filterStatus          = searchParams.get('status')        ?? 'active'
+  const filterEquipType       = searchParams.get('equipment')     ?? ''
+  const pastDueOnly           = searchParams.get('past_due')      === '1'
+  const titlePendingOnly      = searchParams.get('title_pending') === '1'
+  const skippedUnresolvedOnly = searchParams.get('skipped')       === '1'
+  const groupByEntity         = searchParams.get('grouped')       === '1'
+  const sortKey               = searchParams.get('sort')          || null
+  const sortDir               = searchParams.get('dir')           === 'desc' ? 'desc' : 'asc'
+
+  // Generic setter that drops keys when the value equals the default so
+  // the URL stays clean. `opts.replace = true` is used by the search box
+  // to avoid one history entry per keystroke; everything else pushes a
+  // new entry so the browser back/forward buttons walk filter changes.
+  const updateParam = useCallback((key, value, opts) => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      if (value == null || value === '' || value === false) {
+        next.delete(key)
+      } else {
+        next.set(key, String(value))
+      }
+      return next
+    }, opts)
+  }, [setSearchParams])
 
   useEffect(() => { loadData() }, [])
+
+  // ── Scroll restoration. Saved by the loan-row Link's onClick keyed by
+  // the full URL (pathname + search). Restored once data is loaded so
+  // the row we want to land on actually exists by the time we scroll.
+  // `restoredKeyRef` guards against double-running when the user changes
+  // filters after a restore — we only restore for the exact URL we
+  // landed on.
+  const restoredKeyRef = useRef(null)
+  const originUrl = `${location.pathname}${location.search}`
+  const scrollKey = `debt-schedule-scroll:${originUrl}`
+  useEffect(() => {
+    if (loading) return
+    if (restoredKeyRef.current === scrollKey) return
+    const saved = sessionStorage.getItem(scrollKey)
+    restoredKeyRef.current = scrollKey
+    if (saved != null) {
+      const y = parseInt(saved, 10)
+      if (!Number.isNaN(y)) {
+        // Defer a frame so the just-painted rows are in the DOM.
+        requestAnimationFrame(() => window.scrollTo(0, y))
+      }
+      sessionStorage.removeItem(scrollKey)
+    }
+  }, [loading, scrollKey])
+
+  const saveScroll = useCallback(() => {
+    sessionStorage.setItem(scrollKey, String(window.scrollY))
+  }, [scrollKey])
 
   async function loadData() {
     setLoading(true)
@@ -181,7 +229,7 @@ export default function DebtSchedule() {
         }
         if (filterEntity && l.entity_id !== filterEntity) return null
         if (filterLender && l.lender_id !== filterLender) return null
-        if (filterStatus && l.status !== filterStatus) return null
+        if (filterStatus && filterStatus !== 'all' && l.status !== filterStatus) return null
         if (pastDueOnly && (!l.days_behind || l.days_behind <= 0)) return null
         if (titlePendingOnly && !l.title_release_pending) return null
         if (skippedUnresolvedOnly && (!l.unresolved_skipped_count || l.unresolved_skipped_count <= 0)) return null
@@ -220,11 +268,23 @@ export default function DebtSchedule() {
     })
   }, [filtered, sortKey, sortDir])
 
-  // Three-state column sort: asc -> desc -> off
+  // Three-state column sort: asc -> desc -> off. Drops sort/dir from the
+  // URL when off so a default view stays a clean /debt-schedule.
   function onSort(key) {
-    if (sortKey !== key) { setSortKey(key); setSortDir('asc'); return }
-    if (sortDir === 'asc') { setSortDir('desc'); return }
-    setSortKey(null); setSortDir('asc')
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      if (sortKey !== key) {
+        next.set('sort', key)
+        next.delete('dir') // 'asc' is the implicit default
+      } else if (sortDir === 'asc') {
+        next.set('sort', key)
+        next.set('dir', 'desc')
+      } else {
+        next.delete('sort')
+        next.delete('dir')
+      }
+      return next
+    })
   }
 
   // equipment_types.name → display_label lookup. Falls back to uppercase
@@ -405,52 +465,62 @@ export default function DebtSchedule() {
       {/* Awaiting title release — paid-off loans with equipment titles still pending */}
       <TitleReleasePanel rows={titlePendingRows} />
 
-      {/* Filters */}
+      {/* Filters — every dropdown / chip / search keystroke pushes to the
+          URL via updateParam(). Search input uses replace:true so typing
+          doesn't pollute browser history with one entry per keystroke;
+          everything else pushes new entries so back/forward walks filter
+          changes naturally. */}
       <div className="flex gap-3 flex-wrap items-center">
         <input
           type="text"
           placeholder="Search Loan ID, Contract, VIN, Unit, Make/Model…"
           value={search}
-          onChange={e => setSearch(e.target.value)}
+          onChange={e => updateParam('q', e.target.value, { replace: true })}
           className={`${S.input} w-80`}
         />
-        <Select value={filterEntity} onChange={e => setFilterEntity(e.target.value)}>
+        <Select value={filterEntity} onChange={e => updateParam('entity', e.target.value)}>
           <option value="">All Entities</option>
           {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
         </Select>
-        <Select value={filterLender} onChange={e => setFilterLender(e.target.value)}>
+        <Select value={filterLender} onChange={e => updateParam('lender', e.target.value)}>
           <option value="">All Lenders</option>
           {lenders.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
         </Select>
-        <Select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
-          <option value="">All Statuses</option>
+        {/* 'active' is the implicit default — picking it drops the param
+            so the URL stays clean. 'all' is the explicit "no status
+            filter" value (since absent != all in this scheme). */}
+        <Select
+          value={filterStatus}
+          onChange={e => updateParam('status', e.target.value === 'active' ? null : e.target.value)}
+        >
+          <option value="all">All Statuses</option>
           {LOAN_STATUSES.map(s => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}
         </Select>
-        <Select value={filterEquipType} onChange={e => setFilterEquipType(e.target.value)}>
+        <Select value={filterEquipType} onChange={e => updateParam('equipment', e.target.value)}>
           <option value="">All Equipment Types</option>
           {equipmentTypes.map(t => <option key={t.id} value={t.name}>{t.display_label || t.name}</option>)}
         </Select>
         <button
-          onClick={() => setPastDueOnly(v => !v)}
+          onClick={() => updateParam('past_due', !pastDueOnly ? '1' : null)}
           className={S.filterBtn(pastDueOnly)}
         >
           Past Due Only
         </button>
         <button
-          onClick={() => setSkippedUnresolvedOnly(v => !v)}
+          onClick={() => updateParam('skipped', !skippedUnresolvedOnly ? '1' : null)}
           className={S.filterBtn(skippedUnresolvedOnly)}
           title="Show only active loans with skipped past-due rows"
         >
           Skipped Unresolved
         </button>
         <button
-          onClick={() => setTitlePendingOnly(v => !v)}
+          onClick={() => updateParam('title_pending', !titlePendingOnly ? '1' : null)}
           className={S.filterBtn(titlePendingOnly)}
         >
           Title Pending Only
         </button>
         <button
-          onClick={() => setGroupByEntity(v => !v)}
+          onClick={() => updateParam('grouped', !groupByEntity ? '1' : null)}
           className={S.filterBtn(groupByEntity)}
         >
           {groupByEntity ? 'Grouped by Entity' : 'Flat View'}
@@ -483,6 +553,8 @@ export default function DebtSchedule() {
                   rows={rows}
                   equipmentByLoan={equipmentByLoan}
                   formatEqLabel={formatEqLabel}
+                  originUrl={originUrl}
+                  saveScroll={saveScroll}
                 />
               ))
             ) : (
@@ -490,7 +562,14 @@ export default function DebtSchedule() {
                 {sorted.length === 0 ? (
                   <tr><td colSpan={10} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">No loans found</td></tr>
                 ) : sorted.map(l => (
-                  <LoanRow key={l.id} loan={l} equipment={equipmentByLoan[l.id] || []} formatEqLabel={formatEqLabel} />
+                  <LoanRow
+                    key={l.id}
+                    loan={l}
+                    equipment={equipmentByLoan[l.id] || []}
+                    formatEqLabel={formatEqLabel}
+                    originUrl={originUrl}
+                    saveScroll={saveScroll}
+                  />
                 ))}
               </tbody>
             )}
@@ -503,7 +582,7 @@ export default function DebtSchedule() {
   )
 }
 
-function GroupedBody({ entityName, rows, equipmentByLoan, formatEqLabel }) {
+function GroupedBody({ entityName, rows, equipmentByLoan, formatEqLabel, originUrl, saveScroll }) {
   const [open, setOpen] = useState(true)
   return (
     <>
@@ -525,14 +604,23 @@ function GroupedBody({ entityName, rows, equipmentByLoan, formatEqLabel }) {
       </thead>
       {open && (
         <tbody>
-          {rows.map(l => <LoanRow key={l.id} loan={l} equipment={equipmentByLoan[l.id] || []} formatEqLabel={formatEqLabel} />)}
+          {rows.map(l => (
+            <LoanRow
+              key={l.id}
+              loan={l}
+              equipment={equipmentByLoan[l.id] || []}
+              formatEqLabel={formatEqLabel}
+              originUrl={originUrl}
+              saveScroll={saveScroll}
+            />
+          ))}
         </tbody>
       )}
     </>
   )
 }
 
-function LoanRow({ loan, equipment, formatEqLabel }) {
+function LoanRow({ loan, equipment, formatEqLabel, originUrl, saveScroll }) {
   const days = Number(loan.days_behind) || 0
   const eqCount = equipment.length
   const primaryType = (() => {
@@ -547,7 +635,12 @@ function LoanRow({ loan, equipment, formatEqLabel }) {
   return (
     <tr className={S.tableRow}>
       <td className={`${S.td} font-medium`}>
-        <Link to={`/financial-controls/debt-schedule/${loan.id}`} className="text-gray-900 dark:text-slate-200 hover:text-orange-600 dark:hover:text-orange-400 transition-colors">
+        <Link
+          to={`/financial-controls/debt-schedule/${loan.id}`}
+          state={{ from: originUrl }}
+          onClick={saveScroll}
+          className="text-gray-900 dark:text-slate-200 hover:text-orange-600 dark:hover:text-orange-400 transition-colors"
+        >
           {loan.loan_id_external || '—'}
         </Link>
         {loan._hit && (
