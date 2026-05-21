@@ -272,20 +272,25 @@ export function consolidateTransfers(events) {
 // transfers, and expenses fold into a single collapsible BatchCard each.
 // Each batch is sorted by |amount| desc to match the brief.
 //
-// Returns: { loans, inflows, transfers, expenses, adjustments } — each an
-// array of event rows. Empty arrays are fine (caller decides whether to
+// Returns: { loans, inflows, transfers, expenses, reconciliations } — each
+// an array of event rows. Empty arrays are fine (caller decides whether to
 // render). Amount-direction totals are NOT computed here; the caller sums
 // them once it knows the events.
+//
+// "reconciliations" used to render as individual chips (one per adjustment
+// row) because they're often genuinely meaningful per-row. On busy days
+// the row count balloons enough to dominate the day cell visually, so
+// they batch into a single card now matching the other categories.
 export function groupEventsIntoBatches(events) {
   const loans = []
-  const adjustments = []
+  const reconciliations = []
   const inflows = []
   const transfers = []
   const expenses = []
   for (const ev of (events || [])) {
     const cat = ev.category
     if (cat === 'loan') loans.push(ev)
-    else if (cat === 'adjustment') adjustments.push(ev)
+    else if (cat === 'adjustment') reconciliations.push(ev)
     else if (cat === 'expected_income' || cat === 'factor_advance') inflows.push(ev)
     else if (cat === 'transfer') transfers.push(ev)
     else if (cat === 'ap_bill' || cat === 'recurring' || cat === 'custom') expenses.push(ev)
@@ -295,7 +300,8 @@ export function groupEventsIntoBatches(events) {
   inflows.sort(byAbsAmountDesc)
   transfers.sort(byAbsAmountDesc)
   expenses.sort(byAbsAmountDesc)
-  return { loans, inflows, transfers, expenses, adjustments }
+  reconciliations.sort(byAbsAmountDesc)
+  return { loans, inflows, transfers, expenses, reconciliations }
 }
 
 // Small per-line tag for an event inside a BatchCard.

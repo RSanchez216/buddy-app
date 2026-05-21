@@ -140,11 +140,11 @@ export default function WeekView({
 //   2. Inflows batch
 //   3. Transfers batch
 //   4. Expenses batch
-//   5. Adjustments (individual — rare, meaningful per row)
+//   5. Reconciliation batch (signed net — amber accent)
 //
-// Each batch is a single collapsible BatchCard. Empty batches don't render.
+// Each batch is a single BatchCard. Empty batches don't render.
 function BatchedDay({ events, dayISO, customCategoryById, draggingId, setDraggingId, setDropTarget, onChipClick, onOpenBatch }) {
-  const { loans, inflows, transfers, expenses, adjustments } = groupEventsIntoBatches(events)
+  const { loans, inflows, transfers, expenses, reconciliations } = groupEventsIntoBatches(events)
   const tagFor = (ev) => tagForBatchLine(ev, customCategoryById)
 
   const inflowTotal = inflows.reduce((s, e) => s + Number(e.amount || 0), 0)
@@ -153,6 +153,13 @@ function BatchedDay({ events, dayISO, customCategoryById, draggingId, setDraggin
   // movement (sum of |amount|) since net is zero for same-day round trips.
   const transferTotal = transfers.reduce((s, e) => s + Math.abs(Number(e.amount || 0)), 0)
   const expenseTotal = expenses.reduce((s, e) => s + Number(e.amount || 0), 0)
+  // Reconciliation rows carry their direction in v_cash_flow_events
+  // ('inflow' for positive adjustments, 'outflow' for negative) but the
+  // batch header wants the signed net, so build it from the raw sign.
+  const reconciliationTotal = reconciliations.reduce((s, e) => {
+    const amt = Math.abs(Number(e.amount || 0))
+    return s + (e.direction === 'outflow' ? -amt : amt)
+  }, 0)
 
   const sortedLoans = [...loans].sort((a, b) => Number(b.amount) - Number(a.amount))
 
@@ -207,16 +214,19 @@ function BatchedDay({ events, dayISO, customCategoryById, draggingId, setDraggin
         setDropTarget={setDropTarget}
         onOpen={onOpenBatch ? () => onOpenBatch('expenses', dayISO) : undefined}
       />
-      {adjustments.map(ev => (
-        <EventChip
-          key={ev.event_id}
-          event={ev}
-          draggingId={draggingId}
-          onClick={onChipClick}
-          onDragStart={() => setDraggingId(ev.event_id)}
-          onDragEnd={() => { setDraggingId(null); setDropTarget(null) }}
-        />
-      ))}
+      <BatchCard
+        type="reconciliation"
+        title="Reconciliation"
+        events={reconciliations}
+        total={reconciliationTotal}
+        totalDirection="signed"
+        tagFor={tagFor}
+        onChipClick={onChipClick}
+        draggingId={draggingId}
+        setDraggingId={setDraggingId}
+        setDropTarget={setDropTarget}
+        onOpen={onOpenBatch ? () => onOpenBatch('reconciliations', dayISO) : undefined}
+      />
     </>
   )
 }

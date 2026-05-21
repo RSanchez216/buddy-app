@@ -43,9 +43,34 @@ const BANK_IMPACT_TOOLTIP =
   + 'transaction (e.g., factoring fees deducted at source).'
 
 const KIND_META = {
-  inflows:   { label: 'Inflows',   noun: 'inflow',   direction: 'inflow',   accent: 'text-emerald-700 dark:text-emerald-400' },
-  transfers: { label: 'Transfers', noun: 'transfer', direction: 'transfer', accent: 'text-cyan-700 dark:text-cyan-300' },
-  expenses:  { label: 'Expenses',  noun: 'expense',  direction: 'outflow',  accent: 'text-red-700 dark:text-red-400' },
+  inflows:        { label: 'Inflows',        noun: 'inflow',        direction: 'inflow',   accent: 'text-emerald-700 dark:text-emerald-400' },
+  transfers:      { label: 'Transfers',      noun: 'transfer',      direction: 'transfer', accent: 'text-cyan-700 dark:text-cyan-300' },
+  expenses:       { label: 'Expenses',       noun: 'expense',       direction: 'outflow',  accent: 'text-red-700 dark:text-red-400' },
+  // Header sum stays signed (+/− formatted via the same logic the
+  // BatchCard uses for reconciliation totals); accent text is amber to
+  // match the day-cell card. No insert / delete flow surfaces here —
+  // these rows originate from bank reconciliation, not user-added.
+  reconciliations: { label: 'Reconciliation', noun: 'reconciliation', direction: 'signed', accent: 'text-amber-700 dark:text-amber-400' },
+}
+
+// User-facing labels for funding_account_adjustments.classification.
+// Loose text in the DB; canonical entries here line up with the values
+// already in production ('other', 'untracked_transfer',
+// 'unauthorized_charge', 'untracked_deposit'). Picker also offers a
+// "needs review" sentinel that clears classification to NULL so the
+// row remains flagged.
+const RECONCILIATION_CLASSIFICATIONS = [
+  { value: 'untracked_deposit',   label: 'Untracked deposit' },
+  { value: 'untracked_transfer',  label: 'Untracked transfer' },
+  { value: 'unauthorized_charge', label: 'Unauthorized charge' },
+  { value: 'other',               label: 'Other' },
+]
+function fmtClassification(value) {
+  if (!value) return 'Needs review'
+  const hit = RECONCILIATION_CLASSIFICATIONS.find(c => c.value === value)
+  if (hit) return hit.label
+  // Defensive: future / legacy values render as the raw text title-cased.
+  return String(value).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
 }
 
 function fmtFullDate(iso) {
@@ -189,13 +214,18 @@ export default function BatchDetailModal({
 
   // ── Header totals
   const headerCount = visibleRows.length - visibleRows.filter(r => deletes.has(r.id)).length
+  // For reconciliations (direction === 'signed') we keep the sign so the
+  // header reads +/− to match the BatchCard's signed total convention.
+  // Other kinds sum absolute amounts and the headerTotalLabel prefixes a
+  // fixed sign by direction.
   const headerTotal = useMemo(() => {
     return visibleRows.reduce((s, { id, base, isInsert }) => {
       if (deletes.has(id)) return s
       const live = isInsert ? base : (edits[id] ? { ...base, ...edits[id] } : base)
-      return s + Math.abs(Number(live.amount || 0))
+      const n = Number(live.amount || 0)
+      return s + (meta?.direction === 'signed' ? n : Math.abs(n))
     }, 0)
-  }, [visibleRows, edits, deletes])
+  }, [visibleRows, edits, deletes, meta])
 
   const pendingCount =
     Object.keys(edits).length + inserts.length + deletes.size
@@ -219,7 +249,7 @@ export default function BatchDetailModal({
       if (deletes.has(rowId)) continue // delete takes precedence
       ops.push({
         kind: 'update', rowId,
-        run: () => runUpdate(kind, rowId, fields, rows, { factorsById }),
+        run: () => runUpdate(kind, rowId, fields, rows, { factorsById, userId: user?.id }),
       })
     }
     // Inserts
@@ -336,7 +366,7 @@ export default function BatchDetailModal({
           />
         )}
 
-        {!loading && (
+        {!loading && kind !== 'reconciliations' && (
           <button
             type="button"
             onClick={addRow}
@@ -373,6 +403,10 @@ export default function BatchDetailModal({
 function headerTotalLabel(total, meta) {
   if (meta.direction === 'inflow')  return `+${fmtMoneyExact(total)}`
   if (meta.direction === 'outflow') return `−${fmtMoneyExact(total)}`
+  if (meta.direction === 'signed') {
+    const n = Number(total) || 0
+    return `${n >= 0 ? '+' : '−'}${fmtMoneyExact(Math.abs(n))}`
+  }
   return fmtMoneyExact(total)
 }
 
@@ -397,9 +431,10 @@ function FilterChip({ active, onClick, children }) {
 // ─────────────────────────────────────────────────────────────────────────
 
 function BatchTable(props) {
-  if (props.kind === 'expenses')  return <ExpensesTable {...props} />
-  if (props.kind === 'transfers') return <TransfersTable {...props} />
-  if (props.kind === 'inflows')   return <InflowsTable {...props} />
+  if (props.kind === 'expenses')        return <ExpensesTable {...props} />
+  if (props.kind === 'transfers')       return <TransfersTable {...props} />
+  if (props.kind === 'inflows')         return <InflowsTable {...props} />
+  if (props.kind === 'reconciliations') return <ReconciliationsTable {...props} />
   return null
 }
 
@@ -850,6 +885,97 @@ function InflowsTable({
   )
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Reconciliations table — funding_account_adjustments. Date, signed
+// Amount and Description are read-only because the row originates from
+// bank reconciliation against funding_account_balance_entries. Only
+// classification (Type), funding account, and notes are editable.
+// Delete affordance is suppressed at the parent (RowActions not rendered).
+// ─────────────────────────────────────────────────────────────────────────
+function ReconciliationsTable({
+  visibleRows, getRow, deletes, failedIds, editingId, setEditingId, setField, saving, accounts,
+}) {
+  if (visibleRows.length === 0) return <EmptyState label="No reconciliation lines on this day" />
+  return (
+    <div className="border border-gray-200 dark:border-white/5 rounded-xl overflow-x-auto">
+      <table className="w-full text-xs">
+        <thead className="bg-gray-50 dark:bg-white/[0.02] text-[9px] uppercase tracking-widest text-gray-400 dark:text-slate-500">
+          <tr>
+            <th className="text-left  px-2 py-1.5 font-bold min-w-[120px]">Status</th>
+            <th className="text-left  px-2 py-1.5 font-bold min-w-[110px]">Date</th>
+            <th className="text-right px-2 py-1.5 font-bold min-w-[110px]">Amount</th>
+            <th className="text-left  px-2 py-1.5 font-bold min-w-[180px]">Description</th>
+            <th className="text-left  px-2 py-1.5 font-bold min-w-[170px]">Type</th>
+            <th className="text-left  px-2 py-1.5 font-bold min-w-[210px]">Funding account</th>
+            <th className="text-left  px-2 py-1.5 font-bold min-w-[200px]">Notes</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100 dark:divide-white/5">
+          {visibleRows.map(({ id }) => {
+            const row = getRow(id)
+            if (!row) return null
+            const isDel = deletes.has(id)
+            const isEditing = editingId === id
+            const isFailed = failedIds.has(id)
+            const amt = Number(row.amount || 0)
+            const amtClass = amt >= 0
+              ? 'text-emerald-700 dark:text-emerald-400'
+              : 'text-red-700 dark:text-red-400'
+            const signedLabel = `${amt >= 0 ? '+' : '−'}${fmtMoneyExact(Math.abs(amt))}`
+            return (
+              <tr
+                key={id}
+                onClick={() => !saving && !isDel && setEditingId(id)}
+                className={`${isDel ? 'opacity-50 line-through' : ''} ${isFailed ? 'bg-red-50/50 dark:bg-red-500/5' : ''} ${isEditing ? 'bg-amber-50/40 dark:bg-amber-500/5' : 'hover:bg-gray-50/60 dark:hover:bg-white/[0.02] cursor-pointer'}`}
+              >
+                <td className="px-2 py-1"><StatusPill status={row.status} failed={isFailed} /></td>
+                <td className="px-2 py-1">{row.adjustment_date || '—'}</td>
+                <td className={`px-2 py-1 text-right font-mono ${amtClass}`}>{signedLabel}</td>
+                <td className="px-2 py-1">
+                  <span className="text-gray-700 dark:text-slate-300">
+                    {row.classification ? `Reconciliation: ${fmtClassification(row.classification)}` : 'Reconciliation Adjustment'}
+                  </span>
+                </td>
+                <td className="px-2 py-1">
+                  {isEditing && !isDel ? (
+                    <Select
+                      value={row.classification || ''}
+                      onChange={e => setField(id, 'classification', e.target.value || null)}
+                    >
+                      <option value="">Needs review</option>
+                      {RECONCILIATION_CLASSIFICATIONS.map(c => (
+                        <option key={c.value} value={c.value}>{c.label}</option>
+                      ))}
+                    </Select>
+                  ) : fmtClassification(row.classification)}
+                </td>
+                <td className="px-2 py-1 max-w-0">
+                  {isEditing && !isDel ? (
+                    <Select value={row.funding_account_id || ''} onChange={e => setField(id, 'funding_account_id', e.target.value)}>
+                      <option value="">— Select —</option>
+                      {accounts.map(a => <option key={a.id} value={a.id}>{fmtAccountOption(a)}</option>)}
+                    </Select>
+                  ) : (() => {
+                    const name = accounts.find(a => a.id === row.funding_account_id)?.name
+                    return name
+                      ? <span className="block truncate" title={name}>{name}</span>
+                      : <span className="text-gray-400 italic">unassigned</span>
+                  })()}
+                </td>
+                <td className="px-2 py-1">
+                  {isEditing && !isDel ? (
+                    <input className={S.input} value={row.notes || ''} onChange={e => setField(id, 'notes', e.target.value)} />
+                  ) : (row.notes || <span className="text-gray-400 italic">—</span>)}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 // Compact Gross input + live Net readout for the Amount cell of a
 // factor inflow in edit mode. The actual saved amount is computed by
 // runUpdate from gross × (1 − fee_rate), so this view is purely
@@ -1028,6 +1154,20 @@ async function fetchRowsForKind(kind, dayISO) {
       .order('amount', { ascending: false })
     return data || []
   }
+  if (kind === 'reconciliations') {
+    // Bank-reconciliation rows: signed amount preserved (+ inflow / −
+    // outflow). status is derived for the StatusPill so the user can
+    // tell "Needs review" rows apart from classified ones.
+    const { data } = await supabase
+      .from('funding_account_adjustments')
+      .select('id, funding_account_id, adjustment_date, amount, classification, notes, source_balance_entry_id')
+      .eq('adjustment_date', dayISO)
+      .order('amount', { ascending: false })
+    return (data || []).map(r => ({
+      ...r,
+      status: r.classification ? 'classified' : 'needs_review',
+    }))
+  }
   if (kind === 'inflows') {
     // One row per deposit, with the parent's fields denormalized in.
     // Pick the parents first (filtered by date) so the deposit lookup
@@ -1089,6 +1229,31 @@ async function runUpdate(kind, rowId, fields, rows, ctx = {}) {
     }
     const { error } = await supabase.from('funding_account_transfers').update(payload).eq('id', rowId)
     return { ok: !error, error, table: 'funding_account_transfers', recordId: rowId }
+  }
+  if (kind === 'reconciliations') {
+    const payload = pickAllowed(fields, ['classification', 'funding_account_id', 'notes'])
+    // Whitelist classification against the canonical set; allow null
+    // (clearing) so a row can be flipped back to "needs review".
+    if ('classification' in payload) {
+      const v = payload.classification
+      if (v != null && !RECONCILIATION_CLASSIFICATIONS.some(c => c.value === v)) {
+        return { ok: false, error: new Error('Invalid classification') }
+      }
+      // Stamp classified_at / classified_by whenever classification is touched,
+      // including clears (so the audit trail captures the action).
+      payload.classified_at = new Date().toISOString()
+      payload.classified_by = ctx.userId || null
+    }
+    if ('notes' in payload) {
+      const n = (payload.notes ?? '').toString().trim()
+      payload.notes = n.length ? n : null
+    }
+    payload.updated_at = new Date().toISOString()
+    const { error } = await supabase
+      .from('funding_account_adjustments')
+      .update(payload)
+      .eq('id', rowId)
+    return { ok: !error, error, table: 'funding_account_adjustments', recordId: rowId }
   }
   if (kind === 'inflows') {
     const base = rows.find(r => r.id === rowId)

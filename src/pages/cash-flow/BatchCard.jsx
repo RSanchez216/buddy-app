@@ -28,6 +28,14 @@ const TYPE_STYLE = {
     titleText: 'text-[#791F1F] dark:text-red-300',
     totalText: 'text-red-700 dark:text-red-400',
   },
+  // Reconciliation = "needs attention" — amber accent matches the
+  // existing amber treatments (would-go-negative pill, stale-balance
+  // banner). Total color flips green/red by sign on render.
+  reconciliation: {
+    accent: '#D97706',
+    titleText: 'text-[#854D0E] dark:text-amber-300',
+    totalText: 'text-amber-700 dark:text-amber-400',
+  },
 }
 
 export default function BatchCard({
@@ -50,9 +58,22 @@ export default function BatchCard({
     ? `(${paidCount} ${type === 'inflow' ? 'received' : 'paid'} · ${planCount} planned)`
     : null
 
-  const headerAmount = totalDirection === 'transfer'
-    ? fmtMoneyExact(Math.abs(Number(total || 0)))
-    : fmtMoneySigned(Math.abs(Number(total || 0)), totalDirection === 'inflow' ? 'inflow' : 'outflow')
+  // 'signed' (used by reconciliation): render with explicit +/− and
+  // recolor by the actual sign of the net so a negative reconciliation
+  // day still reads red even though the category accent is amber.
+  const totalNumber = Number(total || 0)
+  let headerAmount
+  let totalColorOverride = ''
+  if (totalDirection === 'transfer') {
+    headerAmount = fmtMoneyExact(Math.abs(totalNumber))
+  } else if (totalDirection === 'signed') {
+    headerAmount = fmtMoneySigned(Math.abs(totalNumber), totalNumber >= 0 ? 'inflow' : 'outflow')
+    totalColorOverride = totalNumber >= 0
+      ? 'text-emerald-700 dark:text-emerald-400'
+      : 'text-red-700 dark:text-red-400'
+  } else {
+    headerAmount = fmtMoneySigned(Math.abs(totalNumber), totalDirection === 'inflow' ? 'inflow' : 'outflow')
+  }
 
   const Tag = onOpen ? 'button' : 'div'
   const interactiveProps = onOpen
@@ -66,7 +87,7 @@ export default function BatchCard({
       style={{ borderLeft: `3px solid ${style.accent}`, minHeight: 70 }}
     >
       <div className={`text-[12px] font-medium leading-tight ${style.titleText}`}>{title}</div>
-      <div className={`mt-1 text-[16px] font-mono font-medium leading-tight whitespace-nowrap ${style.totalText}`}>
+      <div className={`mt-1 text-[16px] font-mono font-medium leading-tight whitespace-nowrap ${totalColorOverride || style.totalText}`}>
         {headerAmount}
       </div>
       <div className="mt-1 text-[10px] text-gray-500 dark:text-slate-500 leading-tight">
