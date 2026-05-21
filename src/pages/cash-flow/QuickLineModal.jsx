@@ -75,6 +75,27 @@ function fmtAccountOption(a) {
 
 function round2(n) { return Math.round((Number(n) || 0) * 100) / 100 }
 
+// Single source of truth for "net" — the dollar value that actually hits
+// the bank — across an income row. Other rows: net = amount. Factor rows:
+// net = gross × (1 − fee_rate), with a 0 fallback when factor / gross
+// isn't filled in yet so the footer total degrades gracefully on partial
+// rows. Both the row-level NET cell and the footer Total call this so
+// the displayed number can't drift from the one in the total.
+function computeIncomeNet(row, factorsById) {
+  if (!row) return 0
+  if (row.source_type === 'factor') {
+    const gross = Number(row.gross_amount)
+    if (!gross || gross <= 0) return 0
+    const factor = row.factor_id ? factorsById?.get(row.factor_id) : null
+    if (!factor) return 0
+    const feeRate = Number(factor.fee_rate || 0)
+    return round2(gross * (1 - feeRate))
+  }
+  const amt = Number(row.amount)
+  if (!amt || amt <= 0) return 0
+  return amt
+}
+
 // ── Recurring tab — pure helpers and constants ─────────────────────────────
 
 const FREQUENCY_LABEL = {
@@ -387,10 +408,16 @@ export default function QuickLineModal({ open, kind, focusedDate, defaultSubTab,
     }
   }
 
-  const totalAmount = useMemo(
-    () => rows.reduce((s, r) => s + (Number(r.amount) || 0), 0),
-    [rows]
-  )
+  // Footer Total. Income kind uses computeIncomeNet so factor rows
+  // contribute their computed NET (the dollar that hits the bank) rather
+  // than the empty `amount` field; expense / transfer kinds sum the
+  // typed amount as before.
+  const totalAmount = useMemo(() => {
+    if (kind === 'income') {
+      return rows.reduce((s, r) => s + computeIncomeNet(r, factorsById), 0)
+    }
+    return rows.reduce((s, r) => s + (Number(r.amount) || 0), 0)
+  }, [rows, kind, factorsById])
 
   async function writeAuditLogEntries(tableName, recordIds, total) {
     // Best-effort audit batch. If this fails the user's save still
@@ -672,7 +699,7 @@ export default function QuickLineModal({ open, kind, focusedDate, defaultSubTab,
   if (!open || !kind) return null
 
   return (
-    <Modal open={open} onClose={onClose} title={meta.title} size="xl">
+    <Modal open={open} onClose={onClose} title={meta.title} size="2xl">
       <div className={S.modalBody}>
         {error && <div className={S.errorBox}>{error}</div>}
 
@@ -1008,12 +1035,23 @@ function LineRow({
   isFirst, showLabels, canRemove, onChange, onChangeRow, onRemove,
 }) {
   void isFirst, index
-  const trashButton = canRemove && (
+  // Trash kept in the DOM at a fixed slot regardless of canRemove so the
+  // row geometry doesn't shift on hover; the button itself is hidden when
+  // there's only one row left (always keep at least one) or when the row
+  // isn't being hovered/focused. focus-within keeps it visible for
+  // keyboard users tabbing through.
+  const trashButton = (
     <button
       onClick={onRemove}
-      className="text-gray-400 hover:text-red-500 px-1 py-2 shrink-0"
+      disabled={!canRemove}
+      aria-label="Remove this line"
       title="Remove this line"
       type="button"
+      className={`text-gray-400 hover:text-red-500 px-1 py-2 shrink-0 transition-opacity ${
+        canRemove
+          ? 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100'
+          : 'opacity-0 pointer-events-none'
+      }`}
     >
       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -1026,11 +1064,11 @@ function LineRow({
   // single-row grid.
   if (kind === 'income') {
     return (
-      <div className="p-2 rounded-xl bg-gray-50 dark:bg-white/[0.02] flex items-start gap-2">
+      <div className="group p-2 rounded-xl bg-gray-50 dark:bg-white/[0.02] flex items-start gap-2">
         <div className="flex-1 min-w-0">
           {incomeFields({ row, errors, accounts, knownSources, activeFactors, factorsById, showLabels, onChange, onChangeRow })}
         </div>
-        <div className="pt-3">{trashButton}</div>
+        <div className="pt-3 w-7 flex justify-end shrink-0">{trashButton}</div>
       </div>
     )
   }
@@ -1079,7 +1117,10 @@ function incomeFields({ row, errors, accounts, knownSources, activeFactors, fact
   const grossNum = isFactor ? Number(row.gross_amount) : 0
   const feeRate = factor ? Number(factor.fee_rate) : 0
   const fee = isFactor && grossNum > 0 ? round2(grossNum * feeRate) : 0
-  const net = isFactor && grossNum > 0 ? round2(grossNum - fee) : 0
+  // NET comes from the shared helper so the row's display and the
+  // footer's Total can't drift; defining `net` locally only when we have
+  // a complete row keeps the "—" placeholder behavior intact.
+  const net = isFactor && grossNum > 0 && factor ? computeIncomeNet(row, factorsById) : 0
 
   return (
     <>
@@ -1089,10 +1130,21 @@ function incomeFields({ row, errors, accounts, knownSources, activeFactors, fact
         <TypePill active={isFactor}  onClick={() => switchType('factor')}>Factor</TypePill>
       </div>
 
-      {/* Conditional fields */}
+      {/* Conditional fields.
+          The Factor branch uses an explicit grid-template-columns string
+          instead of repeat(14, 1fr) because the columns have very
+          different content needs: dropdowns (FACTOR / FUNDING ACCOUNT)
+          must absorb extra width as flex tracks, while DATE has a fixed
+          minimum that's high enough for native `MM/DD/YYYY` rendering
+          (~140px in Chrome/Safari). The read-only computed cells
+          (FEE %, FEE, NET) take fixed pixel widths so they don't expand
+          and starve the dropdowns at narrower modal widths. */}
       {isFactor ? (
-        <div className="grid gap-2 items-end" style={{ gridTemplateColumns: 'repeat(14, minmax(0, 1fr))' }}>
-          <div className="col-span-3">
+        <div
+          className="grid gap-2 items-end"
+          style={{ gridTemplateColumns: 'minmax(180px, 2fr) 110px 65px 100px 115px minmax(180px, 2fr) 140px minmax(100px, 1fr)' }}
+        >
+          <div className="min-w-0">
             <FieldLabel show={showLabels}>Factor *</FieldLabel>
             <Select
               value={row.factor_id || ''}
@@ -1108,38 +1160,45 @@ function incomeFields({ row, errors, accounts, knownSources, activeFactors, fact
               )}
             </Select>
           </div>
-          <div className="col-span-2">
+          <div className="min-w-0">
             <FieldLabel show={showLabels}>Gross *</FieldLabel>
             <input
               type="number" step="0.01"
-              className={`${S.input} ${errClass(errors.gross_amount)}`}
+              className={`${S.input} text-right`}
               value={row.gross_amount}
               placeholder="0.00"
               onChange={e => onChange('gross_amount', e.target.value)}
             />
           </div>
-          <div className="col-span-1">
+          <div className="min-w-0">
             <FieldLabel show={showLabels}>Fee %</FieldLabel>
-            <div className="px-2 py-2 text-xs font-mono text-gray-600 dark:text-slate-400">
+            <div className="px-2 py-2 text-xs font-mono text-gray-600 dark:text-slate-400 text-right">
               {factor ? formatFeeRate(factor.fee_rate) : '—'}
             </div>
           </div>
-          <div className="col-span-2">
+          <div className="min-w-0">
             <FieldLabel show={showLabels}>Fee</FieldLabel>
-            <div className="px-2 py-2 text-xs font-mono text-red-600 dark:text-red-400">
+            <div className="px-2 py-2 text-xs font-mono text-red-600 dark:text-red-400 text-right whitespace-nowrap">
               {factor && grossNum > 0 ? `− ${fmtMoneyExact(fee)}` : '—'}
             </div>
           </div>
-          <div className="col-span-2">
-            <FieldLabel show={showLabels}>Net</FieldLabel>
-            <div className="px-2 py-1">
-              <div className="text-sm font-mono font-bold text-emerald-700 dark:text-emerald-400">
-                {factor && grossNum > 0 ? fmtMoneyExact(net) : '—'}
-              </div>
-              <div className="text-[10px] text-gray-500 dark:text-slate-500">This is what hits the bank.</div>
+          <div className="min-w-0">
+            {showLabels && (
+              <label className={`${S.label} flex items-center justify-end gap-1`}>
+                <span>Net</span>
+                <span
+                  className="inline-flex items-center justify-center w-3 h-3 text-[9px] rounded-full border border-gray-300 dark:border-slate-600 text-gray-500 dark:text-slate-400 cursor-help"
+                  tabIndex={0}
+                  aria-label="Net definition"
+                  title="Net = Gross − Fee. This is what hits the bank."
+                >i</span>
+              </label>
+            )}
+            <div className="px-2 py-2 text-sm font-mono font-bold text-emerald-700 dark:text-emerald-400 text-right whitespace-nowrap">
+              {factor && grossNum > 0 ? fmtMoneyExact(net) : '—'}
             </div>
           </div>
-          <div className="col-span-2">
+          <div className="min-w-0">
             <FieldLabel show={showLabels}>Funding account *</FieldLabel>
             <Select
               value={row.funding_account_id}
@@ -1150,7 +1209,7 @@ function incomeFields({ row, errors, accounts, knownSources, activeFactors, fact
               {accounts.map(a => <option key={a.id} value={a.id}>{fmtAccountOption(a)}</option>)}
             </Select>
           </div>
-          <div className="col-span-1">
+          <div className="min-w-0">
             <FieldLabel show={showLabels}>Date *</FieldLabel>
             <input
               type="date"
@@ -1159,12 +1218,13 @@ function incomeFields({ row, errors, accounts, knownSources, activeFactors, fact
               onChange={e => onChange('expected_date', e.target.value)}
             />
           </div>
-          <div className="col-span-1">
+          <div className="min-w-0">
             <FieldLabel show={showLabels}>Notes</FieldLabel>
             <input
-              className={S.input}
+              className={`${S.input} truncate`}
               value={row.notes}
-              placeholder="—"
+              placeholder="Optional"
+              title={row.notes || ''}
               onChange={e => onChange('notes', e.target.value)}
             />
           </div>
