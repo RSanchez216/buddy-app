@@ -12,6 +12,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
+import { Link } from 'react-router-dom'
 import { useToast } from '../../contexts/ToastContext'
 import { S } from '../../lib/styles'
 import Modal from '../../components/Modal'
@@ -248,7 +249,7 @@ function validateRow(row, kind, factorsById) {
   return { isValid: Object.keys(errors).length === 0, errors }
 }
 
-export default function QuickLineModal({ open, kind, focusedDate, onClose, onSaved }) {
+export default function QuickLineModal({ open, kind, focusedDate, defaultSubTab, onClose, onSaved }) {
   const { user, profile } = useAuth()
   const toast = useToast()
   const { active: activeFactors, byId: factorsById } = useFactors()
@@ -290,7 +291,10 @@ export default function QuickLineModal({ open, kind, focusedDate, onClose, onSav
     // recurring form is only rendered when kind === 'expense' but we
     // reset anyway so re-opening the modal in the same session starts
     // fresh.
-    setExpenseSubTab('one-time')
+    // defaultSubTab lets callers (e.g. the Recurring Expenses settings
+    // page's deep link) open straight onto the Recurring tab. Falls
+    // back to 'one-time' which matches the prior default.
+    setExpenseSubTab(defaultSubTab === 'recurring' ? 'recurring' : 'one-time')
     setRecurringForm(emptyRecurringForm())
     setRecurringErrors({})
     setRecurringStartTouched(false)
@@ -325,7 +329,7 @@ export default function QuickLineModal({ open, kind, focusedDate, onClose, onSav
       // (reference table) rather than DISTINCT-from-data; no fetch here.
     })()
     return () => { cancelled = true }
-  }, [open, kind, focusedDate])
+  }, [open, kind, focusedDate, defaultSubTab])
 
   // Smart start_date suggestion for the recurring tab. Re-runs when
   // frequency / day fields change, but never overrides a user-typed
@@ -790,6 +794,13 @@ export default function QuickLineModal({ open, kind, focusedDate, onClose, onSav
           {kind === 'expense' && expenseSubTab === 'recurring' ? (
             <span className="text-xs text-gray-500 dark:text-slate-400">
               Saving will create one template and materialize a year of instances.
+              {' · '}
+              <Link
+                to="/settings/recurring-expenses"
+                className="text-orange-600 dark:text-orange-400 hover:underline font-medium"
+              >
+                Manage existing recurring expenses →
+              </Link>
             </span>
           ) : (
             <span className="text-sm text-gray-500 dark:text-slate-400">

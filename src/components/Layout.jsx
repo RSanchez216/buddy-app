@@ -172,6 +172,7 @@ export default function Layout() {
             <NavItem to="/settings/equipment-types"   label="Equipment Types"   icon={Icons.truck}    onClick={close} />
             <NavItem to="/settings/expense-categories" label="Expense Categories" icon={Icons.category} onClick={close} />
             <NavItem to="/settings/factors"           label="Factors"           icon={Icons.lender}   onClick={close} />
+            <NavItem to="/settings/recurring-expenses" label="Recurring Expenses" icon={Icons.calendar} onClick={close} />
             <NavItem to="/settings/driver-purchase-statuses" label="Driver Purchase Statuses" icon={Icons.flag} onClick={close} />
             {isAdmin && (
               <NavItem to="/settings/users" label="Users" icon={Icons.users} onClick={close} />

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { S } from '../../lib/styles'
@@ -93,6 +93,10 @@ export default function PaymentCalendar() {
   const [editInflowRow, setEditInflowRow] = useState(null) // expected_inflows row for edit, null for add
   const [showAddExpense, setShowAddExpense] = useState(false)
   const [quickLineKind, setQuickLineKind] = useState(null) // 'income' | 'expense' | 'transfer' | null
+  // Sub-tab seed for the Quick Line Add expense kind — only honored on
+  // open; once the modal mounts it owns its own tab state. Used by the
+  // Recurring Expenses settings page's deep link (`?add=recurring`).
+  const [quickLineSubTab, setQuickLineSubTab] = useState(null)
   // Cover-with-transfer modal — null when closed. Shape:
   //   { mode: 'cover'|'list', targetAccountId: uuid|null }
   const [coverModalState, setCoverModalState] = useState(null)
@@ -143,6 +147,25 @@ export default function PaymentCalendar() {
   }, [view, weekStart, anchor])
 
   useEffect(() => { loadEntities() }, [])
+
+  // Deep-link from /settings/recurring-expenses → ?add=recurring opens
+  // the Quick Line Add modal pre-seeded on the Recurring tab so the
+  // user can create a template from there (creation lives on this
+  // page, not the settings list). Clear the param after consuming so
+  // refreshes don't keep re-opening.
+  const [searchParams, setSearchParams] = useSearchParams()
+  useEffect(() => {
+    if (searchParams.get('add') === 'recurring') {
+      setQuickLineKind('expense')
+      setQuickLineSubTab('recurring')
+      setSearchParams(prev => {
+        const next = new URLSearchParams(prev)
+        next.delete('add')
+        return next
+      }, { replace: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   async function loadEntities() {
     const { data } = await supabase.from('loan_entities').select('id, name').eq('is_active', true).order('name')
@@ -736,8 +759,9 @@ export default function PaymentCalendar() {
         open={!!quickLineKind}
         kind={quickLineKind}
         focusedDate={defaultDate || selectedDay || toISO(new Date())}
-        onClose={() => setQuickLineKind(null)}
-        onSaved={() => { setQuickLineKind(null); loadData(); setBalanceRefreshKey(k => k + 1) }}
+        defaultSubTab={quickLineSubTab}
+        onClose={() => { setQuickLineKind(null); setQuickLineSubTab(null) }}
+        onSaved={() => { setQuickLineKind(null); setQuickLineSubTab(null); loadData(); setBalanceRefreshKey(k => k + 1) }}
       />
       <CoverTransferModal
         open={!!coverModalState}
