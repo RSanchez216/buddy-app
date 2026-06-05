@@ -156,14 +156,15 @@ export default function DriversList() {
                 <th className={`${S.th} min-w-[180px]`}>Compensation</th>
                 <SortableTh field="current_status" label="Status"          sortField={sortField} sortDir={sortDir} onToggle={toggleSort} minW="min-w-[120px]" />
                 <th className={`${S.th} min-w-[130px]`}>Phone</th>
+                <th className={`${S.th} min-w-[180px]`}>Email</th>
                 <th className={`${S.th} text-right`}></th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={10} className="px-4 py-12 text-center"><div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500" /></td></tr>
+                <tr><td colSpan={11} className="px-4 py-12 text-center"><div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500" /></td></tr>
               ) : filtered.length === 0 ? (
-                <tr><td colSpan={10} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">
+                <tr><td colSpan={11} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">
                   {rows.length === 0
                     ? "No drivers yet. Click 'Upload Excel' to import from your TMS export, or 'Add Driver' to add one manually."
                     : 'No drivers match these filters.'}
@@ -183,6 +184,12 @@ export default function DriversList() {
                   <td className={`${S.td} text-gray-600 dark:text-slate-400 text-xs`}>{r.compensation_raw || fmtCompensation(r)}</td>
                   <td className={S.td}><DriverStatusPill status={r.current_status} /></td>
                   <td className={`${S.td} text-gray-500 dark:text-slate-400 text-xs whitespace-nowrap`}>{r.phone || '—'}</td>
+                  <td
+                    className={`${S.td} text-gray-500 dark:text-slate-400 text-xs max-w-[220px] truncate`}
+                    title={r.email || ''}
+                  >
+                    {r.email || '—'}
+                  </td>
                   <td className={`${S.td} text-right whitespace-nowrap`}>
                     {canEdit && (
                       <button onClick={() => openEdit(r)} className="text-gray-400 hover:text-cyan-600 dark:hover:text-cyan-400 mr-3" title="Edit">

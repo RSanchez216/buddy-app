@@ -74,6 +74,15 @@ function cleanStr(v) {
   return s === '' ? null : s
 }
 
+// Email-specific normalization. cleanStr handles the trim + empty→null,
+// then we lowercase so a user typing "Bob@FOO.com" in TMS doesn't
+// distinguish from "bob@foo.com" already in BUDDY. Brief calls this
+// out explicitly so we can rely on case-insensitive matches later.
+function cleanEmail(v) {
+  const s = cleanStr(v)
+  return s ? s.toLowerCase() : null
+}
+
 function parseYesNo(v) {
   if (v == null) return false
   const s = String(v).trim().toLowerCase()
@@ -100,7 +109,7 @@ export function parseDriversWorkbook(arrayBuffer) {
     trailer:     findCol(sample, ['Trailer']),
     driverType:  findCol(sample, ['Driver type', 'Driver Type']),
     phone:       findCol(sample, ['Phone number', 'Phone']),
-    email:       findCol(sample, ['Email']),
+    email:       findCol(sample, ['Email', 'Email Address', 'E-mail']),
     missingOp:   findCol(sample, ['Missing OP']),
     referred:    findCol(sample, ['Referred by', 'Referred By']),
     createdAt:   findCol(sample, ['Created at', 'Created At']),
@@ -144,7 +153,7 @@ export function parseDriversWorkbook(arrayBuffer) {
       driver_type_raw: driverTypeRaw,
       carrier: cleanStr(cols.carrier ? r[cols.carrier] : null),
       phone: cleanStr(cols.phone ? r[cols.phone] : null),
-      email: cleanStr(cols.email ? r[cols.email] : null),
+      email: cleanEmail(cols.email ? r[cols.email] : null),
       truck_assignment_raw: cleanStr(cols.truck ? r[cols.truck] : null),
       trailer_assignment_raw: cleanStr(cols.trailer ? r[cols.trailer] : null),
       missing_op: cleanStr(cols.missingOp ? r[cols.missingOp] : null),
