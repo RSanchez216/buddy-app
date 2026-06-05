@@ -40,11 +40,19 @@ export default function ComboBox({
 
   const selected = options.find(o => o.id === value)
 
+  // Filter on the option's plain-text search target. When `name` is a
+  // ReactNode (e.g. the driver picker rendering "Name · #1650" with
+  // mixed styling), the caller passes an explicit `searchText` string
+  // containing every value they want filtered (typically name + id).
+  // Plain-string callers keep working without touching anything.
   const filtered = query.trim()
-    ? options.filter(o =>
-        o.name.toLowerCase().includes(query.toLowerCase()) ||
-        (o.subtitle && o.subtitle.toLowerCase().includes(query.toLowerCase()))
-      )
+    ? options.filter(o => {
+        const q = query.toLowerCase()
+        const text = (typeof o.searchText === 'string' ? o.searchText
+                      : typeof o.name === 'string' ? o.name : '').toLowerCase()
+        return text.includes(q)
+          || (o.subtitle && o.subtitle.toLowerCase().includes(q))
+      })
     : options
 
   function openDropdown() {

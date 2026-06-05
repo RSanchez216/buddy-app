@@ -78,7 +78,7 @@ export default function TruckTrailerFormModal({ kind, open, editItem, onClose, o
     // Drivers + equipment-owner auto-suggest list. Drivers has no active flag,
     // so we just sort alphabetically.
     Promise.all([
-      supabase.from('drivers').select('id, full_name').order('full_name'),
+      supabase.from('drivers').select('id, full_name, internal_id').order('full_name'),
       supabase.from(table).select('equipment_owner_raw').not('equipment_owner_raw', 'is', null),
     ]).then(([dRes, oRes]) => {
       setDrivers(dRes.data || [])
@@ -239,11 +239,30 @@ export default function TruckTrailerFormModal({ kind, open, editItem, onClose, o
         <div className="grid grid-cols-2 gap-4">
           <Field label="Driver">
             <ComboBox
-              options={drivers.map(d => ({ id: d.id, name: d.full_name }))}
+              options={drivers.map(d => ({
+                id: d.id,
+                // Inline "Name · #ID" with muted ID. Falls back to just the
+                // name when internal_id is missing so a row with no TMS id
+                // doesn't show a stray "#" / blank trailer.
+                name: d.internal_id
+                  ? (
+                    <span>
+                      {d.full_name}
+                      <span className="text-gray-400 dark:text-slate-500"> · #{d.internal_id}</span>
+                    </span>
+                  )
+                  : d.full_name,
+                // Plain-string target for the type-to-filter — name AND id
+                // both substring-match so typing "1650" or "mimou" both
+                // surface Abderrahim Mimouni.
+                searchText: d.internal_id
+                  ? `${d.full_name} #${d.internal_id} ${d.internal_id}`
+                  : d.full_name,
+              }))}
               value={form.driver_id}
               onChange={id => setForm(f => ({ ...f, driver_id: id }))}
               placeholder="— Unassigned —"
-              searchPlaceholder="Search drivers…"
+              searchPlaceholder="Search drivers by name or ID…"
               noResultsLabel="No driver matches"
             />
           </Field>
