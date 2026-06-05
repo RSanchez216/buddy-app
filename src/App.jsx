@@ -14,6 +14,7 @@ import SettingsDepartments from './pages/settings/Departments'
 import SettingsVendorCategories from './pages/settings/VendorCategories'
 import SettingsPaymentMethods from './pages/settings/PaymentMethods'
 import SettingsLoanEntities from './pages/settings/LoanEntities'
+import SettingsCarriers from './pages/settings/Carriers'
 import SettingsLoanLenders from './pages/settings/LoanLenders'
 import SettingsFundingAccounts from './pages/settings/FundingAccounts'
 import SettingsEquipmentTypes from './pages/settings/EquipmentTypes'
@@ -77,6 +78,7 @@ export default function App() {
               <Route path="settings/vendor-categories" element={<SettingsVendorCategories />} />
               <Route path="settings/payment-methods" element={<SettingsPaymentMethods />} />
               <Route path="settings/loan-entities" element={<SettingsLoanEntities />} />
+              <Route path="settings/carriers" element={<SettingsCarriers />} />
               <Route path="settings/loan-lenders" element={<SettingsLoanLenders />} />
               <Route path="settings/funding-accounts" element={<SettingsFundingAccounts />} />
               <Route path="settings/equipment-types" element={<SettingsEquipmentTypes />} />

@@ -4,13 +4,17 @@ import { useAuth } from '../../contexts/AuthContext'
 import { S } from '../../lib/styles'
 import Modal from '../../components/Modal'
 import Select from '../../components/Select'
+import ComboBox from '../../components/ComboBox'
 import { DRIVER_TYPES, DRIVER_STATUSES } from './fleetUtils'
 import { useToast } from '../../contexts/ToastContext'
 
 // Add / edit modal for a single driver. UNIQUE(internal_id) is enforced by
 // the DB partial index; we surface a friendly error on the conflict.
-
-const CARRIERS = ['TMS Transport Solutions Inc', 'PJ Twins Inc', 'USKG Trans Inc', 'Other']
+//
+// Carrier options come from public.carriers (managed in Settings ->
+// Carriers). The hardcoded list was removed; an existing value not in
+// the active list is pinned at the top of the picker as "(legacy)" so
+// re-saving the form doesn't blank the field.
 
 const COMPENSATION_TYPES = [
   { value: '',                   label: '— None —' },
@@ -32,12 +36,18 @@ export default function DriverFormModal({ open, editItem, onClose, onSaved }) {
   const { user } = useAuth()
   const toast = useToast()
   const [form, setForm] = useState(empty)
+  const [carriers, setCarriers] = useState([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
   useEffect(() => {
     if (!open) return
     setError('')
+    // Active carriers from the reference table. Fire-and-forget — the
+    // ComboBox falls back to a "(legacy)" pin for the current value if
+    // this hasn't returned yet by the time the user opens it.
+    supabase.from('carriers').select('id, name, is_active').eq('is_active', true).order('name')
+      .then(({ data }) => setCarriers(data || []))
     if (editItem) {
       setForm({
         internal_id: editItem.internal_id || '',
@@ -164,13 +174,19 @@ export default function DriverFormModal({ open, editItem, onClose, onSaved }) {
             </Select>
           </Field>
           <Field label="Carrier">
-            <Select value={form.carrier} onChange={e => setForm(f => ({ ...f, carrier: e.target.value }))}>
-              <option value="">— Select —</option>
-              {CARRIERS.map(c => <option key={c} value={c}>{c}</option>)}
-              {form.carrier && !CARRIERS.includes(form.carrier) && (
-                <option value={form.carrier}>{form.carrier} (legacy)</option>
-              )}
-            </Select>
+            <ComboBox
+              options={[
+                ...carriers.map(c => ({ id: c.name, name: c.name })),
+                ...(form.carrier && !carriers.some(c => c.name === form.carrier)
+                  ? [{ id: form.carrier, name: `${form.carrier} (legacy)` }]
+                  : []),
+              ]}
+              value={form.carrier}
+              onChange={id => setForm(f => ({ ...f, carrier: id }))}
+              placeholder="— Select carrier —"
+              searchPlaceholder="Search carriers…"
+              noResultsLabel="No carrier matches (add one in Settings → Carriers)"
+            />
           </Field>
         </div>
 

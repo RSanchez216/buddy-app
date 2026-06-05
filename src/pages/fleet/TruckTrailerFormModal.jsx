@@ -15,8 +15,11 @@ import { useToast } from '../../contexts/ToastContext'
 //
 // VIN uniqueness is enforced by a DB UNIQUE constraint; we surface a
 // friendly message if Supabase returns the duplicate error.
-
-const CARRIERS = ['TMS Transport Solutions Inc', 'PJ Twins Inc', 'USKG Trans Inc', 'Other']
+//
+// Carriers come from the public.carriers reference table — managed in
+// Settings -> Carriers. Active rows feed the dropdown; if the unit
+// already carries an inactive or legacy value we pin it at the top
+// of the picker so the user can keep it without re-typing.
 
 const emptyTruck = {
   unit_number: '', vin: '', year: '', make: '', model: '',
@@ -40,6 +43,7 @@ export default function TruckTrailerFormModal({ kind, open, editItem, onClose, o
 
   const [form, setForm] = useState(isTrailer ? emptyTrailer : emptyTruck)
   const [drivers, setDrivers] = useState([])
+  const [carriers, setCarriers] = useState([])
   const [ownerSuggestions, setOwnerSuggestions] = useState([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -75,13 +79,16 @@ export default function TruckTrailerFormModal({ kind, open, editItem, onClose, o
       setForm(isTrailer ? emptyTrailer : emptyTruck)
     }
 
-    // Drivers + equipment-owner auto-suggest list. Drivers has no active flag,
-    // so we just sort alphabetically.
+    // Drivers + carriers + equipment-owner auto-suggest list. Drivers has
+    // no active flag, so we just sort alphabetically. Carriers comes from
+    // the reference table in Settings -> Carriers (active rows only).
     Promise.all([
       supabase.from('drivers').select('id, full_name, internal_id').order('full_name'),
+      supabase.from('carriers').select('id, name, is_active').eq('is_active', true).order('name'),
       supabase.from(table).select('equipment_owner_raw').not('equipment_owner_raw', 'is', null),
-    ]).then(([dRes, oRes]) => {
+    ]).then(([dRes, cRes, oRes]) => {
       setDrivers(dRes.data || [])
+      setCarriers(cRes.data || [])
       const uniq = Array.from(new Set((oRes.data || []).map(r => r.equipment_owner_raw).filter(Boolean))).sort()
       setOwnerSuggestions(uniq)
     })
@@ -210,8 +217,13 @@ export default function TruckTrailerFormModal({ kind, open, editItem, onClose, o
           <Field label="Carrier">
             <ComboBox
               options={[
-                ...CARRIERS.map(c => ({ id: c, name: c })),
-                ...(form.carrier && !CARRIERS.includes(form.carrier)
+                ...carriers.map(c => ({ id: c.name, name: c.name })),
+                // If the unit's current carrier text isn't in the active
+                // list (legacy import, deactivated row, manually edited),
+                // pin it at the top with a "(legacy)" tag so the user
+                // doesn't accidentally lose the value just by reopening
+                // the form.
+                ...(form.carrier && !carriers.some(c => c.name === form.carrier)
                   ? [{ id: form.carrier, name: `${form.carrier} (legacy)` }]
                   : []),
               ]}
@@ -219,7 +231,7 @@ export default function TruckTrailerFormModal({ kind, open, editItem, onClose, o
               onChange={id => setForm(f => ({ ...f, carrier: id }))}
               placeholder="— Select carrier —"
               searchPlaceholder="Search carriers…"
-              noResultsLabel="No carrier matches"
+              noResultsLabel="No carrier matches (add one in Settings → Carriers)"
             />
           </Field>
           <Field label="Equipment Owner">

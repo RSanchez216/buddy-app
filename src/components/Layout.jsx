@@ -169,6 +169,7 @@ export default function Layout() {
             <NavItem to="/settings/vendor-categories" label="Vendor Categories" icon={Icons.category} onClick={close} />
             <NavItem to="/settings/payment-methods"   label="Payment Methods"   icon={Icons.payment}  onClick={close} />
             <NavItem to="/settings/loan-entities"     label="Loan Entities"     icon={Icons.entity}   onClick={close} />
+            <NavItem to="/settings/carriers"          label="Carriers"          icon={Icons.truck}    onClick={close} />
             <NavItem to="/settings/loan-lenders"      label="Loan Lenders"      icon={Icons.lender}   onClick={close} />
             <NavItem to="/settings/funding-accounts"  label="Funding & Sources" icon={Icons.bank}     onClick={close} />
             <NavItem to="/settings/equipment-types"   label="Equipment Types"   icon={Icons.truck}    onClick={close} />
