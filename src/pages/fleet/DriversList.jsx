@@ -6,6 +6,7 @@ import { S } from '../../lib/styles'
 import { DriverTypePill, DriverStatusPill, DRIVER_STATUSES, fmtCompensation } from './fleetUtils'
 import DriverFormModal from './DriverFormModal'
 import DriversUploadModal from './upload/DriversUploadModal'
+import CopyButton from '../../components/CopyButton'
 
 const STATUS_PILLS = [
   { key: 'all',        label: 'All',        icon: '' },
@@ -170,12 +171,15 @@ export default function DriversList() {
                     : 'No drivers match these filters.'}
                 </td></tr>
               ) : filtered.map(r => (
-                <tr key={r.id} className={S.tableRow}>
+                <tr key={r.id} className={`group ${S.tableRow}`}>
                   <td className={`${S.td} font-mono text-xs text-gray-500 dark:text-slate-400`}>{r.internal_id || '—'}</td>
                   <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>
-                    <Link to={`/fleet/drivers/${r.id}`} className="hover:text-orange-600 dark:hover:text-orange-400">
-                      {r.full_name || '—'}
-                    </Link>
+                    <span className="inline-flex items-center gap-1.5">
+                      <Link to={`/fleet/drivers/${r.id}`} className="hover:text-orange-600 dark:hover:text-orange-400">
+                        {r.full_name || '—'}
+                      </Link>
+                      {r.full_name && <CopyButton value={r.full_name} label="Copy name" />}
+                    </span>
                   </td>
                   <td className={S.td}><DriverTypePill type={r.driver_type} short /></td>
                   <td className={`${S.td} text-gray-600 dark:text-slate-400 text-xs`}>{r.carrier || '—'}</td>

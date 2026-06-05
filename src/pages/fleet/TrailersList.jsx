@@ -5,6 +5,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import { S } from '../../lib/styles'
 import { StagePill, OWNERSHIP_STAGES, trailerTypePillClasses, inspectionTone, fmtDate, OperationalStatusPill } from './fleetUtils'
 import Select from '../../components/Select'
+import CopyButton from '../../components/CopyButton'
 import TruckTrailerFormModal from './TruckTrailerFormModal'
 import FleetUploadModal from './upload/FleetUploadModal'
 import EquipmentAssignmentsUploadModal from './upload/EquipmentAssignmentsUploadModal'
@@ -204,13 +205,22 @@ export default function TrailersList() {
               ) : filtered.map(r => {
                 const tone = inspectionTone(r.annual_inspection_expiration_date)
                 return (
-                  <tr key={r.id} className={S.tableRow}>
+                  <tr key={r.id} className={`group ${S.tableRow}`}>
                     <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>
                       <Link to={`/fleet/trailers/${r.id}`} className="hover:text-orange-600 dark:hover:text-orange-400">
                         {r.unit_number || '—'}
                       </Link>
                     </td>
-                    <td className={`${S.td} font-mono text-xs text-gray-500 dark:text-slate-400`}>{r.vin || '—'}</td>
+                    <td className={`${S.td} font-mono text-xs text-gray-500 dark:text-slate-400`}>
+                      {r.vin
+                        ? (
+                          <span className="inline-flex items-center gap-1.5">
+                            <span>{r.vin}</span>
+                            <CopyButton value={r.vin} label="Copy VIN" />
+                          </span>
+                        )
+                        : '—'}
+                    </td>
                     <td className={`${S.td} text-gray-600 dark:text-slate-400`}>
                       {[r.year, r.make, r.model].filter(Boolean).join(' ') || '—'}
                     </td>
