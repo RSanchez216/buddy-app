@@ -60,6 +60,19 @@ function cleanStr(v) {
   return s === '' ? null : s
 }
 
+// Open-assignment sentinels seen in the TMS export. Blank is the canonical
+// form but "N/A" is common, and a handful of one-offs ("-", "—", "none",
+// "null", "open") show up across operators / source systems. All are
+// treated as "currently open" with no warning. Anything else that fails
+// to parse as a date IS a warning — that's the signal we want left in
+// the panel after this change.
+const OPEN_END_SENTINELS = new Set(['', 'n/a', 'na', '-', '—', 'none', 'null', 'open'])
+
+function isOpenEndDateSentinel(raw) {
+  if (raw == null) return true
+  return OPEN_END_SENTINELS.has(String(raw).trim().toLowerCase())
+}
+
 function parseTmsId(v) {
   const s = cleanStr(v)
   if (!s) return null
@@ -113,11 +126,15 @@ export function parseEquipmentAssignmentsWorkbook(arrayBuffer, equipmentType) {
     if (!startDate)        { errors.push(`Row ${rowNum}: invalid Start Date "${r[cols.startDate]}" — skipped.`); continue }
 
     const endRaw = cols.endDate ? r[cols.endDate] : null
-    const endDate = parseAssignmentDate(endRaw)
-    // A non-blank End Date that failed to parse is a data issue worth
-    // surfacing; we keep the row (treat as open) and warn.
-    if (endRaw && String(endRaw).trim() && !endDate) {
-      errors.push(`Row ${rowNum}: invalid End Date "${endRaw}" — treating as currently open.`)
+    // Blank / N/A / dash / "open" etc. all mean "currently open" — no
+    // warning. Only flag values that are non-sentinel AND fail date
+    // parsing, since those are genuinely unparseable.
+    let endDate = null
+    if (!isOpenEndDateSentinel(endRaw)) {
+      endDate = parseAssignmentDate(endRaw)
+      if (!endDate) {
+        errors.push(`Row ${rowNum}: unrecognized End Date "${endRaw}" — treating as currently open.`)
+      }
     }
 
     const tmsDriverId = cleanStr(cols.driverId ? r[cols.driverId] : null)
