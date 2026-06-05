@@ -8,12 +8,21 @@ import { supabase } from '../../../lib/supabase'
 // Returns { inserted, updated, errors, newRows, updatedRows }
 //
 // Update semantics: preserves user-managed fields (ownership_stage, notes,
-// ownership_stage_started_at) UNLESS the user changed the stage in the
-// preview (row.overrode_stage === true), in which case stage + history are
-// updated too.
+// operational_status, ownership_stage_started_at) UNLESS the user changed
+// the stage in the preview (row.overrode_stage === true), in which case
+// stage + history are updated too.
+//
+// PRESERVE-ALWAYS contract: any column intentionally left out of
+// buildBasePayload + the conditional override block stays untouched on
+// UPDATE. Do NOT add `operational_status`, `notes`, or `ownership_stage`
+// to the base payload — an "Inactive" unit must survive every Monday
+// upload (the whole reason the column exists). New columns that the
+// TMS file owns can be added to buildBasePayload; new user-managed
+// columns must NOT be added there.
 //
 // Insert semantics: writes the row + an Initial Classification history
-// entry for any stage other than 'unclassified'.
+// entry for any stage other than 'unclassified'. operational_status
+// uses the column default ('active') so new inserts come in active.
 
 const BATCH_INSERT = 200
 

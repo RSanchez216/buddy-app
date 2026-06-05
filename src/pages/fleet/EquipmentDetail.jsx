@@ -3,7 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { S } from '../../lib/styles'
-import { StagePill, STAGE_LABELS, fmtDate, fmtMoney, inspectionTone, trailerTypePillClasses } from './fleetUtils'
+import { StagePill, STAGE_LABELS, fmtDate, fmtMoney, inspectionTone, trailerTypePillClasses, OperationalStatusPill, OPERATIONAL_STATUS_LABELS } from './fleetUtils'
 import TruckTrailerFormModal from './TruckTrailerFormModal'
 
 // Shared detail page for trucks AND trailers. `kind` selects the table +
@@ -104,6 +104,7 @@ export default function EquipmentDetail({ kind }) {
           </h1>
           <div className="flex items-center gap-2 mt-2">
             <StagePill stage={row.ownership_stage} />
+            <OperationalStatusPill status={row.operational_status} />
             {isTrailer && row.trailer_type && (
               <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${trailerTypePillClasses(row.trailer_type)}`}>
                 {row.trailer_type}
@@ -130,7 +131,8 @@ export default function EquipmentDetail({ kind }) {
           <InfoRow label="Carrier" value={row.carrier} />
           <InfoRow label="Equipment Owner (raw)" value={row.equipment_owner_raw} />
           <InfoRow label="Driver" value={row.driver?.full_name} />
-          <InfoRow label="Status (TMS)" value={row.status} />
+          <InfoRow label="Status" value={OPERATIONAL_STATUS_LABELS[row.operational_status] || row.operational_status || 'Active'} />
+          <InfoRow label="TMS Status (imported)" value={row.status} />
           <InfoRow label="Lessee" value={row.lessee} />
           {isTrailer && <InfoRow label="Trailer Type" value={row.trailer_type} />}
           {isTrailer && (

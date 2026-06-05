@@ -43,6 +43,41 @@ export function StagePill({ stage }) {
   )
 }
 
+// User-managed operational status (active/inactive/archived). Distinct
+// from ownership_stage (financial) and the imported TMS `status` (which
+// is uniformly "Active" and overwritten weekly). The pill renders muted
+// grey for inactive/archived so they're visually distinct from active.
+export const OPERATIONAL_STATUSES = [
+  { value: 'active',   label: 'Active'   },
+  { value: 'inactive', label: 'Inactive' },
+  { value: 'archived', label: 'Archived' },
+]
+export const OPERATIONAL_STATUS_LABELS = Object.fromEntries(
+  OPERATIONAL_STATUSES.map(s => [s.value, s.label])
+)
+
+export function operationalStatusPillClasses(status) {
+  switch (status) {
+    case 'active':
+      return 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20'
+    case 'inactive':
+      return 'bg-gray-100 dark:bg-slate-700/40 text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-600/40'
+    case 'archived':
+      return 'bg-gray-100 dark:bg-slate-700/40 text-gray-500 dark:text-slate-400 border border-gray-200 dark:border-slate-600/30 line-through'
+    default:
+      return 'bg-gray-100 dark:bg-slate-700/40 text-gray-400 dark:text-slate-500 border border-gray-200 dark:border-slate-600/30'
+  }
+}
+
+export function OperationalStatusPill({ status }) {
+  const label = OPERATIONAL_STATUS_LABELS[status] || (status ? status.charAt(0).toUpperCase() + status.slice(1) : 'Active')
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${operationalStatusPillClasses(status)}`}>
+      {label}
+    </span>
+  )
+}
+
 export const TRAILER_TYPES = ['Dry Van', 'Reefer', 'Flatbed', 'Step Deck', 'Conestoga', 'Other']
 
 export function trailerTypePillClasses(type) {

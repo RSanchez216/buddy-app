@@ -3,7 +3,8 @@ import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { S } from '../../lib/styles'
-import { StagePill, OWNERSHIP_STAGES } from './fleetUtils'
+import { StagePill, OWNERSHIP_STAGES, OperationalStatusPill } from './fleetUtils'
+import Select from '../../components/Select'
 import TruckTrailerFormModal from './TruckTrailerFormModal'
 import FleetUploadModal from './upload/FleetUploadModal'
 import EquipmentAssignmentsUploadModal from './upload/EquipmentAssignmentsUploadModal'
@@ -31,6 +32,8 @@ export default function TrucksList() {
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('')
   const [stageFilter, setStageFilter] = useState('all')
+  // Default hides archived; user can switch to 'archived' or 'all' to see them.
+  const [opStatusFilter, setOpStatusFilter] = useState('active_inactive')
   const [sortField, setSortField] = useState('unit_number')
   const [sortDir, setSortDir] = useState('asc')
   const [showModal, setShowModal] = useState(false)
@@ -61,7 +64,16 @@ export default function TrucksList() {
 
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase()
-    const base = stageFilter === 'all' ? rows : rows.filter(r => r.ownership_stage === stageFilter)
+    const stageBase = stageFilter === 'all' ? rows : rows.filter(r => r.ownership_stage === stageFilter)
+    // operational_status filter. 'active_inactive' is the default and hides
+    // archived; the all-rows path keeps archived. Defensive default to
+    // 'active' so legacy rows with a NULL column (shouldn't happen — DB
+    // default is 'active' — but defensive) still show up.
+    const base = opStatusFilter === 'all'
+      ? stageBase
+      : opStatusFilter === 'active_inactive'
+        ? stageBase.filter(r => (r.operational_status || 'active') !== 'archived')
+        : stageBase.filter(r => (r.operational_status || 'active') === opStatusFilter)
     const searched = q ? base.filter(r =>
       (r.unit_number || '').toLowerCase().includes(q) ||
       (r.vin || '').toLowerCase().includes(q) ||
@@ -79,7 +91,7 @@ export default function TrucksList() {
       if (va > vb) return  1 * dir
       return 0
     })
-  }, [rows, filter, stageFilter, sortField, sortDir])
+  }, [rows, filter, stageFilter, opStatusFilter, sortField, sortDir])
 
   function toggleSort(field) {
     if (sortField === field) {
@@ -154,12 +166,21 @@ export default function TrucksList() {
         <p className="text-xs text-gray-500 dark:text-slate-500">
           Showing {filtered.length} of {rows.length} truck{rows.length === 1 ? '' : 's'}
         </p>
-        <input
-          className={`${S.input} max-w-xs`}
-          placeholder="Search unit, VIN, plate, owner, driver…"
-          value={filter}
-          onChange={e => setFilter(e.target.value)}
-        />
+        <div className="flex items-center gap-2">
+          <Select value={opStatusFilter} onChange={e => setOpStatusFilter(e.target.value)} className="text-xs">
+            <option value="active_inactive">Active + Inactive</option>
+            <option value="active">Active only</option>
+            <option value="inactive">Inactive only</option>
+            <option value="archived">Archived only</option>
+            <option value="all">All (incl. archived)</option>
+          </Select>
+          <input
+            className={`${S.input} max-w-xs`}
+            placeholder="Search unit, VIN, plate, owner, driver…"
+            value={filter}
+            onChange={e => setFilter(e.target.value)}
+          />
+        </div>
       </div>
 
       <div className={`${S.card} overflow-hidden`}>
@@ -172,6 +193,7 @@ export default function TrucksList() {
                 <SortableTh field="year"        label="Year / Make / Model" sortField={sortField} sortDir={sortDir} onToggle={toggleSort} minW="min-w-[160px]" />
                 <SortableTh field="driver"      label="Driver" sortField={sortField} sortDir={sortDir} onToggle={toggleSort} minW="min-w-[160px]" />
                 <SortableTh field="ownership_stage" label="Ownership Stage" sortField={sortField} sortDir={sortDir} onToggle={toggleSort} minW="min-w-[180px]" />
+                <th className={`${S.th} min-w-[100px]`} title="Operational state — user-managed, survives uploads">Status</th>
                 <th className={`${S.th} min-w-[160px]`}>Carrier</th>
                 <th className={`${S.th} min-w-[120px]`}>License</th>
                 <th className={`${S.th} text-right`}></th>
@@ -179,9 +201,9 @@ export default function TrucksList() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={8} className="px-4 py-12 text-center"><div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500" /></td></tr>
+                <tr><td colSpan={9} className="px-4 py-12 text-center"><div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500" /></td></tr>
               ) : filtered.length === 0 ? (
-                <tr><td colSpan={8} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">
+                <tr><td colSpan={9} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">
                   {rows.length === 0
                     ? "No trucks yet. Click 'Upload Excel' to import a TMS export or 'Add Truck' to add one manually."
                     : 'No trucks match these filters.'}
@@ -199,6 +221,7 @@ export default function TrucksList() {
                   </td>
                   <td className={`${S.td} text-gray-600 dark:text-slate-400`}>{r.driver?.full_name || '—'}</td>
                   <td className={S.td}><StagePill stage={r.ownership_stage} /></td>
+                  <td className={S.td}><OperationalStatusPill status={r.operational_status} /></td>
                   <td className={`${S.td} text-gray-600 dark:text-slate-400 text-xs`}>{r.carrier || '—'}</td>
                   <td className={`${S.td} text-gray-600 dark:text-slate-400 text-xs whitespace-nowrap`}>
                     {r.license_plate ? `${r.license_plate}${r.license_state ? ` (${r.license_state})` : ''}` : '—'}

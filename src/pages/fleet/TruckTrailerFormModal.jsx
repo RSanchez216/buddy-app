@@ -4,6 +4,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import { S } from '../../lib/styles'
 import Modal from '../../components/Modal'
 import Select from '../../components/Select'
+import ComboBox from '../../components/ComboBox'
 import { OWNERSHIP_STAGES, TRAILER_TYPES } from './fleetUtils'
 import { useToast } from '../../contexts/ToastContext'
 
@@ -21,7 +22,9 @@ const emptyTruck = {
   unit_number: '', vin: '', year: '', make: '', model: '',
   license_plate: '', license_state: '', transponder: '',
   carrier: '', equipment_owner_raw: '', driver_id: '',
-  ownership_stage: 'unclassified', status: '', lessee: '', notes: '',
+  ownership_stage: 'unclassified',
+  operational_status: 'active',
+  status: '', lessee: '', notes: '',
 }
 const emptyTrailer = {
   ...emptyTruck,
@@ -59,6 +62,7 @@ export default function TruckTrailerFormModal({ kind, open, editItem, onClose, o
         equipment_owner_raw: e.equipment_owner_raw || '',
         driver_id: e.driver_id || '',
         ownership_stage: e.ownership_stage || 'unclassified',
+        operational_status: e.operational_status || 'active',
         status: e.status || '',
         lessee: e.lessee || '',
         notes: e.notes || '',
@@ -111,6 +115,7 @@ export default function TruckTrailerFormModal({ kind, open, editItem, onClose, o
       equipment_owner_raw: form.equipment_owner_raw.trim() || null,
       driver_id: form.driver_id || null,
       ownership_stage: form.ownership_stage || 'unclassified',
+      operational_status: form.operational_status || 'active',
       status: form.status.trim() || null,
       lessee: form.lessee.trim() || null,
       notes: form.notes.trim() || null,
@@ -203,13 +208,19 @@ export default function TruckTrailerFormModal({ kind, open, editItem, onClose, o
 
         <div className="grid grid-cols-2 gap-4">
           <Field label="Carrier">
-            <Select value={form.carrier} onChange={e => setForm(f => ({ ...f, carrier: e.target.value }))}>
-              <option value="">— Select —</option>
-              {CARRIERS.map(c => <option key={c} value={c}>{c}</option>)}
-              {form.carrier && !CARRIERS.includes(form.carrier) && (
-                <option value={form.carrier}>{form.carrier} (legacy)</option>
-              )}
-            </Select>
+            <ComboBox
+              options={[
+                ...CARRIERS.map(c => ({ id: c, name: c })),
+                ...(form.carrier && !CARRIERS.includes(form.carrier)
+                  ? [{ id: form.carrier, name: `${form.carrier} (legacy)` }]
+                  : []),
+              ]}
+              value={form.carrier}
+              onChange={id => setForm(f => ({ ...f, carrier: id }))}
+              placeholder="— Select carrier —"
+              searchPlaceholder="Search carriers…"
+              noResultsLabel="No carrier matches"
+            />
           </Field>
           <Field label="Equipment Owner">
             <input
@@ -227,15 +238,28 @@ export default function TruckTrailerFormModal({ kind, open, editItem, onClose, o
 
         <div className="grid grid-cols-2 gap-4">
           <Field label="Driver">
-            <Select value={form.driver_id} onChange={e => setForm(f => ({ ...f, driver_id: e.target.value }))}>
-              <option value="">— Unassigned —</option>
-              {drivers.map(d => <option key={d.id} value={d.id}>{d.full_name}</option>)}
-            </Select>
+            <ComboBox
+              options={drivers.map(d => ({ id: d.id, name: d.full_name }))}
+              value={form.driver_id}
+              onChange={id => setForm(f => ({ ...f, driver_id: id }))}
+              placeholder="— Unassigned —"
+              searchPlaceholder="Search drivers…"
+              noResultsLabel="No driver matches"
+            />
           </Field>
           <Field label="Ownership Stage">
-            <Select value={form.ownership_stage} onChange={e => setForm(f => ({ ...f, ownership_stage: e.target.value }))}>
-              {OWNERSHIP_STAGES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-            </Select>
+            <ComboBox
+              options={OWNERSHIP_STAGES.map(s => ({
+                id: s.value,
+                name: s.icon ? `${s.icon} ${s.label}` : s.label,
+              }))}
+              value={form.ownership_stage}
+              onChange={id => setForm(f => ({ ...f, ownership_stage: id || 'unclassified' }))}
+              placeholder="— Select stage —"
+              searchPlaceholder="Search stages…"
+              noResultsLabel="No stage matches"
+              clearable={false}
+            />
           </Field>
         </div>
 
@@ -253,9 +277,26 @@ export default function TruckTrailerFormModal({ kind, open, editItem, onClose, o
           </div>
         )}
 
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="Status (TMS)">
-            <input className={S.input} value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))} placeholder="Active, Inactive, …" />
+        <div className="grid grid-cols-3 gap-4">
+          <Field label="Status">
+            <Select value={form.operational_status} onChange={e => setForm(f => ({ ...f, operational_status: e.target.value }))}>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+              <option value="archived">Archived</option>
+            </Select>
+            <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-1 leading-tight">
+              Operational state — survives weekly TMS uploads.
+            </p>
+          </Field>
+          <Field label="TMS Status (imported)">
+            <input
+              className={`${S.input} bg-gray-50 dark:bg-white/[0.02] text-gray-500 dark:text-slate-500 cursor-not-allowed`}
+              value={form.status}
+              readOnly
+              tabIndex={-1}
+              title="Set by the weekly TMS upload — read-only here."
+              placeholder="—"
+            />
           </Field>
           <Field label="Lessee">
             <input className={S.input} value={form.lessee} onChange={e => setForm(f => ({ ...f, lessee: e.target.value }))} />

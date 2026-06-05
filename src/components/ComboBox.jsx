@@ -6,8 +6,22 @@ import { useState, useRef, useEffect } from 'react'
  * value: selected id (string)
  * onChange: (id: string) => void
  * onAddNew: optional () => void — shown when no results found
+ * placeholder: trigger placeholder when no value is selected
+ * searchPlaceholder / noResultsLabel / addNewLabel: per-call copy overrides.
+ *   Defaults are vendor-flavored to stay backwards-compatible with the
+ *   original Invoice Inbox usage.
  */
-export default function ComboBox({ options = [], value, onChange, placeholder = 'Select…', onAddNew }) {
+export default function ComboBox({
+  options = [],
+  value,
+  onChange,
+  placeholder = 'Select…',
+  onAddNew,
+  searchPlaceholder = 'Search vendors…',
+  noResultsLabel    = 'No vendor found',
+  addNewLabel       = 'Add new vendor →',
+  clearable         = true,
+}) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const ref = useRef()
@@ -64,7 +78,7 @@ export default function ComboBox({ options = [], value, onChange, placeholder = 
             onChange={e => setQuery(e.target.value)}
             onClick={e => e.stopPropagation()}
             className="flex-1 bg-transparent outline-none text-gray-900 dark:text-slate-100 placeholder-gray-400 dark:placeholder-slate-500 min-w-0"
-            placeholder="Search vendors…"
+            placeholder={searchPlaceholder}
           />
         ) : selected ? (
           <span className="text-gray-900 dark:text-slate-100 flex-1 truncate">{selected.name}</span>
@@ -73,7 +87,7 @@ export default function ComboBox({ options = [], value, onChange, placeholder = 
         )}
 
         {/* Clear button */}
-        {selected && !open && (
+        {clearable && selected && !open && (
           <button
             type="button"
             onClick={clearSelection}
@@ -99,14 +113,14 @@ export default function ComboBox({ options = [], value, onChange, placeholder = 
           <div className="max-h-60 overflow-y-auto">
             {filtered.length === 0 ? (
               <div className="px-4 py-4">
-                <p className="text-sm text-gray-400 dark:text-slate-500">No vendor found for "{query}"</p>
+                <p className="text-sm text-gray-400 dark:text-slate-500">{noResultsLabel} for "{query}"</p>
                 {onAddNew && (
                   <button
                     type="button"
                     onClick={() => { setOpen(false); setQuery(''); onAddNew() }}
                     className="mt-2 text-xs font-semibold text-cyan-500 hover:text-cyan-400 transition-colors"
                   >
-                    Add new vendor →
+                    {addNewLabel}
                   </button>
                 )}
               </div>
