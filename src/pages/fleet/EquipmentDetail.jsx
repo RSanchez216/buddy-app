@@ -22,6 +22,7 @@ export default function EquipmentDetail({ kind }) {
 
   const [row, setRow] = useState(null)
   const [history, setHistory] = useState([])
+  const [assignments, setAssignments] = useState([])
   const [loanEq, setLoanEq] = useState(null)
   const [loading, setLoading] = useState(true)
   const [showEdit, setShowEdit] = useState(false)
@@ -55,6 +56,17 @@ export default function EquipmentDetail({ kind }) {
       .eq(historyKey, id)
       .order('occurred_at', { ascending: false })
     setHistory(hist || [])
+
+    // Assignment history (one row per (driver, start_date) event). Newest
+    // first. Open assignments — end_date IS NULL — render with a "Current"
+    // badge in the section below.
+    const { data: assigns } = await supabase
+      .from('equipment_assignments')
+      .select('id, start_date, end_date, driver_name_raw, tms_driver_id, driver:drivers(id, full_name, internal_id)')
+      .eq('equipment_type', kind)
+      .eq(historyKey, id)
+      .order('start_date', { ascending: false })
+    setAssignments(assigns || [])
 
     setLoading(false)
   }
@@ -181,7 +193,65 @@ export default function EquipmentDetail({ kind }) {
         )}
       </Section>
 
-      {/* Section 3 — Ownership History */}
+      {/* Section 3 — Assignment History (driver assignments per TMS upload) */}
+      <Section title="Assignment History">
+        {assignments.length === 0 ? (
+          <p className="text-sm text-gray-400 dark:text-slate-500 italic">
+            No assignment history. Upload the TMS {isTrailer ? 'Trailer' : 'Truck'} Assignments
+            export from the {isTrailer ? 'Trailers' : 'Trucks'} list to populate this.
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className={S.tableHead}>
+                <tr>
+                  <th className={S.th}>Driver</th>
+                  <th className={S.th}>Start</th>
+                  <th className={S.th}>End</th>
+                  <th className={S.th}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {assignments.map(a => {
+                  const isCurrent = a.end_date == null
+                  const driverLabel = a.driver?.full_name
+                    || a.driver_name_raw
+                    || (a.tms_driver_id ? `#${a.tms_driver_id}` : '—')
+                  const driverDisplay = a.driver?.id
+                    ? (
+                      <Link to={`/fleet/drivers/${a.driver.id}`} className="text-orange-600 hover:underline">
+                        {driverLabel}
+                      </Link>
+                    )
+                    : (
+                      <span className="text-gray-600 dark:text-slate-400" title="Driver no longer in BUDDY">
+                        {driverLabel}
+                      </span>
+                    )
+                  return (
+                    <tr key={a.id} className={S.tableRow}>
+                      <td className={S.td}>{driverDisplay}</td>
+                      <td className={`${S.td} whitespace-nowrap text-gray-600 dark:text-slate-400`}>{fmtDate(a.start_date)}</td>
+                      <td className={`${S.td} whitespace-nowrap text-gray-600 dark:text-slate-400`}>
+                        {a.end_date ? fmtDate(a.end_date) : <span className="italic text-emerald-600 dark:text-emerald-400">Open</span>}
+                      </td>
+                      <td className={`${S.td} whitespace-nowrap`}>
+                        {isCurrent && (
+                          <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">
+                            Current
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Section>
+
+      {/* Section 4 — Ownership History */}
       <Section title="Ownership History">
         {history.length === 0 ? (
           <p className="text-sm text-gray-400 dark:text-slate-500 italic">No ownership transitions yet.</p>

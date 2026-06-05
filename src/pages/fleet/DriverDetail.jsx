@@ -13,6 +13,7 @@ export default function DriverDetail() {
   const [trucks, setTrucks] = useState([])
   const [trailers, setTrailers] = useState([])
   const [history, setHistory] = useState([])
+  const [assignments, setAssignments] = useState([])
   const [loading, setLoading] = useState(true)
   const [showEdit, setShowEdit] = useState(false)
 
@@ -23,17 +24,30 @@ export default function DriverDetail() {
     const { data } = await supabase.from('drivers').select('*').eq('id', id).maybeSingle()
     setRow(data || null)
 
-    const [tRes, trRes, hRes] = await Promise.all([
+    const [tRes, trRes, hRes, aRes] = await Promise.all([
       supabase.from('trucks').select('id, unit_number, vin, ownership_stage').eq('driver_id', id).order('unit_number'),
       supabase.from('trailers').select('id, unit_number, vin, ownership_stage, trailer_type').eq('driver_id', id).order('unit_number'),
       supabase.from('driver_status_history')
         .select('*, creator:users!driver_status_history_created_by_fkey(full_name, email)')
         .eq('driver_id', id)
         .order('occurred_at', { ascending: false }),
+      // Equipment assignment history for this driver — both trucks and
+      // trailers, all events, newest first. The truck:/trailer: hints
+      // are tolerant of unmatched assignments (FK null when the unit was
+      // gone from BUDDY at upload time).
+      supabase.from('equipment_assignments')
+        .select(`
+          id, equipment_type, start_date, end_date, equipment_name_raw, tms_equipment_id,
+          truck:trucks(id, unit_number),
+          trailer:trailers(id, unit_number)
+        `)
+        .eq('driver_id', id)
+        .order('start_date', { ascending: false }),
     ])
     setTrucks(tRes.data || [])
     setTrailers(trRes.data || [])
     setHistory(hRes.data || [])
+    setAssignments(aRes.data || [])
     setLoading(false)
   }
 
@@ -144,6 +158,69 @@ export default function DriverDetail() {
                 </ul>
               </div>
             )}
+          </div>
+        )}
+      </Section>
+
+      <Section title="Equipment Assignment History">
+        {assignments.length === 0 ? (
+          <p className="text-sm text-gray-400 dark:text-slate-500 italic">
+            No assignment history yet. Upload the TMS Truck or Trailer Assignments export
+            from the {' '}<Link to="/fleet/trucks" className="text-orange-600 hover:underline">Trucks</Link>{' '}/
+            {' '}<Link to="/fleet/trailers" className="text-orange-600 hover:underline">Trailers</Link>{' '}
+            list to populate this.
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className={S.tableHead}>
+                <tr>
+                  <th className={S.th}>Type</th>
+                  <th className={S.th}>Unit</th>
+                  <th className={S.th}>Start</th>
+                  <th className={S.th}>End</th>
+                  <th className={S.th}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {assignments.map(a => {
+                  const isCurrent = a.end_date == null
+                  const unitMatched = a.equipment_type === 'truck' ? a.truck : a.trailer
+                  const unitLabel = unitMatched?.unit_number || a.equipment_name_raw || '—'
+                  const unitDisplay = unitMatched?.id
+                    ? (
+                      <Link
+                        to={`/fleet/${a.equipment_type === 'truck' ? 'trucks' : 'trailers'}/${unitMatched.id}`}
+                        className="font-mono text-orange-600 hover:underline"
+                      >
+                        {unitLabel}
+                      </Link>
+                    )
+                    : (
+                      <span className="font-mono text-gray-600 dark:text-slate-400" title={`Unit no longer in BUDDY (TMS Equipment ID ${a.tms_equipment_id ?? 'unknown'})`}>
+                        {unitLabel}
+                      </span>
+                    )
+                  return (
+                    <tr key={a.id} className={S.tableRow}>
+                      <td className={`${S.td} text-xs uppercase tracking-wide text-gray-500 dark:text-slate-400`}>{a.equipment_type}</td>
+                      <td className={S.td}>{unitDisplay}</td>
+                      <td className={`${S.td} whitespace-nowrap text-gray-600 dark:text-slate-400`}>{fmtDate(a.start_date)}</td>
+                      <td className={`${S.td} whitespace-nowrap text-gray-600 dark:text-slate-400`}>
+                        {a.end_date ? fmtDate(a.end_date) : <span className="italic text-emerald-600 dark:text-emerald-400">Open</span>}
+                      </td>
+                      <td className={`${S.td} whitespace-nowrap`}>
+                        {isCurrent && (
+                          <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">
+                            Current
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </Section>

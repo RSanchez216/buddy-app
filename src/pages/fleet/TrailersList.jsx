@@ -6,6 +6,7 @@ import { S } from '../../lib/styles'
 import { StagePill, OWNERSHIP_STAGES, trailerTypePillClasses, inspectionTone, fmtDate } from './fleetUtils'
 import TruckTrailerFormModal from './TruckTrailerFormModal'
 import FleetUploadModal from './upload/FleetUploadModal'
+import EquipmentAssignmentsUploadModal from './upload/EquipmentAssignmentsUploadModal'
 
 const STAGE_PILLS = [
   { key: 'all', label: 'All', icon: '' },
@@ -31,6 +32,7 @@ export default function TrailersList() {
   const [showModal, setShowModal] = useState(false)
   const [editItem, setEditItem] = useState(null)
   const [showUpload, setShowUpload] = useState(false)
+  const [showAssignmentsUpload, setShowAssignmentsUpload] = useState(false)
 
   useEffect(() => { load() }, [])
 
@@ -108,6 +110,14 @@ export default function TrailersList() {
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
               Upload Excel
+            </button>
+            <button
+              onClick={() => setShowAssignmentsUpload(true)}
+              title="Upload the TMS Trailer Assignments export to refresh assignment history + current drivers"
+              className="flex items-center gap-2 px-3 py-2 text-sm font-semibold border border-cyan-500 text-cyan-600 hover:bg-cyan-50 dark:hover:bg-cyan-500/10 rounded-xl transition-all"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87m6 1.87a4 4 0 100-8 4 4 0 000 8z" /></svg>
+              Upload Assignments
             </button>
             <button onClick={openAdd} className={S.btnPrimary}>
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
@@ -236,6 +246,12 @@ export default function TrailersList() {
         kind="trailer"
         open={showUpload}
         onClose={() => setShowUpload(false)}
+        onCommitted={() => load()}
+      />
+      <EquipmentAssignmentsUploadModal
+        equipmentType="trailer"
+        open={showAssignmentsUpload}
+        onClose={() => setShowAssignmentsUpload(false)}
         onCommitted={() => load()}
       />
     </div>
