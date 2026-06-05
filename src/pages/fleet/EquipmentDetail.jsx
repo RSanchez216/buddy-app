@@ -5,6 +5,8 @@ import { useAuth } from '../../contexts/AuthContext'
 import { S } from '../../lib/styles'
 import { StagePill, STAGE_LABELS, fmtDate, fmtMoney, inspectionTone, trailerTypePillClasses, OperationalStatusPill, OPERATIONAL_STATUS_LABELS } from './fleetUtils'
 import TruckTrailerFormModal from './TruckTrailerFormModal'
+import { useToast } from '../../contexts/ToastContext'
+import Select from '../../components/Select'
 
 // Shared detail page for trucks AND trailers. `kind` selects the table +
 // the trailer-only display block. Three sections:
@@ -13,8 +15,9 @@ import TruckTrailerFormModal from './TruckTrailerFormModal'
 //   3. Ownership History (equipment_ownership_history entries)
 
 export default function EquipmentDetail({ kind }) {
-  const { canEdit } = useAuth()
+  const { canEdit, user } = useAuth()
   const navigate = useNavigate()
+  const toast = useToast()
   const { id } = useParams()
   const isTrailer = kind === 'trailer'
   const table = isTrailer ? 'trailers' : 'trucks'
@@ -24,8 +27,13 @@ export default function EquipmentDetail({ kind }) {
   const [history, setHistory] = useState([])
   const [assignments, setAssignments] = useState([])
   const [loanEq, setLoanEq] = useState(null)
+  const [lessorVendors, setLessorVendors] = useState([])
   const [loading, setLoading] = useState(true)
   const [showEdit, setShowEdit] = useState(false)
+  // Lease editor local state — only initialized when the row loads and
+  // applies on Save. Independent of the main edit modal.
+  const [leaseDraft, setLeaseDraft] = useState({ lessor_vendor_id: '', lease_cost: '', lease_cost_period: 'monthly' })
+  const [leaseSaving, setLeaseSaving] = useState(false)
 
   useEffect(() => { if (id) load() /* eslint-disable-line */ }, [id])
 
@@ -68,7 +76,76 @@ export default function EquipmentDetail({ kind }) {
       .order('start_date', { ascending: false })
     setAssignments(assigns || [])
 
+    // Lessor vendor list — only loaded when the row is a leased unit so we
+    // don't pull 600+ vendors on every detail open. Equipment Rental
+    // category is the convention for lessors.
+    if (data?.ownership_stage === 'company_leased') {
+      const { data: vendors } = await supabase
+        .from('vendors')
+        .select('id, name, category')
+        .eq('category', 'Equipment Rental')
+        .order('name')
+      setLessorVendors(vendors || [])
+    }
+    setLeaseDraft({
+      lessor_vendor_id:   data?.lessor_vendor_id || '',
+      lease_cost:         data?.lease_cost ?? '',
+      lease_cost_period:  data?.lease_cost_period || 'monthly',
+    })
+
     setLoading(false)
+  }
+
+  async function findByVin() {
+    if (!row || !row.vin) return
+    const vinNorm = String(row.vin).replace(/[^A-Za-z0-9]/g, '').toUpperCase()
+    // Single best match: prefer active loans, then most-recent.
+    const { data: matches, error: matchErr } = await supabase
+      .from('loan_equipment')
+      .select('id, vin, monthly_payment, loan:loans(id, status, contract_number, loan_id_external)')
+      .ilike('vin', `%${vinNorm}%`)
+    if (matchErr) { toast.error("Couldn't look up loan equipment", matchErr); return }
+    const candidates = (matches || []).filter(m =>
+      String(m.vin || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase() === vinNorm
+    )
+    if (candidates.length === 0) {
+      toast.error(`No debt-schedule equipment matches VIN ${row.vin}.`)
+      return
+    }
+    candidates.sort((a, b) => Number(b.loan?.status === 'active') - Number(a.loan?.status === 'active'))
+    const best = candidates[0]
+    const lbl = best.loan?.contract_number || best.loan?.loan_id_external || best.id.slice(0, 8)
+    if (!window.confirm(`Link this ${kind} to "${lbl}" (${best.loan?.status})?`)) return
+    const { error } = await supabase.from(table).update({
+      loan_equipment_id: best.id, updated_by: user?.id || null,
+    }).eq('id', row.id)
+    if (error) { toast.error("Couldn't link to loan equipment", error); return }
+    toast.success(`Linked to ${lbl}`)
+    load()
+  }
+
+  async function saveLease() {
+    if (!row || leaseSaving) return
+    const costNum = leaseDraft.lease_cost === '' ? null : Number(leaseDraft.lease_cost)
+    if (costNum != null && (!Number.isFinite(costNum) || costNum < 0)) {
+      toast.error('Lease cost must be 0 or a positive number.')
+      return
+    }
+    setLeaseSaving(true)
+    const payload = {
+      lessor_vendor_id:   leaseDraft.lessor_vendor_id || null,
+      lease_cost:         costNum,
+      lease_cost_period:  leaseDraft.lease_cost_period || 'monthly',
+      updated_by:         user?.id || null,
+    }
+    const { error } = await supabase.from(table).update(payload).eq('id', row.id)
+    setLeaseSaving(false)
+    if (error) {
+      toast.error("Couldn't save lease cost", error)
+      return
+    }
+    toast.success('Lease cost saved')
+    load()
   }
 
   if (loading) {
@@ -184,16 +261,89 @@ export default function EquipmentDetail({ kind }) {
         ) : (
           <div className="text-sm text-gray-500 dark:text-slate-400 flex items-center justify-between gap-3">
             <span>No debt schedule record linked.</span>
-            <button
-              disabled
-              title="VIN matching arrives in PR 3"
-              className="px-3 py-1.5 text-xs font-medium border border-gray-200 dark:border-slate-700 text-gray-400 dark:text-slate-500 rounded-lg cursor-not-allowed"
-            >
-              Find by VIN (PR 3)
-            </button>
+            {canEdit && (
+              <button
+                onClick={findByVin}
+                title="Search loan_equipment by this unit's VIN and link the best active match"
+                className="px-3 py-1.5 text-xs font-medium border border-orange-300 dark:border-orange-500/30 text-orange-700 dark:text-orange-400 rounded-lg hover:bg-orange-50 dark:hover:bg-orange-500/5 transition-colors"
+              >
+                Find by VIN
+              </button>
+            )}
           </div>
         )}
       </Section>
+
+      {/* Section 2b — Lease Cost (lessor + monthly/weekly cost). Only
+          shown for company-leased units; this is where the Fleet Cost
+          screen's NULL cost values get filled in. Other-cadence number
+          derives live as the user types so they can see what the system
+          will actually store / display. */}
+      {row.ownership_stage === 'company_leased' && (
+        <Section title="Lease Cost">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3 text-sm">
+            <div>
+              <label className={S.label}>Lessor</label>
+              <Select
+                value={leaseDraft.lessor_vendor_id || ''}
+                onChange={e => setLeaseDraft(d => ({ ...d, lessor_vendor_id: e.target.value }))}
+                disabled={!canEdit}
+              >
+                <option value="">— Select lessor vendor —</option>
+                {lessorVendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+              </Select>
+              {row.equipment_owner_raw && (
+                <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-1">
+                  From TMS: <span className="font-mono">{row.equipment_owner_raw}</span>
+                </p>
+              )}
+            </div>
+            <div>
+              <label className={S.label}>Cost period</label>
+              <Select
+                value={leaseDraft.lease_cost_period || 'monthly'}
+                onChange={e => setLeaseDraft(d => ({ ...d, lease_cost_period: e.target.value }))}
+                disabled={!canEdit}
+              >
+                <option value="monthly">Monthly</option>
+                <option value="weekly">Weekly</option>
+              </Select>
+            </div>
+            <div>
+              <label className={S.label}>
+                Cost ({leaseDraft.lease_cost_period === 'weekly' ? 'per week' : 'per month'})
+              </label>
+              <input
+                type="number" step="0.01" min="0"
+                className={S.input}
+                value={leaseDraft.lease_cost}
+                placeholder="0.00"
+                onChange={e => setLeaseDraft(d => ({ ...d, lease_cost: e.target.value }))}
+                disabled={!canEdit}
+              />
+              {(() => {
+                const n = Number(leaseDraft.lease_cost)
+                if (!Number.isFinite(n) || n <= 0) return null
+                const other = leaseDraft.lease_cost_period === 'weekly'
+                  ? { label: 'Monthly equivalent', val: n * 52 / 12 }
+                  : { label: 'Weekly equivalent',  val: n * 12 / 52 }
+                return (
+                  <p className="text-[11px] text-gray-500 dark:text-slate-500 mt-1">
+                    {other.label}: <span className="font-mono font-semibold text-gray-700 dark:text-slate-300">{fmtMoney(other.val)}</span>
+                  </p>
+                )
+              })()}
+            </div>
+            <div className="flex items-end justify-end">
+              {canEdit && (
+                <button onClick={saveLease} disabled={leaseSaving} className={S.btnSave}>
+                  {leaseSaving ? 'Saving…' : 'Save lease cost'}
+                </button>
+              )}
+            </div>
+          </div>
+        </Section>
+      )}
 
       {/* Section 3 — Assignment History (driver assignments per TMS upload) */}
       <Section title="Assignment History">

@@ -10,6 +10,7 @@ import Select from '../components/Select'
 import MultiSelect from '../components/MultiSelect'
 import { buildDeptOptions, pmLabel } from '../lib/deptUtils'
 import { useToast } from '../contexts/ToastContext'
+import { Link } from 'react-router-dom'
 
 const FREQUENCIES = ['Weekly', 'Bi-Weekly', 'Monthly', 'Yearly', 'One-Time']
 
@@ -37,6 +38,11 @@ export default function VendorMaster() {
   const [aliases, setAliases] = useState([])
   const [newAlias, setNewAlias] = useState('')
   const [aliasLoading, setAliasLoading] = useState(false)
+  // Leased equipment for this vendor — only populated when the modal opens
+  // on an Equipment Rental vendor. List of { etype, id, unit_number, vin,
+  // monthly_cost, weekly_cost } drawn from the fleet_equipment_cost view.
+  const [leasedEquipment, setLeasedEquipment] = useState([])
+  const [leasedEquipmentLoading, setLeasedEquipmentLoading] = useState(false)
   const [showImport, setShowImport] = useState(false)
   const [importRows, setImportRows] = useState([])
   const fileRef = useRef()
@@ -82,6 +88,22 @@ export default function VendorMaster() {
       is_active: v.is_active,
     })
     setError(''); setNewAlias(''); loadAliases(v.id); setShowModal(true)
+    // Side-load leased equipment when the vendor's category is the lessor
+    // convention. Other categories skip the fetch.
+    const isEquipmentRental = (v.vendor_categories?.name || v.category) === 'Equipment Rental'
+    setLeasedEquipment([])
+    if (isEquipmentRental) loadLeasedEquipment(v.id)
+  }
+
+  async function loadLeasedEquipment(vendorId) {
+    setLeasedEquipmentLoading(true)
+    const { data } = await supabase
+      .from('fleet_equipment_cost')
+      .select('etype, id, unit_number, vin, monthly_cost, weekly_cost')
+      .eq('lessor_vendor_id', vendorId)
+      .order('etype').order('unit_number')
+    setLeasedEquipment(data || [])
+    setLeasedEquipmentLoading(false)
   }
 
   async function loadAliases(vendorId) {
@@ -457,6 +479,75 @@ export default function VendorMaster() {
                 </>
               )}
             </div>
+          )}
+
+          {/* Leased Equipment — read-only listing for Equipment Rental
+              vendors. Inverse of assigning a lessor from EquipmentDetail:
+              shows every truck/trailer pointing at this vendor via
+              lessor_vendor_id, with the monthly + weekly cost totals. */}
+          {editVendor && leasedEquipment.length > 0 && (
+            <div>
+              <label className={S.label}>Leased Equipment ({leasedEquipment.length})</label>
+              <p className="text-xs text-gray-400 dark:text-slate-500 mb-2">
+                Units MANAS leases from this vendor. Cost shown is each unit&apos;s native cadence converted to both views.
+              </p>
+              <div className="rounded-xl border border-gray-200 dark:border-white/5 overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead className="bg-gray-50 dark:bg-white/[0.02] text-[10px] uppercase tracking-widest text-gray-500 dark:text-slate-500">
+                    <tr>
+                      <th className="text-left px-3 py-2 font-semibold">Unit</th>
+                      <th className="text-left px-3 py-2 font-semibold">Type</th>
+                      <th className="text-right px-3 py-2 font-semibold">Monthly</th>
+                      <th className="text-right px-3 py-2 font-semibold">Weekly</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 dark:divide-white/5">
+                    {leasedEquipment.map(u => (
+                      <tr key={`${u.etype}:${u.id}`}>
+                        <td className="px-3 py-1.5 font-medium text-gray-900 dark:text-slate-200">
+                          <Link
+                            to={`/fleet/${u.etype === 'truck' ? 'trucks' : 'trailers'}/${u.id}`}
+                            onClick={() => setShowModal(false)}
+                            className="hover:text-orange-600 dark:hover:text-orange-400"
+                          >
+                            {u.unit_number || u.vin?.slice(-6) || u.id.slice(0, 8)}
+                          </Link>
+                        </td>
+                        <td className="px-3 py-1.5 text-gray-500 dark:text-slate-400 uppercase">{u.etype}</td>
+                        <td className={`px-3 py-1.5 text-right font-mono ${u.monthly_cost == null ? 'text-amber-600 dark:text-amber-400 italic' : 'text-gray-900 dark:text-slate-200'}`}>
+                          {u.monthly_cost == null
+                            ? 'needs entry'
+                            : Number(u.monthly_cost).toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 })}
+                        </td>
+                        <td className={`px-3 py-1.5 text-right font-mono ${u.weekly_cost == null ? 'text-gray-400 dark:text-slate-500 italic' : 'text-gray-600 dark:text-slate-400'}`}>
+                          {u.weekly_cost == null
+                            ? '—'
+                            : Number(u.weekly_cost).toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 })}
+                        </td>
+                      </tr>
+                    ))}
+                    {(() => {
+                      const mTot = leasedEquipment.reduce((s, u) => s + Number(u.monthly_cost || 0), 0)
+                      const wTot = leasedEquipment.reduce((s, u) => s + Number(u.weekly_cost  || 0), 0)
+                      return (
+                        <tr className="bg-gray-50 dark:bg-white/[0.02]">
+                          <td className="px-3 py-1.5 font-semibold text-gray-700 dark:text-slate-300" colSpan={2}>Total</td>
+                          <td className="px-3 py-1.5 text-right font-mono font-semibold text-gray-900 dark:text-slate-200">
+                            {mTot.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 })}
+                          </td>
+                          <td className="px-3 py-1.5 text-right font-mono font-semibold text-gray-600 dark:text-slate-400">
+                            {wTot.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 })}
+                          </td>
+                        </tr>
+                      )
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+          {editVendor && leasedEquipmentLoading && (
+            <p className="text-xs text-gray-400 dark:text-slate-500 italic">Loading leased equipment…</p>
           )}
 
           <div className={S.modalFooter}>

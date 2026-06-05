@@ -30,6 +30,7 @@ const Icons = {
   sun:       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707M17.657 17.657l-.707-.707M6.343 6.343l-.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z" /></svg>,
   moon:      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" /></svg>,
   menu:      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6h16M4 12h16M4 18h16" /></svg>,
+  cost:      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1" /></svg>,
 }
 
 // ── Nav item ───────────────────────────────────────────────────────────────
@@ -148,6 +149,7 @@ export default function Layout() {
             <NavItem to="/fleet/trucks"   label="Trucks"   icon={Icons.truck}   onClick={close} />
             <NavItem to="/fleet/trailers" label="Trailers" icon={Icons.trailer} onClick={close} />
             <NavItem to="/fleet/drivers"  label="Drivers"  icon={Icons.driver}  onClick={close} />
+            <NavItem to="/fleet/cost"     label="Equipment Cost" icon={Icons.cost} onClick={close} />
           </NavSection>
 
           {/* Financial Controls */}
