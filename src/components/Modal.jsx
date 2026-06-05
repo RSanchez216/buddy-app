@@ -8,7 +8,7 @@ export default function Modal({ open, onClose, title, children, size = 'md' }) {
 
   if (!open) return null
 
-  const sizeClass = { sm: 'max-w-sm', md: 'max-w-lg', lg: 'max-w-2xl', xl: 'max-w-4xl', '2xl': 'max-w-[1200px]' }[size]
+  const sizeClass = { sm: 'max-w-sm', md: 'max-w-lg', lg: 'max-w-2xl', xl: 'max-w-4xl', '2xl': 'max-w-[1200px]', '3xl': 'max-w-[1400px]' }[size]
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">

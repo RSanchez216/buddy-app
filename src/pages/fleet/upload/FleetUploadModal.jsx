@@ -189,7 +189,7 @@ export default function FleetUploadModal({ kind, open, onClose, onCommitted }) {
     : `Upload ${isTrailer ? 'Trailers' : 'Trucks'} Excel`
 
   return (
-    <Modal open={open} onClose={onClose} title={title} size="xl">
+    <Modal open={open} onClose={onClose} title={title} size="3xl">
       <div className={S.modalBody}>
         {parseErrors.length > 0 && stage !== 'done' && (
           <div className={S.errorBox}>
@@ -320,7 +320,12 @@ export default function FleetUploadModal({ kind, open, onClose, onCommitted }) {
                       <th className={S.th}>VIN</th>
                       <th className={S.th}>Owner (raw)</th>
                       <th className={S.th}>Auto-Class · Why</th>
-                      <th className={S.th}>Override</th>
+                      <th
+                        className={S.th}
+                        title="Manually reclassify this row's ownership stage, overriding the auto-classification. Leave as-is to accept the AUTO-CLASS decision."
+                      >
+                        Override
+                      </th>
                       <th className={S.th}>Driver</th>
                       <th className={S.th}>Status</th>
                     </tr>
@@ -357,7 +362,7 @@ export default function FleetUploadModal({ kind, open, onClose, onCommitted }) {
                             <Select
                               value={row.ownership_stage}
                               onChange={e => setRowStage(idx, e.target.value)}
-                              className="text-xs"
+                              className="text-xs min-w-[240px]"
                             >
                               {OWNERSHIP_STAGES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
                             </Select>

@@ -287,7 +287,7 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
   if (!open) return null
 
   return (
-    <Modal open={open} onClose={onClose} title={title} size="xl">
+    <Modal open={open} onClose={onClose} title={title} size="3xl">
       <div className={S.modalBody}>
         {parseErrors.length > 0 && stage !== 'done' && (
           <div className={S.errorBox}>
@@ -410,7 +410,12 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
                       </th>
                       <th className={S.th}>ID#</th>
                       <th className={S.th}>Full Name</th>
-                      <th className={S.th}>Driver Type</th>
+                      <th
+                        className={S.th}
+                        title="Manually reclassify this driver's type, overriding the auto-classification. Leave as-is to accept the parsed value."
+                      >
+                        Driver Type
+                      </th>
                       <th className={S.th}>Carrier</th>
                       <th className={S.th}>Truck / Trailer</th>
                       <th className={S.th}>Compensation</th>
@@ -442,7 +447,7 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
                             <Select
                               value={row.driver_type || ''}
                               onChange={e => setRowType(idx, e.target.value || null)}
-                              className="text-xs"
+                              className="text-xs min-w-[180px]"
                             >
                               <option value="">— Unrecognized —</option>
                               {DRIVER_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
