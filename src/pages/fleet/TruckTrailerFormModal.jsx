@@ -88,11 +88,31 @@ export default function TruckTrailerFormModal({ kind, open, editItem, onClose, o
       supabase.from('drivers').select('id, full_name, internal_id').order('full_name'),
       supabase.from('carriers').select('id, name, is_active').eq('is_active', true).order('name'),
       supabase.from(table).select('equipment_owner_raw').not('equipment_owner_raw', 'is', null),
-    ]).then(([dRes, cRes, oRes]) => {
+      // Active Vendor Master vendors — merged into the Equipment Owner
+      // suggestion list so a brand-new vendor is pickable immediately
+      // (without waiting for a unit to already reference it). Combined
+      // with the auto-link trigger this is the flow: create vendor →
+      // pick as owner → lessor auto-links.
+      supabase.from('vendors').select('name').eq('is_active', true),
+    ]).then(([dRes, cRes, oRes, vRes]) => {
       setDrivers(dRes.data || [])
       setCarriers(cRes.data || [])
-      const uniq = Array.from(new Set((oRes.data || []).map(r => r.equipment_owner_raw).filter(Boolean))).sort()
-      setOwnerSuggestions(uniq)
+      // Merge raw owner values + active vendor names, dedupe
+      // case/space-insensitively (keep the first spelling we see so a
+      // vendor's "official" name wins when both sources have it).
+      const seen = new Map()
+      const norm = s => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim()
+      const pushAll = list => {
+        for (const v of (list || [])) {
+          const name = (v?.equipment_owner_raw ?? v?.name ?? '').toString().trim()
+          if (!name) continue
+          const k = norm(name)
+          if (!seen.has(k)) seen.set(k, name)
+        }
+      }
+      pushAll(oRes.data || [])
+      pushAll(vRes.data || [])
+      setOwnerSuggestions(Array.from(seen.values()).sort((a, b) => a.localeCompare(b)))
     })
   }, [open, editItem, isTrailer, table])
 
