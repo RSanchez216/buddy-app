@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
+import { useAuth } from '../../contexts/AuthContext'
+import { useToast } from '../../contexts/ToastContext'
 import { S } from '../../lib/styles'
 import { StagePill } from './fleetUtils'
 import Select from '../../components/Select'
@@ -65,15 +67,26 @@ function isIdle(row) {
 }
 
 export default function FleetCost() {
+  const { user } = useAuth()
+  const toast = useToast()
   const [rows, setRows] = useState([])
   const [vendorsById, setVendorsById] = useState(new Map())
   const [loansById, setLoansById] = useState(new Map())
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('all')
+  // Bulk action selection. Only used when the user is in the
+  // 'owned_no_loan' filter — the brief's bulk Mark-outright is scoped
+  // there. The Set is keyed `${etype}:${id}` to match the rendered row.
+  const [selected, setSelected] = useState(() => new Set())
+  const [marking, setMarking] = useState(false)
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState('all') // all | truck | trailer
 
   useEffect(() => { load() }, [])
+  // Reset selection whenever the filter or rowset shifts so a stale
+  // checkbox-set from one filter can't leak into a bulk action on
+  // another.
+  useEffect(() => { setSelected(new Set()) }, [filter, rows])
 
   async function load() {
     setLoading(true)
@@ -159,6 +172,38 @@ export default function FleetCost() {
     }
     return out
   }, [rows, filter, typeFilter, search, vendorsById, loansById])
+
+  // Bulk action: flip selected rows' owned_outright -> true. Partitions
+  // by etype so we issue at most two UPDATEs (one per table). The view's
+  // precedence means a row will move from cost_source='owned_no_loan'
+  // to 'owned_outright' on the next reload (or stay 'loan' if the user
+  // also linked an active loan in the meantime — that's the correct
+  // behavior; loan beats flag).
+  async function markSelectedOutright() {
+    if (selected.size === 0 || marking) return
+    setMarking(true)
+    const truckIds   = []
+    const trailerIds = []
+    for (const key of selected) {
+      const [etype, id] = key.split(':')
+      if (etype === 'truck')   truckIds.push(id)
+      else if (etype === 'trailer') trailerIds.push(id)
+    }
+    const tasks = []
+    const stamp = { owned_outright: true, updated_by: user?.id || null, updated_at: new Date().toISOString() }
+    if (truckIds.length)   tasks.push(supabase.from('trucks').update(stamp).in('id', truckIds))
+    if (trailerIds.length) tasks.push(supabase.from('trailers').update(stamp).in('id', trailerIds))
+    const results = await Promise.all(tasks)
+    setMarking(false)
+    const failed = results.filter(r => r.error)
+    if (failed.length > 0) {
+      toast.error("Couldn't mark all selected as owned outright", failed[0].error)
+    } else {
+      toast.success(`${selected.size} unit${selected.size === 1 ? '' : 's'} marked Owned outright ($0)`)
+    }
+    setSelected(new Set())
+    load()
+  }
 
   function lenderLessorLabel(r) {
     if (r.cost_source === 'lease') {
@@ -274,11 +319,48 @@ export default function FleetCost() {
         </div>
       </div>
 
+      {/* Bulk Mark-outright toolbar — only when 'Owned, no loan' is the
+          active filter, per the brief's scope. Select-all checks every
+          currently-visible row (respects type + search filters too). */}
+      {filter === 'owned_no_loan' && (
+        <div className={`${S.card} px-4 py-2.5 flex items-center justify-between flex-wrap gap-3`}>
+          <div className="flex items-center gap-3 text-xs">
+            <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={visible.length > 0 && visible.every(r => selected.has(`${r.etype}:${r.id}`))}
+                onChange={e => {
+                  if (e.target.checked) {
+                    setSelected(new Set(visible.map(r => `${r.etype}:${r.id}`)))
+                  } else {
+                    setSelected(new Set())
+                  }
+                }}
+                className="rounded"
+              />
+              <span className="text-gray-700 dark:text-slate-300">Select all visible ({visible.length})</span>
+            </label>
+            <span className="text-gray-500 dark:text-slate-400">
+              {selected.size > 0 ? `${selected.size} selected` : 'Pick the units that are paid off / cash-owned'}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={markSelectedOutright}
+            disabled={selected.size === 0 || marking}
+            className={S.btnSave}
+          >
+            {marking ? 'Marking…' : `Mark ${selected.size} as owned outright ($0)`}
+          </button>
+        </div>
+      )}
+
       <div className={`${S.card} overflow-hidden`}>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className={S.tableHead}>
               <tr>
+                {filter === 'owned_no_loan' && <th className={`${S.th} w-8`}></th>}
                 <th className={`${S.th} min-w-[110px]`}>Unit</th>
                 <th className={`${S.th} min-w-[70px]`}>Type</th>
                 <th className={`${S.th} min-w-[170px]`}>Ownership</th>
@@ -296,14 +378,31 @@ export default function FleetCost() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={8} className="px-4 py-12 text-center"><div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500" /></td></tr>
+                <tr><td colSpan={filter === 'owned_no_loan' ? 9 : 8} className="px-4 py-12 text-center"><div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500" /></td></tr>
               ) : visible.length === 0 ? (
-                <tr><td colSpan={8} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">No units match these filters.</td></tr>
+                <tr><td colSpan={filter === 'owned_no_loan' ? 9 : 8} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">No units match these filters.</td></tr>
               ) : visible.map(r => {
                 const meta = COST_SOURCE_META[r.cost_source] || COST_SOURCE_META.unknown
                 const isNeeds = needsCost(r)
+                const k = `${r.etype}:${r.id}`
                 return (
-                  <tr key={`${r.etype}:${r.id}`} className={`${S.tableRow} ${isNeeds ? 'bg-amber-50/30 dark:bg-amber-500/[0.03]' : ''}`}>
+                  <tr key={k} className={`${S.tableRow} ${isNeeds ? 'bg-amber-50/30 dark:bg-amber-500/[0.03]' : ''}`}>
+                    {filter === 'owned_no_loan' && (
+                      <td className={S.td}>
+                        <input
+                          type="checkbox"
+                          checked={selected.has(k)}
+                          onChange={e => {
+                            setSelected(prev => {
+                              const next = new Set(prev)
+                              if (e.target.checked) next.add(k); else next.delete(k)
+                              return next
+                            })
+                          }}
+                          className="rounded"
+                        />
+                      </td>
+                    )}
                     <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>
                       <Link
                         to={`/fleet/${r.etype === 'truck' ? 'trucks' : 'trailers'}/${r.id}`}

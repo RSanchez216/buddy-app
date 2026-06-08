@@ -27,6 +27,7 @@ const emptyTruck = {
   carrier: '', equipment_owner_raw: '', driver_id: '',
   ownership_stage: 'unclassified',
   operational_status: 'active',
+  owned_outright: false,
   status: '', lessee: '', notes: '',
 }
 const emptyTrailer = {
@@ -67,6 +68,7 @@ export default function TruckTrailerFormModal({ kind, open, editItem, onClose, o
         driver_id: e.driver_id || '',
         ownership_stage: e.ownership_stage || 'unclassified',
         operational_status: e.operational_status || 'active',
+        owned_outright: !!e.owned_outright,
         status: e.status || '',
         lessee: e.lessee || '',
         notes: e.notes || '',
@@ -131,6 +133,10 @@ export default function TruckTrailerFormModal({ kind, open, editItem, onClose, o
       equipment_owner_raw: form.equipment_owner_raw.trim() || null,
       ownership_stage: form.ownership_stage || 'unclassified',
       operational_status: form.operational_status || 'active',
+      // Only carries meaning for company-owned units; we don't bother
+      // gating the column write because the view's precedence handles
+      // it (loan beats flag; flag means nothing on lease / driver_owned).
+      owned_outright: !!form.owned_outright,
       status: form.status.trim() || null,
       lessee: form.lessee.trim() || null,
       notes: form.notes.trim() || null,
@@ -327,6 +333,31 @@ export default function TruckTrailerFormModal({ kind, open, editItem, onClose, o
               noResultsLabel="No stage matches"
               clearable={false}
             />
+            {/* Owned-outright toggle is only meaningful for company-owned
+                units. Hidden for the other stages so it can't be
+                mis-set; on the DB side the view's precedence ignores
+                the flag for non-owned stages anyway. An ACTIVE linked
+                loan in the Debt Schedule still wins — flag only
+                zeroes-out units that have no active loan. */}
+            {form.ownership_stage === 'company_owned' && (
+              <label
+                className="mt-2 flex items-start gap-2 text-xs text-gray-700 dark:text-slate-300 cursor-pointer select-none"
+                title="Mark as paid-off / cash-owned. The unit shows as Owned outright ($0) on Fleet Cost and drops out of Needs Cost. If you later link an active loan in the Debt Schedule, the live loan payment takes precedence."
+              >
+                <input
+                  type="checkbox"
+                  checked={!!form.owned_outright}
+                  onChange={e => setForm(f => ({ ...f, owned_outright: e.target.checked }))}
+                  className="mt-0.5 rounded"
+                />
+                <span>
+                  Owned outright — no monthly payment ($0)
+                  <span className="block text-[10px] text-gray-400 dark:text-slate-500 leading-tight mt-0.5">
+                    Use when paid off or cash-owned with no loan record.
+                  </span>
+                </span>
+              </label>
+            )}
           </Field>
         </div>
 
