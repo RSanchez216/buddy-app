@@ -211,14 +211,20 @@ export default function FleetCost() {
                 <th className={`${S.th} min-w-[140px]`}>Cost Source</th>
                 <th className={`${S.th} text-right min-w-[120px]`}>Monthly</th>
                 <th className={`${S.th} text-right min-w-[110px]`}>Weekly</th>
+                <th
+                  className={`${S.th} text-right min-w-[110px]`}
+                  title="Lessor's per-mile charge (vendor side). Dollar total against mileage lands once Loads ingest provides per-unit miles."
+                >
+                  Per Mile
+                </th>
                 <th className={`${S.th} min-w-[200px]`}>Lender / Lessor</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={7} className="px-4 py-12 text-center"><div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500" /></td></tr>
+                <tr><td colSpan={8} className="px-4 py-12 text-center"><div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500" /></td></tr>
               ) : visible.length === 0 ? (
-                <tr><td colSpan={7} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">No units match these filters.</td></tr>
+                <tr><td colSpan={8} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">No units match these filters.</td></tr>
               ) : visible.map(r => {
                 const meta = COST_SOURCE_META[r.cost_source] || COST_SOURCE_META.unknown
                 const isNeeds = needsCost(r)
@@ -245,6 +251,11 @@ export default function FleetCost() {
                     </td>
                     <td className={`${S.td} text-right font-mono text-xs ${r.weekly_cost == null ? 'text-gray-400 dark:text-slate-500 italic' : 'text-gray-600 dark:text-slate-400'}`}>
                       {r.weekly_cost == null ? '—' : fmtMoney(r.weekly_cost)}
+                    </td>
+                    <td className={`${S.td} text-right font-mono text-xs ${r.per_mile_rate == null ? 'text-gray-400 dark:text-slate-500' : 'text-gray-600 dark:text-slate-400'}`}>
+                      {r.per_mile_rate == null
+                        ? '—'
+                        : `$${Number(r.per_mile_rate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`}
                     </td>
                     <td className={`${S.td} text-xs`}>{lenderLessorLabel(r)}</td>
                   </tr>

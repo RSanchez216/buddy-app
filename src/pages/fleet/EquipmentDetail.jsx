@@ -32,7 +32,7 @@ export default function EquipmentDetail({ kind }) {
   const [showEdit, setShowEdit] = useState(false)
   // Lease editor local state — only initialized when the row loads and
   // applies on Save. Independent of the main edit modal.
-  const [leaseDraft, setLeaseDraft] = useState({ lessor_vendor_id: '', lease_cost: '', lease_cost_period: 'monthly' })
+  const [leaseDraft, setLeaseDraft] = useState({ lessor_vendor_id: '', lease_cost: '', lease_cost_period: 'monthly', lease_cost_per_mile: '' })
   const [leaseSaving, setLeaseSaving] = useState(false)
 
   useEffect(() => { if (id) load() /* eslint-disable-line */ }, [id])
@@ -88,9 +88,10 @@ export default function EquipmentDetail({ kind }) {
       setLessorVendors(vendors || [])
     }
     setLeaseDraft({
-      lessor_vendor_id:   data?.lessor_vendor_id || '',
-      lease_cost:         data?.lease_cost ?? '',
-      lease_cost_period:  data?.lease_cost_period || 'monthly',
+      lessor_vendor_id:    data?.lessor_vendor_id || '',
+      lease_cost:          data?.lease_cost ?? '',
+      lease_cost_period:   data?.lease_cost_period || 'monthly',
+      lease_cost_per_mile: data?.lease_cost_per_mile ?? '',
     })
 
     setLoading(false)
@@ -131,12 +132,18 @@ export default function EquipmentDetail({ kind }) {
       toast.error('Lease cost must be 0 or a positive number.')
       return
     }
+    const perMileNum = leaseDraft.lease_cost_per_mile === '' ? null : Number(leaseDraft.lease_cost_per_mile)
+    if (perMileNum != null && (!Number.isFinite(perMileNum) || perMileNum < 0)) {
+      toast.error('Per-mile rate must be 0 or a positive number.')
+      return
+    }
     setLeaseSaving(true)
     const payload = {
-      lessor_vendor_id:   leaseDraft.lessor_vendor_id || null,
-      lease_cost:         costNum,
-      lease_cost_period:  leaseDraft.lease_cost_period || 'monthly',
-      updated_by:         user?.id || null,
+      lessor_vendor_id:    leaseDraft.lessor_vendor_id || null,
+      lease_cost:          costNum,
+      lease_cost_period:   leaseDraft.lease_cost_period || 'monthly',
+      lease_cost_per_mile: perMileNum,
+      updated_by:          user?.id || null,
     }
     const { error } = await supabase.from(table).update(payload).eq('id', row.id)
     setLeaseSaving(false)
@@ -311,7 +318,7 @@ export default function EquipmentDetail({ kind }) {
             </div>
             <div>
               <label className={S.label}>
-                Cost ({leaseDraft.lease_cost_period === 'weekly' ? 'per week' : 'per month'})
+                Fixed cost ({leaseDraft.lease_cost_period === 'weekly' ? 'per week' : 'per month'})
               </label>
               <input
                 type="number" step="0.01" min="0"
@@ -334,7 +341,21 @@ export default function EquipmentDetail({ kind }) {
                 )
               })()}
             </div>
-            <div className="flex items-end justify-end">
+            <div>
+              <label className={S.label}>Per-mile rate (lessor charge)</label>
+              <input
+                type="number" step="0.0001" min="0"
+                className={S.input}
+                value={leaseDraft.lease_cost_per_mile}
+                placeholder="0.0000"
+                onChange={e => setLeaseDraft(d => ({ ...d, lease_cost_per_mile: e.target.value }))}
+                disabled={!canEdit}
+              />
+              <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-1 leading-tight">
+                Vendor side — what the lessor charges MANAS per mile. Dollar total lands once Loads ingest provides mileage.
+              </p>
+            </div>
+            <div className="md:col-span-2 flex items-end justify-end">
               {canEdit && (
                 <button onClick={saveLease} disabled={leaseSaving} className={S.btnSave}>
                   {leaseSaving ? 'Saving…' : 'Save lease cost'}

@@ -97,12 +97,36 @@ export default function VendorMaster() {
 
   async function loadLeasedEquipment(vendorId) {
     setLeasedEquipmentLoading(true)
-    const { data } = await supabase
-      .from('fleet_equipment_cost')
-      .select('etype, id, unit_number, vin, monthly_cost, weekly_cost')
-      .eq('lessor_vendor_id', vendorId)
-      .order('etype').order('unit_number')
-    setLeasedEquipment(data || [])
+    // Pull from the cost view (gives us monthly/weekly equivs) AND from
+    // the unit tables (gives us the editable native lease_cost +
+    // lease_cost_period + lease_cost_per_mile) so the editor can
+    // round-trip without re-deriving anything client-side.
+    const [{ data: cost }, { data: trucks }, { data: trailers }] = await Promise.all([
+      supabase.from('fleet_equipment_cost')
+        .select('etype, id, unit_number, vin, monthly_cost, weekly_cost, per_mile_rate')
+        .eq('lessor_vendor_id', vendorId)
+        .order('etype').order('unit_number'),
+      supabase.from('trucks')
+        .select('id, lease_cost, lease_cost_period, lease_cost_per_mile')
+        .eq('lessor_vendor_id', vendorId),
+      supabase.from('trailers')
+        .select('id, lease_cost, lease_cost_period, lease_cost_per_mile')
+        .eq('lessor_vendor_id', vendorId),
+    ])
+    const editableByKey = new Map()
+    for (const t of (trucks || []))   editableByKey.set(`truck:${t.id}`, t)
+    for (const t of (trailers || [])) editableByKey.set(`trailer:${t.id}`, t)
+    const rows = (cost || []).map(c => {
+      const k = `${c.etype}:${c.id}`
+      const e = editableByKey.get(k)
+      return {
+        ...c,
+        lease_cost:          e?.lease_cost ?? null,
+        lease_cost_period:   e?.lease_cost_period || 'monthly',
+        lease_cost_per_mile: e?.lease_cost_per_mile ?? null,
+      }
+    })
+    setLeasedEquipment(rows)
     setLeasedEquipmentLoading(false)
   }
 
@@ -369,15 +393,21 @@ export default function VendorMaster() {
         </div>
       </div>
 
-      {/* Add/Edit Modal */}
-      <Modal open={showModal} onClose={() => setShowModal(false)} title={editVendor ? 'Edit Vendor' : 'Add Vendor'}>
+      {/* Add/Edit Modal — bumped to 2xl so the inline-editable Leased
+          Equipment table has room and the vendor fields can sit in two
+          columns side-by-side. */}
+      <Modal open={showModal} onClose={() => setShowModal(false)} title={editVendor ? 'Edit Vendor' : 'Add Vendor'} size="2xl">
         <div className={S.modalBody}>
           {error && <div className={S.errorBox}>{error}</div>}
-          <div>
-            <label className={S.label}>Vendor Name *</label>
-            <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} className={S.input} />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
+          {/* Vendor fields — 2-column grid. Wide fields (Departments,
+              Expected Amount Range, Aliases) span both columns; pairs
+              (Name + Category, Frequency + Payment Method) sit
+              side-by-side. */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
+            <div>
+              <label className={S.label}>Vendor Name *</label>
+              <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} className={S.input} />
+            </div>
             <div>
               <label className={S.label}>Category</label>
               <Select value={form.category_id} onChange={e => setForm(f => ({ ...f, category_id: e.target.value }))}>
@@ -391,41 +421,41 @@ export default function VendorMaster() {
                 {FREQUENCIES.map(f => <option key={f}>{f}</option>)}
               </Select>
             </div>
-          </div>
-          <div>
-            <label className={S.label}>Payment Method</label>
-            <Select value={form.payment_method_id} onChange={e => setForm(f => ({ ...f, payment_method_id: e.target.value }))}>
-              <option value="">Select…</option>
-              {paymentMethods.map(p => <option key={p.id} value={p.id}>{pmLabel(p)}</option>)}
-            </Select>
-          </div>
-          <div>
-            <label className={S.label}>Department(s) *</label>
-            <MultiSelect
-              options={deptOptions}
-              value={form.department_ids}
-              onChange={ids => setForm(f => ({ ...f, department_ids: ids }))}
-              placeholder="Select department(s)…"
-            />
-          </div>
-          <div>
-            <label className={S.label}>Expected Amount Range ($)</label>
-            <div className="flex items-center gap-2">
-              <input
-                type="number" min="0"
-                value={form.expected_amount_min}
-                onChange={e => setForm(f => ({ ...f, expected_amount_min: e.target.value }))}
-                className={S.input} placeholder="Min"
-              />
-              <span className="text-gray-400 dark:text-slate-500 text-sm shrink-0">to</span>
-              <input
-                type="number" min="0"
-                value={form.expected_amount_max}
-                onChange={e => setForm(f => ({ ...f, expected_amount_max: e.target.value }))}
-                className={S.input} placeholder="Max"
+            <div>
+              <label className={S.label}>Payment Method</label>
+              <Select value={form.payment_method_id} onChange={e => setForm(f => ({ ...f, payment_method_id: e.target.value }))}>
+                <option value="">Select…</option>
+                {paymentMethods.map(p => <option key={p.id} value={p.id}>{pmLabel(p)}</option>)}
+              </Select>
+            </div>
+            <div className="md:col-span-2">
+              <label className={S.label}>Department(s) *</label>
+              <MultiSelect
+                options={deptOptions}
+                value={form.department_ids}
+                onChange={ids => setForm(f => ({ ...f, department_ids: ids }))}
+                placeholder="Select department(s)…"
               />
             </div>
-            <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">Transactions outside this range will be flagged</p>
+            <div className="md:col-span-2">
+              <label className={S.label}>Expected Amount Range ($)</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number" min="0"
+                  value={form.expected_amount_min}
+                  onChange={e => setForm(f => ({ ...f, expected_amount_min: e.target.value }))}
+                  className={S.input} placeholder="Min"
+                />
+                <span className="text-gray-400 dark:text-slate-500 text-sm shrink-0">to</span>
+                <input
+                  type="number" min="0"
+                  value={form.expected_amount_max}
+                  onChange={e => setForm(f => ({ ...f, expected_amount_max: e.target.value }))}
+                  className={S.input} placeholder="Max"
+                />
+              </div>
+              <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">Transactions outside this range will be flagged</p>
+            </div>
           </div>
 
           {/* Aliases section — edit mode only */}
@@ -481,73 +511,23 @@ export default function VendorMaster() {
             </div>
           )}
 
-          {/* Leased Equipment — read-only listing for Equipment Rental
-              vendors. Inverse of assigning a lessor from EquipmentDetail:
-              shows every truck/trailer pointing at this vendor via
-              lessor_vendor_id, with the monthly + weekly cost totals. */}
-          {editVendor && leasedEquipment.length > 0 && (
-            <div>
-              <label className={S.label}>Leased Equipment ({leasedEquipment.length})</label>
-              <p className="text-xs text-gray-400 dark:text-slate-500 mb-2">
-                Units MANAS leases from this vendor. Cost shown is each unit&apos;s native cadence converted to both views.
-              </p>
-              <div className="rounded-xl border border-gray-200 dark:border-white/5 overflow-hidden">
-                <table className="w-full text-xs">
-                  <thead className="bg-gray-50 dark:bg-white/[0.02] text-[10px] uppercase tracking-widest text-gray-500 dark:text-slate-500">
-                    <tr>
-                      <th className="text-left px-3 py-2 font-semibold">Unit</th>
-                      <th className="text-left px-3 py-2 font-semibold">Type</th>
-                      <th className="text-right px-3 py-2 font-semibold">Monthly</th>
-                      <th className="text-right px-3 py-2 font-semibold">Weekly</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100 dark:divide-white/5">
-                    {leasedEquipment.map(u => (
-                      <tr key={`${u.etype}:${u.id}`}>
-                        <td className="px-3 py-1.5 font-medium text-gray-900 dark:text-slate-200">
-                          <Link
-                            to={`/fleet/${u.etype === 'truck' ? 'trucks' : 'trailers'}/${u.id}`}
-                            onClick={() => setShowModal(false)}
-                            className="hover:text-orange-600 dark:hover:text-orange-400"
-                          >
-                            {u.unit_number || u.vin?.slice(-6) || u.id.slice(0, 8)}
-                          </Link>
-                        </td>
-                        <td className="px-3 py-1.5 text-gray-500 dark:text-slate-400 uppercase">{u.etype}</td>
-                        <td className={`px-3 py-1.5 text-right font-mono ${u.monthly_cost == null ? 'text-amber-600 dark:text-amber-400 italic' : 'text-gray-900 dark:text-slate-200'}`}>
-                          {u.monthly_cost == null
-                            ? 'needs entry'
-                            : Number(u.monthly_cost).toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 })}
-                        </td>
-                        <td className={`px-3 py-1.5 text-right font-mono ${u.weekly_cost == null ? 'text-gray-400 dark:text-slate-500 italic' : 'text-gray-600 dark:text-slate-400'}`}>
-                          {u.weekly_cost == null
-                            ? '—'
-                            : Number(u.weekly_cost).toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 })}
-                        </td>
-                      </tr>
-                    ))}
-                    {(() => {
-                      const mTot = leasedEquipment.reduce((s, u) => s + Number(u.monthly_cost || 0), 0)
-                      const wTot = leasedEquipment.reduce((s, u) => s + Number(u.weekly_cost  || 0), 0)
-                      return (
-                        <tr className="bg-gray-50 dark:bg-white/[0.02]">
-                          <td className="px-3 py-1.5 font-semibold text-gray-700 dark:text-slate-300" colSpan={2}>Total</td>
-                          <td className="px-3 py-1.5 text-right font-mono font-semibold text-gray-900 dark:text-slate-200">
-                            {mTot.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 })}
-                          </td>
-                          <td className="px-3 py-1.5 text-right font-mono font-semibold text-gray-600 dark:text-slate-400">
-                            {wTot.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 })}
-                          </td>
-                        </tr>
-                      )
-                    })()}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
+          {/* Leased Equipment — inline-editable cost table for Equipment
+              Rental vendors. Each row's Fixed cost / Period / Per-mile
+              writes back to the unit's columns. Bulk apply lets the
+              user push the same Fixed/Period/Per-mile to a multi-
+              select of rows in one shot — handy when a vendor raises
+              the price or 10 new units come online from one lessor.
+              Reads and writes the same source as the truck/trailer
+              edit forms, so the two screens stay in sync. */}
           {editVendor && leasedEquipmentLoading && (
             <p className="text-xs text-gray-400 dark:text-slate-500 italic">Loading leased equipment…</p>
+          )}
+          {editVendor && !leasedEquipmentLoading && leasedEquipment.length > 0 && (
+            <LeasedEquipmentEditor
+              rows={leasedEquipment}
+              onSaved={() => loadLeasedEquipment(editVendor.id)}
+              onClose={() => setShowModal(false)}
+            />
           )}
 
           <div className={S.modalFooter}>
@@ -603,6 +583,357 @@ export default function VendorMaster() {
           </div>
         </div>
       </Modal>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// LeasedEquipmentEditor — inline-editable table for the vendor profile.
+// Each row owns a `draft` object (lease_cost / period / per_mile) that
+// diverges from the loaded value once the user types. The footer "Save
+// changes" button writes only the dirty rows. Bulk apply pushes the
+// header form's values into every selected row's draft (no DB write
+// until Save).
+//
+// The draft state is keyed by `${etype}:${id}` so trucks and trailers
+// share the row index without collisions.
+// ─────────────────────────────────────────────────────────────────────────
+
+function fmtMoneyShort(n) {
+  if (n == null || n === '') return '—'
+  return Number(n).toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 })
+}
+
+function rowKey(r) { return `${r.etype}:${r.id}` }
+
+function deriveOther(cost, period) {
+  const n = Number(cost)
+  if (!Number.isFinite(n) || n <= 0) return null
+  return period === 'weekly' ? n * 52 / 12 : n * 12 / 52
+}
+
+function LeasedEquipmentEditor({ rows, onSaved, onClose }) {
+  const toast = useToast()
+  const { user } = useAuth()
+  const [drafts, setDrafts] = useState(() => buildInitialDrafts(rows))
+  const [selected, setSelected] = useState(new Set())
+  const [bulk, setBulk] = useState({ cost: '', period: 'monthly', perMile: '' })
+  const [saving, setSaving] = useState(false)
+
+  // When `rows` reloads after a successful save, reset drafts to match.
+  useEffect(() => {
+    setDrafts(buildInitialDrafts(rows))
+    setSelected(new Set())
+  }, [rows])
+
+  function buildInitialDrafts(rows) {
+    const m = {}
+    for (const r of rows) {
+      m[rowKey(r)] = {
+        lease_cost:          r.lease_cost ?? '',
+        lease_cost_period:   r.lease_cost_period || 'monthly',
+        lease_cost_per_mile: r.lease_cost_per_mile ?? '',
+      }
+    }
+    return m
+  }
+
+  function isDirty(r) {
+    const d = drafts[rowKey(r)]
+    if (!d) return false
+    const eq = (a, b) => (a === '' || a == null) ? (b === '' || b == null) : Number(a) === Number(b)
+    return !eq(d.lease_cost, r.lease_cost)
+      || (d.lease_cost_period || 'monthly') !== (r.lease_cost_period || 'monthly')
+      || !eq(d.lease_cost_per_mile, r.lease_cost_per_mile)
+  }
+
+  const dirtyRows = rows.filter(isDirty)
+  const allSelected = rows.length > 0 && rows.every(r => selected.has(rowKey(r)))
+
+  function setRowField(r, field, value) {
+    setDrafts(prev => ({ ...prev, [rowKey(r)]: { ...prev[rowKey(r)], [field]: value } }))
+  }
+
+  function toggleRow(r) {
+    setSelected(prev => {
+      const next = new Set(prev)
+      const k = rowKey(r)
+      if (next.has(k)) next.delete(k); else next.add(k)
+      return next
+    })
+  }
+  function toggleAll() {
+    setSelected(prev => prev.size === rows.length ? new Set() : new Set(rows.map(rowKey)))
+  }
+
+  function applyBulk() {
+    if (selected.size === 0) {
+      toast.error('Select at least one row before applying.')
+      return
+    }
+    const hasCost    = bulk.cost !== ''
+    const hasPerMile = bulk.perMile !== ''
+    if (!hasCost && !hasPerMile) {
+      toast.error('Enter a Fixed cost and/or a Per-mile value to apply.')
+      return
+    }
+    setDrafts(prev => {
+      const next = { ...prev }
+      for (const k of selected) {
+        next[k] = {
+          ...next[k],
+          ...(hasCost ? {
+            lease_cost: bulk.cost,
+            lease_cost_period: bulk.period || 'monthly',
+          } : {}),
+          ...(hasPerMile ? { lease_cost_per_mile: bulk.perMile } : {}),
+        }
+      }
+      return next
+    })
+  }
+
+  async function saveAll() {
+    if (dirtyRows.length === 0) return
+    setSaving(true)
+    // Partition by truck vs trailer for two batched updates.
+    const truckUpdates = []
+    const trailerUpdates = []
+    for (const r of dirtyRows) {
+      const d = drafts[rowKey(r)]
+      const payload = {
+        lease_cost:          d.lease_cost === '' ? null : Number(d.lease_cost),
+        lease_cost_period:   d.lease_cost_period || 'monthly',
+        lease_cost_per_mile: d.lease_cost_per_mile === '' ? null : Number(d.lease_cost_per_mile),
+        updated_by:          user?.id || null,
+      }
+      ;(r.etype === 'truck' ? truckUpdates : trailerUpdates).push({ id: r.id, payload })
+    }
+    const tasks = [
+      ...truckUpdates.map(u => supabase.from('trucks').update(u.payload).eq('id', u.id)),
+      ...trailerUpdates.map(u => supabase.from('trailers').update(u.payload).eq('id', u.id)),
+    ]
+    const results = await Promise.all(tasks)
+    setSaving(false)
+    const failed = results.filter(r => r.error)
+    if (failed.length > 0) {
+      toast.error(`${failed.length} of ${results.length} updates failed`, failed[0].error)
+    } else {
+      toast.success(`${results.length} lease cost${results.length === 1 ? '' : 's'} saved`)
+    }
+    onSaved?.()
+  }
+
+  return (
+    <div>
+      <label className={S.label}>Leased Equipment ({rows.length})</label>
+      <p className="text-xs text-gray-400 dark:text-slate-500 mb-2">
+        Edit a unit&apos;s Fixed cost / Period / Per-mile inline. Bulk apply pushes the same values to every selected row. The same fields are reachable from each unit&apos;s edit page — both screens read/write the one source.
+      </p>
+
+      {/* Bulk-apply form. Compact, always visible — only fires on Apply
+          and only against the rows checked below. */}
+      <div className="mb-2 rounded-xl border border-dashed border-gray-200 dark:border-white/10 p-3 bg-gray-50 dark:bg-white/[0.02]">
+        <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500 mb-1.5">
+          Bulk apply to selected ({selected.size})
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-2 items-end">
+          <div>
+            <label className="text-[10px] text-gray-500 dark:text-slate-400">Fixed cost</label>
+            <input
+              type="number" step="0.01" min="0"
+              className={S.input} placeholder="0.00"
+              value={bulk.cost}
+              onChange={e => setBulk(b => ({ ...b, cost: e.target.value }))}
+            />
+          </div>
+          <div>
+            <label className="text-[10px] text-gray-500 dark:text-slate-400">Period</label>
+            <Select value={bulk.period} onChange={e => setBulk(b => ({ ...b, period: e.target.value }))}>
+              <option value="monthly">Monthly</option>
+              <option value="weekly">Weekly</option>
+            </Select>
+          </div>
+          <div>
+            <label className="text-[10px] text-gray-500 dark:text-slate-400">Per-mile $</label>
+            <input
+              type="number" step="0.0001" min="0"
+              className={S.input} placeholder="0.0000"
+              value={bulk.perMile}
+              onChange={e => setBulk(b => ({ ...b, perMile: e.target.value }))}
+            />
+          </div>
+          <button
+            type="button"
+            onClick={applyBulk}
+            disabled={selected.size === 0 || (bulk.cost === '' && bulk.perMile === '')}
+            className={`${S.btnSave} h-[38px]`}
+          >
+            Apply to selected
+          </button>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-gray-200 dark:border-white/5 overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead className="bg-gray-50 dark:bg-white/[0.02] text-[10px] uppercase tracking-widest text-gray-500 dark:text-slate-500">
+            <tr>
+              <th className="px-3 py-2 w-8">
+                <input type="checkbox" checked={allSelected} onChange={toggleAll} className="rounded" />
+              </th>
+              <th className="text-left px-3 py-2 font-semibold">Unit</th>
+              <th className="text-left px-3 py-2 font-semibold">Type</th>
+              <th className="text-right px-3 py-2 font-semibold min-w-[110px]">Fixed cost</th>
+              <th className="text-left px-3 py-2 font-semibold min-w-[110px]">Period</th>
+              <th className="text-right px-3 py-2 font-semibold min-w-[110px]">Per-mile $</th>
+              <th
+                className="text-right px-3 py-2 font-semibold min-w-[110px]"
+                title="Derived from Fixed cost ÷ Period (monthly = weekly × 52⁄12)"
+              >
+                Monthly equiv
+              </th>
+              <th
+                className="text-right px-3 py-2 font-semibold min-w-[110px]"
+                title="Derived from Fixed cost ÷ Period (weekly = monthly × 12⁄52)"
+              >
+                Weekly equiv
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100 dark:divide-white/5">
+            {rows.map(r => {
+              const k = rowKey(r)
+              const d = drafts[k] || { lease_cost: '', lease_cost_period: 'monthly', lease_cost_per_mile: '' }
+              const monthly = d.lease_cost_period === 'weekly'
+                ? deriveOther(d.lease_cost, 'weekly')
+                : (Number.isFinite(Number(d.lease_cost)) && d.lease_cost !== '' ? Number(d.lease_cost) : null)
+              const weekly = d.lease_cost_period === 'monthly'
+                ? deriveOther(d.lease_cost, 'monthly')
+                : (Number.isFinite(Number(d.lease_cost)) && d.lease_cost !== '' ? Number(d.lease_cost) : null)
+              const needsCost = (d.lease_cost === '' || d.lease_cost == null)
+              const dirty = isDirty(r)
+              return (
+                <tr key={k} className={dirty ? 'bg-amber-50/30 dark:bg-amber-500/[0.04]' : ''}>
+                  <td className="px-3 py-1.5">
+                    <input
+                      type="checkbox"
+                      checked={selected.has(k)}
+                      onChange={() => toggleRow(r)}
+                      className="rounded"
+                    />
+                  </td>
+                  <td className="px-3 py-1.5 font-medium text-gray-900 dark:text-slate-200">
+                    <Link
+                      to={`/fleet/${r.etype === 'truck' ? 'trucks' : 'trailers'}/${r.id}`}
+                      onClick={onClose}
+                      className="hover:text-orange-600 dark:hover:text-orange-400"
+                      title="Open unit detail (closes this modal)"
+                    >
+                      {r.unit_number || r.vin?.slice(-6) || r.id.slice(0, 8)}
+                    </Link>
+                    {needsCost && (
+                      <span
+                        className="ml-2 inline-block px-1.5 py-0.5 rounded-full text-[9px] uppercase tracking-wide bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/20"
+                        title="No fixed cost entered yet — appears in the Needs cost worklist on Fleet Cost."
+                      >
+                        needs cost
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-3 py-1.5 text-gray-500 dark:text-slate-400 uppercase">{r.etype}</td>
+                  <td className="px-3 py-1.5">
+                    <input
+                      type="number" step="0.01" min="0"
+                      className={`${S.input} text-right`}
+                      placeholder="0.00"
+                      value={d.lease_cost}
+                      onChange={e => setRowField(r, 'lease_cost', e.target.value)}
+                    />
+                  </td>
+                  <td className="px-3 py-1.5">
+                    <Select
+                      value={d.lease_cost_period}
+                      onChange={e => setRowField(r, 'lease_cost_period', e.target.value)}
+                    >
+                      <option value="monthly">Monthly</option>
+                      <option value="weekly">Weekly</option>
+                    </Select>
+                  </td>
+                  <td className="px-3 py-1.5">
+                    <input
+                      type="number" step="0.0001" min="0"
+                      className={`${S.input} text-right`}
+                      placeholder="0.0000"
+                      value={d.lease_cost_per_mile}
+                      onChange={e => setRowField(r, 'lease_cost_per_mile', e.target.value)}
+                    />
+                  </td>
+                  <td className="px-3 py-1.5 text-right font-mono text-gray-700 dark:text-slate-300">
+                    {fmtMoneyShort(monthly)}
+                  </td>
+                  <td className="px-3 py-1.5 text-right font-mono text-gray-500 dark:text-slate-400">
+                    {fmtMoneyShort(weekly)}
+                  </td>
+                </tr>
+              )
+            })}
+            {(() => {
+              // Totals across the live drafts. Per-mile is rate not money so
+              // we don't sum it — show count of rows carrying a rate.
+              let mTot = 0, wTot = 0, withPerMile = 0
+              for (const r of rows) {
+                const d = drafts[rowKey(r)] || {}
+                const n = Number(d.lease_cost)
+                if (Number.isFinite(n) && n > 0) {
+                  const m = d.lease_cost_period === 'weekly' ? n * 52 / 12 : n
+                  const w = d.lease_cost_period === 'weekly' ? n : n * 12 / 52
+                  mTot += m; wTot += w
+                }
+                if (d.lease_cost_per_mile !== '' && d.lease_cost_per_mile != null) withPerMile++
+              }
+              return (
+                <tr className="bg-gray-50 dark:bg-white/[0.02]">
+                  <td className="px-3 py-1.5" colSpan={5}>
+                    <span className="font-semibold text-gray-700 dark:text-slate-300">Totals</span>
+                  </td>
+                  <td className="px-3 py-1.5 text-right text-[10px] text-gray-500 dark:text-slate-500">
+                    {withPerMile} with rate
+                  </td>
+                  <td className="px-3 py-1.5 text-right font-mono font-semibold text-gray-900 dark:text-slate-200">
+                    {fmtMoneyShort(mTot)}
+                  </td>
+                  <td className="px-3 py-1.5 text-right font-mono font-semibold text-gray-600 dark:text-slate-400">
+                    {fmtMoneyShort(wTot)}
+                  </td>
+                </tr>
+              )
+            })()}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="flex items-center justify-between mt-2">
+        <p className="text-[11px] text-gray-500 dark:text-slate-500">
+          {dirtyRows.length === 0
+            ? <>No pending changes</>
+            : <><span className="font-semibold text-gray-700 dark:text-slate-300">{dirtyRows.length}</span> row{dirtyRows.length === 1 ? '' : 's'} with pending changes</>}
+        </p>
+        <button
+          type="button"
+          onClick={saveAll}
+          disabled={saving || dirtyRows.length === 0}
+          className={S.btnSave}
+        >
+          {saving ? 'Saving…' : `Save ${dirtyRows.length || ''} change${dirtyRows.length === 1 ? '' : 's'}`}
+        </button>
+      </div>
+
+      {/* Totals helper text — per-mile dollar impact is intentionally
+          not summed: the rate × miles total lands once Loads ingest
+          supplies per-unit mileage. */}
+      <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-2 leading-tight">
+        Per-mile $ is the rate; dollar impact (rate × miles) shows up on Fleet Cost once Loads supply mileage.
+      </p>
     </div>
   )
 }
