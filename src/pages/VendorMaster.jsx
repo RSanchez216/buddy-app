@@ -11,6 +11,7 @@ import MultiSelect from '../components/MultiSelect'
 import { buildDeptOptions, pmLabel } from '../lib/deptUtils'
 import { useToast } from '../contexts/ToastContext'
 import { Link } from 'react-router-dom'
+import InfoIcon, { COST_PERIOD_TOOLTIP } from '../components/InfoIcon'
 
 const FREQUENCIES = ['Weekly', 'Bi-Weekly', 'Monthly', 'Yearly', 'One-Time']
 
@@ -735,7 +736,10 @@ function LeaseRateCardEditor({ vendorId, card, fees, loading, onSaved }) {
           />
         </div>
         <div>
-          <label className="text-[10px] text-gray-500 dark:text-slate-400">Period</label>
+          <label className="text-[10px] text-gray-500 dark:text-slate-400">
+            Period
+            <InfoIcon tip={COST_PERIOD_TOOLTIP} />
+          </label>
           <Select value={draft.period} onChange={e => setDraft(d => ({ ...d, period: e.target.value }))}>
             <option value="weekly">Weekly</option>
             <option value="monthly">Monthly</option>
@@ -999,7 +1003,10 @@ function LeasedEquipmentEditor({ rows, card, fees, onSaved, onClose }) {
             />
           </div>
           <div>
-            <label className="text-[10px] text-gray-500 dark:text-slate-400">Period</label>
+            <label className="text-[10px] text-gray-500 dark:text-slate-400">
+              Period
+              <InfoIcon tip={COST_PERIOD_TOOLTIP} />
+            </label>
             <Select value={bulk.period} onChange={e => setBulk(b => ({ ...b, period: e.target.value }))}>
               <option value="monthly">Monthly</option>
               <option value="weekly">Weekly</option>
@@ -1043,17 +1050,13 @@ function LeasedEquipmentEditor({ rows, card, fees, onSaved, onClose }) {
               <th className="text-right px-3 py-2 font-semibold min-w-[110px]">Fixed cost</th>
               <th className="text-left px-3 py-2 font-semibold min-w-[110px]">Period</th>
               <th className="text-right px-3 py-2 font-semibold min-w-[110px]">Per-mile $</th>
-              <th
-                className="text-right px-3 py-2 font-semibold min-w-[110px]"
-                title="Effective monthly cost — inherited from vendor card OR derived from the unit's override (12⁄52 conversion)."
-              >
+              <th className="text-right px-3 py-2 font-semibold min-w-[110px]">
                 Effective monthly
+                <InfoIcon tip={COST_PERIOD_TOOLTIP} />
               </th>
-              <th
-                className="text-right px-3 py-2 font-semibold min-w-[110px]"
-                title="Effective weekly cost — inherited from vendor card OR derived from the unit's override (52⁄12 conversion)."
-              >
+              <th className="text-right px-3 py-2 font-semibold min-w-[110px]">
                 Effective weekly
+                <InfoIcon tip={COST_PERIOD_TOOLTIP} />
               </th>
             </tr>
           </thead>

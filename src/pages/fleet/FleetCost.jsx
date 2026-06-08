@@ -6,6 +6,7 @@ import { useToast } from '../../contexts/ToastContext'
 import { S } from '../../lib/styles'
 import { StagePill } from './fleetUtils'
 import Select from '../../components/Select'
+import InfoIcon, { COST_PERIOD_TOOLTIP } from '../../components/InfoIcon'
 
 // Per-unit carrying-cost view. Reads from the public.fleet_equipment_cost
 // SQL view (single source of truth for the cost split: loan / owned
@@ -434,8 +435,8 @@ export default function FleetCost() {
                 <th className={`${S.th} min-w-[70px]`}>Type</th>
                 <th className={`${S.th} min-w-[170px]`}>Ownership</th>
                 <th className={`${S.th} min-w-[140px]`}>Cost Source</th>
-                <th className={`${S.th} text-right min-w-[120px]`}>Monthly</th>
-                <th className={`${S.th} text-right min-w-[110px]`}>Weekly</th>
+                <th className={`${S.th} text-right min-w-[120px]`}>Monthly<InfoIcon tip={COST_PERIOD_TOOLTIP} /></th>
+                <th className={`${S.th} text-right min-w-[110px]`}>Weekly<InfoIcon tip={COST_PERIOD_TOOLTIP} /></th>
                 <th
                   className={`${S.th} text-right min-w-[110px]`}
                   title="Lessor's per-mile charge (vendor side). Dollar total against mileage lands once Loads ingest provides per-unit miles."

@@ -7,6 +7,7 @@ import { StagePill, STAGE_LABELS, fmtDate, fmtMoney, inspectionTone, trailerType
 import TruckTrailerFormModal from './TruckTrailerFormModal'
 import { useToast } from '../../contexts/ToastContext'
 import Select from '../../components/Select'
+import InfoIcon, { COST_PERIOD_TOOLTIP } from '../../components/InfoIcon'
 
 // Shared detail page for trucks AND trailers. `kind` selects the table +
 // the trailer-only display block. Three sections:
@@ -423,7 +424,10 @@ export default function EquipmentDetail({ kind }) {
               </div>
             )}
             <div>
-              <label className={S.label}>Cost period</label>
+              <label className={S.label}>
+                Cost period
+                <InfoIcon tip={COST_PERIOD_TOOLTIP} />
+              </label>
               <Select
                 value={leaseDraft.lease_cost_period || 'monthly'}
                 onChange={e => setLeaseDraft(d => ({ ...d, lease_cost_period: e.target.value }))}
@@ -455,6 +459,7 @@ export default function EquipmentDetail({ kind }) {
                 return (
                   <p className="text-[11px] text-gray-500 dark:text-slate-500 mt-1">
                     {other.label}: <span className="font-mono font-semibold text-gray-700 dark:text-slate-300">{fmtMoney(other.val)}</span>
+                    <InfoIcon tip={COST_PERIOD_TOOLTIP} />
                   </p>
                 )
               })()}
