@@ -39,8 +39,12 @@ export default function EquipmentDetail({ kind }) {
   const [showEdit, setShowEdit] = useState(false)
   // Lease editor local state — only initialized when the row loads and
   // applies on Save. Independent of the main edit modal.
-  const [leaseDraft, setLeaseDraft] = useState({ lessor_vendor_id: '', lease_cost: '', lease_cost_period: 'monthly', lease_cost_per_mile: '' })
+  const [leaseDraft, setLeaseDraft] = useState({ lessor_vendor_id: '', lease_cost: '', lease_cost_period: 'monthly', lease_cost_per_mile: '', lease_rate_override: false })
   const [leaseSaving, setLeaseSaving] = useState(false)
+  // Vendor rate card for the current lessor — drives the "Inherited"
+  // breakdown when the unit's lease_rate_override is off.
+  const [rateCard, setRateCard] = useState(null)
+  const [rateCardFees, setRateCardFees] = useState([])
 
   useEffect(() => { if (id) load() /* eslint-disable-line */ }, [id])
 
@@ -93,12 +97,31 @@ export default function EquipmentDetail({ kind }) {
         .eq('category', 'Equipment Rental')
         .order('name')
       setLessorVendors(vendors || [])
+      // Load the lessor's rate card so the inheritance breakdown can
+      // render without an extra round-trip when the user toggles
+      // Override off. Skipped when the unit has no lessor yet.
+      if (data?.lessor_vendor_id) {
+        const [{ data: card }, { data: cardFees }] = await Promise.all([
+          supabase.from('vendor_lease_rates')
+            .select('fixed_charge, period, per_mile_rate')
+            .eq('vendor_id', data.lessor_vendor_id).maybeSingle(),
+          supabase.from('vendor_lease_fees')
+            .select('id, label, amount, sort_order')
+            .eq('vendor_id', data.lessor_vendor_id)
+            .order('sort_order').order('created_at'),
+        ])
+        setRateCard(card || null)
+        setRateCardFees(cardFees || [])
+      } else {
+        setRateCard(null); setRateCardFees([])
+      }
     }
     setLeaseDraft({
       lessor_vendor_id:    data?.lessor_vendor_id || '',
       lease_cost:          data?.lease_cost ?? '',
       lease_cost_period:   data?.lease_cost_period || 'monthly',
       lease_cost_per_mile: data?.lease_cost_per_mile ?? '',
+      lease_rate_override: !!data?.lease_rate_override,
     })
 
     setLoading(false)
@@ -150,6 +173,7 @@ export default function EquipmentDetail({ kind }) {
       lease_cost:          costNum,
       lease_cost_period:   leaseDraft.lease_cost_period || 'monthly',
       lease_cost_per_mile: perMileNum,
+      lease_rate_override: !!leaseDraft.lease_rate_override,
       updated_by:          user?.id || null,
     }
     const { error } = await supabase.from(table).update(payload).eq('id', row.id)
@@ -312,7 +336,14 @@ export default function EquipmentDetail({ kind }) {
           screen's NULL cost values get filled in. Other-cadence number
           derives live as the user types so they can see what the system
           will actually store / display. */}
-      {row.ownership_stage === 'company_leased' && (
+      {row.ownership_stage === 'company_leased' && (() => {
+        const fixed   = Number(rateCard?.fixed_charge) || 0
+        const feesTot = (rateCardFees || []).reduce((s, f) => s + (Number(f.amount) || 0), 0)
+        const cardTotal = fixed + feesTot
+        const cardPeriod = rateCard?.period || 'weekly'
+        const overriding = !!leaseDraft.lease_rate_override
+        const inheritActive = !overriding && cardTotal > 0
+        return (
         <Section title="Lease Cost">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3 text-sm">
             <div>
@@ -332,11 +363,72 @@ export default function EquipmentDetail({ kind }) {
               )}
             </div>
             <div>
+              <label className={S.label}>Override</label>
+              <label className="flex items-start gap-2 text-xs text-gray-700 dark:text-slate-300 cursor-pointer select-none mt-1">
+                <input
+                  type="checkbox"
+                  checked={overriding}
+                  onChange={e => setLeaseDraft(d => ({ ...d, lease_rate_override: e.target.checked }))}
+                  disabled={!canEdit}
+                  className="mt-0.5 rounded"
+                />
+                <span>
+                  Override vendor rate card
+                  <span className="block text-[10px] text-gray-400 dark:text-slate-500 leading-tight mt-0.5">
+                    Off — inherit the lessor&apos;s card. On — use the per-unit fields below.
+                  </span>
+                </span>
+              </label>
+            </div>
+            {inheritActive && (
+              <div className="md:col-span-2">
+                <div className="rounded-xl border border-emerald-200 dark:border-emerald-500/20 bg-emerald-50/40 dark:bg-emerald-500/[0.04] p-3">
+                  <p className="text-[11px] font-semibold uppercase tracking-widest text-emerald-700 dark:text-emerald-400 mb-1.5">
+                    Inherited from {lessorVendors.find(v => v.id === leaseDraft.lessor_vendor_id)?.name || 'vendor'} rate card
+                  </p>
+                  <div className="text-sm space-y-0.5">
+                    <div className="flex justify-between">
+                      <span className="text-gray-600 dark:text-slate-400">Fixed ({cardPeriod})</span>
+                      <span className="font-mono text-gray-900 dark:text-slate-200">{fmtMoney(fixed)}</span>
+                    </div>
+                    {rateCardFees.map(f => (
+                      <div key={f.id} className="flex justify-between">
+                        <span className="text-gray-600 dark:text-slate-400">{f.label}</span>
+                        <span className="font-mono text-gray-900 dark:text-slate-200">{fmtMoney(Number(f.amount))}</span>
+                      </div>
+                    ))}
+                    <div className="flex justify-between pt-1 mt-1 border-t border-emerald-200/70 dark:border-emerald-500/20">
+                      <span className="font-semibold text-gray-700 dark:text-slate-300">Recurring {cardPeriod}</span>
+                      <span className="font-mono font-semibold text-emerald-700 dark:text-emerald-400">{fmtMoney(cardTotal)}</span>
+                    </div>
+                    {rateCard?.per_mile_rate != null && (
+                      <div className="flex justify-between text-xs">
+                        <span className="text-gray-500 dark:text-slate-500">Per-mile rate</span>
+                        <span className="font-mono text-gray-700 dark:text-slate-300">${Number(rateCard.per_mile_rate).toFixed(4)}/mi</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+            {!inheritActive && !overriding && leaseDraft.lessor_vendor_id && (
+              <div className="md:col-span-2">
+                <div className="rounded-xl border border-amber-200 dark:border-amber-500/20 bg-amber-50/40 dark:bg-amber-500/[0.04] p-3 text-xs text-amber-800 dark:text-amber-300">
+                  No rate card set on{' '}
+                  <Link to="/vendors" className="font-semibold underline">
+                    {lessorVendors.find(v => v.id === leaseDraft.lessor_vendor_id)?.name || 'the vendor'}
+                  </Link>
+                  {' '}yet. Set the card on the vendor profile, or turn on Override to enter a unit-specific cost.
+                </div>
+              </div>
+            )}
+            <div>
               <label className={S.label}>Cost period</label>
               <Select
                 value={leaseDraft.lease_cost_period || 'monthly'}
                 onChange={e => setLeaseDraft(d => ({ ...d, lease_cost_period: e.target.value }))}
-                disabled={!canEdit}
+                disabled={!canEdit || !overriding}
+                className={!overriding ? 'opacity-60' : ''}
               >
                 <option value="monthly">Monthly</option>
                 <option value="weekly">Weekly</option>
@@ -348,13 +440,13 @@ export default function EquipmentDetail({ kind }) {
               </label>
               <input
                 type="number" step="0.01" min="0"
-                className={S.input}
+                className={`${S.input} ${!overriding ? 'opacity-60 cursor-not-allowed' : ''}`}
                 value={leaseDraft.lease_cost}
                 placeholder="0.00"
                 onChange={e => setLeaseDraft(d => ({ ...d, lease_cost: e.target.value }))}
-                disabled={!canEdit}
+                disabled={!canEdit || !overriding}
               />
-              {(() => {
+              {overriding && (() => {
                 const n = Number(leaseDraft.lease_cost)
                 if (!Number.isFinite(n) || n <= 0) return null
                 const other = leaseDraft.lease_cost_period === 'weekly'
@@ -371,11 +463,11 @@ export default function EquipmentDetail({ kind }) {
               <label className={S.label}>Per-mile rate (lessor charge)</label>
               <input
                 type="number" step="0.0001" min="0"
-                className={S.input}
+                className={`${S.input} ${!overriding ? 'opacity-60 cursor-not-allowed' : ''}`}
                 value={leaseDraft.lease_cost_per_mile}
                 placeholder="0.0000"
                 onChange={e => setLeaseDraft(d => ({ ...d, lease_cost_per_mile: e.target.value }))}
-                disabled={!canEdit}
+                disabled={!canEdit || !overriding}
               />
               <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-1 leading-tight">
                 Vendor side — what the lessor charges MANAS per mile. Dollar total lands once Loads ingest provides mileage.
@@ -390,7 +482,8 @@ export default function EquipmentDetail({ kind }) {
             </div>
           </div>
         </Section>
-      )}
+        )
+      })()}
 
       {/* Section 3 — Assignment History (driver assignments per TMS upload) */}
       <Section title="Assignment History">
