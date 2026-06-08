@@ -5,6 +5,7 @@ import { S } from '../../lib/styles'
 import Modal from '../../components/Modal'
 import Select from '../../components/Select'
 import ComboBox from '../../components/ComboBox'
+import SuggestInput from '../../components/SuggestInput'
 import { OWNERSHIP_STAGES, TRAILER_TYPES } from './fleetUtils'
 import { useToast } from '../../contexts/ToastContext'
 
@@ -275,16 +276,18 @@ export default function TruckTrailerFormModal({ kind, open, editItem, onClose, o
             />
           </Field>
           <Field label="Equipment Owner">
-            <input
-              className={S.input}
-              list={`owner-suggestions-${kind}`}
+            {/* SuggestInput is the same typeahead pattern Carrier and
+                Driver use — themed light, type-to-filter, but free
+                text remains the saved value (it writes
+                equipment_owner_raw verbatim). Replaces the native
+                <datalist> which rendered with OS-dark chrome on some
+                browsers. */}
+            <SuggestInput
               value={form.equipment_owner_raw}
-              onChange={e => setForm(f => ({ ...f, equipment_owner_raw: e.target.value }))}
-              placeholder="Free text — type or pick"
+              onChange={v => setForm(f => ({ ...f, equipment_owner_raw: v }))}
+              suggestions={ownerSuggestions}
+              placeholder="Type to search or enter free text"
             />
-            <datalist id={`owner-suggestions-${kind}`}>
-              {ownerSuggestions.map(o => <option key={o} value={o} />)}
-            </datalist>
           </Field>
         </div>
 
