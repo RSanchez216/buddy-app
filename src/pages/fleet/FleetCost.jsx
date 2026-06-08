@@ -54,16 +54,20 @@ function fmtMoneyWhole(n) {
   return num.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
 }
 
-function needsCost(row) {
-  return row.cost_source === 'owned_no_loan'
-    || (row.cost_source === 'lease' && (row.monthly_cost == null))
-}
-
 // Cost-bearing = the categories that SHOULD have a cost (loan, lease,
 // owned_outright, owned_no_loan). Driver-owned and unknown carry no
 // company cost and don't belong in the "Units Costed" denominator —
 // including them was making coverage look worse than it is.
 const COST_BEARING_SOURCES = new Set(['loan', 'lease', 'owned_outright', 'owned_no_loan'])
+
+// Needs cost = any cost-bearing unit with no monthly cost yet, across
+// every cost_source. This catches the easy-to-miss case of a loan unit
+// whose per-unit split payment isn't populated in loan_equipment —
+// without this, those units sit hidden inside "Loan" with no cost.
+// Reconciles exactly with cost_bearing − costed.
+function needsCost(row) {
+  return COST_BEARING_SOURCES.has(row.cost_source) && row.monthly_cost == null
+}
 
 // Cost-bearing, active, no current driver. The brief's "money sitting"
 // definition — leased units missing a cost still count (they're real
