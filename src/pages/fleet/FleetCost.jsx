@@ -25,14 +25,14 @@ const COST_SOURCE_META = {
 
 const FILTERS = [
   { key: 'all',         label: 'All' },
-  { key: 'needs_cost',  label: '⚠️ Needs cost' },
-  { key: 'idle',        label: '⚠️ Idle (active · no driver)' },
-  { key: 'loan',        label: 'Loan' },
-  { key: 'lease',       label: 'Lease' },
-  { key: 'owned_outright', label: 'Owned outright' },
-  { key: 'owned_no_loan',  label: 'Owned, no loan' },
-  { key: 'driver_owned',   label: 'Driver owned' },
-  { key: 'unknown',        label: 'Unknown' },
+  { key: 'needs_cost',  label: '⚠️ Needs cost', tooltip: "Cost-bearing units without a fixed cost entered yet — leased units missing a manual cost, or company-owned units with no linked loan." },
+  { key: 'idle',        label: '⚠️ Idle (active · no driver)', tooltip: "Cost-bearing units that are active but have no current driver. Mark genuine yard/spare units Inactive to remove them from the idle total." },
+  { key: 'loan',        label: 'Loan',           tooltip: "Financed: has an active loan in the Debt Schedule. Monthly cost auto-derives from the loan payment." },
+  { key: 'lease',       label: 'Lease',          tooltip: "Rented from a lessor vendor. Cost entered manually (monthly or weekly)." },
+  { key: 'owned_outright', label: 'Owned outright', tooltip: "Company-owned with the loan fully paid off — no payment remaining, so $0 carrying cost." },
+  { key: 'owned_no_loan',  label: 'Owned, no loan', tooltip: "Company-owned but no matching loan found in the Debt Schedule. Cost unknown: either truly owned outright ($0) or the loan needs to be added/linked." },
+  { key: 'driver_owned',   label: 'Driver owned',   tooltip: "Owned by the driver — no cost to MANAS." },
+  { key: 'unknown',        label: 'Unknown',        tooltip: "Not yet classified." },
 ]
 
 function fmtMoney(n) {
@@ -46,6 +46,12 @@ function needsCost(row) {
   return row.cost_source === 'owned_no_loan'
     || (row.cost_source === 'lease' && (row.monthly_cost == null))
 }
+
+// Cost-bearing = the categories that SHOULD have a cost (loan, lease,
+// owned_outright, owned_no_loan). Driver-owned and unknown carry no
+// company cost and don't belong in the "Units Costed" denominator —
+// including them was making coverage look worse than it is.
+const COST_BEARING_SOURCES = new Set(['loan', 'lease', 'owned_outright', 'owned_no_loan'])
 
 // Cost-bearing, active, no current driver. The brief's "money sitting"
 // definition — leased units missing a cost still count (they're real
@@ -94,15 +100,16 @@ export default function FleetCost() {
   }, [rows])
 
   const totals = useMemo(() => {
-    let monthly = 0, weekly = 0, costedCount = 0
+    let monthly = 0, weekly = 0, costedCount = 0, costBearingCount = 0
     for (const r of rows) {
+      if (COST_BEARING_SOURCES.has(r.cost_source)) costBearingCount++
       if (r.monthly_cost != null) {
         monthly += Number(r.monthly_cost)
         weekly  += Number(r.weekly_cost || 0)
         costedCount++
       }
     }
-    return { monthly, weekly, costedCount, total: rows.length }
+    return { monthly, weekly, costedCount, costBearingCount, total: rows.length }
   }, [rows])
 
   // Idle-cost lens. Splits owned vs leased so it's clear what's
@@ -185,71 +192,46 @@ export default function FleetCost() {
         </div>
       </div>
 
-      {/* KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      {/* KPIs. 5 cards on wide screens — Total monthly / Total weekly /
+          Units Costed / Needs cost / Idle Cost. Falls back to 2-col on
+          mobile. The Idle Cost card is clickable and applies the Idle
+          filter to the table below. */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
         <Kpi label="Total monthly" value={fmtMoney(totals.monthly)} tone="emerald" />
         <Kpi label="Total weekly"  value={fmtMoney(totals.weekly)}  tone="cyan" />
         <Kpi
-          label="Units costed"
-          value={`${totals.costedCount} / ${totals.total}`}
+          label="Units Costed"
+          value={`${totals.costedCount} / ${totals.costBearingCount} cost-bearing`}
           tone="slate"
-          hint={totals.total ? `${Math.round((totals.costedCount / totals.total) * 100)}% coverage` : ''}
+          hint={totals.costBearingCount ? `${Math.round((totals.costedCount / totals.costBearingCount) * 100)}% coverage` : ''}
+          titleAttr={
+            'Cost-bearing = company-owned or leased units that should carry a cost. '
+            + `Driver-owned units (${sourceCounts.driver_owned || 0}) have no cost to MANAS and are excluded. `
+            + "'Needs cost' are the cost-bearing units still missing a value."
+          }
         />
         <Kpi
           label="Needs cost"
           value={sourceCounts.needs_cost}
           tone="amber"
           hint="Click the ⚠️ filter →"
+          onClick={() => setFilter('needs_cost')}
+          titleAttr="Cost-bearing units without a fixed cost entered yet — leased units missing a manual cost, or owned units with no linked loan."
+        />
+        <Kpi
+          label="Idle Cost"
+          value={
+            <span className="block">
+              <span className="block">{fmtMoney(idleTotals.monthly)} <span className="text-[10px] font-normal text-gray-500 dark:text-slate-500">/ mo</span></span>
+              <span className="block text-base">{fmtMoney(idleTotals.weekly)} <span className="text-[10px] font-normal text-gray-500 dark:text-slate-500">/ wk</span></span>
+            </span>
+          }
+          tone="amber"
+          hint={`Active, financed/leased, no driver — estimate if idle the full month. ${idleTotals.units} unit${idleTotals.units === 1 ? '' : 's'}.`}
+          onClick={() => setFilter('idle')}
+          titleAttr="Cost-bearing units that are active but have no current driver. Mark genuine yard/spare units Inactive to remove them from this total."
         />
       </div>
-
-      {/* Idle cost lens — only render the strip when there's an idle
-          unit to talk about. Owned vs leased split so it's clear what's
-          financed (cost MANAS is paying out anyway) vs rented (cost
-          that could be cut by returning the unit). */}
-      {idleTotals.units > 0 && (
-        <div className={`${S.card} p-4 space-y-3 border-amber-200 dark:border-amber-500/20`}>
-          <div className="flex items-baseline justify-between gap-3 flex-wrap">
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-widest text-amber-700 dark:text-amber-400">
-                ⚠️ Idle cost (active · no driver)
-              </p>
-              <p className="text-xs text-gray-500 dark:text-slate-500 mt-0.5 leading-tight">
-                Cost-bearing units with no current driver. Mark genuine yard/spare units{' '}
-                <span className="font-semibold text-gray-600 dark:text-slate-400">Inactive</span>{' '}
-                to remove them from the total.
-              </p>
-            </div>
-            <button
-              onClick={() => setFilter('idle')}
-              className="text-xs font-semibold text-orange-600 dark:text-orange-400 hover:underline"
-            >
-              Show {idleTotals.units} units →
-            </button>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Kpi
-              label="Idle monthly"
-              value={fmtMoney(idleTotals.monthly)}
-              tone="amber"
-              hint={idleTotals.uncosted > 0 ? `${idleTotals.uncosted} unit${idleTotals.uncosted === 1 ? '' : 's'} missing cost` : 'All idle units costed'}
-            />
-            <Kpi label="Idle weekly" value={fmtMoney(idleTotals.weekly)} tone="amber" />
-            <Kpi
-              label="Owned (financed)"
-              value={`${idleTotals.owned.units} · ${fmtMoney(idleTotals.owned.monthly)}/mo`}
-              tone="slate"
-              hint="Sitting under a loan / paid-off"
-            />
-            <Kpi
-              label="Leased (rented)"
-              value={`${idleTotals.leased.units} · ${fmtMoney(idleTotals.leased.monthly)}/mo`}
-              tone="cyan"
-              hint="Could be ended by returning the unit"
-            />
-          </div>
-        </div>
-      )}
 
       {/* Filter pills */}
       <div className="flex items-center flex-wrap gap-2">
@@ -260,6 +242,7 @@ export default function FleetCost() {
             <button
               key={f.key}
               onClick={() => setFilter(f.key)}
+              title={f.tooltip}
               className={`px-3 py-1.5 text-xs font-medium rounded-full border transition-colors ${
                 active
                   ? 'bg-orange-50 dark:bg-orange-500/10 border-orange-300 dark:border-orange-500/30 text-orange-700 dark:text-orange-400'
@@ -360,18 +343,33 @@ export default function FleetCost() {
   )
 }
 
-function Kpi({ label, value, tone, hint }) {
+function Kpi({ label, value, tone, hint, titleAttr, onClick }) {
   const toneClasses = {
     emerald: 'text-emerald-700 dark:text-emerald-400',
     cyan:    'text-cyan-700 dark:text-cyan-400',
     slate:   'text-gray-900 dark:text-slate-200',
     amber:   'text-amber-700 dark:text-amber-400',
   }[tone] || 'text-gray-900 dark:text-slate-200'
+  const interactive = typeof onClick === 'function'
+  const Tag = interactive ? 'button' : 'div'
   return (
-    <div className={`${S.card} p-4`}>
-      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500">{label}</p>
+    <Tag
+      type={interactive ? 'button' : undefined}
+      onClick={onClick}
+      title={titleAttr}
+      className={`${S.card} p-4 text-left w-full ${interactive ? 'hover:bg-gray-50 dark:hover:bg-white/[0.02] transition-colors cursor-pointer' : ''}`}
+    >
+      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500">
+        {label}
+        {titleAttr && (
+          <span
+            className="ml-1 inline-flex items-center justify-center w-3 h-3 text-[8px] rounded-full border border-gray-300 dark:border-slate-600 text-gray-500 dark:text-slate-400 align-middle"
+            aria-hidden
+          >i</span>
+        )}
+      </p>
       <p className={`mt-1 text-2xl font-bold font-mono ${toneClasses}`}>{value}</p>
-      {hint && <p className="mt-0.5 text-[10px] text-gray-400 dark:text-slate-500">{hint}</p>}
-    </div>
+      {hint && <p className="mt-0.5 text-[10px] text-gray-400 dark:text-slate-500 leading-tight">{hint}</p>}
+    </Tag>
   )
 }
