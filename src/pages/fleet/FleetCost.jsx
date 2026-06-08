@@ -151,6 +151,16 @@ export default function FleetCost() {
     return c
   }, [rows])
 
+  // Lease units not yet linked to a tracked vendor. Surfaces when the
+  // Lease filter is active so Rebeca can find the remaining ones to
+  // alias or new-vendor. resolve_lessor_vendors() runs every weekly
+  // import and only fills NULLs, so the count shrinks as aliases are
+  // added without manual re-runs.
+  const leaseUnlinkedCount = useMemo(
+    () => rows.reduce((n, r) => n + (r.cost_source === 'lease' && !r.lessor_vendor_id ? 1 : 0), 0),
+    [rows]
+  )
+
   const totals = useMemo(() => {
     let monthly = 0, weekly = 0, costedCount = 0, costBearingCount = 0
     for (const r of rows) {
@@ -352,8 +362,16 @@ export default function FleetCost() {
       </div>
 
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <p className="text-xs text-gray-500 dark:text-slate-500">
-          Showing {visible.length} of {rows.length} unit{rows.length === 1 ? '' : 's'}
+        <p className="text-xs text-gray-500 dark:text-slate-500 flex items-center gap-2 flex-wrap">
+          <span>Showing {visible.length} of {rows.length} unit{rows.length === 1 ? '' : 's'}</span>
+          {filter === 'lease' && leaseUnlinkedCount > 0 && (
+            <span
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/20"
+              title="Leased units whose Equipment Owner doesn't yet match a tracked vendor name or alias. Open each unit and pick a Lessor in the Lease Cost section — or add the raw owner as an alias on the corresponding vendor and re-run the next weekly import."
+            >
+              ⚠️ {leaseUnlinkedCount} unlinked to a vendor
+            </span>
+          )}
         </p>
         <div className="flex items-center gap-2">
           <Select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} className="text-xs">

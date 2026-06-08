@@ -177,7 +177,6 @@ export function parseFleetWorkbook(arrayBuffer, kind, allDrivers) {
     vin:     findCol(sample, ['Vin', 'VIN']),
     license: findCol(sample, isTrailer ? ['License Plate', 'License plate'] : ['License plate (State)', 'License Plate (State)']),
     transponder: findCol(sample, ['Transponder']),
-    lessee:  findCol(sample, ['Lessee']),
     trailerType: findCol(sample, ['Trailer Type']),
     inspExp: findCol(sample, ['Annual Inspection Expiration Date', 'Annual Inspection Expiration']),
   }
@@ -223,7 +222,6 @@ export function parseFleetWorkbook(arrayBuffer, kind, allDrivers) {
       license_plate: license.plate,
       license_state: license.state,
       transponder: cleanStr(cols.transponder ? r[cols.transponder] : null),
-      lessee: cleanStr(cols.lessee ? r[cols.lessee] : null),
     }
     if (isTrailer) {
       out.trailer_type = normalizeTrailerType(cols.trailerType ? r[cols.trailerType] : null)

@@ -221,10 +221,29 @@ export default function EquipmentDetail({ kind }) {
           <InfoRow label="Transponder" value={row.transponder} />
           <InfoRow label="Carrier" value={row.carrier} />
           <InfoRow label="Equipment Owner (raw)" value={row.equipment_owner_raw} />
+          {row.ownership_stage === 'company_leased' && (() => {
+            const v = lessorVendors.find(x => x.id === row.lessor_vendor_id)
+            return (
+              <InfoRow
+                label="Lessor (tracked vendor)"
+                value={v
+                  ? (
+                    <Link to="/vendors" className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400 hover:underline" title="Open Vendor Master">
+                      <span aria-hidden>✓</span>
+                      <span>{v.name}</span>
+                    </Link>
+                  )
+                  : (
+                    <span className="text-amber-700 dark:text-amber-400 italic" title="Pick a Lessor in the Lease Cost section below to link this unit to a vendor.">
+                      Not linked
+                    </span>
+                  )}
+              />
+            )
+          })()}
           <InfoRow label="Driver" value={row.driver?.full_name} />
           <InfoRow label="Status" value={OPERATIONAL_STATUS_LABELS[row.operational_status] || row.operational_status || 'Active'} />
           <InfoRow label="TMS Status (imported)" value={row.status} />
-          <InfoRow label="Lessee" value={row.lessee} />
           {isTrailer && <InfoRow label="Trailer Type" value={row.trailer_type} />}
           {isTrailer && (
             <InfoRow

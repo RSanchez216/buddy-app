@@ -221,8 +221,8 @@ export default function FleetUploadModal({ kind, open, onClose, onCommitted }) {
             </p>
             <p className="text-[11px] text-gray-500 dark:text-slate-500 mt-2">
               {isTrailer
-                ? 'Expected columns: Unit ID, Vin, Status, Equipment Owner, Driver, Make, Year, Trailer Type, License Plate, Lessee, Annual Inspection Expiration Date'
-                : 'Expected columns: Unit ID#, Vin, Status, Equipment Owner, Driver, Year, Make, Model, License plate (State), Transponder, Lessee'}
+                ? 'Expected columns: Unit ID, Vin, Status, Equipment Owner, Driver, Make, Year, Trailer Type, License Plate, Annual Inspection Expiration Date'
+                : 'Expected columns: Unit ID#, Vin, Status, Equipment Owner, Driver, Year, Make, Model, License plate (State), Transponder'}
             </p>
           </div>
         )}

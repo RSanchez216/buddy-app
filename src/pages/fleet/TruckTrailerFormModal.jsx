@@ -28,7 +28,7 @@ const emptyTruck = {
   ownership_stage: 'unclassified',
   operational_status: 'active',
   owned_outright: false,
-  status: '', lessee: '', notes: '',
+  status: '', notes: '',
 }
 const emptyTrailer = {
   ...emptyTruck,
@@ -70,7 +70,6 @@ export default function TruckTrailerFormModal({ kind, open, editItem, onClose, o
         operational_status: e.operational_status || 'active',
         owned_outright: !!e.owned_outright,
         status: e.status || '',
-        lessee: e.lessee || '',
         notes: e.notes || '',
         ...(isTrailer ? {
           trailer_type: e.trailer_type || '',
@@ -138,7 +137,6 @@ export default function TruckTrailerFormModal({ kind, open, editItem, onClose, o
       // it (loan beats flag; flag means nothing on lease / driver_owned).
       owned_outright: !!form.owned_outright,
       status: form.status.trim() || null,
-      lessee: form.lessee.trim() || null,
       notes: form.notes.trim() || null,
       updated_by: user?.id || null,
       ...(isTrailer ? {
@@ -375,7 +373,7 @@ export default function TruckTrailerFormModal({ kind, open, editItem, onClose, o
           </div>
         )}
 
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 gap-4">
           <Field label="Status">
             <Select value={form.operational_status} onChange={e => setForm(f => ({ ...f, operational_status: e.target.value }))}>
               <option value="active">Active</option>
@@ -395,9 +393,6 @@ export default function TruckTrailerFormModal({ kind, open, editItem, onClose, o
               title="Set by the weekly TMS upload — read-only here."
               placeholder="—"
             />
-          </Field>
-          <Field label="Lessee">
-            <input className={S.input} value={form.lessee} onChange={e => setForm(f => ({ ...f, lessee: e.target.value }))} />
           </Field>
         </div>
 

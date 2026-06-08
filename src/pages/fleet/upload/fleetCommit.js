@@ -40,7 +40,6 @@ function buildBasePayload(row, isTrailer) {
     license_plate: row.license_plate,
     license_state: row.license_state,
     transponder: row.transponder,
-    lessee: row.lessee,
   }
   if (isTrailer) {
     out.trailer_type = row.trailer_type || null
@@ -208,6 +207,15 @@ export async function commitFleetRows({ kind, rows, userId }) {
     if (closeErr) assignmentsReport.errors.push(`close_superseded: ${closeErr.message}`)
     const { error: resErr } = await supabase.rpc('resolve_current_equipment_drivers')
     if (resErr) assignmentsReport.errors.push(`resolver: ${resErr.message}`)
+
+    // Auto-link the lessor: match equipment_owner_raw -> Equipment
+    // Rental vendor (name OR alias). Fills NULL lessor_vendor_id only,
+    // so any manual link sticks. New leased units in the import that
+    // happen to match a known vendor get linked here without an
+    // operator step.
+    const { data: lessorLinked, error: lessorErr } = await supabase.rpc('resolve_lessor_vendors')
+    if (lessorErr) assignmentsReport.errors.push(`resolve_lessor_vendors: ${lessorErr.message}`)
+    assignmentsReport.lessor_linked = Number(lessorLinked) || 0
   }
   errors.push(...assignmentsReport.errors)
 
