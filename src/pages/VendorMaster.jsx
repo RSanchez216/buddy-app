@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, forwardRef, useImperativeHandle, useCallback } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
@@ -53,6 +53,13 @@ export default function VendorMaster() {
   const [showImport, setShowImport] = useState(false)
   const [importRows, setImportRows] = useState([])
   const fileRef = useRef()
+  // Imperative handle into the LeasedEquipmentEditor so the single
+  // "Update Vendor" save button can flush its pending override rows
+  // alongside the vendor row. editorDirty mirrors the editor's count
+  // so the button's label / disabled state stays accurate.
+  const editorRef = useRef(null)
+  const [editorDirty, setEditorDirty] = useState(0)
+  const onEditorDirty = useCallback(n => setEditorDirty(n), [])
 
   useEffect(() => { loadData() }, [])
 
@@ -84,11 +91,23 @@ export default function VendorMaster() {
   function openAdd() { setEditVendor(null); setForm(emptyForm); setError(''); setShowModal(true) }
   function openEdit(v) {
     setEditVendor(v)
+    // Hydrate category_id / payment_method_id by FK first; if NULL,
+    // fall back to matching the stored TEXT against the reference
+    // tables (case- and trim-insensitive). Covers the seeded lessors
+    // whose FKs landed null before the backfill — without this the
+    // dropdowns would show "Select…" and a no-op save could blank them.
+    const norm = s => String(s || '').toLowerCase().trim()
+    const categoryIdFallback = v.category_id
+      || categories.find(c => norm(c.name) === norm(v.category))?.id
+      || ''
+    const paymentMethodIdFallback = v.payment_method_id
+      || paymentMethods.find(p => norm(p.name) === norm(v.payment_method))?.id
+      || ''
     setForm({
       name: v.name,
-      category_id: v.category_id || '',
+      category_id: categoryIdFallback,
       frequency: v.frequency,
-      payment_method_id: v.payment_method_id || '',
+      payment_method_id: paymentMethodIdFallback,
       department_ids: v.department_ids?.length ? v.department_ids : (v.department_id ? [v.department_id] : []),
       expected_amount_min: v.expected_amount_min || '',
       expected_amount_max: v.expected_amount_max || '',
@@ -206,6 +225,13 @@ export default function VendorMaster() {
       setError(res.error.message)
       toast.error(editVendor ? "Couldn't update vendor" : "Couldn't create vendor", res.error)
     } else {
+      // After the vendor row persists, flush any pending leased-
+      // equipment overrides through the same gesture so the user
+      // doesn't have to find a second save button. The editor's
+      // saveAll is a no-op when there's nothing dirty.
+      if (editorRef.current?.dirtyCount > 0) {
+        await editorRef.current.saveAll()
+      }
       toast.success(editVendor ? `Vendor updated — ${payload.name}` : `Vendor created — ${payload.name}`)
       setShowModal(false); loadData()
     }
@@ -385,7 +411,16 @@ export default function VendorMaster() {
                 <tr><td colSpan={8} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">No vendors found</td></tr>
               ) : filtered.map(v => (
                 <tr key={v.id} className={S.tableRow}>
-                  <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>{v.name}</td>
+                  <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>
+                    <button
+                      type="button"
+                      onClick={() => openEdit(v)}
+                      className="hover:text-orange-600 dark:hover:text-orange-400 transition-colors text-left"
+                      title="Open vendor"
+                    >
+                      {v.name}
+                    </button>
+                  </td>
                   <td className={`${S.td} text-gray-500 dark:text-slate-400`}>{v.vendor_categories?.name || v.category || '—'}</td>
                   <td className={`${S.td} text-gray-500 dark:text-slate-400`}>{v.frequency}</td>
                   <td className={`${S.td} text-gray-500 dark:text-slate-400`}>
@@ -427,6 +462,11 @@ export default function VendorMaster() {
       <Modal open={showModal} onClose={() => setShowModal(false)} title={editVendor ? 'Edit Vendor' : 'Add Vendor'} size="2xl">
         <div className={S.modalBody}>
           {error && <div className={S.errorBox}>{error}</div>}
+          {editVendor && (
+            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500">
+              Details
+            </p>
+          )}
           {/* Vendor fields — 2-column grid. Wide fields (Departments,
               Expected Amount Range, Aliases) span both columns; pairs
               (Name + Category, Frequency + Payment Method) sit
@@ -551,6 +591,11 @@ export default function VendorMaster() {
               above the Leased Equipment table because units inherit
               from it. */}
           {editVendor && (rateCardLoading || rateCard !== null || leasedEquipment.length > 0) && (
+            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500 pt-3 mt-1 border-t border-gray-100 dark:border-white/5">
+              Rate card
+            </p>
+          )}
+          {editVendor && (rateCardLoading || rateCard !== null || leasedEquipment.length > 0) && (
             <LeaseRateCardEditor
               vendorId={editVendor.id}
               card={rateCard}
@@ -566,20 +611,45 @@ export default function VendorMaster() {
             <p className="text-xs text-gray-400 dark:text-slate-500 italic">Loading leased equipment…</p>
           )}
           {editVendor && !leasedEquipmentLoading && leasedEquipment.length > 0 && (
+            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500 pt-3 mt-1 border-t border-gray-100 dark:border-white/5">
+              Leased equipment
+            </p>
+          )}
+          {editVendor && !leasedEquipmentLoading && leasedEquipment.length > 0 && (
             <LeasedEquipmentEditor
+              ref={editorRef}
               rows={leasedEquipment}
               card={rateCard}
               fees={rateFees}
               onSaved={() => loadLeasedEquipment(editVendor.id)}
               onClose={() => setShowModal(false)}
+              onDirtyChange={onEditorDirty}
             />
           )}
 
-          <div className={S.modalFooter}>
-            <button onClick={() => setShowModal(false)} className={S.btnCancel}>Cancel</button>
-            <button onClick={handleSave} disabled={saving} className={S.btnSave}>
-              {saving ? 'Saving…' : editVendor ? 'Update Vendor' : 'Add Vendor'}
-            </button>
+          {/* Sticky modal footer — single primary save covers the
+              vendor row + any pending leased-equipment overrides via
+              the editor's imperative handle. The Save rate card
+              button inside the rate-card section stays separate
+              (it's a distinct, vendor-scoped save). */}
+          <div className="sticky bottom-0 -mx-5 -mb-5 px-5 py-3 bg-white dark:bg-[#0d0d1f] border-t border-gray-100 dark:border-white/5 flex items-center justify-between gap-3 flex-wrap z-10">
+            <p className="text-[11px] text-gray-500 dark:text-slate-500">
+              {editorDirty === 0
+                ? 'No pending overrides'
+                : <><span className="font-semibold text-gray-700 dark:text-slate-300">{editorDirty}</span> override{editorDirty === 1 ? '' : 's'} pending</>}
+            </p>
+            <div className="flex gap-2">
+              <button onClick={() => setShowModal(false)} className={S.btnCancel}>Cancel</button>
+              <button onClick={handleSave} disabled={saving} className={S.btnSave}>
+                {saving
+                  ? 'Saving…'
+                  : editVendor
+                    ? (editorDirty > 0
+                        ? `Update Vendor + ${editorDirty} override${editorDirty === 1 ? '' : 's'}`
+                        : 'Update Vendor')
+                    : 'Add Vendor'}
+              </button>
+            </div>
           </div>
         </div>
       </Modal>
@@ -835,12 +905,19 @@ function fmtMoneyShort(n) {
 
 function rowKey(r) { return `${r.etype}:${r.id}` }
 
-function LeasedEquipmentEditor({ rows, card, fees, onSaved, onClose }) {
+const LeasedEquipmentEditor = forwardRef(function LeasedEquipmentEditor(
+  { rows, card, fees, onSaved, onClose, onDirtyChange }, ref
+) {
   const toast = useToast()
   const { user } = useAuth()
-  const [drafts, setDrafts] = useState(() => buildInitialDrafts(rows))
+  // Card period drives initial defaults for both individual override
+  // rows (so flipping override on starts with the vendor's cadence)
+  // and the bulk-apply form. Falls back to 'weekly' for rental
+  // vendors per brief — that's the period AIM / Cadence bill in.
+  const cardPeriod = card?.period || 'weekly'
+  const [drafts, setDrafts] = useState(() => buildInitialDrafts(rows, cardPeriod))
   const [selected, setSelected] = useState(new Set())
-  const [bulk, setBulk] = useState({ cost: '', period: 'monthly', perMile: '' })
+  const [bulk, setBulk] = useState({ cost: '', period: cardPeriod, perMile: '' })
   const [saving, setSaving] = useState(false)
 
   // Pre-compute the vendor card's effective values once so each row's
@@ -849,22 +926,35 @@ function LeasedEquipmentEditor({ rows, card, fees, onSaved, onClose }) {
   const vendorRecurring = (() => {
     const fixed = Number(card?.fixed_charge) || 0
     const feesTot = (fees || []).reduce((s, f) => s + (Number(f.amount) || 0), 0)
-    return { fixed, feesTot, total: fixed + feesTot, period: card?.period || 'weekly',
+    return { fixed, feesTot, total: fixed + feesTot, period: cardPeriod,
              perMile: card?.per_mile_rate ?? null }
   })()
 
   // When `rows` reloads after a successful save, reset drafts to match.
   useEffect(() => {
-    setDrafts(buildInitialDrafts(rows))
+    setDrafts(buildInitialDrafts(rows, cardPeriod))
     setSelected(new Set())
-  }, [rows])
+  }, [rows, cardPeriod])
 
-  function buildInitialDrafts(rows) {
+  // Sync the bulk period default whenever the card period changes
+  // (e.g. user just saved a Weekly card on a previously-Monthly
+  // vendor). Doesn't stomp on a value the user typed mid-edit.
+  useEffect(() => {
+    setBulk(b => (b.cost === '' && b.perMile === '') ? { ...b, period: cardPeriod } : b)
+  }, [cardPeriod])
+
+  function buildInitialDrafts(rows, defaultPeriod) {
     const m = {}
     for (const r of rows) {
       m[rowKey(r)] = {
         lease_cost:          r.lease_cost ?? '',
-        lease_cost_period:   r.lease_cost_period || 'monthly',
+        // Pre-fill the period dropdown with the vendor card's cadence
+        // when the unit has no explicit override yet — so toggling
+        // Override on starts the user on the right cadence. Already-
+        // overriding rows keep their stored period.
+        lease_cost_period:   r.lease_rate_override
+          ? (r.lease_cost_period || defaultPeriod || 'monthly')
+          : (defaultPeriod || r.lease_cost_period || 'monthly'),
         lease_cost_per_mile: r.lease_cost_per_mile ?? '',
         lease_rate_override: !!r.lease_rate_override,
       }
@@ -978,6 +1068,27 @@ function LeasedEquipmentEditor({ rows, card, fees, onSaved, onClose }) {
     }
     onSaved?.()
   }
+
+  // Surface the dirty count to the parent so its sticky "Update Vendor"
+  // button can label / enable based on pending leased-equipment edits
+  // without owning the drafts state.
+  useEffect(() => {
+    onDirtyChange?.(dirtyRows.length)
+  }, [dirtyRows.length, onDirtyChange])
+
+  // Imperative handle: the parent's single "Update Vendor" save path
+  // calls saveAll() here after persisting the vendor row, so the user
+  // doesn't have to click two save buttons. Wrapped via a ref so the
+  // handle identity stays stable across renders (no exhaustive-deps
+  // churn). saving is exposed so the parent can disable its own
+  // button while we're flushing.
+  const saveAllRef = useRef(saveAll)
+  saveAllRef.current = saveAll
+  useImperativeHandle(ref, () => ({
+    saveAll:    () => saveAllRef.current?.(),
+    dirtyCount: dirtyRows.length,
+    isSaving:   saving,
+  }), [dirtyRows.length, saving])
 
   return (
     <div>
@@ -1222,28 +1333,14 @@ function LeasedEquipmentEditor({ rows, card, fees, onSaved, onClose }) {
         </table>
       </div>
 
-      <div className="flex items-center justify-between mt-2">
-        <p className="text-[11px] text-gray-500 dark:text-slate-500">
-          {dirtyRows.length === 0
-            ? <>No pending changes</>
-            : <><span className="font-semibold text-gray-700 dark:text-slate-300">{dirtyRows.length}</span> row{dirtyRows.length === 1 ? '' : 's'} with pending changes</>}
-        </p>
-        <button
-          type="button"
-          onClick={saveAll}
-          disabled={saving || dirtyRows.length === 0}
-          className={S.btnSave}
-        >
-          {saving ? 'Saving…' : `Save ${dirtyRows.length || ''} change${dirtyRows.length === 1 ? '' : 's'}`}
-        </button>
-      </div>
-
       {/* Totals helper text — per-mile dollar impact is intentionally
           not summed: the rate × miles total lands once Loads ingest
-          supplies per-unit mileage. */}
+          supplies per-unit mileage. Pending-changes count + Save now
+          live on the modal's sticky footer (one Update Vendor button
+          saves the vendor details + every dirty override row). */}
       <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-2 leading-tight">
         Per-mile $ is the rate; dollar impact (rate × miles) shows up on Fleet Cost once Loads supply mileage.
       </p>
     </div>
   )
-}
+})
