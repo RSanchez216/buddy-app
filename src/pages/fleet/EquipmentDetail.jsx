@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useParams, Link, useNavigate, useLocation } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { S } from '../../lib/styles'
@@ -17,11 +17,18 @@ import Select from '../../components/Select'
 export default function EquipmentDetail({ kind }) {
   const { canEdit, user } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
   const toast = useToast()
   const { id } = useParams()
   const isTrailer = kind === 'trailer'
   const table = isTrailer ? 'trailers' : 'trucks'
   const listPath = isTrailer ? '/fleet/trailers' : '/fleet/trucks'
+  // Pages that route here can pass { returnTo, returnLabel } in
+  // location.state so the unit page can return to that exact filtered
+  // view (e.g. Equipment Cost with the Needs cost filter still
+  // applied). Falls back to the list when nothing was passed.
+  const returnTo = location.state?.returnTo || listPath
+  const returnLabel = location.state?.returnLabel || (isTrailer ? 'Trailers' : 'Trucks')
 
   const [row, setRow] = useState(null)
   const [history, setHistory] = useState([])
@@ -166,7 +173,7 @@ export default function EquipmentDetail({ kind }) {
   if (!row) {
     return (
       <div className="space-y-4">
-        <Link to={listPath} className="text-sm text-orange-600 hover:underline">← Back to {isTrailer ? 'Trailers' : 'Trucks'}</Link>
+        <Link to={returnTo} className="text-sm text-orange-600 hover:underline">← Back to {returnLabel}</Link>
         <p className="text-sm text-gray-500 dark:text-slate-500">{isTrailer ? 'Trailer' : 'Truck'} not found.</p>
       </div>
     )
@@ -177,7 +184,7 @@ export default function EquipmentDetail({ kind }) {
       {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
-          <Link to={listPath} className="text-xs text-orange-600 hover:underline">← {isTrailer ? 'Trailers' : 'Trucks'}</Link>
+          <Link to={returnTo} className="text-xs text-orange-600 hover:underline">← {returnLabel}</Link>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white mt-1">
             {row.unit_number || '—'}
             {row.year || row.make || row.model ? (
@@ -479,7 +486,18 @@ export default function EquipmentDetail({ kind }) {
         open={showEdit}
         editItem={row}
         onClose={() => setShowEdit(false)}
-        onSaved={() => { setShowEdit(false); load() }}
+        // If the user arrived here from a filtered table (Equipment
+        // Cost with a returnTo in router state), drop them back on
+        // that table after save — the brief's "Save → lands back on
+        // /fleet/cost with the filter still applied" flow. When the
+        // user entered directly via the Trucks/Trailers list, keep
+        // today's behavior of closing the modal and staying on the
+        // detail page so they can verify the change in place.
+        onSaved={() => {
+          setShowEdit(false)
+          if (location.state?.returnTo) navigate(location.state.returnTo)
+          else load()
+        }}
       />
     </div>
   )

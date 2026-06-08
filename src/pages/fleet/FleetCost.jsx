@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
@@ -83,24 +83,49 @@ function isIdle(row) {
 export default function FleetCost() {
   const { user } = useAuth()
   const toast = useToast()
+  const location = useLocation()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [rows, setRows] = useState([])
   const [vendorsById, setVendorsById] = useState(new Map())
   const [loansById, setLoansById] = useState(new Map())
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState('all')
+  // Filter / type / search live in the URL so the table state is
+  // restorable on refresh and survives the round-trip into a unit's
+  // edit page (the unit page navigates back here via `returnTo`).
+  // Initial state hydrates from search params; setters write back so
+  // the URL and the UI stay in sync.
+  const [filter, setFilter] = useState(() => searchParams.get('filter') || 'all')
+  const [typeFilter, setTypeFilter] = useState(() => searchParams.get('type') || 'all')
+  const [search, setSearch] = useState(() => searchParams.get('q') || '')
   // Bulk action selection. Only used when the user is in the
   // 'owned_no_loan' filter — the brief's bulk Mark-outright is scoped
   // there. The Set is keyed `${etype}:${id}` to match the rendered row.
   const [selected, setSelected] = useState(() => new Set())
   const [marking, setMarking] = useState(false)
-  const [search, setSearch] = useState('')
-  const [typeFilter, setTypeFilter] = useState('all') // all | truck | trailer
 
   useEffect(() => { load() }, [])
   // Reset selection whenever the filter or rowset shifts so a stale
   // checkbox-set from one filter can't leak into a bulk action on
   // another.
   useEffect(() => { setSelected(new Set()) }, [filter, rows])
+
+  // Mirror filter / type / search back to the URL on change. `replace`
+  // keeps the browser history clean — repeated filter-flipping doesn't
+  // pollute the Back button with intermediate states. The empty
+  // defaults (all / all / '') are written as missing params so a
+  // bare /fleet/cost URL stays bare.
+  useEffect(() => {
+    const next = new URLSearchParams(searchParams)
+    if (filter === 'all') next.delete('filter'); else next.set('filter', filter)
+    if (typeFilter === 'all') next.delete('type'); else next.set('type', typeFilter)
+    if (!search) next.delete('q'); else next.set('q', search)
+    // Only call setSearchParams when the string actually shifted —
+    // avoids a render loop with the dep array below.
+    if (next.toString() !== searchParams.toString()) {
+      setSearchParams(next, { replace: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filter, typeFilter, search])
 
   async function load() {
     setLoading(true)
@@ -432,6 +457,11 @@ export default function FleetCost() {
                     <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>
                       <Link
                         to={`/fleet/${r.etype === 'truck' ? 'trucks' : 'trailers'}/${r.id}`}
+                        // returnTo carries the current filtered URL via
+                        // router state so the unit page can navigate
+                        // back to this exact filtered view after the
+                        // user saves or hits Back.
+                        state={{ returnTo: location.pathname + location.search, returnLabel: 'Equipment Cost' }}
                         className="hover:text-orange-600 dark:hover:text-orange-400"
                       >
                         {r.unit_number || '—'}
