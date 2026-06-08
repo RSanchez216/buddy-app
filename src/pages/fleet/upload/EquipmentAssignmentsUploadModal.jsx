@@ -292,6 +292,10 @@ export default function EquipmentAssignmentsUploadModal({ open, equipmentType, o
                 <span className="font-mono text-cyan-700 dark:text-cyan-400">{commitResult.updated}</span>
                 <span className="text-gray-500 dark:text-slate-400">Unchanged</span>
                 <span className="font-mono text-gray-700 dark:text-slate-300">{commitResult.unchanged}</span>
+                <span className="text-gray-500 dark:text-slate-400" title="Previous-driver open assignments auto-closed when this upload introduced a new driver on the same unit">
+                  Auto-closed (superseded)
+                </span>
+                <span className="font-mono text-cyan-700 dark:text-cyan-400">{commitResult.auto_closed ?? 0}</span>
                 <span className="text-gray-500 dark:text-slate-400">Resolver</span>
                 <span className={`font-mono ${commitResult.resolver_ok ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}`}>
                   {commitResult.resolver_ok ? 'ran ✓' : 'skipped'}

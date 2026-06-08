@@ -61,6 +61,7 @@ export async function commitEquipmentAssignmentRows({ rows, userId }) {
     upserted: 0,
     new: 0,
     closed: 0,
+    auto_closed: 0,
     unchanged: 0,
     updated: 0,
     errors: [],
@@ -94,12 +95,29 @@ export async function commitEquipmentAssignmentRows({ rows, userId }) {
     result.upserted += (data || []).length
   }
 
-  // Propagate open assignments to trucks/trailers.driver_id. Skipped if any
-  // batch failed so we don't half-resolve from a partial commit.
+  // Two-step post-upsert reconcile. Skipped on any batch failure so we
+  // don't half-resolve from a partial commit.
+  //   1. close_superseded_open_assignments() — for each unit, leave only
+  //      the latest-start assignment open and end-date every earlier
+  //      open row at the next assignment's start. Without this step
+  //      a unit accumulates multiple "Open / Current" rows on every
+  //      driver change because TMS sends the new row without closing
+  //      the previous one.
+  //   2. resolve_current_equipment_drivers() — propagate the (now
+  //      single) open assignment to trucks/trailers.driver_id.
   if (result.errors.length === 0) {
-    const { error: rpcErr } = await supabase.rpc('resolve_current_equipment_drivers')
-    if (rpcErr) result.errors.push(`Resolver: ${rpcErr.message}`)
-    else result.resolver_ok = true
+    const { data: closedCount, error: closeErr } = await supabase
+      .rpc('close_superseded_open_assignments')
+    if (closeErr) {
+      result.errors.push(`Auto-close superseded: ${closeErr.message}`)
+    } else {
+      result.auto_closed = Number(closedCount) || 0
+    }
+    if (result.errors.length === 0) {
+      const { error: rpcErr } = await supabase.rpc('resolve_current_equipment_drivers')
+      if (rpcErr) result.errors.push(`Resolver: ${rpcErr.message}`)
+      else result.resolver_ok = true
+    }
   }
 
   return result
