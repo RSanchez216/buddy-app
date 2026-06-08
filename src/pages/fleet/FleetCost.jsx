@@ -26,6 +26,7 @@ const COST_SOURCE_META = {
 const FILTERS = [
   { key: 'all',         label: 'All' },
   { key: 'needs_cost',  label: '⚠️ Needs cost' },
+  { key: 'idle',        label: '⚠️ Idle (active · no driver)' },
   { key: 'loan',        label: 'Loan' },
   { key: 'lease',       label: 'Lease' },
   { key: 'owned_outright', label: 'Owned outright' },
@@ -44,6 +45,17 @@ function fmtMoney(n) {
 function needsCost(row) {
   return row.cost_source === 'owned_no_loan'
     || (row.cost_source === 'lease' && (row.monthly_cost == null))
+}
+
+// Cost-bearing, active, no current driver. The brief's "money sitting"
+// definition — leased units missing a cost still count (they're real
+// idle inventory; their monthly_cost may just not be entered yet),
+// owned-no-loan likewise count toward the unit total. The dollar total
+// only sums monthly_cost where it's known.
+function isIdle(row) {
+  return ['company_owned', 'company_leased'].includes(row.ownership_stage)
+    && (row.operational_status || 'active') === 'active'
+    && !row.has_current_driver
 }
 
 export default function FleetCost() {
@@ -71,11 +83,12 @@ export default function FleetCost() {
   }
 
   const sourceCounts = useMemo(() => {
-    const c = { all: rows.length, needs_cost: 0 }
+    const c = { all: rows.length, needs_cost: 0, idle: 0 }
     for (const k of Object.keys(COST_SOURCE_META)) c[k] = 0
     for (const r of rows) {
       c[r.cost_source] = (c[r.cost_source] || 0) + 1
       if (needsCost(r)) c.needs_cost++
+      if (isIdle(r))    c.idle++
     }
     return c
   }, [rows])
@@ -92,11 +105,41 @@ export default function FleetCost() {
     return { monthly, weekly, costedCount, total: rows.length }
   }, [rows])
 
+  // Idle-cost lens. Splits owned vs leased so it's clear what's
+  // financed (cost MANAS is paying out anyway) vs rented (cost that
+  // could be ended by returning the unit). monthly_cost may be NULL
+  // for leased units missing a manual cost entry — counted in unit
+  // total, omitted from dollar total.
+  const idleTotals = useMemo(() => {
+    const owned  = { units: 0, monthly: 0, weekly: 0, costed: 0, uncosted: 0 }
+    const leased = { units: 0, monthly: 0, weekly: 0, costed: 0, uncosted: 0 }
+    for (const r of rows) {
+      if (!isIdle(r)) continue
+      const bucket = r.ownership_stage === 'company_leased' ? leased : owned
+      bucket.units++
+      if (r.monthly_cost != null) {
+        bucket.monthly += Number(r.monthly_cost)
+        bucket.weekly  += Number(r.weekly_cost || 0)
+        bucket.costed++
+      } else {
+        bucket.uncosted++
+      }
+    }
+    return {
+      owned, leased,
+      units:   owned.units   + leased.units,
+      monthly: owned.monthly + leased.monthly,
+      weekly:  owned.weekly  + leased.weekly,
+      uncosted: owned.uncosted + leased.uncosted,
+    }
+  }, [rows])
+
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase()
     let out = rows
-    if (filter === 'needs_cost') out = out.filter(needsCost)
-    else if (filter !== 'all')   out = out.filter(r => r.cost_source === filter)
+    if      (filter === 'needs_cost') out = out.filter(needsCost)
+    else if (filter === 'idle')       out = out.filter(isIdle)
+    else if (filter !== 'all')        out = out.filter(r => r.cost_source === filter)
     if (typeFilter !== 'all')    out = out.filter(r => r.etype === typeFilter)
     if (q) {
       out = out.filter(r =>
@@ -159,6 +202,54 @@ export default function FleetCost() {
           hint="Click the ⚠️ filter →"
         />
       </div>
+
+      {/* Idle cost lens — only render the strip when there's an idle
+          unit to talk about. Owned vs leased split so it's clear what's
+          financed (cost MANAS is paying out anyway) vs rented (cost
+          that could be cut by returning the unit). */}
+      {idleTotals.units > 0 && (
+        <div className={`${S.card} p-4 space-y-3 border-amber-200 dark:border-amber-500/20`}>
+          <div className="flex items-baseline justify-between gap-3 flex-wrap">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-amber-700 dark:text-amber-400">
+                ⚠️ Idle cost (active · no driver)
+              </p>
+              <p className="text-xs text-gray-500 dark:text-slate-500 mt-0.5 leading-tight">
+                Cost-bearing units with no current driver. Mark genuine yard/spare units{' '}
+                <span className="font-semibold text-gray-600 dark:text-slate-400">Inactive</span>{' '}
+                to remove them from the total.
+              </p>
+            </div>
+            <button
+              onClick={() => setFilter('idle')}
+              className="text-xs font-semibold text-orange-600 dark:text-orange-400 hover:underline"
+            >
+              Show {idleTotals.units} units →
+            </button>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <Kpi
+              label="Idle monthly"
+              value={fmtMoney(idleTotals.monthly)}
+              tone="amber"
+              hint={idleTotals.uncosted > 0 ? `${idleTotals.uncosted} unit${idleTotals.uncosted === 1 ? '' : 's'} missing cost` : 'All idle units costed'}
+            />
+            <Kpi label="Idle weekly" value={fmtMoney(idleTotals.weekly)} tone="amber" />
+            <Kpi
+              label="Owned (financed)"
+              value={`${idleTotals.owned.units} · ${fmtMoney(idleTotals.owned.monthly)}/mo`}
+              tone="slate"
+              hint="Sitting under a loan / paid-off"
+            />
+            <Kpi
+              label="Leased (rented)"
+              value={`${idleTotals.leased.units} · ${fmtMoney(idleTotals.leased.monthly)}/mo`}
+              tone="cyan"
+              hint="Could be ended by returning the unit"
+            />
+          </div>
+        </div>
+      )}
 
       {/* Filter pills */}
       <div className="flex items-center flex-wrap gap-2">

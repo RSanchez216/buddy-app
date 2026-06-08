@@ -74,7 +74,12 @@ export default function TrucksList() {
       ? stageBase
       : opStatusFilter === 'active_inactive'
         ? stageBase.filter(r => (r.operational_status || 'active') !== 'archived')
-        : stageBase.filter(r => (r.operational_status || 'active') === opStatusFilter)
+        : opStatusFilter === 'idle'
+          // Idle = active with no current driver. driver_id is kept in
+          // sync with the open assignment by the source-of-truth
+          // resolver, so this is the precise definition.
+          ? stageBase.filter(r => (r.operational_status || 'active') === 'active' && !r.driver_id)
+          : stageBase.filter(r => (r.operational_status || 'active') === opStatusFilter)
     const searched = q ? base.filter(r =>
       (r.unit_number || '').toLowerCase().includes(q) ||
       (r.vin || '').toLowerCase().includes(q) ||
@@ -174,6 +179,7 @@ export default function TrucksList() {
             <option value="inactive">Inactive only</option>
             <option value="archived">Archived only</option>
             <option value="all">All (incl. archived)</option>
+            <option value="idle">⚠️ Idle (no driver)</option>
           </Select>
           <input
             className={`${S.input} max-w-xs`}

@@ -66,7 +66,9 @@ export default function TrailersList() {
       ? stageBase
       : opStatusFilter === 'active_inactive'
         ? stageBase.filter(r => (r.operational_status || 'active') !== 'archived')
-        : stageBase.filter(r => (r.operational_status || 'active') === opStatusFilter)
+        : opStatusFilter === 'idle'
+          ? stageBase.filter(r => (r.operational_status || 'active') === 'active' && !r.driver_id)
+          : stageBase.filter(r => (r.operational_status || 'active') === opStatusFilter)
     const searched = q ? base.filter(r =>
       (r.unit_number || '').toLowerCase().includes(q) ||
       (r.vin || '').toLowerCase().includes(q) ||
@@ -166,6 +168,7 @@ export default function TrailersList() {
             <option value="inactive">Inactive only</option>
             <option value="archived">Archived only</option>
             <option value="all">All (incl. archived)</option>
+            <option value="idle">⚠️ Idle (no driver)</option>
           </Select>
           <input
             className={`${S.input} max-w-xs`}
