@@ -37,7 +37,7 @@ export default function DriverDetail() {
       // gone from BUDDY at upload time).
       supabase.from('equipment_assignments')
         .select(`
-          id, equipment_type, start_date, end_date, equipment_name_raw, tms_equipment_id,
+          id, equipment_type, start_date, end_date, source, equipment_name_raw, tms_equipment_id,
           truck:trucks(id, unit_number),
           trailer:trailers(id, unit_number)
         `)
@@ -205,7 +205,23 @@ export default function DriverDetail() {
                     <tr key={a.id} className={S.tableRow}>
                       <td className={`${S.td} text-xs uppercase tracking-wide text-gray-500 dark:text-slate-400`}>{a.equipment_type}</td>
                       <td className={S.td}>{unitDisplay}</td>
-                      <td className={`${S.td} whitespace-nowrap text-gray-600 dark:text-slate-400`}>{fmtDate(a.start_date)}</td>
+                      <td className={`${S.td} whitespace-nowrap text-gray-600 dark:text-slate-400`}>
+                        {fmtDate(a.start_date)}
+                        {a.source && a.source !== 'tms_upload' && (
+                          <span
+                            className="ml-2 inline-block px-1.5 py-0.5 rounded-full text-[9px] uppercase tracking-wide bg-gray-100 dark:bg-slate-700/40 text-gray-500 dark:text-slate-400"
+                            title={
+                              a.source === 'reconciled' ? 'Synthesized during the assignments source-of-truth backfill — start date is approximate.'
+                              : a.source === 'manual'   ? 'Created from a manual driver change on the unit edit form.'
+                              : a.source === 'trucks_import' || a.source === 'trailers_import'
+                                ? 'Created from the trucks/trailers Excel import when the unit named a driver but had no open assignment.'
+                                : `Source: ${a.source}`
+                            }
+                          >
+                            {a.source.replace(/_/g, ' ')}
+                          </span>
+                        )}
+                      </td>
                       <td className={`${S.td} whitespace-nowrap text-gray-600 dark:text-slate-400`}>
                         {a.end_date ? fmtDate(a.end_date) : <span className="italic text-emerald-600 dark:text-emerald-400">Open</span>}
                       </td>

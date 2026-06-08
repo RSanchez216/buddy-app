@@ -144,7 +144,7 @@ export async function commitFleetRows({ kind, rows, userId }) {
       errors.push(`Update VIN ${row.vin}: ${upErr.message}`)
       return
     }
-    updatedRows.push({ id: existing.id, vin: row.vin })
+    updatedRows.push({ id: existing.id, vin: row.vin, driver_id: row.driver_id })
 
     // History event if stage changed
     if (row.overrode_stage && row.ownership_stage && row.ownership_stage !== existing.ownership_stage) {
@@ -162,11 +162,61 @@ export async function commitFleetRows({ kind, rows, userId }) {
   })
   await Promise.all(updateTasks)
 
+  // ── Reconcile Assignment History ─────────────────────────────────────
+  // equipment_assignments is the source of truth for who-drives-what-when.
+  // For any unit whose import named a driver (resolvable to a BUDDY
+  // driver) and that has NO open assignment, open one via the
+  // assignment-aware RPC. Assignment-file data still wins — we only fill
+  // the gap when no open row exists. Then re-run the self-healing
+  // close-superseded + resolver pair so the unit's driver_id + carrier
+  // settle from the single open row.
+  const assignmentsReport = { gap_filled: 0, errors: [] }
+  if (errors.length === 0) {
+    const unitsWithDriver = [...newRows, ...updatedRows]
+      .filter(r => r.id && r.driver_id)
+    if (unitsWithDriver.length > 0) {
+      const { data: openRows, error: openErr } = await supabase
+        .from('equipment_assignments')
+        .select(`${fkKey}`)
+        .eq('equipment_type', kind)
+        .is('end_date', null)
+        .in(fkKey, unitsWithDriver.map(r => r.id))
+      if (openErr) {
+        assignmentsReport.errors.push(`Open-assignment lookup: ${openErr.message}`)
+      } else {
+        const haveOpen = new Set((openRows || []).map(r => r[fkKey]))
+        const gaps = unitsWithDriver.filter(r => !haveOpen.has(r.id))
+        for (const gap of gaps) {
+          const { error: rpcErr } = await supabase.rpc('set_unit_current_driver', {
+            p_equipment_type: kind,
+            p_unit_id: gap.id,
+            p_new_driver_id: gap.driver_id,
+            p_source: kind === 'truck' ? 'trucks_import' : 'trailers_import',
+          })
+          if (rpcErr) {
+            assignmentsReport.errors.push(`set_unit_current_driver ${gap.id}: ${rpcErr.message}`)
+          } else {
+            assignmentsReport.gap_filled++
+          }
+        }
+      }
+    }
+    // Self-heal pass: close any superseded opens then re-resolve so
+    // trucks/trailers.driver_id + carrier settle off the single open
+    // row per unit. Both are safe to run when no gaps were filled.
+    const { error: closeErr } = await supabase.rpc('close_superseded_open_assignments')
+    if (closeErr) assignmentsReport.errors.push(`close_superseded: ${closeErr.message}`)
+    const { error: resErr } = await supabase.rpc('resolve_current_equipment_drivers')
+    if (resErr) assignmentsReport.errors.push(`resolver: ${resErr.message}`)
+  }
+  errors.push(...assignmentsReport.errors)
+
   return {
     inserted: newRows.length,
     updated: updatedRows.length,
     errors,
     newRows,
     updatedRows,
+    assignmentsReport,
   }
 }

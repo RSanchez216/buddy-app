@@ -109,6 +109,15 @@ export default function TruckTrailerFormModal({ kind, open, editItem, onClose, o
     const v = validate()
     if (v) { setError(v); return }
     setSaving(true); setError('')
+    // driver_id is intentionally NOT in the payload. equipment_assignments
+    // is the source of truth, so any driver change is routed through the
+    // set_unit_current_driver RPC below which opens/closes assignment
+    // rows + re-derives trucks/trailers.driver_id from the open row.
+    // carrier IS in the payload — the resolver re-syncs carrier from the
+    // current driver whenever one is assigned, but for units with no
+    // current driver the user's pick stands.
+    const prevDriverId = editItem?.driver_id || null
+    const nextDriverId = form.driver_id || null
     const payload = {
       unit_number: form.unit_number.trim(),
       vin: form.vin.trim(),
@@ -120,7 +129,6 @@ export default function TruckTrailerFormModal({ kind, open, editItem, onClose, o
       transponder: form.transponder.trim() || null,
       carrier: form.carrier || null,
       equipment_owner_raw: form.equipment_owner_raw.trim() || null,
-      driver_id: form.driver_id || null,
       ownership_stage: form.ownership_stage || 'unclassified',
       operational_status: form.operational_status || 'active',
       status: form.status.trim() || null,
@@ -150,6 +158,34 @@ export default function TruckTrailerFormModal({ kind, open, editItem, onClose, o
       toast.error(editItem ? `Couldn't update ${kind}` : `Couldn't create ${kind}`, msg)
       return
     }
+    const unitId = editItem?.id || res.data.id
+
+    // Sync the assignment timeline. RPC short-circuits if the desired
+    // driver already equals the open-row driver. We always call it on
+    // insert too, in case the user picked a driver on a brand-new unit.
+    if (nextDriverId !== prevDriverId || !editItem) {
+      const { error: rpcErr } = await supabase.rpc('set_unit_current_driver', {
+        p_equipment_type: kind,
+        p_unit_id: unitId,
+        p_new_driver_id: nextDriverId,
+        p_source: 'manual',
+      })
+      if (rpcErr) {
+        // Soft-fail: the unit itself saved, but the assignment didn't
+        // write. Surface a toast so Rebeca can re-trigger; don't roll
+        // back the unit edit.
+        console.error('[TruckTrailerFormModal] set_unit_current_driver failed', rpcErr)
+        toast.error("Saved unit, but couldn't sync Assignment History — try editing the Driver again.")
+      }
+      // Resolver inside the RPC only fires when there IS an open driver,
+      // so on unassign the unit's driver_id stays stale unless we clear
+      // it explicitly. (No-op when prev was already null.)
+      if (nextDriverId === null && prevDriverId !== null) {
+        await supabase.from(table)
+          .update({ driver_id: null, updated_at: new Date().toISOString() })
+          .eq('id', unitId)
+      }
+    }
 
     // Initial-classification history entry — only on insert when stage is
     // explicitly set (anything other than 'unclassified').
@@ -160,7 +196,7 @@ export default function TruckTrailerFormModal({ kind, open, editItem, onClose, o
         trailer_id: kind === 'trailer' ? res.data.id : null,
         from_stage: null,
         to_stage: payload.ownership_stage,
-        driver_id: payload.driver_id,
+        driver_id: nextDriverId,
         reason: 'Initial classification',
         created_by: user?.id || null,
       })

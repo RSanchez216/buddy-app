@@ -135,6 +135,19 @@ export default function DriverFormModal({ open, editItem, onClose, onSaved }) {
       })
     }
 
+    // Carrier cascade: a unit's carrier must always equal its current
+    // driver's carrier. If the driver's carrier changed (or this is a
+    // fresh insert with a carrier set), re-run the resolver so every
+    // truck/trailer currently assigned to this driver picks up the new
+    // carrier. No-op when nothing changed.
+    const carrierChanged = !editItem || editItem.carrier !== payload.carrier
+    if (carrierChanged && payload.carrier) {
+      const { error: rpcErr } = await supabase.rpc('resolve_current_equipment_drivers')
+      if (rpcErr) {
+        console.warn('[DriverFormModal] carrier cascade failed', rpcErr)
+      }
+    }
+
     setSaving(false)
     toast.success(editItem ? `Driver updated — ${payload.full_name}` : `Driver added — ${payload.full_name}`)
     onSaved?.(res.data.id)

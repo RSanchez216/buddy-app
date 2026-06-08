@@ -188,5 +188,13 @@ export async function commitDriverRows({ rows, terminations = [], userId }) {
   })
   await Promise.all(termTasks)
 
+  // Carrier cascade: every truck/trailer's carrier should track its
+  // current driver's carrier. After a drivers import (which can change
+  // a driver's carrier under the field-level merge), re-resolve so any
+  // unit currently assigned to a moved driver picks up the new carrier.
+  // No-op for units whose driver/carrier didn't shift.
+  const { error: resErr } = await supabase.rpc('resolve_current_equipment_drivers')
+  if (resErr) result.errors.push(`Carrier cascade: ${resErr.message}`)
+
   return result
 }
