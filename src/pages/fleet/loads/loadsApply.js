@@ -9,6 +9,14 @@ import { normName } from './loadsParse'
 // and apply, so the fresh-upload and resume paths behave identically.
 
 const CHUNK = 200
+// Apply writes go out in batches of this size so a 500+ load import can't
+// stall on one oversized request and so the progress bar advances per batch.
+const BATCH_SIZE = 50
+const chunked = (arr, n = BATCH_SIZE) => {
+  const out = []
+  for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n))
+  return out
+}
 
 // Stable key for a user-confirmed link to an unmatched entity. Drivers key
 // on normalized name; trucks/trailers on the raw unit text. Shared by the
@@ -110,26 +118,54 @@ export async function discardBatch(batchId) {
 // decisions: Map(load_number -> 'approved' | 'skipped')
 // linkOverrides: Map(`${type}:${normRaw}` -> fleet uuid) for unmatched
 //   driver/truck/trailer the user linked on the review screen.
-export async function applyBatch({ batchId, decisions, linkOverrides }) {
+// Batched, progress-reporting apply. onProgress({ phase, done, total }) fires
+// after every batch resolves so the UI bar advances (React repaints between
+// the awaited network calls). Phases respect FK order: customers →
+// dispatchers → loads → legs → entity links.
+//
+// Idempotent / retry-safe: loads upsert on load_number (notes write-once —
+// existing loads are updated WITHOUT touching the three notes columns); legs
+// are matched against the CURRENT DB state (re-derived here, not just the
+// staged existing_leg_id) so a leg written by a prior partial run is updated,
+// never duplicated. Re-running after a failure resumes cleanly.
+export async function applyBatch({ batchId, decisions, linkOverrides, onProgress }) {
   const now = () => new Date().toISOString()
   const { data: rows, error: rowsErr } = await supabase.from('load_import_rows').select('*').eq('batch_id', batchId)
   if (rowsErr) return { error: rowsErr }
   const plan = planFromRows(rows || [])
 
-  // 1) Create to-create customers / dispatchers (distinct by normalized name).
+  // Loads/legs actually written = approved (not skipped) and not unchanged.
+  const appliedPlan = plan.filter(p =>
+    (decisions?.get(p.load_number) || 'approved') !== 'skipped' && p.classification !== 'unchanged')
+
+  // Distinct to-create entities (by normalized name).
   const newCustomers = new Map(), newDispatchers = new Map()
   for (const p of plan) {
     const c = p.resolved.customer, d = p.resolved.dispatcher
     if (c?.match_status === 'to_create' && c.name) newCustomers.set(normName(c.name), c.name)
     if (d?.match_status === 'to_create' && d.name) newDispatchers.set(normName(d.name), d.name)
   }
-  if (newCustomers.size) {
-    const { error } = await supabase.from('customers').insert([...newCustomers.values()].map(name => ({ name })))
-    if (error && !/duplicate|unique/i.test(error.message || '')) return { error }
+  const custNames = [...newCustomers.values()]
+  const dispNames = [...newDispatchers.values()]
+
+  const legTotal = appliedPlan.reduce((n, p) => n + p.legs.length, 0)
+  const linkCount = linkOverrides?.size || 0
+  const total = custNames.length + dispNames.length + appliedPlan.length + legTotal + linkCount
+  let done = 0
+  const report = (phase) => onProgress?.({ phase, done, total })
+  report('Starting')
+
+  // ── Phase 1: customers ──
+  for (const c of chunked(custNames)) {
+    const { error } = await supabase.from('customers').insert(c.map(name => ({ name })))
+    if (error && !/duplicate|unique/i.test(error.message || '')) return { error, done, total }
+    done += c.length; report('Creating customers')
   }
-  if (newDispatchers.size) {
-    const { error } = await supabase.from('dispatchers').insert([...newDispatchers.values()].map(name => ({ name })))
-    if (error && !/duplicate|unique/i.test(error.message || '')) return { error }
+  // ── Phase 2: dispatchers ──
+  for (const c of chunked(dispNames)) {
+    const { error } = await supabase.from('dispatchers').insert(c.map(name => ({ name })))
+    if (error && !/duplicate|unique/i.test(error.message || '')) return { error, done, total }
+    done += c.length; report('Creating dispatchers')
   }
 
   // Re-read entity maps (includes the just-created rows).
@@ -140,25 +176,17 @@ export async function applyBatch({ batchId, decisions, linkOverrides }) {
   const custByName = new Map((custs || []).map(c => [normName(c.name), c.id]))
   const dispByName = new Map((disps || []).map(d => [normName(d.name), d.id]))
 
-  const linkFor = (type, raw, resolvedId) => {
-    if (resolvedId) return resolvedId
-    if (raw == null) return null
-    return linkOverrides?.get(linkKey(type, raw)) ?? null
-  }
-
-  let appliedLoads = 0, appliedLegs = 0
-  for (const p of plan) {
-    const decision = decisions?.get(p.load_number) || 'approved'
-    if (decision === 'skipped') continue
-    if (p.classification === 'unchanged') continue   // idempotent no-op
-
+  // ── Phase 3: loads ── partition into existing (update, no notes) vs new
+  // (insert with notes); both via upsert on load_number for idempotency.
+  const loadIdByNumber = new Map()
+  const existingPayloads = [], newPayloads = []
+  for (const p of appliedPlan) {
     const h = p.header
     const customer_id = p.resolved.customer?.id || (p.resolved.customer?.name ? custByName.get(normName(p.resolved.customer.name)) : null) || null
     const dispatcher_id = p.resolved.dispatcher?.id || (p.resolved.dispatcher?.name ? dispByName.get(normName(p.resolved.dispatcher.name)) : null) || null
     const carrier_id = p.resolved.carrier?.id || null   // carriers never auto-created
-
-    let loadId = p.existing_load_id
-    const commonFields = {
+    const common = {
+      load_number: p.load_number,
       customer_load_number: h.customer_load_number ?? null,
       customer_id, dispatcher_id, carrier_id,
       status: h.status ?? 'Unknown',
@@ -170,52 +198,99 @@ export async function applyBatch({ batchId, decisions, linkOverrides }) {
       is_team_load: !!h.is_team_load,
       last_imported_at: now(),
     }
-
-    if (loadId) {
-      // Existing → update watched + non-note fields. NEVER touch notes.
-      const { error } = await supabase.from('loads').update(commonFields).eq('id', loadId)
-      if (error) return { error }
+    if (p.existing_load_id) {
+      loadIdByNumber.set(p.load_number, p.existing_load_id)
+      existingPayloads.push(common)            // notes intentionally omitted → untouched
     } else {
-      // New → insert full row incl. notes (write-once) + first_imported_at.
-      const { data: inserted, error } = await supabase.from('loads').insert({
-        load_number: p.load_number,
-        ...commonFields,
-        load_notes: h.load_notes ?? null,
-        load_instructions: h.load_instructions ?? null,
-        invoice_notes: h.invoice_notes ?? null,
-        first_imported_at: now(),
-      }).select('id').single()
-      if (error || !inserted) return { error: error || new Error(`Insert failed for load ${p.load_number}`) }
-      loadId = inserted.id
+      newPayloads.push({
+        ...common,
+        load_notes: h.load_notes ?? null, load_instructions: h.load_instructions ?? null,
+        invoice_notes: h.invoice_notes ?? null, first_imported_at: now(),
+      })
     }
-    appliedLoads++
+  }
+  for (const c of chunked(existingPayloads)) {
+    const { error } = await supabase.from('loads').upsert(c, { onConflict: 'load_number' })
+    if (error) return { error, done, total }
+    done += c.length; report('Applying loads')
+  }
+  for (const c of chunked(newPayloads)) {
+    const { data, error } = await supabase.from('loads').upsert(c, { onConflict: 'load_number' }).select('id, load_number')
+    if (error || !data) return { error: error || new Error('Load upsert returned no rows'), done, total }
+    for (const r of data) loadIdByNumber.set(r.load_number, r.id)
+    done += c.length; report('Applying loads')
+  }
 
-    // Legs: update matched, insert new.
+  // ── Phase 4: legs ── re-derive current legs so a retry updates rather than
+  // duplicates. driver/truck/trailer ids here are AUTO matches only; the
+  // user-confirmed overrides are applied in Phase 5.
+  const loadIds = [...new Set(loadIdByNumber.values())]
+  const legIdByKey = new Map()  // `${load_id}|${normName(driver_raw)}` -> leg_id
+  for (const c of chunked(loadIds, 200)) {
+    const { data, error } = await supabase.from('load_legs').select('id, load_id, driver_raw').in('load_id', c)
+    if (error) return { error, done, total }
+    for (const lg of (data || [])) legIdByKey.set(`${lg.load_id}|${normName(lg.driver_raw)}`, lg.id)
+  }
+  const legInserts = [], legUpdates = []
+  for (const p of appliedPlan) {
+    const loadId = loadIdByNumber.get(p.load_number)
+    if (!loadId) continue
     for (const leg of p.legs) {
       const lp = leg.parsed
-      const driver_id  = linkFor('driver',  lp.driver_raw,  leg.resolved?.driver?.id)
-      const truck_id   = linkFor('truck',   lp.truck_raw,   leg.resolved?.truck?.id)
-      const trailer_id = linkFor('trailer', lp.trailer_raw, leg.resolved?.trailer?.id)
-      const legFields = {
+      const fields = {
         driver_raw: lp.driver_raw, truck_raw: lp.truck_raw ?? null, trailer_raw: lp.trailer_raw ?? null,
-        driver_id, truck_id, trailer_id,
+        driver_id: leg.resolved?.driver?.id ?? null,
+        truck_id: leg.resolved?.truck?.id ?? null,
+        trailer_id: leg.resolved?.trailer?.id ?? null,
         empty_miles: lp.empty_miles ?? null, loaded_miles: lp.loaded_miles ?? null, total_miles: lp.total_miles ?? null,
         last_imported_at: now(),
       }
-      if (leg.existing_leg_id) {
-        const { error } = await supabase.from('load_legs').update(legFields).eq('id', leg.existing_leg_id)
-        if (error) return { error }
-      } else {
-        const { error } = await supabase.from('load_legs').insert({ load_id: loadId, leg_seq: leg.leg_seq, ...legFields })
-        if (error) return { error }
-      }
-      appliedLegs++
+      const existId = legIdByKey.get(`${loadId}|${normName(lp.driver_raw)}`)
+      if (existId) legUpdates.push({ id: existId, fields })
+      else legInserts.push({ load_id: loadId, leg_seq: leg.leg_seq, ...fields })
     }
+  }
+  for (const c of chunked(legInserts)) {
+    const { data, error } = await supabase.from('load_legs').insert(c).select('id, load_id, driver_raw')
+    if (error) return { error, done, total }
+    for (const lg of (data || [])) legIdByKey.set(`${lg.load_id}|${normName(lg.driver_raw)}`, lg.id)
+    done += c.length; report('Linking legs')
+  }
+  // Updates carry distinct payloads → applied individually (low volume: a
+  // fresh all-new import has zero of these).
+  for (const u of legUpdates) {
+    const { error } = await supabase.from('load_legs').update(u.fields).eq('id', u.id)
+    if (error) return { error, done, total }
+    done += 1; report('Linking legs')
+  }
+
+  // ── Phase 5: entity links ── set driver/truck/trailer_id on the legs whose
+  // entity the user linked on the review screen. Grouped per link → one
+  // update covering all its legs.
+  for (const [key, overrideId] of (linkOverrides || new Map())) {
+    const type = key.slice(0, key.indexOf(':'))
+    const legIds = []
+    for (const p of appliedPlan) {
+      const loadId = loadIdByNumber.get(p.load_number)
+      if (!loadId) continue
+      for (const leg of p.legs) {
+        const r = leg.resolved?.[type]
+        if (!r || r.match_status !== 'unmatched' || linkKey(type, r.raw) !== key) continue
+        const id = legIdByKey.get(`${loadId}|${normName(leg.parsed.driver_raw)}`)
+        if (id) legIds.push(id)
+      }
+    }
+    if (legIds.length) {
+      const { error } = await supabase.from('load_legs').update({ [`${type}_id`]: overrideId }).in('id', legIds)
+      if (error) return { error, done, total }
+    }
+    done += 1; report('Applying matches')
   }
 
   const { error: doneErr } = await supabase.from('load_import_batches')
     .update({ status: 'applied', applied_at: now() }).eq('id', batchId)
-  if (doneErr) return { error: doneErr }
+  if (doneErr) return { error: doneErr, done, total }
 
-  return { appliedLoads, appliedLegs }
+  done = total; report('Done')
+  return { appliedLoads: appliedPlan.length, appliedLegs: legInserts.length + legUpdates.length }
 }

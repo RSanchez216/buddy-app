@@ -39,6 +39,10 @@ export default function LoadsImport() {
   // Per-updated-load approve/skip + per-unmatched-entity link choices.
   const [decisions, setDecisions] = useState(() => new Map())
   const [links, setLinks] = useState(() => new Map())
+  // Determinate apply progress: { phase, done, total } while running.
+  const [progress, setProgress] = useState(null)
+  // Set when an apply stops mid-way: { done, total } → show counter + Retry.
+  const [applyError, setApplyError] = useState(null)
   const [showNew, setShowNew] = useState(false)
   // Fleet pick-lists for linking unmatched entities.
   const [fleet, setFleet] = useState({ drivers: [], trucks: [], trailers: [] })
@@ -151,12 +155,22 @@ export default function LoadsImport() {
   async function onApply() {
     if (!batch || busy) return
     setBusy(true)
+    setApplyError(null)
+    setProgress({ phase: 'Starting', done: 0, total: 0 })
     try {
-      const { appliedLoads, appliedLegs, error } = await applyBatch({
-        batchId: batch.id, decisions, linkOverrides: links,
+      // The apply is idempotent (loads upsert on load_number, notes
+      // write-once, legs matched against current DB), so Retry just re-runs
+      // from the start — already-written rows no-op.
+      const { appliedLoads, appliedLegs, error, done, total } = await applyBatch({
+        batchId: batch.id, decisions, linkOverrides: links, onProgress: setProgress,
       })
-      if (error) { toast.error("Apply failed", error); return }
+      if (error) {
+        setApplyError({ done: done ?? 0, total: total ?? 0 })
+        toast.error('Apply interrupted — you can retry', error)
+        return
+      }
       toast.success(`Applied — ${appliedLoads} load${appliedLoads === 1 ? '' : 's'}, ${appliedLegs} leg${appliedLegs === 1 ? '' : 's'}`)
+      setProgress(null)
       await init()
     } finally {
       setBusy(false)
@@ -360,8 +374,37 @@ export default function LoadsImport() {
             <p className="text-xs text-gray-400 dark:text-slate-500">{unchangedCount} unchanged load{unchangedCount === 1 ? '' : 's'} — skipped on apply (no writes).</p>
           )}
 
+          {/* Apply progress — determinate bar + counter + phase caption.
+              Advances per batch (React repaints between awaited writes). */}
+          {progress && !applyError && (() => {
+            const { phase, done, total } = progress
+            const pct = total > 0 ? Math.max(0, Math.min(100, Math.round((done / total) * 100))) : 0
+            return (
+              <div className={`${S.card} p-4 space-y-2`}>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-700 dark:text-slate-300">{phase}…</span>
+                  <span className="font-mono text-gray-600 dark:text-slate-400">{done.toLocaleString()} / {total.toLocaleString()}</span>
+                </div>
+                <div className="h-2 rounded-full bg-gray-100 dark:bg-white/5 overflow-hidden">
+                  <div className="h-full bg-orange-500 transition-[width] duration-200" style={{ width: `${pct}%` }} />
+                </div>
+              </div>
+            )
+          })()}
+
+          {/* Mid-apply failure — show how far it got + Retry (safe to re-run). */}
+          {applyError && (
+            <div className="rounded-xl border border-red-200 dark:border-red-500/20 bg-red-50/60 dark:bg-red-500/[0.06] px-4 py-3 text-sm text-red-700 dark:text-red-300 flex items-center justify-between flex-wrap gap-2">
+              <span>Apply interrupted at <span className="font-mono font-semibold">{applyError.done.toLocaleString()} of {applyError.total.toLocaleString()}</span>. It's safe to retry — already-applied rows are skipped.</span>
+              <span className="flex items-center gap-2">
+                <button onClick={onDiscard} disabled={busy} className={S.btnCancel}>Discard batch</button>
+                <button onClick={onApply} disabled={busy} className={S.btnSave}>{busy ? 'Retrying…' : 'Retry'}</button>
+              </span>
+            </div>
+          )}
+
           {/* Actions */}
-          {canEdit && (
+          {canEdit && !progress && !applyError && (
             <div className="flex items-center justify-end gap-3 pt-2">
               <button onClick={onDiscard} disabled={busy} className={S.btnCancel}>Discard batch</button>
               <button onClick={onApply} disabled={busy} className={S.btnSave}>{busy ? 'Applying…' : 'Apply approved'}</button>
