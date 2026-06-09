@@ -31,6 +31,9 @@ export default function VendorMaster() {
   const [search, setSearch] = useState('')
   const [filterDept, setFilterDept] = useState('')
   const [filterCat, setFilterCat] = useState('')
+  // Default to Active so deactivated vendors (e.g. NATO Leasing) stay out
+  // of the way unless explicitly asked for. 'active' | 'inactive' | 'all'.
+  const [filterStatus, setFilterStatus] = useState('active')
   const [showModal, setShowModal] = useState(false)
   const [editVendor, setEditVendor] = useState(null)
   const [form, setForm] = useState(emptyForm)
@@ -85,7 +88,9 @@ export default function VendorMaster() {
     const deptIds = v.department_ids?.length ? v.department_ids : (v.department_id ? [v.department_id] : [])
     const matchDept = !filterDept || deptIds.includes(filterDept)
     const matchCat = !filterCat || v.category_id === filterCat
-    return matchSearch && matchDept && matchCat
+    const matchStatus = filterStatus === 'all'
+      || (filterStatus === 'active' ? !!v.is_active : !v.is_active)
+    return matchSearch && matchDept && matchCat && matchStatus
   })
 
   function openAdd() { setEditVendor(null); setForm(emptyForm); setError(''); setShowModal(true) }
@@ -367,7 +372,13 @@ export default function VendorMaster() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Vendor Master</h1>
-          <p className="text-sm text-gray-500 dark:text-slate-500 mt-0.5">{vendors.filter(v => v.is_active).length} active vendors</p>
+          {/* Count + noun follow the active status filter, so it reads
+              "8 active vendors" / "1 inactive vendor" / "9 vendors". Uses
+              the filtered length so it stays truthful when search / dept /
+              category are also narrowing the list. */}
+          <p className="text-sm text-gray-500 dark:text-slate-500 mt-0.5">
+            {filtered.length} {filterStatus === 'active' ? 'active ' : filterStatus === 'inactive' ? 'inactive ' : ''}vendor{filtered.length === 1 ? '' : 's'}
+          </p>
         </div>
         {canEdit && (
           <div className="flex gap-2 flex-wrap">
@@ -399,6 +410,11 @@ export default function VendorMaster() {
         <Select value={filterCat} onChange={e => setFilterCat(e.target.value)}>
           <option value="">All Categories</option>
           {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </Select>
+        <Select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+          <option value="active">Active</option>
+          <option value="inactive">Inactive</option>
+          <option value="all">All Statuses</option>
         </Select>
       </div>
 
