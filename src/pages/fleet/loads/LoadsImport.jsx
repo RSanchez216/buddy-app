@@ -132,6 +132,13 @@ export default function LoadsImport() {
   const updatedLoads = useMemo(() => plan.filter(p => p.classification === 'updated'), [plan])
   const newLoads = useMemo(() => plan.filter(p => p.classification === 'new'), [plan])
   const unchangedCount = useMemo(() => plan.filter(p => p.classification === 'unchanged').length, [plan])
+  // Canceled/TONU split: genuine flips (status changed on an existing load)
+  // vs. brand-new loads that simply arrive Canceled/TONU. Banner copy keys
+  // off this so a first import doesn't say loads "flipped" when nothing did.
+  const statusFlag = useMemo(() => ({
+    flips:    plan.filter(p => p.is_status_flag && p.classification === 'updated').length,
+    arriving: plan.filter(p => p.is_status_flag && p.classification === 'new').length,
+  }), [plan])
 
   function decisionFor(loadNumber) { return decisions.get(loadNumber) || 'approved' }
   function setDecision(loadNumber, d) {
@@ -221,11 +228,28 @@ export default function LoadsImport() {
             <Stat label="Unmatched" value={counts.unmatched ?? 0} tone={(counts.unmatched ?? 0) > 0 ? 'red' : 'slate'} />
           </div>
 
-          {(counts.status_flags ?? 0) > 0 && (
-            <div className="rounded-xl border border-red-200 dark:border-red-500/20 bg-red-50/60 dark:bg-red-500/[0.06] px-4 py-2.5 text-sm text-red-700 dark:text-red-300">
-              ⚠️ {counts.status_flags} load{counts.status_flags === 1 ? '' : 's'} flipped to <span className="font-semibold">Canceled / TONU</span> — review highlighted below.
-            </div>
-          )}
+          {(statusFlag.flips + statusFlag.arriving) > 0 && (() => {
+            const { flips, arriving } = statusFlag
+            const ld = n => `load${n === 1 ? '' : 's'}`
+            // Pure-arriving is informational (nothing changed); any genuine
+            // flip makes it a warning.
+            const warn = flips > 0
+            return (
+              <div className={`rounded-xl border px-4 py-2.5 text-sm ${warn
+                ? 'border-red-200 dark:border-red-500/20 bg-red-50/60 dark:bg-red-500/[0.06] text-red-700 dark:text-red-300'
+                : 'border-cyan-200 dark:border-cyan-500/20 bg-cyan-50/60 dark:bg-cyan-500/[0.06] text-cyan-700 dark:text-cyan-300'}`}>
+                {flips > 0 && arriving === 0 && (
+                  <>⚠️ {flips} {ld(flips)} flipped to <span className="font-semibold">Canceled / TONU</span> — review highlighted below.</>
+                )}
+                {flips === 0 && arriving > 0 && (
+                  <>ℹ️ {arriving} new {ld(arriving)} {arriving === 1 ? 'is' : 'are'} <span className="font-semibold">Canceled / TONU</span> — they'll import (Canceled is excluded from profit; TONU counts). Review highlighted below.</>
+                )}
+                {flips > 0 && arriving > 0 && (
+                  <>⚠️ {flips} existing {ld(flips)} flipped to <span className="font-semibold">Canceled / TONU</span>, and {arriving} new {ld(arriving)} arrive Canceled/TONU — review highlighted below.</>
+                )}
+              </div>
+            )
+          })()}
 
           {/* Unmatched entities */}
           {unmatched.length > 0 && (
