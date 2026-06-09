@@ -411,7 +411,10 @@ export default function FleetCost() {
           )}
         </p>
         <div className="flex items-center gap-2">
-          <Select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} className="text-xs">
+          {/* min-w keeps the longest option ("Trailers only") + chevron
+              from clipping to "All typ"; min- rather than fixed so it
+              still flexes on narrow layouts. */}
+          <Select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} className="text-xs min-w-[9rem]">
             <option value="all">All types</option>
             <option value="truck">Trucks only</option>
             <option value="trailer">Trailers only</option>
