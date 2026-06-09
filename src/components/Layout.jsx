@@ -151,6 +151,7 @@ export default function Layout() {
             <NavItem to="/fleet/drivers"  label="Drivers"  icon={Icons.driver}  onClick={close} />
             <NavItem to="/fleet/cost"     label="Equipment Cost" icon={Icons.cost} onClick={close} />
             <NavItem to="/fleet/loads/import" label="Loads Import" icon={Icons.truck} onClick={close} />
+            <NavItem to="/fleet/profitability" label="Profitability" icon={Icons.cost} onClick={close} />
           </NavSection>
 
           {/* Financial Controls */}
