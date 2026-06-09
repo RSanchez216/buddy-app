@@ -88,7 +88,7 @@ export default function LoadsImport() {
         supabase.from('trucks').select('id, unit_number'),
         supabase.from('trailers').select('id, unit_number'),
         supabase.from('carriers').select('id, name'),
-        supabase.from('customers').select('id, name'),
+        supabase.from('customers').select('id, name, trailer_required'),
         supabase.from('dispatchers').select('id, name'),
         supabase.from('loads').select('id, load_number, status, linehaul, pickup_date, delivery_date').in('load_number', loadNumbers),
       ])
@@ -140,6 +140,8 @@ export default function LoadsImport() {
 
   const updatedLoads = useMemo(() => plan.filter(p => p.classification === 'updated'), [plan])
   const newLoads = useMemo(() => plan.filter(p => p.classification === 'new'), [plan])
+  // Advisory "needs review" loads (e.g. missing trailer, customer not exempt).
+  const needsReviewLoads = useMemo(() => plan.filter(p => p.header?.needs_review), [plan])
   const unchangedCount = useMemo(() => plan.filter(p => p.classification === 'unchanged').length, [plan])
   // Canceled/TONU split: genuine flips (status changed on an existing load)
   // vs. brand-new loads that simply arrive Canceled/TONU. Banner copy keys
@@ -313,6 +315,34 @@ export default function LoadsImport() {
             </Section>
           )}
 
+          {/* Needs review — advisory, non-blocking (e.g. missing trailer). */}
+          {needsReviewLoads.length > 0 && (
+            <Section title={`Needs review (${needsReviewLoads.length})`} subtitle="Advisory only — these loads still import on Apply. Worth a manual look (e.g. a missing trailer on a customer that normally supplies one).">
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className={S.tableHead}><tr>
+                    <th className={S.th}>Load #</th><th className={S.th}>Customer</th>
+                    <th className={S.th}>Driver(s)</th><th className={S.th}>Reason</th>
+                  </tr></thead>
+                  <tbody>
+                    {needsReviewLoads.map(p => (
+                      <tr key={p.load_number} className={S.tableRow}>
+                        <td className={`${S.td} font-mono`}>{p.load_number}</td>
+                        <td className={S.td}>{p.resolved.customer?.name || '—'}</td>
+                        <td className={S.td}>{p.legs.map(l => l.parsed.driver_raw).filter(Boolean).join(', ') || '—'}</td>
+                        <td className={S.td}>
+                          {(p.header.review_reasons || []).map(rsn => (
+                            <span key={rsn} className="inline-block mr-1 text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/20">{rsn}</span>
+                          ))}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Section>
+          )}
+
           {/* Updated */}
           {updatedLoads.length > 0 && (
             <Section title={`Updated (${updatedLoads.length})`} subtitle="Watched-field changes vs. what's stored. Approve or skip each — skipped loads aren't written.">
@@ -370,7 +400,12 @@ export default function LoadsImport() {
                     <tbody>
                       {newLoads.map(p => (
                         <tr key={p.load_number} className={S.tableRow}>
-                          <td className={`${S.td} font-mono`}>{p.load_number}</td>
+                          <td className={`${S.td} font-mono`}>
+                            {p.load_number}
+                            {p.header?.needs_review && (
+                              <span className="ml-1.5 text-[9px] uppercase tracking-wide px-1 py-0.5 rounded bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400" title={(p.header.review_reasons || []).join(', ')}>review</span>
+                            )}
+                          </td>
                           <td className={S.td}>{p.resolved.customer?.name || '—'}{p.resolved.customer?.match_status === 'to_create' && <span className="ml-1 text-[10px] text-cyan-600 dark:text-cyan-400">(new)</span>}</td>
                           <td className={S.td}>{p.header.status || '—'}</td>
                           <td className={`${S.td} text-right font-mono`}>{p.header.linehaul == null ? '—' : `$${Number(p.header.linehaul).toLocaleString('en-US', { minimumFractionDigits: 2 })}`}</td>

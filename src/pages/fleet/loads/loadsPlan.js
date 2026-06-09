@@ -76,7 +76,13 @@ export function buildPlan({ rows, refs, existing }) {
   const carrierByName = new Map()
   for (const c of refs.carriers) carrierByName.set(normName(c.name), c.id)
   const customerByName = new Map()
-  for (const c of refs.customers) customerByName.set(normName(c.name), c.id)
+  // trailer_required per customer (default true) — drives the missing-trailer
+  // "needs review" flag. Absent key → treated as true (requires a trailer).
+  const customerTrailerReq = new Map()
+  for (const c of refs.customers) {
+    customerByName.set(normName(c.name), c.id)
+    customerTrailerReq.set(normName(c.name), c.trailer_required !== false)
+  }
   const dispatcherByName = new Map()
   for (const d of refs.dispatchers) dispatcherByName.set(normName(d.name), d.id)
 
@@ -243,6 +249,22 @@ export function buildPlan({ rows, refs, existing }) {
     else if (headerDiffs.length || legs.some(l => l.classification === 'updated' || l.classification === 'new_leg')) classification = 'updated'
     else classification = 'unchanged'
 
+    // "Needs review" — advisory, non-blocking. Today the only reason is a
+    // missing trailer on a non-Canceled load whose customer requires one.
+    // Amazon Logistics Inc (and any customer flagged trailer_required=false)
+    // is exempt — the name check also covers a brand-new Amazon customer
+    // that doesn't have a row yet. Structured as a reasons LIST so more
+    // checks (missing truck, zero miles, …) can be added later.
+    const custNorm = normName(custRaw)
+    const isAmazon = custNorm === 'amazon logistics inc'
+    const customerRequiresTrailer = !isAmazon && customerTrailerReq.get(custNorm) !== false
+    const notCanceled = !(newStatusNorm === 'canceled' || newStatusNorm === 'cancelled')
+    const someLegMissingTrailer = legs.some(l => l.parsed.trailer_raw == null || String(l.parsed.trailer_raw).trim() === '')
+    const reviewReasons = []
+    if (notCanceled && customerRequiresTrailer && someLegMissingTrailer) reviewReasons.push('Missing trailer')
+    header.needs_review = reviewReasons.length > 0
+    header.review_reasons = reviewReasons
+
     plan.push({
       load_number: loadNumber,
       existing_load_id: existingLoad?.id ?? null,
@@ -265,6 +287,7 @@ export function buildPlan({ rows, refs, existing }) {
     new_dispatchers: toCreateDispatchers.size,
     unmatched: unmatchedKeys.size,
     status_flags: plan.filter(p => p.is_status_flag).length,
+    needs_review: plan.filter(p => p.header.needs_review).length,
   }
 
   return { plan, counts }

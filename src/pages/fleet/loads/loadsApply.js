@@ -170,7 +170,11 @@ export async function applyBatch({ batchId, decisions, linkOverrides, onProgress
 
   // ── Phase 1: customers ──
   for (const c of chunked(custNames)) {
-    const { error } = await supabase.from('customers').insert(c.map(name => ({ name })))
+    // Drop-trailer customers (Amazon Logistics Inc) are created
+    // trailer_required=false so their no-trailer loads don't flag for review.
+    const { error } = await supabase.from('customers').insert(
+      c.map(name => normName(name) === 'amazon logistics inc' ? { name, trailer_required: false } : { name })
+    )
     if (error && !/duplicate|unique/i.test(error.message || '')) return { error, done, total }
     done += c.length; report('Creating customers')
   }
