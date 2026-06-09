@@ -29,8 +29,9 @@ export default function TrailersList() {
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('')
   const [stageFilter, setStageFilter] = useState('all')
-  // Default hides archived; user can switch to 'archived' or 'all' to see them.
-  const [opStatusFilter, setOpStatusFilter] = useState('active_inactive')
+  // Default to Active so opening the page shows only active trailers; the
+  // dropdown switches to Inactive / Archived / All / Idle on demand.
+  const [opStatusFilter, setOpStatusFilter] = useState('active')
   const [sortField, setSortField] = useState('unit_number')
   const [sortDir, setSortDir] = useState('asc')
   const [showModal, setShowModal] = useState(false)
@@ -162,7 +163,7 @@ export default function TrailersList() {
           Showing {filtered.length} of {rows.length} trailer{rows.length === 1 ? '' : 's'}
         </p>
         <div className="flex items-center gap-2">
-          <Select value={opStatusFilter} onChange={e => setOpStatusFilter(e.target.value)} className="text-xs">
+          <Select value={opStatusFilter} onChange={e => setOpStatusFilter(e.target.value)} className="text-xs min-w-[12rem]">
             <option value="active_inactive">Active + Inactive</option>
             <option value="active">Active only</option>
             <option value="inactive">Inactive only</option>

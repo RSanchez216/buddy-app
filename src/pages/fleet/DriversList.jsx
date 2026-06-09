@@ -26,7 +26,9 @@ export default function DriversList() {
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('')
-  const [statusFilter, setStatusFilter] = useState('all')
+  // Default to Active so opening the page shows only active drivers; the
+  // All / Inactive / Terminated / etc. pills are one click away.
+  const [statusFilter, setStatusFilter] = useState('active')
   const [sortField, setSortField] = useState('full_name')
   const [sortDir, setSortDir] = useState('asc')
   const [showModal, setShowModal] = useState(false)
