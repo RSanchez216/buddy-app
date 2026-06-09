@@ -64,12 +64,46 @@ function formatRange(from, to) {
 }
 const PRESET_LABEL = { week: 'This week', month: 'This month', custom: 'Custom' }
 
+// Shift a 'YYYY-MM-DD' by N days (local), and inclusive day-span between two.
+function shiftYmd(s, days) { const d = parseYmd(s); d.setDate(d.getDate() + days); return ymd(d) }
+function spanDays(from, to) {
+  const a = parseYmd(from), b = parseYmd(to)
+  if (!a || !b) return 0
+  return Math.round((b - a) / 86400000) + 1
+}
+
+// Roll a set of rollup rows up to period totals. activeEntities = rows with any
+// realized load (e.g. drivers who actually ran a load this week).
+function aggregate(rows) {
+  let loads = 0, realizedLoads = 0, bookedLoads = 0, miles = 0, realized = 0, projected = 0, activeEntities = 0
+  for (const r of rows) {
+    loads += Number(r.load_count || 0)
+    realizedLoads += Number(r.realized_loads || 0)
+    bookedLoads += Number(r.booked_loads || 0)
+    miles += Number(r.total_miles || 0)
+    realized += Number(r.realized_revenue || 0)
+    projected += Number(r.projected_revenue || 0)
+    if (Number(r.realized_loads || 0) > 0) activeEntities++
+  }
+  return { loads, realizedLoads, bookedLoads, miles, realized, projected, activeEntities, rpm: miles > 0 ? realized / miles : null }
+}
+
+// Week-over-week movement. isNew when there's nothing to compare against (prior
+// = 0) but the current period has activity; flat when essentially unchanged.
+function pctDelta(cur, prev) {
+  cur = Number(cur) || 0; prev = Number(prev) || 0
+  if (prev === 0) return cur > 0 ? { isNew: true } : { flat: true }
+  const pct = (cur - prev) / prev * 100
+  return { pct, dir: pct > 0.5 ? 'up' : pct < -0.5 ? 'down' : 'flat' }
+}
+
 export default function Profitability() {
   const toast = useToast()
   const [dimension, setDimension] = useState('driver')
   const [preset, setPreset] = useState('week')
   const [range, setRange] = useState(thisWeek)
   const [rows, setRows] = useState([])
+  const [priorRows, setPriorRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [teamLoads, setTeamLoads] = useState([])
   const [editLoad, setEditLoad] = useState(null)
@@ -108,12 +142,20 @@ export default function Profitability() {
       }))
     }
 
-    const [rollup, team] = await Promise.all([
+    // Prior comparable period (same dimension) for week-over-week deltas:
+    // the equal-length span immediately before the selected one.
+    const span = spanDays(range.from, range.to)
+    const priorFrom = shiftYmd(range.from, -span)
+    const priorTo = shiftYmd(range.to, -span)
+
+    const [rollup, prior, team] = await Promise.all([
       supabase.rpc('load_profit_rollup', { p_dimension: dimension, p_from: range.from, p_to: range.to }),
+      supabase.rpc('load_profit_rollup', { p_dimension: dimension, p_from: priorFrom, p_to: priorTo }),
       loadTeamLoads(),
     ])
     if (rollup.error) toast.error("Couldn't load profitability", rollup.error)
     setRows(rollup.data || [])
+    setPriorRows(prior.data || [])
     setTeamLoads(team)
     setLoading(false)
   }, [dimension, range.from, range.to, toast])
@@ -130,23 +172,21 @@ export default function Profitability() {
     () => [...rows].sort((a, b) => Number(b.realized_revenue) - Number(a.realized_revenue)),
     [rows]
   )
-  const totals = useMemo(() => {
-    let loads = 0, realizedLoads = 0, bookedLoads = 0, miles = 0, realized = 0, projected = 0
-    for (const r of rows) {
-      loads += Number(r.load_count || 0)
-      realizedLoads += Number(r.realized_loads || 0)
-      bookedLoads += Number(r.booked_loads || 0)
-      miles += Number(r.total_miles || 0)
-      realized += Number(r.realized_revenue || 0)
-      projected += Number(r.projected_revenue || 0)
-    }
-    return { loads, realizedLoads, bookedLoads, miles, realized, projected, rpm: miles > 0 ? realized / miles : null }
-  }, [rows])
+  const totals = useMemo(() => aggregate(rows), [rows])
+  const priorTotals = useMemo(() => aggregate(priorRows), [priorRows])
 
   const dimLabel = DIMENSIONS.find(d => d.key === dimension)?.label || ''
+  // Comparison framing for the summary panel: a 7-day selection reads "vs last
+  // week"; anything else compares to the equal-length prior period.
+  const isWeek = spanDays(range.from, range.to) === 7
+  const cmpLabel = isWeek ? 'vs last week' : 'vs prior period'
+  // Days-active denominator = days in the selected window (7 for a week).
+  const rangeDays = spanDays(range.from, range.to)
+  // Utilization column is most meaningful where one entity = one running unit.
+  const showDays = dimension === 'driver' || dimension === 'truck'
   // "% of loads" is scoped to the Customers tab for now (concentration view).
   const showPct = dimension === 'customer'
-  const colCount = showPct ? 7 : 6
+  const colCount = 6 + (showPct ? 1 : 0) + (showDays ? 1 : 0)
   const pctOfLoads = (n) => totals.loads > 0 ? `${(Number(n || 0) / totals.loads * 100).toFixed(1)}%` : '—'
 
   return (
@@ -162,12 +202,27 @@ export default function Profitability() {
         </p>
       </div>
 
-      {/* KPI summary */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Kpi label="Realized revenue" tone="emerald" value={fmtMoneyWhole(totals.realized)} sub={`${totals.realizedLoads.toLocaleString()} realized load${totals.realizedLoads === 1 ? '' : 's'}`} />
-        <Kpi label="Upcoming (Booked)" tone="cyan" value={fmtMoneyWhole(totals.projected)} sub={`${totals.bookedLoads.toLocaleString()} booked load${totals.bookedLoads === 1 ? '' : 's'}`} />
-        <Kpi label="Realized miles" tone="slate" value={fmtNum(totals.miles)} sub="non-projected legs" />
-        <Kpi label="Realized $/mile" tone="amber" value={totals.rpm == null ? '—' : `$${totals.rpm.toFixed(2)}`} sub="revenue ÷ miles" />
+      {/* Week summary — revenue-based "good week / bad week" read with
+          week-over-week deltas. NOT a profit verdict; the net-margin layer
+          lands with the cost phase and can drop straight into this panel. */}
+      <div className={`${S.card} p-4`}>
+        <div className="flex items-start justify-between flex-wrap gap-x-4 gap-y-1 mb-3">
+          <h2 className="text-sm font-semibold text-gray-900 dark:text-white">
+            {isWeek ? 'Week summary' : 'Period summary'}
+            <span className="ml-2 text-[11px] font-normal text-gray-400 dark:text-slate-500">{cmpLabel}</span>
+          </h2>
+          <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400" title="This is a revenue/productivity read. Driver pay, fuel, and equipment cost aren't in BUDDY yet, so there's no true profit verdict here — that arrives with the cost/margin phase.">
+            Revenue view — net margin pending cost layer
+          </span>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+          <Stat label="Realized gross" tone="emerald" value={fmtMoneyWhole(totals.realized)} delta={pctDelta(totals.realized, priorTotals.realized)} cmpLabel={cmpLabel} />
+          <Stat label="Upcoming (Booked)" tone="cyan" value={fmtMoneyWhole(totals.projected)} sub={`${totals.bookedLoads.toLocaleString()} booked`} delta={pctDelta(totals.projected, priorTotals.projected)} cmpLabel={cmpLabel} />
+          <Stat label="Realized loads" tone="slate" value={fmtNum(totals.realizedLoads)} delta={pctDelta(totals.realizedLoads, priorTotals.realizedLoads)} cmpLabel={cmpLabel} />
+          <Stat label="Realized miles" tone="slate" value={fmtNum(totals.miles)} delta={pctDelta(totals.miles, priorTotals.miles)} cmpLabel={cmpLabel} />
+          <Stat label="Realized $/mile" tone="amber" value={totals.rpm == null ? '—' : `$${totals.rpm.toFixed(2)}`} delta={pctDelta(totals.rpm, priorTotals.rpm)} cmpLabel={cmpLabel} />
+          <Stat label={`Active ${dimLabel.toLowerCase()}`} tone="slate" value={fmtNum(totals.activeEntities)} sub={`of ${rows.length}`} delta={pctDelta(totals.activeEntities, priorTotals.activeEntities)} cmpLabel={cmpLabel} />
+        </div>
       </div>
 
       {/* Controls: dimension tabs + date range. Stacks on narrow widths so
@@ -222,6 +277,7 @@ export default function Profitability() {
               <tr>
                 <th className={`${S.th} min-w-[180px]`}>{dimLabel.replace(/s$/, '')}</th>
                 <th className={`${S.th} text-right`}>Loads</th>
+                {showDays && <th className={`${S.th} text-right`} title={`Distinct days with a realized (delivered) load in range — utilization out of ${rangeDays}.`}>Days active</th>}
                 {showPct && <th className={`${S.th} text-right`} title="Share of total loads in the selected date window.">% of loads</th>}
                 <th className={`${S.th} text-right`}>Miles</th>
                 <th className={`${S.th} text-right`}>Realized revenue</th>
@@ -253,6 +309,18 @@ export default function Profitability() {
                       </span>
                     )}
                   </td>
+                  {showDays && (
+                    <td className={`${S.td} text-right font-mono text-gray-600 dark:text-slate-400 align-top`}>
+                      <span className={Number(r.active_days) > 0 ? 'text-gray-900 dark:text-slate-200' : 'text-gray-300 dark:text-slate-600'}>
+                        {fmtNum(r.active_days)} <span className="text-gray-400 dark:text-slate-500">/ {rangeDays}</span>
+                      </span>
+                      {Number(r.active_days) > 0 && Number(r.realized_loads) > 0 && (
+                        <span className="block text-[10px] font-normal text-gray-400 dark:text-slate-500 leading-tight mt-0.5">
+                          {(Number(r.realized_loads) / Number(r.active_days)).toFixed(1)} loads/day
+                        </span>
+                      )}
+                    </td>
+                  )}
                   {showPct && <td className={`${S.td} text-right font-mono text-gray-500 dark:text-slate-400 align-top`}>{pctOfLoads(r.load_count)}</td>}
                   <td className={`${S.td} text-right font-mono text-gray-600 dark:text-slate-400 align-top`}>{fmtNum(r.total_miles)}</td>
                   <td className={`${S.td} text-right font-mono text-gray-900 dark:text-slate-200`}>{fmtMoney(r.realized_revenue)}</td>
@@ -273,6 +341,7 @@ export default function Profitability() {
                       </span>
                     )}
                   </td>
+                  {showDays && <td className={`${S.td} text-right font-mono align-top text-gray-400 dark:text-slate-500`}>{totals.activeEntities} active</td>}
                   {showPct && <td className={`${S.td} text-right font-mono align-top text-gray-500 dark:text-slate-400`}>{totals.loads > 0 ? '100.0%' : '—'}</td>}
                   <td className={`${S.td} text-right font-mono align-top`}>{fmtNum(totals.miles)}</td>
                   <td className={`${S.td} text-right font-mono text-gray-900 dark:text-slate-200`}>{fmtMoney(totals.realized)}</td>
@@ -334,17 +403,34 @@ export default function Profitability() {
   )
 }
 
-function Kpi({ label, tone, value, sub }) {
+function Stat({ label, tone, value, sub, delta, cmpLabel }) {
   const toneText = {
     emerald: 'text-emerald-700 dark:text-emerald-400', cyan: 'text-cyan-700 dark:text-cyan-400',
     amber: 'text-amber-700 dark:text-amber-400', slate: 'text-gray-900 dark:text-slate-200',
   }[tone] || 'text-gray-900 dark:text-slate-200'
   return (
-    <div className={`${S.card} p-4`}>
+    <div>
       <p className="text-[11px] font-semibold uppercase tracking-widest text-gray-500 dark:text-slate-400">{label}</p>
       <p className={`text-xl font-mono font-medium ${toneText} leading-tight mt-0.5`}>{value}</p>
-      {sub && <p className="text-[11px] text-gray-500 dark:text-slate-400 leading-tight mt-0.5">{sub}</p>}
+      <div className="flex items-center gap-1.5 leading-tight mt-0.5">
+        <DeltaBadge delta={delta} cmpLabel={cmpLabel} />
+        {sub && <span className="text-[11px] text-gray-500 dark:text-slate-400">{sub}</span>}
+      </div>
     </div>
+  )
+}
+
+// Week-over-week badge: ▲/▼ + %, green up / red down (more revenue, miles,
+// loads, RPM is always "better" here). "new" when there's no prior to compare.
+function DeltaBadge({ delta, cmpLabel }) {
+  if (!delta || delta.flat) return <span className="text-[11px] text-gray-400 dark:text-slate-600">— flat</span>
+  if (delta.isNew) return <span className="text-[11px] text-emerald-600 dark:text-emerald-400" title={`No activity ${cmpLabel}`}>new</span>
+  const up = delta.dir === 'up', down = delta.dir === 'down'
+  const cls = up ? 'text-emerald-600 dark:text-emerald-400' : down ? 'text-rose-600 dark:text-rose-400' : 'text-gray-400 dark:text-slate-600'
+  return (
+    <span className={`text-[11px] font-medium ${cls}`} title={cmpLabel}>
+      {up ? '▲' : down ? '▼' : '■'} {Math.abs(delta.pct).toFixed(0)}%
+    </span>
   )
 }
 
