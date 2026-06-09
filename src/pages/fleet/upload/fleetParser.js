@@ -147,6 +147,22 @@ function cleanVin(v) {
   return s === '' ? null : s
 }
 
+// Normalize the TMS free-text Status mirror. The export now includes full
+// fleet, so active equipment can arrive as "On Service" / "In Service" /
+// "Service" — all of which mean Active and must collapse to "Active" so the
+// UI never shows an "On Service" status. "Out of Service" is the opposite
+// meaning and is explicitly NOT collapsed; anything else passes through
+// trimmed. Silent (not a parse warning) — this normalization is intended.
+// operational_status is unaffected here (new units default 'active';
+// existing units keep their user-managed value — see fleetCommit).
+function normalizeTmsStatus(raw) {
+  const s = String(raw ?? '').trim().toLowerCase().replace(/[\s-]+/g, ' ')
+  if (s === '') return null
+  if (s === 'out of service') return 'Out of Service'
+  if (['active', 'on service', 'in service', 'service'].includes(s)) return 'Active'
+  return String(raw).trim()
+}
+
 // Top-level: ArrayBuffer → { kind, rows: Array<RawRow>, errors }
 // kind ∈ {'truck','trailer'} (caller passes hint based on which page launched the modal)
 export function parseFleetWorkbook(arrayBuffer, kind, allDrivers) {
@@ -211,7 +227,7 @@ export function parseFleetWorkbook(arrayBuffer, kind, allDrivers) {
       _rowNum: rowNum,
       unit_number,
       vin,
-      status: cleanStr(cols.status ? r[cols.status] : null),
+      status: normalizeTmsStatus(cols.status ? r[cols.status] : null),
       equipment_owner_raw: cleanStr(cols.owner ? r[cols.owner] : null),
       driver_assignment_raw: rawDriver,
       driver_id: driverResolved.driverId,
