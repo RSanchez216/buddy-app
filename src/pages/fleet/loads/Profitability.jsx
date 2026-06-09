@@ -114,14 +114,16 @@ export default function Profitability() {
     [rows]
   )
   const totals = useMemo(() => {
-    let loads = 0, miles = 0, realized = 0, projected = 0
+    let loads = 0, realizedLoads = 0, bookedLoads = 0, miles = 0, realized = 0, projected = 0
     for (const r of rows) {
       loads += Number(r.load_count || 0)
+      realizedLoads += Number(r.realized_loads || 0)
+      bookedLoads += Number(r.booked_loads || 0)
       miles += Number(r.total_miles || 0)
       realized += Number(r.realized_revenue || 0)
       projected += Number(r.projected_revenue || 0)
     }
-    return { loads, miles, realized, projected, rpm: miles > 0 ? realized / miles : null }
+    return { loads, realizedLoads, bookedLoads, miles, realized, projected, rpm: miles > 0 ? realized / miles : null }
   }, [rows])
 
   const dimLabel = DIMENSIONS.find(d => d.key === dimension)?.label || ''
@@ -141,8 +143,8 @@ export default function Profitability() {
 
       {/* KPI summary */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Kpi label="Realized revenue" tone="emerald" value={fmtMoneyWhole(totals.realized)} sub={`${totals.loads} load${totals.loads === 1 ? '' : 's'}`} />
-        <Kpi label="Upcoming (Booked)" tone="cyan" value={fmtMoneyWhole(totals.projected)} sub="not yet earned" />
+        <Kpi label="Realized revenue" tone="emerald" value={fmtMoneyWhole(totals.realized)} sub={`${totals.realizedLoads.toLocaleString()} realized load${totals.realizedLoads === 1 ? '' : 's'}`} />
+        <Kpi label="Upcoming (Booked)" tone="cyan" value={fmtMoneyWhole(totals.projected)} sub={`${totals.bookedLoads.toLocaleString()} booked load${totals.bookedLoads === 1 ? '' : 's'}`} />
         <Kpi label="Realized miles" tone="slate" value={fmtNum(totals.miles)} sub="non-projected legs" />
         <Kpi label="Realized $/mile" tone="amber" value={totals.rpm == null ? '—' : `$${totals.rpm.toFixed(2)}`} sub="revenue ÷ miles" />
       </div>
@@ -209,8 +211,18 @@ export default function Profitability() {
                       <span className="ml-2 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400" title="Raw name from TMS — not yet linked to a fleet record. Resolve it in Loads Import review.">unmatched</span>
                     )}
                   </td>
-                  <td className={`${S.td} text-right font-mono text-gray-600 dark:text-slate-400`}>{fmtNum(r.load_count)}</td>
-                  <td className={`${S.td} text-right font-mono text-gray-600 dark:text-slate-400`}>{fmtNum(r.total_miles)}</td>
+                  <td className={`${S.td} text-right font-mono text-gray-600 dark:text-slate-400 align-top`}>
+                    {fmtNum(r.load_count)}
+                    {/* Show the realized vs booked split when any of the row's
+                        loads are Booked — so a $0/0mi/— row reads as upcoming,
+                        not missing data. Pure-realized rows stay clean. */}
+                    {Number(r.booked_loads) > 0 && (
+                      <span className="block text-[10px] font-normal text-gray-400 dark:text-slate-500 leading-tight mt-0.5">
+                        {fmtNum(r.realized_loads)} realized · <span className="text-cyan-600 dark:text-cyan-400">{fmtNum(r.booked_loads)} booked</span>
+                      </span>
+                    )}
+                  </td>
+                  <td className={`${S.td} text-right font-mono text-gray-600 dark:text-slate-400 align-top`}>{fmtNum(r.total_miles)}</td>
                   <td className={`${S.td} text-right font-mono text-gray-900 dark:text-slate-200`}>{fmtMoney(r.realized_revenue)}</td>
                   <td className={`${S.td} text-right font-mono text-gray-600 dark:text-slate-400`}>{r.realized_rpm == null ? '—' : `$${Number(r.realized_rpm).toFixed(2)}`}</td>
                   <td className={`${S.td} text-right font-mono ${Number(r.projected_revenue) > 0 ? 'text-cyan-700 dark:text-cyan-400' : 'text-gray-300 dark:text-slate-600'}`}>{Number(r.projected_revenue) > 0 ? fmtMoney(r.projected_revenue) : '—'}</td>
@@ -220,9 +232,16 @@ export default function Profitability() {
             {!loading && sorted.length > 0 && (
               <tfoot>
                 <tr className="border-t-2 border-gray-200 dark:border-white/10 bg-gray-50/70 dark:bg-white/[0.02] font-medium">
-                  <td className={`${S.td} text-xs text-gray-600 dark:text-slate-300`}>Totals · {sorted.length} {dimLabel.toLowerCase()}</td>
-                  <td className={`${S.td} text-right font-mono`}>{fmtNum(totals.loads)}</td>
-                  <td className={`${S.td} text-right font-mono`}>{fmtNum(totals.miles)}</td>
+                  <td className={`${S.td} text-xs text-gray-600 dark:text-slate-300 align-top`}>Totals · {sorted.length} {dimLabel.toLowerCase()}</td>
+                  <td className={`${S.td} text-right font-mono align-top`}>
+                    {fmtNum(totals.loads)}
+                    {totals.bookedLoads > 0 && (
+                      <span className="block text-[10px] font-normal text-gray-400 dark:text-slate-500 leading-tight mt-0.5">
+                        {fmtNum(totals.realizedLoads)} realized · <span className="text-cyan-600 dark:text-cyan-400">{fmtNum(totals.bookedLoads)} booked</span>
+                      </span>
+                    )}
+                  </td>
+                  <td className={`${S.td} text-right font-mono align-top`}>{fmtNum(totals.miles)}</td>
                   <td className={`${S.td} text-right font-mono text-gray-900 dark:text-slate-200`}>{fmtMoney(totals.realized)}</td>
                   <td className={`${S.td} text-right font-mono`}>{totals.rpm == null ? '—' : `$${totals.rpm.toFixed(2)}`}</td>
                   <td className={`${S.td} text-right font-mono text-cyan-700 dark:text-cyan-400`}>{totals.projected > 0 ? fmtMoney(totals.projected) : '—'}</td>
