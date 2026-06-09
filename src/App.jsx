@@ -36,6 +36,7 @@ import TrailerDetail from './pages/fleet/TrailerDetail'
 import DriversList from './pages/fleet/DriversList'
 import DriverDetail from './pages/fleet/DriverDetail'
 import FleetCost from './pages/fleet/FleetCost'
+import LoadsImport from './pages/fleet/loads/LoadsImport'
 import SetPassword from './pages/auth/SetPassword'
 
 export default function App() {
@@ -65,6 +66,7 @@ export default function App() {
               <Route path="fleet/drivers" element={<DriversList />} />
               <Route path="fleet/drivers/:id" element={<DriverDetail />} />
               <Route path="fleet/cost" element={<FleetCost />} />
+              <Route path="fleet/loads/import" element={<LoadsImport />} />
               {/* Financial Controls */}
               <Route path="financial-controls/debt-schedule" element={<DebtSchedule />} />
               <Route path="financial-controls/debt-schedule/:loanId" element={<LoanDetail />} />
