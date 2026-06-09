@@ -574,6 +574,18 @@ export default function FleetCost() {
                       {r.per_mile_rate == null
                         ? '—'
                         : `$${Number(r.per_mile_rate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`}
+                      {/* Penalty/overage rate as a light secondary line —
+                          reference only (miles-over-allowance bill), not a
+                          total. Shown whenever the row carries a penalty
+                          rate, even if base per-mile is blank. */}
+                      {r.penalty_per_mile_rate != null && (
+                        <span
+                          className="block text-[10px] text-gray-400 dark:text-slate-500 leading-tight"
+                          title="Overage rate billed on miles over the free mileage allowance — reference only until mileage arrives."
+                        >
+                          +${Number(r.penalty_per_mile_rate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })} penalty
+                        </span>
+                      )}
                     </td>
                     <td className={`${S.td} text-xs`}>{lenderLessorLabel(r)}</td>
                   </tr>

@@ -129,7 +129,7 @@ export default function VendorMaster() {
     setRateCardLoading(true)
     const [{ data: card }, { data: fees }] = await Promise.all([
       supabase.from('vendor_lease_rates')
-        .select('fixed_charge, period, per_mile_rate, updated_at')
+        .select('fixed_charge, period, per_mile_rate, penalty_per_mile_rate, updated_at')
         .eq('vendor_id', vendorId).maybeSingle(),
       supabase.from('vendor_lease_fees')
         .select('id, label, amount, sort_order')
@@ -149,14 +149,14 @@ export default function VendorMaster() {
     // round-trip without re-deriving anything client-side.
     const [{ data: cost }, { data: trucks }, { data: trailers }] = await Promise.all([
       supabase.from('fleet_equipment_cost')
-        .select('etype, id, unit_number, vin, monthly_cost, weekly_cost, per_mile_rate')
+        .select('etype, id, unit_number, vin, monthly_cost, weekly_cost, per_mile_rate, penalty_per_mile_rate')
         .eq('lessor_vendor_id', vendorId)
         .order('etype').order('unit_number'),
       supabase.from('trucks')
-        .select('id, lease_cost, lease_cost_period, lease_cost_per_mile, lease_rate_override')
+        .select('id, lease_cost, lease_cost_period, lease_cost_per_mile, lease_penalty_per_mile, lease_rate_override')
         .eq('lessor_vendor_id', vendorId),
       supabase.from('trailers')
-        .select('id, lease_cost, lease_cost_period, lease_cost_per_mile, lease_rate_override')
+        .select('id, lease_cost, lease_cost_period, lease_cost_per_mile, lease_penalty_per_mile, lease_rate_override')
         .eq('lessor_vendor_id', vendorId),
     ])
     const editableByKey = new Map()
@@ -167,10 +167,11 @@ export default function VendorMaster() {
       const e = editableByKey.get(k)
       return {
         ...c,
-        lease_cost:          e?.lease_cost ?? null,
-        lease_cost_period:   e?.lease_cost_period || 'monthly',
-        lease_cost_per_mile: e?.lease_cost_per_mile ?? null,
-        lease_rate_override: !!e?.lease_rate_override,
+        lease_cost:            e?.lease_cost ?? null,
+        lease_cost_period:     e?.lease_cost_period || 'monthly',
+        lease_cost_per_mile:   e?.lease_cost_per_mile ?? null,
+        lease_penalty_per_mile: e?.lease_penalty_per_mile ?? null,
+        lease_rate_override:   !!e?.lease_rate_override,
       }
     })
     setLeasedEquipment(rows)
@@ -712,7 +713,7 @@ export default function VendorMaster() {
 // ─────────────────────────────────────────────────────────────────────────
 function LeaseRateCardEditor({ vendorId, card, fees, loading, onSaved }) {
   const toast = useToast()
-  const [draft, setDraft] = useState({ fixed: '', period: 'weekly', perMile: '' })
+  const [draft, setDraft] = useState({ fixed: '', period: 'weekly', perMile: '', penalty: '' })
   const [feeDrafts, setFeeDrafts] = useState([])
   const [saving, setSaving] = useState(false)
 
@@ -721,6 +722,7 @@ function LeaseRateCardEditor({ vendorId, card, fees, loading, onSaved }) {
       fixed:   card?.fixed_charge ?? '',
       period:  card?.period || 'weekly',
       perMile: card?.per_mile_rate ?? '',
+      penalty: card?.penalty_per_mile_rate ?? '',
     })
     setFeeDrafts((fees || []).map((f, i) => ({ ...f, _local: false, sort_order: f.sort_order ?? i })))
   }, [card, fees])
@@ -745,6 +747,10 @@ function LeaseRateCardEditor({ vendorId, card, fees, loading, onSaved }) {
     if (perMileNum != null && (!Number.isFinite(perMileNum) || perMileNum < 0)) {
       toast.error('Per-mile rate must be 0 or positive.'); return
     }
+    const penaltyNum = draft.penalty === '' ? null : Number(draft.penalty)
+    if (penaltyNum != null && (!Number.isFinite(penaltyNum) || penaltyNum < 0)) {
+      toast.error('Penalty per-mile rate must be 0 or positive.'); return
+    }
     const validFees = feeDrafts
       .filter(f => f.label.trim() && f.amount !== '' && Number.isFinite(Number(f.amount)) && Number(f.amount) >= 0)
       .map((f, i) => ({ vendor_id: vendorId, label: f.label.trim(), amount: Number(f.amount), sort_order: i }))
@@ -758,6 +764,7 @@ function LeaseRateCardEditor({ vendorId, card, fees, loading, onSaved }) {
         fixed_charge: fixedNum,
         period: draft.period || 'weekly',
         per_mile_rate: perMileNum,
+        penalty_per_mile_rate: penaltyNum,
         updated_at: new Date().toISOString(),
       }, { onConflict: 'vendor_id' })
     if (upErr) {
@@ -792,10 +799,10 @@ function LeaseRateCardEditor({ vendorId, card, fees, loading, onSaved }) {
         {loading && <span className="text-[10px] text-gray-400 dark:text-slate-500 italic">Loading…</span>}
       </div>
       <p className="text-xs text-gray-400 dark:text-slate-500 mb-3 leading-tight">
-        Set once per vendor — every leased unit inherits this card. Per-mile dollar impact still waits on mileage from invoices/Loads.
+        Set once per vendor — every leased unit inherits this card. Per-mile and penalty dollar impact still wait on mileage from invoices/Loads. Penalty applies to miles over the free allowance.
       </p>
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div>
           <label className="text-[10px] text-gray-500 dark:text-slate-400">Fixed cost</label>
           <input
@@ -822,6 +829,20 @@ function LeaseRateCardEditor({ vendorId, card, fees, loading, onSaved }) {
             className={S.input} placeholder="0.0000"
             value={draft.perMile}
             onChange={e => setDraft(d => ({ ...d, perMile: e.target.value }))}
+          />
+        </div>
+        <div>
+          <label
+            className="text-[10px] text-gray-500 dark:text-slate-400"
+            title="Overage rate billed on miles driven above the free mileage allowance (e.g. Vanguard DISTANCE PENALTY). Reads $0 when under the cap; dollar impact waits on mileage."
+          >
+            Penalty per-mile $
+          </label>
+          <input
+            type="number" step="0.0001" min="0"
+            className={S.input} placeholder="0.0000"
+            value={draft.penalty}
+            onChange={e => setDraft(d => ({ ...d, penalty: e.target.value }))}
           />
         </div>
       </div>
@@ -917,7 +938,7 @@ const LeasedEquipmentEditor = forwardRef(function LeasedEquipmentEditor(
   const cardPeriod = card?.period || 'weekly'
   const [drafts, setDrafts] = useState(() => buildInitialDrafts(rows, cardPeriod))
   const [selected, setSelected] = useState(new Set())
-  const [bulk, setBulk] = useState({ cost: '', period: cardPeriod, perMile: '' })
+  const [bulk, setBulk] = useState({ cost: '', period: cardPeriod, perMile: '', penalty: '' })
   const [saving, setSaving] = useState(false)
 
   // Pre-compute the vendor card's effective values once so each row's
@@ -927,7 +948,8 @@ const LeasedEquipmentEditor = forwardRef(function LeasedEquipmentEditor(
     const fixed = Number(card?.fixed_charge) || 0
     const feesTot = (fees || []).reduce((s, f) => s + (Number(f.amount) || 0), 0)
     return { fixed, feesTot, total: fixed + feesTot, period: cardPeriod,
-             perMile: card?.per_mile_rate ?? null }
+             perMile: card?.per_mile_rate ?? null,
+             penalty: card?.penalty_per_mile_rate ?? null }
   })()
 
   // When `rows` reloads after a successful save, reset drafts to match.
@@ -940,7 +962,7 @@ const LeasedEquipmentEditor = forwardRef(function LeasedEquipmentEditor(
   // (e.g. user just saved a Weekly card on a previously-Monthly
   // vendor). Doesn't stomp on a value the user typed mid-edit.
   useEffect(() => {
-    setBulk(b => (b.cost === '' && b.perMile === '') ? { ...b, period: cardPeriod } : b)
+    setBulk(b => (b.cost === '' && b.perMile === '' && b.penalty === '') ? { ...b, period: cardPeriod } : b)
   }, [cardPeriod])
 
   function buildInitialDrafts(rows, defaultPeriod) {
@@ -956,6 +978,7 @@ const LeasedEquipmentEditor = forwardRef(function LeasedEquipmentEditor(
           ? (r.lease_cost_period || defaultPeriod || 'monthly')
           : (defaultPeriod || r.lease_cost_period || 'monthly'),
         lease_cost_per_mile: r.lease_cost_per_mile ?? '',
+        lease_penalty_per_mile: r.lease_penalty_per_mile ?? '',
         lease_rate_override: !!r.lease_rate_override,
       }
     }
@@ -970,6 +993,7 @@ const LeasedEquipmentEditor = forwardRef(function LeasedEquipmentEditor(
       || !eq(d.lease_cost, r.lease_cost)
       || (d.lease_cost_period || 'monthly') !== (r.lease_cost_period || 'monthly')
       || !eq(d.lease_cost_per_mile, r.lease_cost_per_mile)
+      || !eq(d.lease_penalty_per_mile, r.lease_penalty_per_mile)
   }
 
   const dirtyRows = rows.filter(isDirty)
@@ -998,8 +1022,9 @@ const LeasedEquipmentEditor = forwardRef(function LeasedEquipmentEditor(
     }
     const hasCost    = bulk.cost !== ''
     const hasPerMile = bulk.perMile !== ''
-    if (!hasCost && !hasPerMile) {
-      toast.error('Enter a Fixed cost and/or a Per-mile value to apply.')
+    const hasPenalty = bulk.penalty !== ''
+    if (!hasCost && !hasPerMile && !hasPenalty) {
+      toast.error('Enter a Fixed cost, Per-mile, and/or Penalty value to apply.')
       return
     }
     setDrafts(prev => {
@@ -1017,6 +1042,7 @@ const LeasedEquipmentEditor = forwardRef(function LeasedEquipmentEditor(
             lease_cost_period: bulk.period || 'monthly',
           } : {}),
           ...(hasPerMile ? { lease_cost_per_mile: bulk.perMile } : {}),
+          ...(hasPenalty ? { lease_penalty_per_mile: bulk.penalty } : {}),
         }
       }
       return next
@@ -1047,6 +1073,7 @@ const LeasedEquipmentEditor = forwardRef(function LeasedEquipmentEditor(
         lease_cost:          d.lease_cost === '' ? null : Number(d.lease_cost),
         lease_cost_period:   d.lease_cost_period || 'monthly',
         lease_cost_per_mile: d.lease_cost_per_mile === '' ? null : Number(d.lease_cost_per_mile),
+        lease_penalty_per_mile: d.lease_penalty_per_mile === '' ? null : Number(d.lease_penalty_per_mile),
         updated_by:          user?.id || null,
       } : {
         lease_rate_override: false,
@@ -1103,7 +1130,7 @@ const LeasedEquipmentEditor = forwardRef(function LeasedEquipmentEditor(
         <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500 mb-1.5">
           Bulk apply to selected ({selected.size})
         </p>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-2 items-end">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-2 items-end">
           <div>
             <label className="text-[10px] text-gray-500 dark:text-slate-400">Fixed cost</label>
             <input
@@ -1132,10 +1159,24 @@ const LeasedEquipmentEditor = forwardRef(function LeasedEquipmentEditor(
               onChange={e => setBulk(b => ({ ...b, perMile: e.target.value }))}
             />
           </div>
+          <div>
+            <label
+              className="text-[10px] text-gray-500 dark:text-slate-400"
+              title="Overage rate for miles over the free allowance."
+            >
+              Penalty $/mi
+            </label>
+            <input
+              type="number" step="0.0001" min="0"
+              className={S.input} placeholder="0.0000"
+              value={bulk.penalty}
+              onChange={e => setBulk(b => ({ ...b, penalty: e.target.value }))}
+            />
+          </div>
           <button
             type="button"
             onClick={applyBulk}
-            disabled={selected.size === 0 || (bulk.cost === '' && bulk.perMile === '')}
+            disabled={selected.size === 0 || (bulk.cost === '' && bulk.perMile === '' && bulk.penalty === '')}
             className={`${S.btnSave} h-[38px]`}
           >
             Apply to selected
@@ -1161,6 +1202,12 @@ const LeasedEquipmentEditor = forwardRef(function LeasedEquipmentEditor(
               <th className="text-right px-3 py-2 font-semibold min-w-[110px]">Fixed cost</th>
               <th className="text-left px-3 py-2 font-semibold min-w-[110px]">Period</th>
               <th className="text-right px-3 py-2 font-semibold min-w-[110px]">Per-mile $</th>
+              <th
+                className="text-right px-3 py-2 font-semibold min-w-[110px]"
+                title="Overage rate billed on miles over the free mileage allowance."
+              >
+                Penalty $/mi
+              </th>
               <th className="text-right px-3 py-2 font-semibold min-w-[110px]">
                 Effective monthly
                 <InfoIcon tip={COST_PERIOD_TOOLTIP} />
@@ -1280,6 +1327,16 @@ const LeasedEquipmentEditor = forwardRef(function LeasedEquipmentEditor(
                       onChange={e => setRowField(r, 'lease_cost_per_mile', e.target.value)}
                     />
                   </td>
+                  <td className="px-3 py-1.5">
+                    <input
+                      type="number" step="0.0001" min="0"
+                      className={`${S.input} text-right ${inh ? 'opacity-60 cursor-not-allowed' : ''}`}
+                      placeholder={inh ? (vendorRecurring.penalty != null ? `$${Number(vendorRecurring.penalty).toFixed(4)}` : '—') : '0.0000'}
+                      value={d.lease_penalty_per_mile}
+                      disabled={inh}
+                      onChange={e => setRowField(r, 'lease_penalty_per_mile', e.target.value)}
+                    />
+                  </td>
                   <td className="px-3 py-1.5 text-right font-mono text-gray-700 dark:text-slate-300">
                     {fmtMoneyShort(live.monthly)}
                   </td>
@@ -1295,7 +1352,7 @@ const LeasedEquipmentEditor = forwardRef(function LeasedEquipmentEditor(
               // a rate. For inherited rows the vendor card supplies the
               // effective monthly/weekly; for override rows the
               // unit-typed values do.
-              let mTot = 0, wTot = 0, withPerMile = 0
+              let mTot = 0, wTot = 0, withPerMile = 0, withPenalty = 0
               for (const r of rows) {
                 const d = drafts[rowKey(r)] || {}
                 if (d.lease_rate_override) {
@@ -1305,11 +1362,13 @@ const LeasedEquipmentEditor = forwardRef(function LeasedEquipmentEditor(
                     wTot += d.lease_cost_period === 'weekly' ? n : n * 12 / 52
                   }
                   if (d.lease_cost_per_mile !== '' && d.lease_cost_per_mile != null) withPerMile++
+                  if (d.lease_penalty_per_mile !== '' && d.lease_penalty_per_mile != null) withPenalty++
                 } else if (vendorRecurring.total > 0) {
                   const period = vendorRecurring.period
                   mTot += period === 'weekly' ? vendorRecurring.total * 52 / 12 : vendorRecurring.total
                   wTot += period === 'weekly' ? vendorRecurring.total : vendorRecurring.total * 12 / 52
                   if (vendorRecurring.perMile != null) withPerMile++
+                  if (vendorRecurring.penalty != null) withPenalty++
                 }
               }
               return (
@@ -1319,6 +1378,9 @@ const LeasedEquipmentEditor = forwardRef(function LeasedEquipmentEditor(
                   </td>
                   <td className="px-3 py-1.5 text-right text-[10px] text-gray-500 dark:text-slate-500">
                     {withPerMile} with rate
+                  </td>
+                  <td className="px-3 py-1.5 text-right text-[10px] text-gray-500 dark:text-slate-500">
+                    {withPenalty} with rate
                   </td>
                   <td className="px-3 py-1.5 text-right font-mono font-semibold text-gray-900 dark:text-slate-200">
                     {fmtMoneyShort(mTot)}

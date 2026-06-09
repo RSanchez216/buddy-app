@@ -40,7 +40,7 @@ export default function EquipmentDetail({ kind }) {
   const [showEdit, setShowEdit] = useState(false)
   // Lease editor local state — only initialized when the row loads and
   // applies on Save. Independent of the main edit modal.
-  const [leaseDraft, setLeaseDraft] = useState({ lessor_vendor_id: '', lease_cost: '', lease_cost_period: 'monthly', lease_cost_per_mile: '', lease_rate_override: false })
+  const [leaseDraft, setLeaseDraft] = useState({ lessor_vendor_id: '', lease_cost: '', lease_cost_period: 'monthly', lease_cost_per_mile: '', lease_penalty_per_mile: '', lease_rate_override: false })
   const [leaseSaving, setLeaseSaving] = useState(false)
   // Vendor rate card for the current lessor — drives the "Inherited"
   // breakdown when the unit's lease_rate_override is off.
@@ -104,7 +104,7 @@ export default function EquipmentDetail({ kind }) {
       if (data?.lessor_vendor_id) {
         const [{ data: card }, { data: cardFees }] = await Promise.all([
           supabase.from('vendor_lease_rates')
-            .select('fixed_charge, period, per_mile_rate')
+            .select('fixed_charge, period, per_mile_rate, penalty_per_mile_rate')
             .eq('vendor_id', data.lessor_vendor_id).maybeSingle(),
           supabase.from('vendor_lease_fees')
             .select('id, label, amount, sort_order')
@@ -122,6 +122,7 @@ export default function EquipmentDetail({ kind }) {
       lease_cost:          data?.lease_cost ?? '',
       lease_cost_period:   data?.lease_cost_period || 'monthly',
       lease_cost_per_mile: data?.lease_cost_per_mile ?? '',
+      lease_penalty_per_mile: data?.lease_penalty_per_mile ?? '',
       lease_rate_override: !!data?.lease_rate_override,
     })
 
@@ -168,12 +169,18 @@ export default function EquipmentDetail({ kind }) {
       toast.error('Per-mile rate must be 0 or a positive number.')
       return
     }
+    const penaltyNum = leaseDraft.lease_penalty_per_mile === '' ? null : Number(leaseDraft.lease_penalty_per_mile)
+    if (penaltyNum != null && (!Number.isFinite(penaltyNum) || penaltyNum < 0)) {
+      toast.error('Penalty per-mile rate must be 0 or a positive number.')
+      return
+    }
     setLeaseSaving(true)
     const payload = {
       lessor_vendor_id:    leaseDraft.lessor_vendor_id || null,
       lease_cost:          costNum,
       lease_cost_period:   leaseDraft.lease_cost_period || 'monthly',
       lease_cost_per_mile: perMileNum,
+      lease_penalty_per_mile: penaltyNum,
       lease_rate_override: !!leaseDraft.lease_rate_override,
       updated_by:          user?.id || null,
     }
@@ -408,6 +415,12 @@ export default function EquipmentDetail({ kind }) {
                         <span className="font-mono text-gray-700 dark:text-slate-300">${Number(rateCard.per_mile_rate).toFixed(4)}/mi</span>
                       </div>
                     )}
+                    {rateCard?.penalty_per_mile_rate != null && (
+                      <div className="flex justify-between text-xs">
+                        <span className="text-gray-500 dark:text-slate-500" title="Overage rate for miles over the free allowance.">Penalty per-mile</span>
+                        <span className="font-mono text-gray-700 dark:text-slate-300">${Number(rateCard.penalty_per_mile_rate).toFixed(4)}/mi</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -476,6 +489,20 @@ export default function EquipmentDetail({ kind }) {
               />
               <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-1 leading-tight">
                 Vendor side — what the lessor charges MANAS per mile. Dollar total lands once Loads ingest provides mileage.
+              </p>
+            </div>
+            <div>
+              <label className={S.label}>Penalty per-mile (overage)</label>
+              <input
+                type="number" step="0.0001" min="0"
+                className={`${S.input} ${!overriding ? 'opacity-60 cursor-not-allowed' : ''}`}
+                value={leaseDraft.lease_penalty_per_mile}
+                placeholder="0.0000"
+                onChange={e => setLeaseDraft(d => ({ ...d, lease_penalty_per_mile: e.target.value }))}
+                disabled={!canEdit || !overriding}
+              />
+              <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-1 leading-tight">
+                Overage rate billed on miles over the free allowance. Dollar impact waits on mileage + the allowance.
               </p>
             </div>
             <div className="md:col-span-2 flex items-end justify-end">
