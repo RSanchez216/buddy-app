@@ -6,7 +6,7 @@ import { S } from '../../../lib/styles'
 import ComboBox from '../../../components/ComboBox'
 import { parseLoadsWorkbook } from './loadsParse'
 import { buildPlan } from './loadsPlan'
-import { stageBatch, loadPendingBatch, applyBatch, discardBatch, linkKey } from './loadsApply'
+import { stageBatch, loadPendingBatch, applyBatch, discardBatch, loadRecentBatches, linkKey } from './loadsApply'
 
 // Loads ingest — Phase 2 review/approve screen. Upload the TMS "All Loads"
 // export → parse + resolve + diff + stage → review New/Updated/Unchanged,
@@ -43,6 +43,9 @@ export default function LoadsImport() {
   const [progress, setProgress] = useState(null)
   // Set when an apply stops mid-way: { done, total } → show counter + Retry.
   const [applyError, setApplyError] = useState(null)
+  // Recent import batches (history) + a dismissible post-apply summary.
+  const [recent, setRecent] = useState([])
+  const [applySummary, setApplySummary] = useState(null)
   const [showNew, setShowNew] = useState(false)
   // Fleet pick-lists for linking unmatched entities.
   const [fleet, setFleet] = useState({ drivers: [], trucks: [], trailers: [] })
@@ -51,14 +54,16 @@ export default function LoadsImport() {
 
   async function init() {
     setLoading(true)
-    const [{ batch: b, plan: p, counts: c }, dRes, tkRes, trRes] = await Promise.all([
+    const [{ batch: b, plan: p, counts: c }, dRes, tkRes, trRes, rec] = await Promise.all([
       loadPendingBatch(),
       supabase.from('drivers').select('id, full_name').order('full_name'),
       supabase.from('trucks').select('id, unit_number').order('unit_number'),
       supabase.from('trailers').select('id, unit_number').order('unit_number'),
+      loadRecentBatches(),
     ])
     setFleet({ drivers: dRes.data || [], trucks: tkRes.data || [], trailers: trRes.data || [] })
     setBatch(b); setPlan(p || []); setCounts(c || {})
+    setRecent(rec)
     setDecisions(new Map()); setLinks(new Map())
     setLoading(false)
   }
@@ -161,15 +166,24 @@ export default function LoadsImport() {
       // The apply is idempotent (loads upsert on load_number, notes
       // write-once, legs matched against current DB), so Retry just re-runs
       // from the start — already-written rows no-op.
-      const { appliedLoads, appliedLegs, error, done, total } = await applyBatch({
+      const fname = batch.filename
+      const cancelTonu = Number(counts.status_flags || 0)
+      const { appliedLoads, appliedLegs, appliedCustomers, appliedDispatchers, error, done, total } = await applyBatch({
         batchId: batch.id, decisions, linkOverrides: links, onProgress: setProgress,
       })
       if (error) {
+        // Record how many items didn't make it so history reflects the
+        // interruption (the batch stays pending_review and is retryable).
+        await supabase.from('load_import_batches')
+          .update({ counts: { ...counts, failed: Math.max(0, (total ?? 0) - (done ?? 0)) } }).eq('id', batch.id)
         setApplyError({ done: done ?? 0, total: total ?? 0 })
         toast.error('Apply interrupted — you can retry', error)
+        setRecent(await loadRecentBatches())
         return
       }
       toast.success(`Applied — ${appliedLoads} load${appliedLoads === 1 ? '' : 's'}, ${appliedLegs} leg${appliedLegs === 1 ? '' : 's'}`)
+      // Durable summary so a user who navigated away still sees the outcome.
+      setApplySummary({ filename: fname, loads: appliedLoads, legs: appliedLegs, customers: appliedCustomers, dispatchers: appliedDispatchers, cancelTonu })
       setProgress(null)
       await init()
     } finally {
@@ -412,6 +426,98 @@ export default function LoadsImport() {
           )}
         </>
       )}
+
+      {/* Post-apply success summary — durable so a user who navigated away
+          mid-apply still sees the outcome on return. Dismissible. */}
+      {applySummary && (
+        <div className="rounded-xl border border-emerald-200 dark:border-emerald-500/20 bg-emerald-50/60 dark:bg-emerald-500/[0.06] px-4 py-3 text-sm text-emerald-800 dark:text-emerald-300 flex items-start justify-between gap-3">
+          <span>
+            ✓ Import applied{applySummary.filename ? ` — ${applySummary.filename}` : ''}:{' '}
+            <span className="font-semibold">{applySummary.loads.toLocaleString()} load{applySummary.loads === 1 ? '' : 's'}, {applySummary.legs.toLocaleString()} leg{applySummary.legs === 1 ? '' : 's'}</span>
+            {(applySummary.customers > 0 || applySummary.dispatchers > 0) && `, ${applySummary.customers} customer${applySummary.customers === 1 ? '' : 's'}, ${applySummary.dispatchers} dispatcher${applySummary.dispatchers === 1 ? '' : 's'}`}.
+            {applySummary.cancelTonu > 0 && ` ${applySummary.cancelTonu} Canceled/TONU.`}
+          </span>
+          <button onClick={() => setApplySummary(null)} className="text-emerald-600 dark:text-emerald-400 hover:opacity-70 shrink-0" aria-label="Dismiss">✕</button>
+        </div>
+      )}
+
+      {/* Recent imports — durable history; renders in every state. */}
+      {!loading && <RecentImports recent={recent} />}
+    </div>
+  )
+}
+
+// ── Recent imports history ────────────────────────────────────────────────
+const CHICAGO = { timeZone: 'America/Chicago', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }
+function fmtChicago(ts) {
+  if (!ts) return '—'
+  try { return new Date(ts).toLocaleString('en-US', CHICAGO) } catch { return '—' }
+}
+const STATUS_BADGE = {
+  applied:        { label: 'Applied',        cls: 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/20' },
+  pending_review: { label: 'Pending review', cls: 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-500/20' },
+  discarded:      { label: 'Discarded',      cls: 'bg-gray-100 dark:bg-slate-700/40 text-gray-500 dark:text-slate-400 border-gray-200 dark:border-slate-600/40' },
+}
+
+function RecentImports({ recent }) {
+  const [openId, setOpenId] = useState(null)
+  const num = (c, k) => Number(c?.[k] ?? 0)
+  return (
+    <div className={`${S.card} p-4 space-y-3`}>
+      <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Recent imports</h2>
+      {recent.length === 0 ? (
+        <p className="text-xs text-gray-400 dark:text-slate-500">No imports yet.</p>
+      ) : (
+        <div className="divide-y divide-gray-100 dark:divide-white/5">
+          {recent.map(b => {
+            const badge = STATUS_BADGE[b.status] || STATUS_BADGE.discarded
+            const c = b.counts || {}
+            const open = openId === b.id
+            const failed = c.failed
+            return (
+              <div key={b.id} className="py-2.5">
+                <button onClick={() => setOpenId(open ? null : b.id)} className="w-full flex items-center justify-between gap-3 text-left">
+                  <div className="min-w-0 flex items-center gap-2 flex-wrap">
+                    <span className={`text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded border ${badge.cls}`}>{badge.label}</span>
+                    <span className="text-sm font-medium text-gray-900 dark:text-slate-200 truncate">{b.filename || '(unnamed file)'}</span>
+                    <span className="text-[11px] text-gray-400 dark:text-slate-500">{b.total_rows} rows</span>
+                  </div>
+                  <div className="flex items-center gap-3 text-[11px] text-gray-500 dark:text-slate-400 shrink-0">
+                    <span className="hidden sm:inline">New {num(c, 'new')} · Updated {num(c, 'updated')} · Unmatched {num(c, 'unmatched')}{num(c, 'status_flags') > 0 ? ` · ${num(c, 'status_flags')} Canc/TONU` : ''}</span>
+                    <span>{b.status === 'applied' ? fmtChicago(b.applied_at) : fmtChicago(b.uploaded_at)}</span>
+                    <span className="text-gray-400">{open ? '▾' : '▸'}</span>
+                  </div>
+                </button>
+                {open && (
+                  <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1 text-[11px] text-gray-600 dark:text-slate-400 pl-1">
+                    <Detail label="New" v={num(c, 'new')} />
+                    <Detail label="Updated" v={num(c, 'updated')} />
+                    <Detail label="Unchanged" v={num(c, 'unchanged')} />
+                    <Detail label="New legs" v={num(c, 'new_legs')} />
+                    <Detail label="Unmatched" v={num(c, 'unmatched')} />
+                    <Detail label="New customers" v={num(c, 'new_customers')} />
+                    <Detail label="New dispatchers" v={num(c, 'new_dispatchers')} />
+                    <Detail label="Canceled/TONU" v={num(c, 'status_flags')} />
+                    <Detail label="Uploaded" v={fmtChicago(b.uploaded_at)} />
+                    {b.status === 'applied' && <Detail label="Applied" v={fmtChicago(b.applied_at)} />}
+                    {b.status === 'applied' && <Detail label="Applied loads" v={num(c, 'applied_loads')} />}
+                    <Detail label="Failed" v={failed == null ? '—' : Number(failed)} />
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function Detail({ label, v }) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-gray-400 dark:text-slate-500">{label}</span>
+      <span className="font-mono text-gray-700 dark:text-slate-300">{typeof v === 'number' ? v.toLocaleString() : v}</span>
     </div>
   )
 }

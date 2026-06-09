@@ -114,6 +114,15 @@ export async function discardBatch(batchId) {
   return { error }
 }
 
+// Recent import batches for the history list — newest first. Pure read of
+// the existing table; stats come from the counts jsonb (read defensively).
+export async function loadRecentBatches(limit = 20) {
+  const { data } = await supabase.from('load_import_batches')
+    .select('id, filename, status, total_rows, counts, uploaded_at, applied_at')
+    .order('uploaded_at', { ascending: false }).limit(limit)
+  return data || []
+}
+
 // ── apply ────────────────────────────────────────────────────────────────
 // decisions: Map(load_number -> 'approved' | 'skipped')
 // linkOverrides: Map(`${type}:${normRaw}` -> fleet uuid) for unmatched
@@ -130,6 +139,10 @@ export async function discardBatch(batchId) {
 // never duplicated. Re-running after a failure resumes cleanly.
 export async function applyBatch({ batchId, decisions, linkOverrides, onProgress }) {
   const now = () => new Date().toISOString()
+  // Existing staged counts — the apply outcome is merged into this jsonb on
+  // completion (no migration), so history can show applied totals + failed.
+  const { data: batchRow } = await supabase.from('load_import_batches').select('counts').eq('id', batchId).maybeSingle()
+  const baseCounts = batchRow?.counts || {}
   const { data: rows, error: rowsErr } = await supabase.from('load_import_rows').select('*').eq('batch_id', batchId)
   if (rowsErr) return { error: rowsErr }
   const plan = planFromRows(rows || [])
@@ -287,10 +300,27 @@ export async function applyBatch({ batchId, decisions, linkOverrides, onProgress
     done += 1; report('Applying matches')
   }
 
+  const appliedLoads = appliedPlan.length
+  const appliedLegs = legInserts.length + legUpdates.length
+  // Merge the apply outcome into the existing counts jsonb (no migration) so
+  // Recent imports can show what actually landed; failed = 0 on a clean run
+  // (the apply aborts + retries on error rather than partially failing).
   const { error: doneErr } = await supabase.from('load_import_batches')
-    .update({ status: 'applied', applied_at: now() }).eq('id', batchId)
+    .update({
+      status: 'applied', applied_at: now(),
+      counts: {
+        ...baseCounts,
+        applied_loads: appliedLoads, applied_legs: appliedLegs,
+        applied_customers: custNames.length, applied_dispatchers: dispNames.length,
+        links_applied: linkCount, failed: 0,
+      },
+    }).eq('id', batchId)
   if (doneErr) return { error: doneErr, done, total }
 
   done = total; report('Done')
-  return { appliedLoads: appliedPlan.length, appliedLegs: legInserts.length + legUpdates.length }
+  return {
+    appliedLoads, appliedLegs,
+    appliedCustomers: custNames.length, appliedDispatchers: dispNames.length,
+    linksApplied: linkCount,
+  }
 }
