@@ -46,6 +46,23 @@ function fmtNum(n) {
   if (n == null) return '—'
   return Number(n).toLocaleString('en-US', { maximumFractionDigits: 0 })
 }
+// Parse a 'YYYY-MM-DD' as a LOCAL date (avoid the UTC shift of new Date(str)).
+function parseYmd(s) {
+  if (!s) return null
+  const [y, m, d] = String(s).split('-').map(Number)
+  return new Date(y, m - 1, d)
+}
+// Inclusive span label, e.g. "Jun 8 – Jun 14, 2026" (year collapsed when both
+// endpoints share it). Matches the rollup's BETWEEN from AND to.
+function formatRange(from, to) {
+  const a = parseYmd(from), b = parseYmd(to)
+  if (!a || !b) return ''
+  const sameYear = a.getFullYear() === b.getFullYear()
+  const aStr = a.toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...(sameYear ? {} : { year: 'numeric' }) })
+  const bStr = b.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  return `${aStr} – ${bStr}`
+}
+const PRESET_LABEL = { week: 'This week', month: 'This month', custom: 'Custom' }
 
 export default function Profitability() {
   const toast = useToast()
@@ -127,6 +144,10 @@ export default function Profitability() {
   }, [rows])
 
   const dimLabel = DIMENSIONS.find(d => d.key === dimension)?.label || ''
+  // "% of loads" is scoped to the Customers tab for now (concentration view).
+  const showPct = dimension === 'customer'
+  const colCount = showPct ? 7 : 6
+  const pctOfLoads = (n) => totals.loads > 0 ? `${(Number(n || 0) / totals.loads * 100).toFixed(1)}%` : '—'
 
   return (
     <div className="space-y-5">
@@ -168,30 +189,40 @@ export default function Profitability() {
             </button>
           ))}
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700 text-xs shrink-0">
-            {[['week', 'This week'], ['month', 'This month'], ['custom', 'Custom']].map(([k, lbl]) => (
-              <button key={k} onClick={() => setPresetRange(k)} className={`px-3 py-1.5 whitespace-nowrap shrink-0 ${preset === k ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400'}`}>{lbl}</button>
-            ))}
+        <div className="flex flex-col gap-1 lg:items-end">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700 text-xs shrink-0">
+              {[['week', 'This week'], ['month', 'This month'], ['custom', 'Custom']].map(([k, lbl]) => (
+                <button key={k} onClick={() => setPresetRange(k)} className={`px-3 py-1.5 whitespace-nowrap shrink-0 ${preset === k ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400'}`}>{lbl}</button>
+              ))}
+            </div>
+            {preset === 'custom' && (
+              <>
+                <input type="date" className={`${S.input} w-auto shrink-0 min-w-[8.5rem]`} value={range.from} onChange={e => setRange(r => ({ ...r, from: e.target.value }))} />
+                <span className="text-gray-400 text-xs shrink-0">→</span>
+                <input type="date" className={`${S.input} w-auto shrink-0 min-w-[8.5rem]`} value={range.to} onChange={e => setRange(r => ({ ...r, to: e.target.value }))} />
+              </>
+            )}
           </div>
-          {preset === 'custom' && (
-            <>
-              <input type="date" className={`${S.input} w-auto shrink-0 min-w-[8.5rem]`} value={range.from} onChange={e => setRange(r => ({ ...r, from: e.target.value }))} />
-              <span className="text-gray-400 text-xs shrink-0">→</span>
-              <input type="date" className={`${S.input} w-auto shrink-0 min-w-[8.5rem]`} value={range.to} onChange={e => setRange(r => ({ ...r, to: e.target.value }))} />
-            </>
-          )}
+          {/* Resolved span so "This week" isn't ambiguous. Updates live with
+              preset/custom changes; inclusive of both endpoints. */}
+          <p className="text-[11px] text-gray-400 dark:text-slate-500">
+            {PRESET_LABEL[preset]} · <span className="font-medium text-gray-500 dark:text-slate-400">{formatRange(range.from, range.to)}</span> · by delivery date
+          </p>
         </div>
       </div>
 
-      {/* Rollup table */}
+      {/* Rollup table. Vertical scroll lives on this container so the header
+          row can stick to its top on long lists (sticky needs a scrolling
+          ancestor; the card itself stays put). */}
       <div className={`${S.card} overflow-hidden`}>
-        <div className="overflow-x-auto">
+        <div className="overflow-auto max-h-[70vh]">
           <table className="w-full text-sm">
-            <thead className={S.tableHead}>
+            <thead className="sticky top-0 z-10 border-b border-gray-100 dark:border-white/5 bg-gray-50 dark:bg-[#0d0d1f]">
               <tr>
                 <th className={`${S.th} min-w-[180px]`}>{dimLabel.replace(/s$/, '')}</th>
                 <th className={`${S.th} text-right`}>Loads</th>
+                {showPct && <th className={`${S.th} text-right`} title="Share of total loads in the selected date window.">% of loads</th>}
                 <th className={`${S.th} text-right`}>Miles</th>
                 <th className={`${S.th} text-right`}>Realized revenue</th>
                 <th className={`${S.th} text-right`}>$/mile</th>
@@ -200,9 +231,9 @@ export default function Profitability() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={6} className="px-4 py-12 text-center"><div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500" /></td></tr>
+                <tr><td colSpan={colCount} className="px-4 py-12 text-center"><div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500" /></td></tr>
               ) : sorted.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">No loads delivered in this range. Import loads first, then check the date window.</td></tr>
+                <tr><td colSpan={colCount} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">No loads delivered in this range. Import loads first, then check the date window.</td></tr>
               ) : sorted.map((r, i) => (
                 <tr key={r.key_id || `raw-${i}`} className={S.tableRow}>
                   <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>
@@ -222,6 +253,7 @@ export default function Profitability() {
                       </span>
                     )}
                   </td>
+                  {showPct && <td className={`${S.td} text-right font-mono text-gray-500 dark:text-slate-400 align-top`}>{pctOfLoads(r.load_count)}</td>}
                   <td className={`${S.td} text-right font-mono text-gray-600 dark:text-slate-400 align-top`}>{fmtNum(r.total_miles)}</td>
                   <td className={`${S.td} text-right font-mono text-gray-900 dark:text-slate-200`}>{fmtMoney(r.realized_revenue)}</td>
                   <td className={`${S.td} text-right font-mono text-gray-600 dark:text-slate-400`}>{r.realized_rpm == null ? '—' : `$${Number(r.realized_rpm).toFixed(2)}`}</td>
@@ -241,6 +273,7 @@ export default function Profitability() {
                       </span>
                     )}
                   </td>
+                  {showPct && <td className={`${S.td} text-right font-mono align-top text-gray-500 dark:text-slate-400`}>{totals.loads > 0 ? '100.0%' : '—'}</td>}
                   <td className={`${S.td} text-right font-mono align-top`}>{fmtNum(totals.miles)}</td>
                   <td className={`${S.td} text-right font-mono text-gray-900 dark:text-slate-200`}>{fmtMoney(totals.realized)}</td>
                   <td className={`${S.td} text-right font-mono`}>{totals.rpm == null ? '—' : `$${totals.rpm.toFixed(2)}`}</td>
