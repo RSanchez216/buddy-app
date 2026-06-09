@@ -3,6 +3,7 @@ import { supabase } from '../../../lib/supabase'
 import { useToast } from '../../../contexts/ToastContext'
 import { S } from '../../../lib/styles'
 import Modal from '../../../components/Modal'
+import ProfitabilityCalendar from './ProfitabilityCalendar'
 
 // Loads ingest — Phase 3 profitability (revenue/productivity only; margin
 // comes when the cost side is wired). Rolls revenue + miles + $/mile up by
@@ -102,6 +103,7 @@ export default function Profitability() {
   const [dimension, setDimension] = useState('driver')
   const [preset, setPreset] = useState('week')
   const [range, setRange] = useState(thisWeek)
+  const [calendarView, setCalendarView] = useState(false)
   const [rows, setRows] = useState([])
   const [priorRows, setPriorRows] = useState([])
   const [loading, setLoading] = useState(true)
@@ -161,6 +163,11 @@ export default function Profitability() {
   }, [dimension, range.from, range.to, toast])
 
   useEffect(() => { load() }, [load])
+
+  function setDimensionAndReset(d) {
+    setDimension(d)
+    if (d !== 'driver') setCalendarView(false)
+  }
 
   function setPresetRange(p) {
     setPreset(p)
@@ -233,7 +240,7 @@ export default function Profitability() {
           {DIMENSIONS.map(d => (
             <button
               key={d.key}
-              onClick={() => setDimension(d.key)}
+              onClick={() => setDimensionAndReset(d.key)}
               className={`px-3 py-1.5 text-xs font-medium rounded-full border transition-colors ${
                 dimension === d.key
                   ? 'bg-orange-50 dark:bg-orange-500/10 border-orange-300 dark:border-orange-500/30 text-orange-700 dark:text-orange-400'
@@ -244,13 +251,45 @@ export default function Profitability() {
             </button>
           ))}
         </div>
-        <div className="flex flex-col gap-1 lg:items-end">
+        <div className="flex flex-col gap-2 lg:items-end">
           <div className="flex flex-wrap items-center gap-2">
+            {/* Week navigation arrows */}
+            <button
+              onClick={() => setRange(r => ({ from: shiftYmd(r.from, -7), to: shiftYmd(r.to, -7) }))}
+              className="px-2 py-1.5 text-xs font-medium rounded border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors"
+              title="Previous week"
+            >
+              ◀
+            </button>
             <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700 text-xs shrink-0">
               {[['week', 'This week'], ['month', 'This month'], ['custom', 'Custom']].map(([k, lbl]) => (
                 <button key={k} onClick={() => setPresetRange(k)} className={`px-3 py-1.5 whitespace-nowrap shrink-0 ${preset === k ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400'}`}>{lbl}</button>
               ))}
             </div>
+            <button
+              onClick={() => setRange(r => ({ from: shiftYmd(r.from, 7), to: shiftYmd(r.to, 7) }))}
+              className="px-2 py-1.5 text-xs font-medium rounded border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors"
+              title="Next week"
+            >
+              ▶
+            </button>
+            {/* Table | Calendar toggle (Drivers dimension only) */}
+            {dimension === 'driver' && (
+              <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700 text-xs shrink-0">
+                <button
+                  onClick={() => setCalendarView(false)}
+                  className={`px-3 py-1.5 whitespace-nowrap shrink-0 ${!calendarView ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400'}`}
+                >
+                  Table
+                </button>
+                <button
+                  onClick={() => setCalendarView(true)}
+                  className={`px-3 py-1.5 whitespace-nowrap shrink-0 ${calendarView ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400'}`}
+                >
+                  Calendar
+                </button>
+              </div>
+            )}
             {preset === 'custom' && (
               <>
                 <input type="date" className={`${S.input} w-auto shrink-0 min-w-[8.5rem]`} value={range.from} onChange={e => setRange(r => ({ ...r, from: e.target.value }))} />
@@ -267,6 +306,11 @@ export default function Profitability() {
         </div>
       </div>
 
+      {/* Table or Calendar view */}
+      {calendarView && dimension === 'driver' ? (
+        <ProfitabilityCalendar weekStart={range.from} weekEnd={range.to} />
+      ) : (
+        <>
       {/* Rollup table. Vertical scroll lives on this container so the header
           row can stick to its top on long lists (sticky needs a scrolling
           ancestor; the card itself stays put). */}
@@ -398,6 +442,8 @@ export default function Profitability() {
 
       {editLoad && (
         <TeamSplitModal load={editLoad} onClose={() => setEditLoad(null)} onSaved={() => { setEditLoad(null); load() }} />
+      )}
+        </>
       )}
     </div>
   )
