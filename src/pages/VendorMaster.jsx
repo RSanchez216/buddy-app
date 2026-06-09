@@ -151,6 +151,12 @@ export default function VendorMaster() {
       supabase.from('fleet_equipment_cost')
         .select('etype, id, unit_number, vin, monthly_cost, weekly_cost, per_mile_rate, penalty_per_mile_rate')
         .eq('lessor_vendor_id', vendorId)
+        // Ownership stage is the source of truth for "is this leased" — a
+        // stray lessor link on a non-leased unit (legacy data) must never
+        // surface it here. The trigger guard now prevents new strays; this
+        // keeps the list correct regardless. Drives both the rows and the
+        // "Leased Equipment (n)" count.
+        .eq('ownership_stage', 'company_leased')
         .order('etype').order('unit_number'),
       supabase.from('trucks')
         .select('id, lease_cost, lease_cost_period, lease_cost_per_mile, lease_penalty_per_mile, lease_rate_override')
