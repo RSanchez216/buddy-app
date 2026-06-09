@@ -147,8 +147,10 @@ export default function Profitability() {
         <Kpi label="Realized $/mile" tone="amber" value={totals.rpm == null ? '—' : `$${totals.rpm.toFixed(2)}`} sub="revenue ÷ miles" />
       </div>
 
-      {/* Controls: dimension tabs + date range */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      {/* Controls: dimension tabs + date range. Stacks on narrow widths so
+          the date control drops below the tabs instead of squeezing the
+          preset buttons into clipped/wrapped labels (~1280px laptop). */}
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-center flex-wrap gap-2">
           {DIMENSIONS.map(d => (
             <button
@@ -164,17 +166,17 @@ export default function Profitability() {
             </button>
           ))}
         </div>
-        <div className="flex items-center gap-2">
-          <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700 text-xs">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700 text-xs shrink-0">
             {[['week', 'This week'], ['month', 'This month'], ['custom', 'Custom']].map(([k, lbl]) => (
-              <button key={k} onClick={() => setPresetRange(k)} className={`px-2.5 py-1.5 ${preset === k ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400'}`}>{lbl}</button>
+              <button key={k} onClick={() => setPresetRange(k)} className={`px-3 py-1.5 whitespace-nowrap shrink-0 ${preset === k ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400'}`}>{lbl}</button>
             ))}
           </div>
           {preset === 'custom' && (
             <>
-              <input type="date" className={`${S.input} w-auto`} value={range.from} onChange={e => setRange(r => ({ ...r, from: e.target.value }))} />
-              <span className="text-gray-400 text-xs">→</span>
-              <input type="date" className={`${S.input} w-auto`} value={range.to} onChange={e => setRange(r => ({ ...r, to: e.target.value }))} />
+              <input type="date" className={`${S.input} w-auto shrink-0 min-w-[8.5rem]`} value={range.from} onChange={e => setRange(r => ({ ...r, from: e.target.value }))} />
+              <span className="text-gray-400 text-xs shrink-0">→</span>
+              <input type="date" className={`${S.input} w-auto shrink-0 min-w-[8.5rem]`} value={range.to} onChange={e => setRange(r => ({ ...r, to: e.target.value }))} />
             </>
           )}
         </div>
