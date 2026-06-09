@@ -249,6 +249,37 @@ export default function FleetCost() {
     return out
   }, [rows, filter, typeFilter, search, vendorsById, loansById])
 
+  // Footer totals for whatever's currently filtered/searched — aggregates
+  // the SAME `visible` array the table renders, so it tracks chip / type /
+  // search changes live. Rows with no cost (monthly_cost == null:
+  // "needs entry", driver-owned, unknown) are excluded from the sums AND
+  // the average denominator. $0 units (owned-outright) have a non-null 0,
+  // so they DO count as costed — they add $0 and pull the average down.
+  // Per-mile isn't additive, so it's averaged over rows that have one.
+  const visibleTotals = useMemo(() => {
+    let monthly = 0, weekly = 0, costedCount = 0
+    let pmSum = 0, pmCount = 0
+    for (const r of visible) {
+      if (r.monthly_cost != null) {
+        monthly += Number(r.monthly_cost)
+        weekly  += Number(r.weekly_cost || 0)
+        costedCount++
+      }
+      if (r.per_mile_rate != null) {
+        pmSum += Number(r.per_mile_rate)
+        pmCount++
+      }
+    }
+    return {
+      shownCount: visible.length,
+      costedCount,
+      monthly,
+      weekly,
+      avgMonthly: costedCount ? monthly / costedCount : null,
+      avgPerMile: pmCount ? pmSum / pmCount : null,
+    }
+  }, [visible])
+
   // Bulk action: flip selected rows' owned_outright -> true. Partitions
   // by etype so we issue at most two UPDATEs (one per table). The view's
   // precedence means a row will move from cost_source='owned_no_loan'
@@ -549,6 +580,42 @@ export default function FleetCost() {
                 )
               })}
             </tbody>
+            {/* Filtered totals — aggregates the visible set so it reads as
+                "what this filter/lessor costs me." Sums skip uncosted rows;
+                the average is over costed units only. Hidden while loading
+                or when nothing matches. */}
+            {!loading && visible.length > 0 && (
+              <tfoot>
+                <tr className="border-t-2 border-gray-200 dark:border-white/10 bg-gray-50/70 dark:bg-white/[0.02] font-medium">
+                  <td
+                    className={`${S.td} text-xs text-gray-600 dark:text-slate-300`}
+                    colSpan={filter === 'owned_no_loan' ? 5 : 4}
+                  >
+                    Totals · {visibleTotals.shownCount} unit{visibleTotals.shownCount === 1 ? '' : 's'}
+                    {visibleTotals.costedCount < visibleTotals.shownCount && (
+                      <span className="text-gray-400 dark:text-slate-500"> · {visibleTotals.costedCount} costed</span>
+                    )}
+                  </td>
+                  <td className={`${S.td} text-right font-mono text-gray-900 dark:text-slate-200`}>
+                    {fmtMoney(visibleTotals.monthly)} <span className="text-gray-400 dark:text-slate-500">/mo</span>
+                    {visibleTotals.avgMonthly != null && (
+                      <span className="block text-[11px] font-normal text-gray-400 dark:text-slate-500 leading-tight mt-0.5">
+                        avg {fmtMoney(visibleTotals.avgMonthly)}/unit
+                      </span>
+                    )}
+                  </td>
+                  <td className={`${S.td} text-right font-mono text-xs text-gray-600 dark:text-slate-400 align-top`}>
+                    {fmtMoney(visibleTotals.weekly)} <span className="text-gray-400 dark:text-slate-500">/wk</span>
+                  </td>
+                  <td className={`${S.td} text-right font-mono text-xs text-gray-600 dark:text-slate-400 align-top`}>
+                    {visibleTotals.avgPerMile == null
+                      ? '—'
+                      : `$${visibleTotals.avgPerMile.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`}
+                  </td>
+                  <td className={`${S.td} align-top`}></td>
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
       </div>
