@@ -1,4 +1,4 @@
-import { normName, normUnit, stripNickname } from './loadsParse'
+import { normName, normUnit, normalizeName } from './loadsParse'
 
 // Loads ingest — Phase 2 plan layer. Takes parsed leg-rows + reference
 // data + existing loads/legs and produces a review plan: one entry per
@@ -57,8 +57,18 @@ function matchByName(raw, index) {
 
 export function buildPlan({ rows, refs, existing }) {
   // Build lookup indexes once.
-  const driverByName = new Map()
-  for (const d of refs.drivers) driverByName.set(normName(d.full_name), d.id)
+  // Drivers key on the punctuation-insensitive normalizeName so cosmetic
+  // differences (hyphen vs space, accents, "(Baikozu)") resolve. If two
+  // fleet drivers collapse to the same key, mark it ambiguous → leave
+  // unmatched for manual review rather than guess.
+  const driverByNorm = new Map() // key -> { id, ambiguous }
+  for (const d of refs.drivers) {
+    const k = normalizeName(d.full_name)
+    if (!k) continue
+    const ex = driverByNorm.get(k)
+    if (!ex) driverByNorm.set(k, { id: d.id, ambiguous: false })
+    else if (ex.id !== d.id) ex.ambiguous = true
+  }
   const truckByUnit = new Map()
   for (const t of refs.trucks) truckByUnit.set(normUnit(t.unit_number), t.id)
   const trailerByUnit = new Map()
@@ -88,12 +98,12 @@ export function buildPlan({ rows, refs, existing }) {
 
   // ── driver/truck/trailer leg resolver ──
   function resolveDriver(raw) {
-    let id = matchByName(raw, driverByName)
-    if (!id) {
-      const stripped = normName(stripNickname(raw))
-      if (stripped) id = driverByName.get(stripped) || null
-    }
-    if (id) return { raw, id, match_status: 'matched', suggestion: null }
+    // Exact-match-after-cleanup on the normalized key (symmetric: the index
+    // is built the same way). Ambiguous keys fall through to unmatched so
+    // we never guess between two same-normalizing drivers.
+    const key = normalizeName(raw)
+    const hit = key ? driverByNorm.get(key) : null
+    if (hit && !hit.ambiguous) return { raw, id: hit.id, match_status: 'matched', suggestion: null }
     const sug = bestFuzzy(raw, refs.drivers, d => d.full_name, d => d.id, d => d.full_name)
     return { raw, id: null, match_status: 'unmatched', suggestion: sug }
   }

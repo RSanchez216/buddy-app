@@ -7,16 +7,29 @@ import * as XLSX from 'xlsx'
 // diffing live in loadsPlan.js.
 
 // ── normalizers (shared with loadsPlan.js) ──────────────────────────────
-// normName: lower, trim, collapse internal whitespace. For people/company
-// names (driver, customer, dispatcher, carrier).
+// normName: lower, trim, collapse internal whitespace. For company names
+// (customer, dispatcher, carrier) and the per-load leg dedup key, which
+// must stay aligned with the DB's lower(btrim(driver_raw)) unique index.
 export function normName(s) {
   if (s == null) return ''
   return String(s).toLowerCase().replace(/\s+/g, ' ').trim()
 }
-// Drop a trailing "(nickname)" so "Jose Ramirez (Pepe)" matches "Jose Ramirez".
-export function stripNickname(s) {
-  if (s == null) return ''
-  return String(s).replace(/\([^)]*\)/g, ' ').replace(/\s+/g, ' ').trim()
+// normalizeName: punctuation- AND whitespace-insensitive, accent-folded.
+// Used for matching a TMS driver value to a fleet drivers.full_name so
+// cosmetic differences (hyphen vs space, periods, apostrophes, accents,
+// case, parenthetical content) don't cause a false "unmatched" —
+// e.g. "Karl-Marc Pinard" ⇄ "Karl Marc Pinard". Applied SYMMETRICALLY to
+// both sides; still an exact-match-after-cleanup (no fuzzy), so it can't
+// mis-link distinct drivers. Parentheses content is normalized to spaces,
+// not stripped — "(Baikozu)" appears on both sides and stays matched.
+export function normalizeName(s) {
+  return String(s ?? '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')   // drop combining marks (fold accents)
+    .replace(/[^a-z0-9]+/g, ' ')       // any run of non-alphanumerics → one space
+    .trim()
+    .replace(/\s+/g, ' ')
 }
 // normUnit: strip a leading '#' and all non-alphanumerics, uppercase. For
 // truck/trailer unit numbers ("#SN66 9631" → "SN669631").
