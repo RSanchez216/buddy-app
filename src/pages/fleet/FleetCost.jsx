@@ -259,6 +259,7 @@ export default function FleetCost() {
   const visibleTotals = useMemo(() => {
     let monthly = 0, weekly = 0, costedCount = 0
     let pmSum = 0, pmCount = 0
+    let penSum = 0, penCount = 0
     for (const r of visible) {
       if (r.monthly_cost != null) {
         monthly += Number(r.monthly_cost)
@@ -269,6 +270,13 @@ export default function FleetCost() {
         pmSum += Number(r.per_mile_rate)
         pmCount++
       }
+      // Penalty/overage rate is a rate, not money — averaged over rows
+      // that carry one, same as base per-mile. Omitted entirely when no
+      // filtered row has a penalty rate.
+      if (r.penalty_per_mile_rate != null) {
+        penSum += Number(r.penalty_per_mile_rate)
+        penCount++
+      }
     }
     return {
       shownCount: visible.length,
@@ -277,6 +285,7 @@ export default function FleetCost() {
       weekly,
       avgMonthly: costedCount ? monthly / costedCount : null,
       avgPerMile: pmCount ? pmSum / pmCount : null,
+      avgPenalty: penCount ? penSum / penCount : null,
     }
   }, [visible])
 
@@ -450,12 +459,32 @@ export default function FleetCost() {
             <option value="truck">Trucks only</option>
             <option value="trailer">Trailers only</option>
           </Select>
-          <input
-            className={`${S.input} max-w-xs`}
-            placeholder="Search unit, VIN, lessor, contract…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
+          {/* Clearable search. The × clears only the search text — the
+              existing URL-sync effect drops ?q= when search is empty, so
+              one click returns to the full set while any active chip /
+              type filter stays put. */}
+          <div className="relative max-w-xs">
+            <input
+              className={`${S.input} ${search ? 'pr-8' : ''}`}
+              placeholder="Search unit, VIN, lessor, contract…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Escape' && search) setSearch('') }}
+            />
+            {search && (
+              <button
+                type="button"
+                aria-label="Clear search"
+                title="Clear search"
+                onClick={() => setSearch('')}
+                className="absolute inset-y-0 right-2 flex items-center text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -623,6 +652,14 @@ export default function FleetCost() {
                     {visibleTotals.avgPerMile == null
                       ? '—'
                       : `$${visibleTotals.avgPerMile.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`}
+                    {/* Penalty avg mirrors the per-row secondary line —
+                        averaged across filtered rows that carry a penalty
+                        rate, omitted when none do. */}
+                    {visibleTotals.avgPenalty != null && (
+                      <span className="block text-[10px] text-gray-400 dark:text-slate-500 leading-tight">
+                        +${visibleTotals.avgPenalty.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })} penalty avg
+                      </span>
+                    )}
                   </td>
                   <td className={`${S.td} align-top`}></td>
                 </tr>
