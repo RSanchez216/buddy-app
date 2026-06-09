@@ -593,9 +593,21 @@ export default function FleetCost() {
                         {meta.label}
                       </span>
                     </td>
-                    <td className={`${S.td} text-right font-mono ${r.monthly_cost == null ? 'text-amber-600 dark:text-amber-400 italic' : 'text-gray-900 dark:text-slate-200'}`}>
-                      {r.monthly_cost == null ? 'needs entry' : fmtMoney(r.monthly_cost)}
-                    </td>
+                    {/* Driver-owned units are non-cost-bearing (MANAS pays
+                        nothing), so a null cost there is "not required"
+                        (muted, no action) rather than the orange "needs
+                        entry" that flags a genuinely-missing cost on a
+                        cost-bearing row. `unknown` stays "needs entry" so a
+                        real ownership-mapping gap still surfaces. */}
+                    {r.monthly_cost == null && r.cost_source === 'driver_owned' ? (
+                      <td className={`${S.td} text-right font-mono text-gray-400 dark:text-slate-500`}>
+                        not required
+                      </td>
+                    ) : (
+                      <td className={`${S.td} text-right font-mono ${r.monthly_cost == null ? 'text-amber-600 dark:text-amber-400 italic' : 'text-gray-900 dark:text-slate-200'}`}>
+                        {r.monthly_cost == null ? 'needs entry' : fmtMoney(r.monthly_cost)}
+                      </td>
+                    )}
                     <td className={`${S.td} text-right font-mono text-xs ${r.weekly_cost == null ? 'text-gray-400 dark:text-slate-500 italic' : 'text-gray-600 dark:text-slate-400'}`}>
                       {r.weekly_cost == null ? '—' : fmtMoney(r.weekly_cost)}
                     </td>
