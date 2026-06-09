@@ -29,6 +29,8 @@ const emptyTruck = {
   ownership_stage: 'unclassified',
   operational_status: 'active',
   owned_outright: false,
+  is_total_loss: false,
+  lease_charge_active: true,
   status: '', notes: '',
 }
 const emptyTrailer = {
@@ -70,6 +72,10 @@ export default function TruckTrailerFormModal({ kind, open, editItem, onClose, o
         ownership_stage: e.ownership_stage || 'unclassified',
         operational_status: e.operational_status || 'active',
         owned_outright: !!e.owned_outright,
+        is_total_loss: !!e.is_total_loss,
+        // Default ON when the column is null/undefined (legacy rows) so a
+        // unit isn't silently treated as "no longer charged".
+        lease_charge_active: e.lease_charge_active == null ? true : !!e.lease_charge_active,
         status: e.status || '',
         notes: e.notes || '',
         ...(isTrailer ? {
@@ -157,6 +163,11 @@ export default function TruckTrailerFormModal({ kind, open, editItem, onClose, o
       // gating the column write because the view's precedence handles
       // it (loan beats flag; flag means nothing on lease / driver_owned).
       owned_outright: !!form.owned_outright,
+      // Independent total-loss dimensions: is_total_loss = written off;
+      // lease_charge_active = still being billed (gates the leased-cost
+      // path in fleet_equipment_cost). Both set manually by Rebeca.
+      is_total_loss: !!form.is_total_loss,
+      lease_charge_active: !!form.lease_charge_active,
       status: form.status.trim() || null,
       notes: form.notes.trim() || null,
       updated_by: user?.id || null,
@@ -379,6 +390,54 @@ export default function TruckTrailerFormModal({ kind, open, editItem, onClose, o
                 </span>
               </label>
             )}
+          </Field>
+        </div>
+
+        {/* Total-loss tracking — two independent flags. "Total loss" marks
+            a unit written off (accident/insurance). "Lessor still charging"
+            (default on) gates whether we keep counting a lease /
+            lease-purchase cost while the settlement plays out; turn it off
+            when the lessor stops billing or the unit is paid off and the
+            cost drops out of Fleet Cost. Kept independent so the two
+            states combine freely. */}
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="Total loss">
+            <label
+              className="flex items-start gap-2 text-xs text-gray-700 dark:text-slate-300 cursor-pointer select-none"
+              title="Mark when the unit is written off in an accident / total loss. Independent of whether the lessor is still charging — set that separately."
+            >
+              <input
+                type="checkbox"
+                checked={!!form.is_total_loss}
+                onChange={e => setForm(f => ({ ...f, is_total_loss: e.target.checked }))}
+                className="mt-0.5 rounded"
+              />
+              <span>
+                Written off (total loss)
+                <span className="block text-[10px] text-gray-400 dark:text-slate-500 leading-tight mt-0.5">
+                  Accident / insurance — still tracked while settlement is pending.
+                </span>
+              </span>
+            </label>
+          </Field>
+          <Field label="Lessor still charging">
+            <label
+              className="flex items-start gap-2 text-xs text-gray-700 dark:text-slate-300 cursor-pointer select-none"
+              title="Leave on while you're still being billed a lease / lease-purchase amount. Turn off when the lessor stops billing or the unit is paid off — the cost stops counting in Fleet Cost."
+            >
+              <input
+                type="checkbox"
+                checked={!!form.lease_charge_active}
+                onChange={e => setForm(f => ({ ...f, lease_charge_active: e.target.checked }))}
+                className="mt-0.5 rounded"
+              />
+              <span>
+                Still being charged a lease cost
+                <span className="block text-[10px] text-gray-400 dark:text-slate-500 leading-tight mt-0.5">
+                  Turn off when the lessor stops billing or the unit is paid off — cost stops counting.
+                </span>
+              </span>
+            </label>
           </Field>
         </div>
 

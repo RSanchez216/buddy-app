@@ -61,13 +61,25 @@ function fmtMoneyWhole(n) {
 // including them was making coverage look worse than it is.
 const COST_BEARING_SOURCES = new Set(['loan', 'lease', 'owned_outright', 'owned_no_loan'])
 
+// Cost-bearing = a category that should carry a cost, MINUS total-loss
+// units the lessor has stopped charging. A unit that's both written off
+// (is_total_loss) AND no longer billed (lease_charge_active=false) has no
+// cost obligation, so it must not inflate the coverage denominator or
+// show up as "Needs cost". A totaled unit that's STILL charged stays
+// cost-bearing (it should be costed). Owned units are unaffected —
+// lease_charge_active is a no-op there; the loan answers "still paying".
+function isCostBearing(row) {
+  if (!COST_BEARING_SOURCES.has(row.cost_source)) return false
+  return !(row.is_total_loss === true && row.lease_charge_active === false)
+}
+
 // Needs cost = any cost-bearing unit with no monthly cost yet, across
 // every cost_source. This catches the easy-to-miss case of a loan unit
 // whose per-unit split payment isn't populated in loan_equipment —
 // without this, those units sit hidden inside "Loan" with no cost.
 // Reconciles exactly with cost_bearing − costed.
 function needsCost(row) {
-  return COST_BEARING_SOURCES.has(row.cost_source) && row.monthly_cost == null
+  return isCostBearing(row) && row.monthly_cost == null
 }
 
 // Cost-bearing, active, no current driver. The brief's "money sitting"
@@ -164,15 +176,29 @@ export default function FleetCost() {
 
   const totals = useMemo(() => {
     let monthly = 0, weekly = 0, costedCount = 0, costBearingCount = 0
+    // Total-loss segment: written-off units we're STILL paying on
+    // (monthly_cost survives because lease_charge_active is on, or it's an
+    // owned unit on an active loan). Surfaced as a labeled sub-line under
+    // the Total Carrying Cost figure so the "why is a totaled unit still
+    // costing us" question is answered in place.
+    let tlMonthly = 0, tlWeekly = 0, tlCount = 0
     for (const r of rows) {
-      if (COST_BEARING_SOURCES.has(r.cost_source)) costBearingCount++
+      if (isCostBearing(r)) costBearingCount++
       if (r.monthly_cost != null) {
         monthly += Number(r.monthly_cost)
         weekly  += Number(r.weekly_cost || 0)
         costedCount++
+        if (r.is_total_loss === true) {
+          tlMonthly += Number(r.monthly_cost)
+          tlWeekly  += Number(r.weekly_cost || 0)
+          tlCount++
+        }
       }
     }
-    return { monthly, weekly, costedCount, costBearingCount, total: rows.length }
+    return {
+      monthly, weekly, costedCount, costBearingCount, total: rows.length,
+      totalLoss: { monthly: tlMonthly, weekly: tlWeekly, count: tlCount },
+    }
   }, [rows])
 
   // Idle-cost lens. Splits owned vs leased so it's clear what's
@@ -304,6 +330,16 @@ export default function FleetCost() {
               primary={`${fmtMoneyWhole(totals.monthly)} /mo`}
               secondary={`${fmtMoneyWhole(totals.weekly)} /wk`}
               subtext={`${totals.costedCount} costed unit${totals.costedCount === 1 ? '' : 's'}`}
+              footnote={totals.totalLoss.count > 0 ? (
+                <span
+                  className="text-amber-700 dark:text-amber-400"
+                  title="Lease/lease-purchase charges we're still paying on units written off as total losses (e.g., accident, insurance pending). These stay in the total until the lessor stops billing or the unit is paid off."
+                >
+                  Incl. {fmtMoneyWhole(totals.totalLoss.monthly)}/mo
+                  {' '}({fmtMoneyWhole(totals.totalLoss.weekly)}/wk) from {totals.totalLoss.count}{' '}
+                  total-loss unit{totals.totalLoss.count === 1 ? '' : 's'} still charged
+                </span>
+              ) : null}
             />
             <KpiCard
               label="Costed"
@@ -529,7 +565,7 @@ export default function FleetCost() {
 //     cards become buttons with hover background.
 function KpiCard({
   label, tone, titleAttr,
-  primary, secondary, subtext,
+  primary, secondary, subtext, footnote,
   progressPct, progressLabel,
   onClick, action,
 }) {
@@ -584,6 +620,9 @@ function KpiCard({
       )}
       {subtext && progressPct == null && (
         <p className="text-[11px] text-gray-500 dark:text-slate-400 leading-tight">{subtext}</p>
+      )}
+      {footnote && (
+        <p className="text-[11px] leading-tight mt-0.5 cursor-help">{footnote}</p>
       )}
       {action && (
         <button
