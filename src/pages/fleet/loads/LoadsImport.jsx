@@ -26,6 +26,66 @@ function fieldLabel(f) {
   })[f] || f
 }
 
+// ── Smart approval classification ──
+const STATUS_RANK = {
+  'booked': 1,
+  'at shipper': 2, 'in transit': 2, 'at receiver': 2,
+  'delayed': 2, 'abnormal delay': 2, 'update needed': 2,
+  'delivered': 3, 'pending to bill': 4, 'billed': 5,
+}
+const MILEAGE_PCT = 0.01
+const MILEAGE_ABS = 5
+
+function statusRank(s) {
+  return STATUS_RANK[(s || '').toLowerCase().trim()] ?? null
+}
+
+function classifyLoad(p) {
+  const allDiffs = [...p.header_diffs, ...p.legs.flatMap(l => l.diffs)]
+  for (const d of allDiffs) {
+    if (d.field === 'linehaul') return 'rate_change'
+    if (d.field === 'status') {
+      const isCT = s => /^(canceled|cancelled|tonu)$/i.test(s || '')
+      if (isCT(d.old) || isCT(d.new)) return 'cancel_tonu'
+      const oR = statusRank(d.old), nR = statusRank(d.new)
+      if (oR === null || nR === null) return 'unknown_status'
+      if (nR < oR) return 'status_regression'
+    }
+    if (['driver','truck','trailer'].includes(d.field)) return 'reassignment'
+    if (['pickup_date','delivery_date'].includes(d.field)) return 'date_change'
+    if (d.field === 'total_miles') {
+      const o = Number(d.old)||0, n = Number(d.new)||0
+      const diff = Math.abs(n - o)
+      const pct = o > 0 ? diff/o : (diff > 0 ? 1 : 0)
+      if (diff > MILEAGE_ABS && pct > MILEAGE_PCT) return 'large_mileage'
+    }
+  }
+  return null
+}
+
+const REVIEW_GROUPS = [
+  { key: 'rate_change',       label: 'Rate changes' },
+  { key: 'reassignment',      label: 'Reassignments' },
+  { key: 'cancel_tonu',       label: 'Canceled / TONU' },
+  { key: 'date_change',       label: 'Date changes' },
+  { key: 'status_regression', label: 'Status regressions' },
+  { key: 'large_mileage',     label: 'Large mileage changes' },
+  { key: 'unknown_status',    label: 'Unknown status' },
+]
+
+function isHighlightedField(field, reason) {
+  const map = {
+    rate_change: ['linehaul'],
+    cancel_tonu: ['status'],
+    reassignment: ['driver','truck','trailer'],
+    date_change: ['pickup_date','delivery_date'],
+    status_regression: ['status'],
+    large_mileage: ['total_miles'],
+    unknown_status: ['status'],
+  }
+  return (map[reason] || []).includes(field)
+}
+
 export default function LoadsImport() {
   const { user, canEdit } = useAuth()
   const toast = useToast()
@@ -47,6 +107,7 @@ export default function LoadsImport() {
   const [recent, setRecent] = useState([])
   const [applySummary, setApplySummary] = useState(null)
   const [showNew, setShowNew] = useState(false)
+  const [routineExpanded, setRoutineExpanded] = useState(false)
   // Fleet pick-lists for linking unmatched entities.
   const [fleet, setFleet] = useState({ drivers: [], trucks: [], trailers: [] })
 
@@ -151,9 +212,46 @@ export default function LoadsImport() {
     arriving: plan.filter(p => p.is_status_flag && p.classification === 'new').length,
   }), [plan])
 
+  const classifiedLoads = useMemo(() =>
+    updatedLoads.map(p => ({ ...p, _reviewReason: classifyLoad(p) })),
+    [updatedLoads]
+  )
+  const routineLoads  = useMemo(() => classifiedLoads.filter(p => p._reviewReason === null), [classifiedLoads])
+  const reviewLoads   = useMemo(() => classifiedLoads.filter(p => p._reviewReason !== null), [classifiedLoads])
+  const reviewByReason = useMemo(() => {
+    const m = Object.fromEntries(REVIEW_GROUPS.map(g => [g.key, []]))
+    for (const p of reviewLoads) m[p._reviewReason]?.push(p)
+    return m
+  }, [reviewLoads])
+  const approvedCount = useMemo(() =>
+    classifiedLoads.filter(p => decisionFor(p.load_number) !== 'skipped').length,
+    [classifiedLoads, decisions]
+  )
+
   function decisionFor(loadNumber) { return decisions.get(loadNumber) || 'approved' }
   function setDecision(loadNumber, d) {
     setDecisions(prev => { const n = new Map(prev); n.set(loadNumber, d); return n })
+  }
+  function approveAllRoutine() {
+    setDecisions(prev => {
+      const next = new Map(prev)
+      for (const p of routineLoads) next.set(p.load_number, 'approved')
+      return next
+    })
+  }
+  function approveGroup(reason) {
+    setDecisions(prev => {
+      const next = new Map(prev)
+      for (const p of reviewByReason[reason] || []) next.set(p.load_number, 'approved')
+      return next
+    })
+  }
+  function approveAll() {
+    setDecisions(prev => {
+      const next = new Map(prev)
+      for (const p of classifiedLoads) next.set(p.load_number, 'approved')
+      return next
+    })
   }
   function setLink(key, id) {
     setLinks(prev => { const n = new Map(prev); if (id) n.set(key, id); else n.delete(key); return n })
@@ -343,41 +441,105 @@ export default function LoadsImport() {
             </Section>
           )}
 
-          {/* Updated */}
-          {updatedLoads.length > 0 && (
-            <Section title={`Updated (${updatedLoads.length})`} subtitle="Watched-field changes vs. what's stored. Approve or skip each — skipped loads aren't written.">
-              <div className="space-y-3">
-                {updatedLoads.map(p => {
-                  const skipped = decisionFor(p.load_number) === 'skipped'
-                  const legDiffs = p.legs.flatMap(l => l.diffs.map(d => ({ ...d, leg_seq: l.leg_seq })))
-                  return (
-                    <div key={p.load_number} className={`rounded-xl border p-3 ${skipped ? 'border-gray-200 dark:border-white/5 opacity-60' : 'border-amber-200 dark:border-amber-500/20 bg-amber-50/30 dark:bg-amber-500/[0.03]'}`}>
-                      <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono font-semibold text-gray-900 dark:text-slate-200">{p.load_number}</span>
-                          {p.is_status_flag && (
-                            <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-500/15 text-red-700 dark:text-red-300">Canceled/TONU</span>
-                          )}
-                          {p.header.is_team_load && (
-                            <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-cyan-50 dark:bg-cyan-500/10 text-cyan-700 dark:text-cyan-400">team · {p.legs.length} legs</span>
-                          )}
+          {/* Updated — smart approval flow */}
+          {classifiedLoads.length > 0 && (
+            <Section title={`Updated (${classifiedLoads.length})`} subtitle="Smart approval: routine changes bulk-approved in one click; material changes grouped for review.">
+              <div className="space-y-4">
+                {/* Running count + global Approve all */}
+                <div className="flex items-center justify-between text-xs text-gray-500 dark:text-slate-400">
+                  <span>{approvedCount} of {classifiedLoads.length} approved</span>
+                  <button onClick={approveAll} className={S.btnSecondary}>Approve all ({classifiedLoads.length})</button>
+                </div>
+
+                {/* Needs your review */}
+                {reviewLoads.length > 0 && (
+                  <div className="space-y-3">
+                    <p className="text-sm font-semibold text-gray-900 dark:text-slate-100">Needs your review ({reviewLoads.length})</p>
+                    {REVIEW_GROUPS.filter(g => reviewByReason[g.key].length > 0).map(g => (
+                      <div key={g.key} className="space-y-2 pl-2 border-l-2 border-amber-300 dark:border-amber-500/30">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-slate-400">
+                            {g.label} ({reviewByReason[g.key].length})
+                          </p>
+                          <button onClick={() => approveGroup(g.key)} className={S.btnSecondary + ' text-xs'}>Approve group</button>
                         </div>
-                        <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700 text-xs">
-                          <button onClick={() => setDecision(p.load_number, 'approved')} className={`px-2.5 py-1 ${!skipped ? 'bg-emerald-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400'}`}>Approve</button>
-                          <button onClick={() => setDecision(p.load_number, 'skipped')} className={`px-2.5 py-1 ${skipped ? 'bg-gray-400 dark:bg-slate-600 text-white font-semibold' : 'text-gray-500 dark:text-slate-400'}`}>Skip</button>
-                        </div>
+                        {reviewByReason[g.key].map(p => {
+                          const skipped = decisionFor(p.load_number) === 'skipped'
+                          const legDiffs = p.legs.flatMap(l => l.diffs.map(d => ({ ...d, leg_seq: l.leg_seq })))
+                          return (
+                            <div key={p.load_number} className={`rounded-lg border p-3 ${skipped ? 'border-gray-200 dark:border-white/5 opacity-60' : 'border-amber-200 dark:border-amber-500/20 bg-amber-50/30 dark:bg-amber-500/[0.03]'}`}>
+                              <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono font-semibold text-gray-900 dark:text-slate-200 text-sm">{p.load_number}</span>
+                                  {p.is_status_flag && <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-500/15 text-red-700 dark:text-red-300">Canceled/TONU</span>}
+                                  {p.header.is_team_load && <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-cyan-50 dark:bg-cyan-500/10 text-cyan-700 dark:text-cyan-400">team · {p.legs.length} legs</span>}
+                                </div>
+                                <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700 text-xs">
+                                  <button onClick={() => setDecision(p.load_number, 'approved')} className={`px-2.5 py-1 ${!skipped ? 'bg-emerald-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400'}`}>Approve</button>
+                                  <button onClick={() => setDecision(p.load_number, 'skipped')} className={`px-2.5 py-1 ${skipped ? 'bg-gray-400 dark:bg-slate-600 text-white font-semibold' : 'text-gray-500 dark:text-slate-400'}`}>Skip</button>
+                                </div>
+                              </div>
+                              <ul className="space-y-1 text-xs">
+                                {p.header_diffs.map((d, i) => <DiffRow key={`h${i}`} scope="header" d={d} highlight={p._reviewReason} />)}
+                                {legDiffs.map((d, i) => <DiffRow key={`l${i}`} scope={`leg ${d.leg_seq}`} d={d} highlight={p._reviewReason} />)}
+                              </ul>
+                            </div>
+                          )
+                        })}
                       </div>
-                      <ul className="space-y-1 text-xs">
-                        {p.header_diffs.map((d, i) => (
-                          <DiffRow key={`h${i}`} scope="header" d={d} />
-                        ))}
-                        {legDiffs.map((d, i) => (
-                          <DiffRow key={`l${i}`} scope={`leg ${d.leg_seq}`} d={d} />
-                        ))}
-                      </ul>
-                    </div>
-                  )
-                })}
+                    ))}
+                  </div>
+                )}
+
+                {/* Routine (collapsed by default) */}
+                {routineLoads.length > 0 && (
+                  <div className="rounded-xl border border-gray-200 dark:border-white/10">
+                    <button
+                      onClick={() => setRoutineExpanded(v => !v)}
+                      className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 dark:hover:bg-white/[0.02] transition-colors"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-gray-800 dark:text-slate-200">Routine ({routineLoads.length})</span>
+                        <span className="text-xs text-gray-400 dark:text-slate-500">— status progressions & minor mileage, straight from TMS</span>
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <button
+                          onClick={e => { e.stopPropagation(); approveAllRoutine() }}
+                          className={S.btnSuccess + ' text-xs'}
+                        >
+                          Approve all routine
+                        </button>
+                        <span className="text-gray-400 dark:text-slate-500">{routineExpanded ? '▲' : '▼'}</span>
+                      </div>
+                    </button>
+                    {routineExpanded && (
+                      <div className="border-t border-gray-100 dark:border-white/[0.06] px-4 pb-4 space-y-2 pt-3">
+                        {routineLoads.map(p => {
+                          const skipped = decisionFor(p.load_number) === 'skipped'
+                          const legDiffs = p.legs.flatMap(l => l.diffs.map(d => ({ ...d, leg_seq: l.leg_seq })))
+                          return (
+                            <div key={p.load_number} className={`rounded-lg border p-3 text-xs ${skipped ? 'border-gray-200 dark:border-white/5 opacity-60' : 'border-gray-200 dark:border-white/5 bg-gray-50/30 dark:bg-white/[0.02]'}`}>
+                              <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono font-semibold text-gray-900 dark:text-slate-200">{p.load_number}</span>
+                                  {p.header.is_team_load && <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-cyan-50 dark:bg-cyan-500/10 text-cyan-700 dark:text-cyan-400">team · {p.legs.length} legs</span>}
+                                </div>
+                                <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700 text-xs">
+                                  <button onClick={() => setDecision(p.load_number, 'approved')} className={`px-2.5 py-1 ${!skipped ? 'bg-emerald-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400'}`}>Approve</button>
+                                  <button onClick={() => setDecision(p.load_number, 'skipped')} className={`px-2.5 py-1 ${skipped ? 'bg-gray-400 dark:bg-slate-600 text-white font-semibold' : 'text-gray-500 dark:text-slate-400'}`}>Skip</button>
+                                </div>
+                              </div>
+                              <ul className="space-y-1 text-xs">
+                                {p.header_diffs.map((d, i) => <DiffRow key={`h${i}`} scope="header" d={d} />)}
+                                {legDiffs.map((d, i) => <DiffRow key={`l${i}`} scope={`leg ${d.leg_seq}`} d={d} />)}
+                              </ul>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </Section>
           )}
@@ -586,15 +748,18 @@ function Section({ title, subtitle, action, children }) {
   )
 }
 
-function DiffRow({ scope, d }) {
+function DiffRow({ scope, d, highlight }) {
   const isStatusFlip = d.field === 'status'
+  const isHighlighted = highlight && isHighlightedField(d.field, highlight)
   return (
     <li className="flex items-center gap-2 flex-wrap">
       <span className="text-[10px] uppercase tracking-wide text-gray-400 dark:text-slate-500 w-14">{scope}</span>
       <span className="text-gray-500 dark:text-slate-400">{fieldLabel(d.field)}:</span>
       <span className="font-mono text-gray-400 dark:text-slate-500 line-through">{fmtVal(d.old)}</span>
       <span className="text-gray-400">→</span>
-      <span className={`font-mono ${isStatusFlip ? 'text-red-600 dark:text-red-400 font-semibold' : 'text-gray-900 dark:text-slate-200'}`}>{fmtVal(d.new)}</span>
+      <span className={`font-mono ${isHighlighted
+        ? 'font-bold text-amber-700 dark:text-amber-400'
+        : isStatusFlip ? 'text-red-600 dark:text-red-400 font-semibold' : 'text-gray-900 dark:text-slate-200'}`}>{fmtVal(d.new)}</span>
     </li>
   )
 }
