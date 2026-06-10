@@ -49,6 +49,8 @@ export default function LaneFlowMap() {
   const [weight, setWeight] = useState('revenue') // arc thickness: revenue | loads
   const [sortKey, setSortKey] = useState('revenue')
   const [dispatcherFilter, setDispatcherFilter] = useState(null) // null = all
+  const [dispatcherSearchOpen, setDispatcherSearchOpen] = useState(false)
+  const [dispatcherSearchQuery, setDispatcherSearchQuery] = useState('')
 
   // Fetched legs are stored with the period key they belong to, so a
   // period/basis change invalidates them by derivation (Spotlight pattern).
@@ -78,6 +80,11 @@ export default function LaneFlowMap() {
     }
     return [...seen.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
   }, [legState.legs])
+
+  const filteredDispatchers = useMemo(() => {
+    const q = dispatcherSearchQuery.trim().toLowerCase()
+    return dispatchers.filter(d => d.name.toLowerCase().includes(q))
+  }, [dispatchers, dispatcherSearchQuery])
 
   const filteredLegs = useMemo(() => {
     if (!legState.legs || !dispatcherFilter) return legState.legs
@@ -145,15 +152,41 @@ export default function LaneFlowMap() {
           <Pills value={weight} onChange={setWeight} title="What arc thickness represents"
             options={[['revenue', 'Weight: revenue'], ['loads', 'Weight: loads']]} />
           {dispatchers.length > 1 && (
-            <select
-              value={dispatcherFilter ?? ''}
-              onChange={e => setDispatcherFilter(e.target.value || null)}
-              className={`${S.select} text-xs ${dispatcherFilter ? 'ring-2 ring-orange-400/50' : ''}`}
-              title="Filter entire page to one dispatcher"
-            >
-              <option value="">All dispatchers</option>
-              {dispatchers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-            </select>
+            <div className="relative">
+              <input
+                type="text"
+                value={dispatcherFilter ? (dispatchers.find(d => d.id === dispatcherFilter)?.name || '') : dispatcherSearchQuery}
+                onChange={e => { setDispatcherSearchQuery(e.target.value); setDispatcherSearchOpen(true) }}
+                onFocus={() => setDispatcherSearchOpen(true)}
+                onBlur={() => setTimeout(() => setDispatcherSearchOpen(false), 150)}
+                placeholder={dispatcherFilter ? '—' : 'Filter dispatchers…'}
+                className={`${S.input} w-32 text-xs ${dispatcherFilter ? 'ring-2 ring-orange-400/50' : ''}`}
+                title="Search and filter by dispatcher"
+              />
+              {dispatcherSearchOpen && (
+                <div className="absolute z-50 mt-1 w-48 rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-[#12132e] shadow-lg overflow-hidden">
+                  <button
+                    onMouseDown={e => { e.preventDefault(); setDispatcherFilter(null); setDispatcherSearchQuery(''); setDispatcherSearchOpen(false) }}
+                    className="w-full text-left px-3 py-2 text-xs text-gray-700 dark:text-slate-300 hover:bg-orange-50 dark:hover:bg-orange-500/10 border-b border-gray-100 dark:border-white/[0.06]"
+                  >
+                    All dispatchers
+                  </button>
+                  {filteredDispatchers.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-gray-400 dark:text-slate-500">No matches</p>
+                  ) : (
+                    filteredDispatchers.map(d => (
+                      <button
+                        key={d.id}
+                        onMouseDown={e => { e.preventDefault(); setDispatcherFilter(d.id); setDispatcherSearchQuery(''); setDispatcherSearchOpen(false) }}
+                        className={`w-full text-left px-3 py-2 text-xs hover:bg-orange-50 dark:hover:bg-orange-500/10 ${dispatcherFilter === d.id ? 'bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-400 font-semibold' : 'text-gray-700 dark:text-slate-300'}`}
+                      >
+                        {d.name}
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
           )}
         </div>
         <div className="flex flex-col gap-1.5 lg:items-end">
@@ -254,7 +287,7 @@ export default function LaneFlowMap() {
           <div className={`${S.card} overflow-hidden`}>
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-white/5">
               <p className="text-xs font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">Lane leaderboard</p>
-              <Pills value={sortKey} onChange={setSortKey} options={LEADERBOARD_SORTS.map(s => [s.key, s.label])} title="Sort: Revenue = highest total revenue · $/mile = highest rate/mile · Loads = busiest lane (ties broken by revenue)" />
+              <Pills value={sortKey} onChange={setSortKey} options={LEADERBOARD_SORTS.map(s => [s.key, s.label])} title="Revenue — total $ on the lane · $/mile — revenue ÷ miles · Loads — how many loads ran this origin→destination. Tied lanes sorted by revenue." />
             </div>
             <div className="max-h-[460px] overflow-y-auto">
               {ranked.length === 0 ? (
@@ -311,7 +344,8 @@ export default function LaneFlowMap() {
                           {leg.is_projected && <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-50 dark:bg-cyan-500/10 text-cyan-700 dark:text-cyan-400">Booked</span>}
                         </p>
                         <p className="text-gray-400 dark:text-slate-500 truncate">{leg[dateCol] || '—'} · {leg.customer_name || '—'}</p>
-                        <p className="text-gray-400 dark:text-slate-500 truncate">{leg.dispatcher_name || '—'} · {leg.driver_display || '—'}</p>
+                        <p className="text-gray-400 dark:text-slate-500 truncate text-[11px]">Dispatcher: {leg.dispatcher_name || '—'}</p>
+                        <p className="text-gray-400 dark:text-slate-500 truncate text-[11px]">Driver: {leg.driver_display || '—'}</p>
                       </div>
                       <div className="text-right shrink-0">
                         <p className="font-mono text-gray-900 dark:text-slate-200">{fmtMoney(leg.leg_revenue)}</p>
