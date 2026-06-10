@@ -128,6 +128,7 @@ export default function Spotlight({ dimension = 'driver' }) {
       rangeDays={rangeDays}
       effDays={deck?.effDays ?? rangeDays}
       periodLabel={formatRange(range.from, range.to)}
+      basis={basis}
       focused={focused}
       rank={sorted.indexOf(entry) + 1}
       total={sorted.length}

@@ -160,7 +160,7 @@ const ROADMAP = [
   { label: 'Driver pay', desc: 'settlement deductions' },
 ]
 
-function DriverSpotlightCard({ entry, lanes, trend, rangeDays, effDays, periodLabel, focused, rank, total, sortLabel }) {
+function DriverSpotlightCard({ entry, lanes, trend, rangeDays, effDays, periodLabel, basis = 'delivery', focused, rank, total, sortLabel }) {
   const m = entry.metrics
   const hs = HEALTH_STYLES[entry.health.level]
   // Idle days only count days that have actually happened — a mid-week
@@ -232,8 +232,16 @@ function DriverSpotlightCard({ entry, lanes, trend, rangeDays, effDays, periodLa
         </div>
       </div>
 
+      {/* ── Date range emphasis ── */}
+      <div className="px-6 pt-4 pb-2">
+        <div className="inline-flex flex-col gap-1 px-3 py-2 rounded-lg bg-gradient-to-br from-slate-100 to-slate-50 dark:from-slate-800/40 dark:to-slate-900/20 border border-slate-200 dark:border-slate-700/40">
+          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100 font-mono">{periodLabel}</p>
+          <p className="text-[10px] text-slate-500 dark:text-slate-400">by {basis} date</p>
+        </div>
+      </div>
+
       {/* ── Headline metrics (real — load_profit_rollup) ── */}
-      <div className="px-6 pt-4">
+      <div className="px-6 pt-2">
         <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
           <StatTile label="Gross revenue" tone="emerald" value={fmtMoney(m.gross)} sub={periodLabel} />
           <StatTile label="$/mile" tone={entry.health.rpmRatio != null && entry.health.rpmRatio < 0.9 ? 'rose' : 'amber'} value={fmtRpm(m.rpm)} sub={entry.benchmarkRpm != null ? `vs ${fmtRpm(entry.benchmarkRpm)} avg` : null} />
