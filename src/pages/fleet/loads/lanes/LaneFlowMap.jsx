@@ -42,17 +42,19 @@ function Kpi({ label, value, sub }) {
 
 export default function LaneFlowMap() {
   const toast = useToast()
-  const [preset, setPreset] = useState('month')
-  const [range, setRange] = useState(thisMonth)
+  const [preset, setPreset] = useState('week')
+  const [range, setRange] = useState(thisWeek)
   const [basis, setBasis] = useState('delivery')
   const [view, setView] = useState('realized') // realized | booked
   const [weight, setWeight] = useState('revenue') // arc thickness: revenue | loads
   const [sortKey, setSortKey] = useState('revenue')
+  const [dispatcherFilter, setDispatcherFilter] = useState(null) // null = all
 
   // Fetched legs are stored with the period key they belong to, so a
   // period/basis change invalidates them by derivation (Spotlight pattern).
   const dataKey = `${range.from}|${range.to}|${basis}`
   const [legState, setLegState] = useState({ key: null, legs: null })
+  useEffect(() => { setDispatcherFilter(null) }, [dataKey])
   useEffect(() => {
     let stale = false
     fetchLaneLegs({ from: range.from, to: range.to, basis })
@@ -67,9 +69,24 @@ export default function LaneFlowMap() {
   }, [dataKey, range.from, range.to, basis, toast])
   const loading = legState.key !== dataKey
 
+  const dispatchers = useMemo(() => {
+    if (!legState.legs) return []
+    const seen = new Map()
+    for (const l of legState.legs) {
+      if (l.dispatcher_id && !seen.has(l.dispatcher_id))
+        seen.set(l.dispatcher_id, l.dispatcher_name || String(l.dispatcher_id))
+    }
+    return [...seen.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
+  }, [legState.legs])
+
+  const filteredLegs = useMemo(() => {
+    if (!legState.legs || !dispatcherFilter) return legState.legs
+    return legState.legs.filter(l => l.dispatcher_id === dispatcherFilter)
+  }, [legState.legs, dispatcherFilter])
+
   const agg = useMemo(
-    () => (loading ? null : aggregateLanes(legState.legs, view)),
-    [loading, legState.legs, view],
+    () => (loading ? null : aggregateLanes(filteredLegs, view)),
+    [loading, filteredLegs, view],
   )
   const rpmScale = useMemo(() => (agg ? makeRpmScale(agg.lanes) : null), [agg])
   const widthFor = useMemo(() => (agg ? makeWidthScale(agg.lanes, weight) : null), [agg, weight])
@@ -127,6 +144,17 @@ export default function LaneFlowMap() {
             options={[['realized', 'Realized'], ['booked', 'Booked']]} />
           <Pills value={weight} onChange={setWeight} title="What arc thickness represents"
             options={[['revenue', 'Weight: revenue'], ['loads', 'Weight: loads']]} />
+          {dispatchers.length > 1 && (
+            <select
+              value={dispatcherFilter ?? ''}
+              onChange={e => setDispatcherFilter(e.target.value || null)}
+              className={`${S.select} text-xs ${dispatcherFilter ? 'ring-2 ring-orange-400/50' : ''}`}
+              title="Filter entire page to one dispatcher"
+            >
+              <option value="">All dispatchers</option>
+              {dispatchers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+          )}
         </div>
         <div className="flex flex-col gap-1.5 lg:items-end">
           <div className="flex flex-wrap items-center gap-2">
@@ -135,11 +163,11 @@ export default function LaneFlowMap() {
             <button onClick={() => shiftRange(1)} className="px-2 py-1.5 text-xs font-medium rounded border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors" title="Next period">▶</button>
             <Pills value={basis} onChange={setBasis} options={[['delivery', 'By delivery'], ['pickup', 'By pickup']]} />
             {preset === 'custom' && (
-              <>
-                <input type="date" className={`${S.input} w-auto shrink-0 min-w-[8.5rem]`} value={range.from} onChange={e => setRange(r => ({ ...r, from: e.target.value }))} />
-                <span className="text-gray-400 text-xs shrink-0">→</span>
-                <input type="date" className={`${S.input} w-auto shrink-0 min-w-[8.5rem]`} value={range.to} onChange={e => setRange(r => ({ ...r, to: e.target.value }))} />
-              </>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <input type="date" className={`${S.input} w-[9rem]`} value={range.from} onChange={e => setRange(r => ({ ...r, from: e.target.value }))} />
+                <span className="text-gray-400 text-xs">→</span>
+                <input type="date" className={`${S.input} w-[9rem]`} value={range.to} onChange={e => setRange(r => ({ ...r, to: e.target.value }))} />
+              </div>
             )}
           </div>
           <p className="text-[11px] text-gray-400 dark:text-slate-500">{PRESET_LABEL[preset]} · {formatRange(range.from, range.to)} · by {basis} date</p>
@@ -226,7 +254,7 @@ export default function LaneFlowMap() {
           <div className={`${S.card} overflow-hidden`}>
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-white/5">
               <p className="text-xs font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">Lane leaderboard</p>
-              <Pills value={sortKey} onChange={setSortKey} options={LEADERBOARD_SORTS.map(s => [s.key, s.label])} title="Sort lanes" />
+              <Pills value={sortKey} onChange={setSortKey} options={LEADERBOARD_SORTS.map(s => [s.key, s.label])} title="Sort: Revenue = highest total revenue · $/mile = highest rate/mile · Loads = busiest lane (ties broken by revenue)" />
             </div>
             <div className="max-h-[460px] overflow-y-auto">
               {ranked.length === 0 ? (
@@ -273,21 +301,28 @@ export default function LaneFlowMap() {
                 <button onClick={() => setSelected(null)} className="text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 text-sm leading-none px-1" title="Clear selection">✕</button>
               </div>
               <ul className="divide-y divide-gray-50 dark:divide-white/[0.03] max-h-72 overflow-y-auto">
-                {selectedLane.legs.map(leg => (
-                  <li key={leg.leg_id} className="px-4 py-2.5 flex items-center justify-between gap-3 text-xs">
-                    <div className="min-w-0">
-                      <p className="font-medium text-gray-900 dark:text-slate-200 truncate">
-                        #{leg.load_number || leg.load_id}
-                        {leg.is_projected && <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-50 dark:bg-cyan-500/10 text-cyan-700 dark:text-cyan-400">Booked</span>}
-                      </p>
-                      <p className="text-gray-400 dark:text-slate-500 truncate">{leg[dateCol] || '—'} · {leg.customer_name || '—'}</p>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <p className="font-mono text-gray-900 dark:text-slate-200">{fmtMoney(leg.leg_revenue)}</p>
-                      <p className="font-mono text-gray-400 dark:text-slate-500">{fmtNum(leg.leg_total_miles)} mi</p>
-                    </div>
-                  </li>
-                ))}
+                {selectedLane.legs.map(leg => {
+                  const legRpm = leg.leg_total_miles > 0 ? leg.leg_revenue / leg.leg_total_miles : null
+                  return (
+                    <li key={leg.leg_id} className="px-4 py-2.5 flex items-center justify-between gap-3 text-xs">
+                      <div className="min-w-0">
+                        <p className="font-medium text-gray-900 dark:text-slate-200 truncate">
+                          #{leg.load_number || leg.load_id}
+                          {leg.is_projected && <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-50 dark:bg-cyan-500/10 text-cyan-700 dark:text-cyan-400">Booked</span>}
+                        </p>
+                        <p className="text-gray-400 dark:text-slate-500 truncate">{leg[dateCol] || '—'} · {leg.customer_name || '—'}</p>
+                        <p className="text-gray-400 dark:text-slate-500 truncate">{leg.dispatcher_name || '—'} · {leg.driver_display || '—'}</p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="font-mono text-gray-900 dark:text-slate-200">{fmtMoney(leg.leg_revenue)}</p>
+                        <p className="font-mono text-[11px]" style={{ color: rpmScale ? rpmScale.color(legRpm) : undefined }}>
+                          {legRpm != null ? `${fmtRpm(legRpm)}/mi` : '—'}
+                        </p>
+                        <p className="font-mono text-gray-400 dark:text-slate-500">{fmtNum(leg.leg_total_miles)} mi</p>
+                      </div>
+                    </li>
+                  )
+                })}
               </ul>
             </div>
           )}

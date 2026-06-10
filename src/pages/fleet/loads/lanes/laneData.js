@@ -18,7 +18,7 @@ export async function fetchLaneLegs({ from, to, basis = 'delivery' }) {
   const out = []
   for (let page = 0; ; page++) {
     const { data, error } = await supabase.from('v_load_leg_profit')
-      .select('leg_id, load_id, load_number, status, is_projected, pickup_date, delivery_date, origin, destination, leg_revenue, leg_total_miles, customer_name')
+      .select('leg_id, load_id, load_number, status, is_projected, pickup_date, delivery_date, origin, destination, leg_revenue, leg_total_miles, customer_name, dispatcher_id, dispatcher_name, driver_display')
       .gte(dateCol, from).lte(dateCol, to)
       .order(dateCol, { ascending: true }).order('leg_id', { ascending: true })
       .range(page * 1000, page * 1000 + 999)
