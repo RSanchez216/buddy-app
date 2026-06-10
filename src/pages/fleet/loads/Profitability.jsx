@@ -471,6 +471,7 @@ function Stat({ label, tone, value, sub, delta, cmpLabel }) {
 function DeltaBadge({ delta, cmpLabel }) {
   if (!delta || delta.flat) return <span className="text-[11px] text-gray-400 dark:text-slate-600">— flat</span>
   if (delta.isNew) return <span className="text-[11px] text-emerald-600 dark:text-emerald-400" title={`No activity ${cmpLabel}`}>new</span>
+  if (Math.abs(delta.pct) > 999) return <span className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400" title={cmpLabel}>new</span>
   const up = delta.dir === 'up', down = delta.dir === 'down'
   const cls = up ? 'text-emerald-600 dark:text-emerald-400' : down ? 'text-rose-600 dark:text-rose-400' : 'text-gray-400 dark:text-slate-600'
   return (
