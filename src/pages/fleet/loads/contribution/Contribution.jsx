@@ -42,7 +42,7 @@ function Waterfall({ row }) {
     <div className="space-y-1.5 max-w-xl">
       {steps.map(s => (
         <div key={s.label} className="flex items-center gap-3 text-xs">
-          <span className="w-44 shrink-0 text-gray-500 dark:text-slate-400">{s.label}</span>
+          <span className="w-44 shrink-0 text-gray-700 dark:text-slate-400">{s.label}</span>
           <div className="relative flex-1 h-4 rounded bg-gray-100 dark:bg-white/[0.04] overflow-hidden">
             <div className="absolute inset-y-0 border-l border-dashed border-gray-300 dark:border-slate-600" style={{ left: `${x(0)}%` }} />
             <div
@@ -64,16 +64,16 @@ function RowDetail({ row, days, dimension }) {
   return (
     <div className="px-4 py-4 space-y-4">
       <Waterfall row={row} />
-      <div className="flex flex-wrap gap-x-8 gap-y-2 text-xs text-gray-500 dark:text-slate-400">
+      <div className="flex flex-wrap gap-x-8 gap-y-2 text-xs text-gray-700 dark:text-slate-400">
         {row.units.length > 0 && (
           <div>
             <div className="font-semibold text-gray-600 dark:text-slate-300 mb-1">Equipment ({days}-day share of monthly cost)</div>
             {row.units.map((u, i) => (
               <div key={i} className="flex items-center gap-2 font-mono">
-                <span className="w-14 capitalize font-sans text-gray-400 dark:text-slate-500">{u.etype}</span>
+                <span className="w-14 capitalize font-sans text-gray-600 dark:text-slate-500">{u.etype}</span>
                 <span className="w-24">{u.unitNumber || '—'}</span>
                 <span className="w-20 text-right">{u.monthly != null ? `${fmtMoney(u.monthly)}/mo` : u.source === 'driver_owned' ? '$0 (driver-owned)' : 'unknown'}</span>
-                <span className="font-sans text-gray-400 dark:text-slate-500">{u.source !== 'driver_owned' ? u.source : ''}</span>
+                <span className="font-sans text-gray-600 dark:text-slate-500">{u.source !== 'driver_owned' ? u.source : ''}</span>
               </div>
             ))}
           </div>
@@ -207,7 +207,7 @@ export default function Contribution() {
           <span className="w-1.5 h-1.5 rounded-full bg-orange-500" /> Fleet
         </div>
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Profit Contribution</h1>
-        <p className="text-sm text-gray-500 dark:text-slate-500 mt-0.5">
+        <p className="text-sm text-gray-700 dark:text-slate-500 mt-0.5">
           What each {nounSingular} leaves behind after its equipment carrying cost — money-losers flagged.
           <span className="ml-1.5 text-[11px] px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 align-middle whitespace-nowrap" title="Driver pay, fuel, and insurance aren't in BUDDY yet, so this is contribution after equipment & purchase only — not net profit.">
             Partial — driver pay &amp; fuel pending. Not net profit.
@@ -218,14 +218,14 @@ export default function Contribution() {
       {/* ── Controls: dimension · filter · period · basis ── */}
       <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-center flex-wrap gap-2">
-          <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700 text-xs shrink-0">
+          <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-slate-700 text-xs shrink-0">
             {[['truck', 'By truck'], ['driver', 'By driver']].map(([k, lbl]) => (
-              <button key={k} onClick={() => setDimension(k)} className={`px-3 py-1.5 whitespace-nowrap shrink-0 ${dimension === k ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400'}`}>{lbl}</button>
+              <button key={k} onClick={() => setDimension(k)} className={`px-3 py-1.5 whitespace-nowrap shrink-0 ${dimension === k ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-700 dark:text-slate-400'}`}>{lbl}</button>
             ))}
           </div>
-          <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700 text-xs shrink-0">
+          <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-slate-700 text-xs shrink-0">
             {[['all', 'All'], ['company', 'Company'], ['driver_owned', 'Owner-op']].map(([k, lbl]) => (
-              <button key={k} onClick={() => setOwnershipFilter(k)} className={`px-3 py-1.5 whitespace-nowrap shrink-0 ${ownershipFilter === k ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400'}`}>{lbl}</button>
+              <button key={k} onClick={() => setOwnershipFilter(k)} className={`px-3 py-1.5 whitespace-nowrap shrink-0 ${ownershipFilter === k ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-700 dark:text-slate-400'}`}>{lbl}</button>
             ))}
           </div>
           <input
@@ -238,26 +238,26 @@ export default function Contribution() {
         </div>
         <div className="flex flex-col gap-1.5 lg:items-end">
           <div className="flex flex-wrap items-center gap-2">
-            <button onClick={() => shiftRange(-1)} className="px-2 py-1.5 text-xs font-medium rounded border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors" title="Previous period">◀</button>
-            <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700 text-xs shrink-0">
+            <button onClick={() => shiftRange(-1)} className="px-2 py-1.5 text-xs font-medium rounded border border-gray-300 dark:border-slate-700 text-gray-700 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors" title="Previous period">◀</button>
+            <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-slate-700 text-xs shrink-0">
               {[['week', 'This week'], ['month', 'This month'], ['custom', 'Custom']].map(([k, lbl]) => (
-                <button key={k} onClick={() => setPresetRange(k)} className={`px-3 py-1.5 whitespace-nowrap shrink-0 ${preset === k ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400'}`}>{lbl}</button>
+                <button key={k} onClick={() => setPresetRange(k)} className={`px-3 py-1.5 whitespace-nowrap shrink-0 ${preset === k ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-700 dark:text-slate-400'}`}>{lbl}</button>
               ))}
             </div>
-            <button onClick={() => shiftRange(1)} className="px-2 py-1.5 text-xs font-medium rounded border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors" title="Next period">▶</button>
-            <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700 text-xs shrink-0">
+            <button onClick={() => shiftRange(1)} className="px-2 py-1.5 text-xs font-medium rounded border border-gray-300 dark:border-slate-700 text-gray-700 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors" title="Next period">▶</button>
+            <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-slate-700 text-xs shrink-0">
               <button onClick={() => setBasis('delivery')} className={`px-3 py-1.5 whitespace-nowrap shrink-0 ${basis === 'delivery' ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400'}`}>By delivery</button>
               <button onClick={() => setBasis('pickup')} className={`px-3 py-1.5 whitespace-nowrap shrink-0 ${basis === 'pickup' ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400'}`}>By pickup</button>
             </div>
             {preset === 'custom' && (
               <>
                 <input type="date" className={`${S.input} w-auto shrink-0 min-w-[8.5rem]`} value={range.from} onChange={e => setRange(r => ({ ...r, from: e.target.value }))} />
-                <span className="text-gray-400 text-xs shrink-0">→</span>
+                <span className="text-gray-600 text-xs shrink-0">→</span>
                 <input type="date" className={`${S.input} w-auto shrink-0 min-w-[8.5rem]`} value={range.to} onChange={e => setRange(r => ({ ...r, to: e.target.value }))} />
               </>
             )}
           </div>
-          <p className="text-[11px] text-gray-400 dark:text-slate-500">{PRESET_LABEL[preset]} · {formatRange(range.from, range.to)} · by {basis} date</p>
+          <p className="text-[11px] text-gray-600 dark:text-slate-500">{PRESET_LABEL[preset]} · {formatRange(range.from, range.to)} · by {basis} date</p>
         </div>
       </div>
 
@@ -271,15 +271,15 @@ export default function Contribution() {
           { label: `Negative ${nounSingular}s`, value: loading ? '—' : String(totals.negatives), tone: totals.negatives > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400', clickable: true },
         ].map(c => (
           <div key={c.label} className={`${S.card} px-4 py-3 ${c.big ? 'ring-1 ring-orange-500/30' : ''} ${c.clickable ? 'cursor-pointer hover:shadow-md transition-shadow' : ''} ${c.clickable && negativeFilter ? 'ring-2 ring-rose-500/50' : ''}`} onClick={() => c.clickable && setNegativeFilter(!negativeFilter)}>
-            <div className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">{c.label}</div>
+            <div className="text-[10px] font-semibold uppercase tracking-widest text-gray-600 dark:text-slate-500">{c.label}</div>
             <div className={`mt-0.5 font-mono font-bold ${c.big ? 'text-xl' : 'text-lg'} ${c.tone || 'text-gray-900 dark:text-white'} flex items-center justify-between`}>
               <span>{loading ? '…' : c.value}</span>
-              {c.clickable && negativeFilter && <span className="text-xs text-gray-400 dark:text-slate-500 font-normal ml-2">✕</span>}
+              {c.clickable && negativeFilter && <span className="text-xs text-gray-600 dark:text-slate-500 font-normal ml-2">✕</span>}
             </div>
           </div>
         ))}
       </div>
-      <p className="text-[11px] text-gray-400 dark:text-slate-500 -mt-1 space-y-1">
+      <p className="text-[11px] text-gray-600 dark:text-slate-500 -mt-1 space-y-1">
         <div>
           Contribution = realized revenue − equipment carrying cost (monthly cost × {data ? data.days : '…'} days ÷ 30.44) − truck-purchase deduction.
           Coming next on the road to net margin: fuel · driver pay · insurance.
@@ -306,9 +306,9 @@ export default function Contribution() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={8} className="px-4 py-12 text-center text-sm text-gray-400 dark:text-slate-500 animate-pulse">Crunching the leaderboard…</td></tr>
+                <tr><td colSpan={8} className="px-4 py-12 text-center text-sm text-gray-600 dark:text-slate-500 animate-pulse">Crunching the leaderboard…</td></tr>
               ) : sorted.length === 0 ? (
-                <tr><td colSpan={8} className="px-4 py-12 text-center text-sm text-gray-400 dark:text-slate-500">No {nounSingular}s with activity or carrying cost in this window.</td></tr>
+                <tr><td colSpan={8} className="px-4 py-12 text-center text-sm text-gray-600 dark:text-slate-500">No {nounSingular}s with activity or carrying cost in this window.</td></tr>
               ) : sorted.map((r, i) => {
                 const negative = r.contribution < 0
                 const expanded = expandedId === r.id
@@ -324,7 +324,7 @@ export default function Contribution() {
             </tbody>
             {!loading && sorted.length > 0 && (
               <tfoot>
-                <tr className="border-t border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-white/[0.02] font-semibold">
+                <tr className="border-t border-gray-300 dark:border-white/10 bg-gray-50 dark:bg-white/[0.02] font-semibold">
                   <td className={S.td} />
                   <td className={`${S.td} text-gray-700 dark:text-slate-200`}>Fleet total · {sorted.length} {nounSingular}s</td>
                   <td className={`${S.td} text-right font-mono`}>{fmtMoney(totals.revenue)}</td>
@@ -341,7 +341,7 @@ export default function Contribution() {
       </div>
 
       {/* ── Honesty footer ── */}
-      <div className="text-[11px] text-gray-400 dark:text-slate-500 space-y-1 max-w-4xl">
+      <div className="text-[11px] text-gray-600 dark:text-slate-500 space-y-1 max-w-4xl">
         {data && data.unassigned.revenue > 0 && (
           <p>
             {fmtMoney(data.unassigned.revenue)} of realized revenue ({fmtNum(data.unassigned.miles)} mi) in this window
@@ -376,7 +376,7 @@ function FragmentRow({ row, rank, negative, expanded, onToggle, days, dimension 
         onClick={onToggle}
         className={`${S.tableRow} cursor-pointer ${negative ? 'bg-rose-50/60 dark:bg-rose-500/[0.06] hover:bg-rose-50 dark:hover:bg-rose-500/[0.1]' : ''}`}
       >
-        <td className={`${S.td} font-mono text-xs text-gray-400 dark:text-slate-500`}>{rank}</td>
+        <td className={`${S.td} font-mono text-xs text-gray-600 dark:text-slate-500`}>{rank}</td>
         <td className={S.td}>
           <div className="flex items-center gap-2">
             <span className={`font-medium ${negative ? 'text-rose-700 dark:text-rose-300' : 'text-gray-900 dark:text-slate-100'}`}>{row.name || '—'}</span>
@@ -396,14 +396,14 @@ function FragmentRow({ row, rank, negative, expanded, onToggle, days, dimension 
               </span>
             )}
             {row.loads === 0 && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 dark:bg-slate-500/10 text-gray-500 dark:text-slate-400 whitespace-nowrap">no loads</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-200 dark:bg-slate-500/10 text-gray-700 dark:text-slate-400 whitespace-nowrap">no loads</span>
             )}
             {row.status && (
               <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 whitespace-nowrap">{row.status}</span>
             )}
             {row.unknownUnits > 0 && <span title={`${row.unknownUnits} unit(s) with unknown carrying cost`} className="text-amber-500 text-xs">⚠</span>}
           </div>
-          {row.sub && <div className="text-[11px] text-gray-400 dark:text-slate-500 mt-0.5">{row.sub}</div>}
+          {row.sub && <div className="text-[11px] text-gray-600 dark:text-slate-500 mt-0.5">{row.sub}</div>}
         </td>
         <td className={`${S.td} text-right font-mono text-gray-700 dark:text-slate-200`}>{fmtMoney(row.revenue)}</td>
         <td className={`${S.td} text-right font-mono text-amber-600 dark:text-amber-400`}>{row.equipCost > 0 ? fmtSignedMoney(-row.equipCost) : '$0'}</td>
@@ -413,7 +413,7 @@ function FragmentRow({ row, rank, negative, expanded, onToggle, days, dimension 
         <td className={`${S.td} text-right font-mono text-gray-600 dark:text-slate-300`}>{fmtPct(row.util)}</td>
       </tr>
       {expanded && (
-        <tr className="border-b border-gray-100 dark:border-white/5 bg-gray-50/60 dark:bg-white/[0.015]">
+        <tr className="border-b border-gray-200 dark:border-white/5 bg-gray-50/60 dark:bg-white/[0.015]">
           <td colSpan={8} className="p-0"><RowDetail row={row} days={days} dimension={dimension} /></td>
         </tr>
       )}
