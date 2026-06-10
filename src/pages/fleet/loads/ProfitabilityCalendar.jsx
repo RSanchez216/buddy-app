@@ -195,15 +195,15 @@ export default function ProfitabilityCalendar({ weekStart, weekEnd, basis = 'del
       <div className={`${S.card} max-h-[70vh] overflow-auto`}>
         <div className="inline-block min-w-full" style={{ display: 'grid', gridTemplateColumns: '180px repeat(7, minmax(80px, 1fr)) 200px', gap: '0.5px', backgroundColor: '#f3f4f6', padding: '0.5px' }}>
           {/* Header row (top-left corner, day headers, summary header) */}
-          <div className="sticky top-0 left-0 z-30 bg-gray-50 dark:bg-[#0d0d1f] border-b border-gray-100 dark:border-white/5 px-3 py-2 text-xs font-semibold text-gray-600 dark:text-slate-400" />
+          <div className="sticky top-0 left-0 z-30 bg-gray-50 dark:bg-[#0d0d1f] border-b border-gray-200 dark:border-white/5 px-3 py-2 text-xs font-semibold text-gray-600 dark:text-slate-400" />
           {dayLabels.map(day => (
-            <div key={day.date.toISOString()} className={`sticky top-0 z-20 text-center px-2 py-2 text-xs font-semibold border-b border-gray-100 dark:border-white/5 ${
+            <div key={day.date.toISOString()} className={`sticky top-0 z-20 text-center px-2 py-2 text-xs font-semibold border-b border-gray-200 dark:border-white/5 ${
               day.isToday ? 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400' : 'bg-gray-50 dark:bg-[#0d0d1f] text-gray-600 dark:text-slate-400'
             }`}>
               {day.label}
             </div>
           ))}
-          <div className="sticky top-0 right-0 z-30 bg-gray-50 dark:bg-[#0d0d1f] border-b border-gray-100 dark:border-white/5 px-3 py-2 text-xs font-semibold text-gray-600 dark:text-slate-400">Summary</div>
+          <div className="sticky top-0 right-0 z-30 bg-gray-50 dark:bg-[#0d0d1f] border-b border-gray-200 dark:border-white/5 px-3 py-2 text-xs font-semibold text-gray-600 dark:text-slate-400">Summary</div>
 
           {/* Driver rows */}
           {filtered.map(driver => {
@@ -223,17 +223,17 @@ export default function ProfitabilityCalendar({ weekStart, weekEnd, basis = 'del
             return (
               <div key={driver.key} className="contents">
                 {/* Driver cell (sticky left) */}
-                <div className="sticky left-0 z-10 bg-white dark:bg-slate-900 border-b border-gray-50 dark:border-white/[0.03] px-3 py-3 text-xs font-medium text-gray-900 dark:text-slate-200 min-h-[80px]" style={{ minWidth: '180px' }}>
+                <div className="sticky left-0 z-10 bg-white dark:bg-slate-900 border-b border-gray-100 dark:border-white/[0.03] px-3 py-3 text-xs font-medium text-gray-900 dark:text-slate-200 min-h-[80px]" style={{ minWidth: '180px' }}>
                   <div className="truncate">{driver.display}</div>
                   <div className="text-[10px] text-gray-500 dark:text-slate-500 mt-0.5 truncate" title={trucks.length > 1 ? trucks.join(', ') : undefined}>{truckLabel}</div>
                   <div className="text-[10px] text-gray-500 dark:text-slate-500 truncate" title={trailers.length > 1 ? trailers.join(', ') : undefined}>{trailerLabel || '—'}</div>
                 </div>
 
                 {/* Chips area (7 columns, stacked by track) */}
-                <div className="col-span-7 bg-white dark:bg-slate-900 border-b border-gray-50 dark:border-white/[0.03] p-0.5 relative" style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 1, minHeight: `${36 * (maxTrack + 1) + 8}px` }}>
+                <div className="col-span-7 bg-white dark:bg-slate-900 border-b border-gray-100 dark:border-white/[0.03] p-0.5 relative" style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 1, minHeight: `${36 * (maxTrack + 1) + 8}px` }}>
                   {/* Day dividers (sentinel cells define row height) */}
                   {dayLabels.map((_, i) => (
-                    <div key={i} style={{ gridColumn: i + 1, minHeight: 36 }} className="border-r border-gray-100 dark:border-white/5" />
+                    <div key={i} style={{ gridColumn: i + 1, minHeight: 36 }} className="border-r border-gray-200 dark:border-white/5" />
                   ))}
                   {/* Load chips */}
                   {chips.map(chip => {
@@ -271,7 +271,7 @@ export default function ProfitabilityCalendar({ weekStart, weekEnd, basis = 'del
                 </div>
 
                 {/* Summary cell (sticky right) */}
-                <div className="sticky right-0 z-10 bg-white dark:bg-slate-900 border-b border-gray-50 dark:border-white/[0.03] px-3 py-3 text-[11px] text-gray-600 dark:text-slate-400 min-h-[80px] grid grid-cols-2 gap-2" style={{ minWidth: '200px' }}>
+                <div className="sticky right-0 z-10 bg-white dark:bg-slate-900 border-b border-gray-100 dark:border-white/[0.03] px-3 py-3 text-[11px] text-gray-600 dark:text-slate-400 min-h-[80px] grid grid-cols-2 gap-2" style={{ minWidth: '200px' }}>
                   <div><span className="block text-xs font-semibold text-gray-900 dark:text-slate-200">{fmtNum(summary.trips)}</span><span>trips</span></div>
                   <div><span className="block text-xs font-semibold text-gray-900 dark:text-slate-200">{fmtNum(summary.miles)}</span><span>miles</span></div>
                   <div><span className="block text-xs font-semibold text-gray-900 dark:text-slate-200">{fmtMoney(summary.gross)}</span><span>gross</span></div>
@@ -296,7 +296,7 @@ export default function ProfitabilityCalendar({ weekStart, weekEnd, basis = 'del
             <>
               <div className="bg-gray-50 dark:bg-[#0d0d1f] border-t-2 border-gray-200 dark:border-white/10 px-3 py-2 text-xs font-semibold text-gray-600 dark:text-slate-400">Totals · {filtered.length} drivers</div>
               {dayLabels.map((_, i) => (
-                <div key={i} className="bg-gray-50 dark:bg-[#0d0d1f] border-t-2 border-gray-200 dark:border-white/10 border-r border-gray-100 dark:border-white/5" />
+                <div key={i} className="bg-gray-50 dark:bg-[#0d0d1f] border-t-2 border-gray-200 dark:border-white/10 border-r border-gray-200 dark:border-white/5" />
               ))}
               <div className="bg-gray-50 dark:bg-[#0d0d1f] border-t-2 border-gray-200 dark:border-white/10 px-3 py-2 text-[11px] text-gray-600 dark:text-slate-400 grid grid-cols-2 gap-2">
                 <div><span className="block text-xs font-semibold text-gray-900 dark:text-slate-200">{fmtNum(weekTotals.trips)}</span><span>trips</span></div>
