@@ -75,6 +75,39 @@ function PulseStat({ label, tone, value, format, sub, delta, cmpLabel, hero }) {
   )
 }
 
+// Hero stat with company/owner-op ownership split
+function PulseStatWithOwnership({ label, pulseData, pulsePrior, cmpLabel }) {
+  if (!pulseData) return null
+  const totalRealized = pulseData.total.realized
+  const companyRealized = pulseData.company.realized
+  const ownerOpRealized = pulseData.ownerOp.realized
+  const companyPct = totalRealized > 0 ? ((companyRealized / totalRealized) * 100).toFixed(0) : 0
+  const ownerOpPct = totalRealized > 0 ? ((ownerOpRealized / totalRealized) * 100).toFixed(0) : 0
+  const totalDelta = pulsePrior ? pctDelta(totalRealized, pulsePrior.total.realized) : null
+
+  return (
+    <div className="col-span-2">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500 dark:text-slate-400">{label}</p>
+      <p className="font-mono font-semibold leading-none mt-1.5 text-emerald-600 dark:text-emerald-400 text-5xl lg:text-6xl tracking-tight">
+        <CountUp value={totalRealized} format={fmtMoney} />
+      </p>
+      <div className="flex items-center gap-2 mt-2 mb-3">
+        <DeltaBadge delta={totalDelta} cmpLabel={cmpLabel} />
+      </div>
+      <div className="space-y-1.5 text-xs">
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="text-gray-600 dark:text-slate-400">Company</span>
+          <span className="font-mono text-gray-900 dark:text-white">{fmtMoney(companyRealized)} <span className="text-gray-500 dark:text-slate-400">({companyPct}%)</span></span>
+        </div>
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="text-gray-600 dark:text-slate-400">Owner-op <span className="text-[10px] text-gray-400 dark:text-slate-500">(pass-through)</span></span>
+          <span className="font-mono text-gray-900 dark:text-white">{fmtMoney(ownerOpRealized)} <span className="text-gray-500 dark:text-slate-400">({ownerOpPct}%)</span></span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Customer concentration donut ──────────────────────────────────────────
 const DONUT_COLORS = ['#f97316', '#06b6d4', '#34d399', '#a78bfa', '#fbbf24', '#f43f5e']
 const OTHER_COLOR = '#64748b'
@@ -483,14 +516,13 @@ export default function Boardroom() {
                 </div>
               ))}
             </div>
-          ) : pulse ? (
+          ) : pulse && data?.pulseWithOwnership ? (
             <div className="grid grid-cols-2 lg:grid-cols-6 gap-x-6 gap-y-7 items-end">
-              <PulseStat hero label="Realized gross" tone="emerald" value={pulse.cur.realized} format={fmtMoney}
-                delta={pctDelta(pulse.cur.realized, pulse.prior.realized)} cmpLabel={cmpLabel} />
+              <PulseStatWithOwnership label="Total billed freight" pulseData={data.pulseWithOwnership} pulsePrior={data.pulseWithOwnershipPrior} cmpLabel={cmpLabel} />
               <PulseStat label="Realized $/mile" tone="amber" value={pulse.cur.rpm} format={n => (n == null ? '—' : `$${n.toFixed(2)}`)}
                 delta={pctDelta(pulse.cur.rpm, pulse.prior.rpm)} cmpLabel={cmpLabel} />
               <PulseStat label="Booked pipeline" tone="cyan" value={pulse.cur.projected} format={fmtMoney}
-                sub={`${fmtNum(pulse.cur.bookedLoads)} loads`}
+                sub={`${fmtNum(pulse.cur.bookedLoads)} loads · incl. owner-op`}
                 delta={pctDelta(pulse.cur.projected, pulse.prior.projected)} cmpLabel={cmpLabel} />
               <PulseStat label="Realized miles" tone="slate" value={pulse.cur.miles} format={n => fmtNum(n)}
                 delta={pctDelta(pulse.cur.miles, pulse.prior.miles)} cmpLabel={cmpLabel} />

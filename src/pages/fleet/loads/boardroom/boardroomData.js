@@ -14,6 +14,69 @@ import { elapsedDays, shiftYmd, spanDays } from '../spotlight/spotlightShared'
 import { aggregateLanes, fetchLaneLegs, pickPayers } from '../lanes/laneData'
 import { fetchContribution } from '../contribution/contributionData'
 
+// ── Fetch legs with truck_id for ownership join ───────────────────────────
+async function fetchLegsForPulse({ from, to, basis = 'delivery' }) {
+  const dateCol = basis === 'pickup' ? 'pickup_date' : 'delivery_date'
+  const out = []
+  for (let page = 0; ; page++) {
+    const { data, error } = await supabase.from('v_load_leg_profit')
+      .select('leg_id, truck_id, is_projected, leg_revenue, leg_total_miles, ' + dateCol)
+      .gte(dateCol, from).lte(dateCol, to)
+      .order(dateCol, { ascending: true }).order('leg_id', { ascending: true })
+      .range(page * 1000, page * 1000 + 999)
+    if (error) throw error
+    out.push(...(data || []))
+    if (!data || data.length < 1000) break
+  }
+  return out
+}
+
+// ── Fetch ownership map for all trucks ────────────────────────────────────
+async function fetchOwnershipMap() {
+  const { data, error } = await supabase
+    .from('fleet_equipment_cost')
+    .select('id, etype, ownership_stage')
+  if (error) throw error
+  const map = new Map()
+  for (const r of data || []) {
+    if (r.etype === 'truck') {
+      map.set(r.id, r.ownership_stage || 'unknown')
+    }
+  }
+  return map
+}
+
+// ── Calculate pulse with ownership split ──────────────────────────────────
+function calculatePulseWithOwnership(legs, ownershipMap) {
+  const company = { realized: 0, projected: 0, realizedLoads: 0, bookedLoads: 0 }
+  const ownerOp = { realized: 0, projected: 0, realizedLoads: 0, bookedLoads: 0 }
+
+  for (const leg of legs || []) {
+    const ownership = ownershipMap.get(leg.truck_id) || 'unknown'
+    const bucket = ownership === 'driver_owned' ? ownerOp : company
+    const revenue = Number(leg.leg_revenue) || 0
+
+    if (leg.is_projected) {
+      bucket.projected += revenue
+      bucket.bookedLoads += 1
+    } else {
+      bucket.realized += revenue
+      bucket.realizedLoads += 1
+    }
+  }
+
+  return {
+    company,
+    ownerOp,
+    total: {
+      realized: company.realized + ownerOp.realized,
+      projected: company.projected + ownerOp.projected,
+      realizedLoads: company.realizedLoads + ownerOp.realizedLoads,
+      bookedLoads: company.bookedLoads + ownerOp.bookedLoads,
+    }
+  }
+}
+
 // ── Period totals (same shape the Profitability week summary uses) ────────
 export function aggregate(rows) {
   let loads = 0, realizedLoads = 0, bookedLoads = 0, miles = 0, realized = 0, projected = 0, activeEntities = 0
@@ -188,7 +251,7 @@ export async function fetchBoardroom({ from, to, basis = 'delivery' }) {
   const rpc = (dimension, f, t) =>
     supabase.rpc('load_profit_rollup', { p_dimension: dimension, p_from: f, p_to: t, p_basis: basis })
 
-  const [driver, driverPrior, dispatcher, customer, trailer, trailersRes, legs, contributionRes] = await Promise.all([
+  const [driver, driverPrior, dispatcher, customer, trailer, trailersRes, legs, legsForPulse, ownershipMap, contributionRes] = await Promise.all([
     rpc('driver', from, to),
     rpc('driver', priorFrom, priorTo),
     rpc('dispatcher', from, to),
@@ -196,12 +259,19 @@ export async function fetchBoardroom({ from, to, basis = 'delivery' }) {
     rpc('trailer', from, to),
     supabase.from('trailers').select('id, unit_number, trailer_type'),
     fetchLaneLegs({ from, to, basis }).catch(() => null),
+    fetchLegsForPulse({ from, to, basis }).catch(() => null),
+    fetchOwnershipMap().catch(() => new Map()),
     fetchContribution({ dimension: 'truck', from, to, basis }).catch(() => null),
   ])
   if (driver.error) throw driver.error
 
   const driverRows = driver.data || []
   const pulse = { cur: aggregate(driverRows), prior: aggregate(driverPrior.data || []) }
+
+  // Also calculate ownership-split pulse for the hero
+  const legsForPrior = legsForPulse ? await fetchLegsForPulse({ from: priorFrom, to: priorTo, basis }).catch(() => []) : []
+  const pulseWithOwnership = legsForPulse ? calculatePulseWithOwnership(legsForPulse, ownershipMap) : null
+  const pulseWithOwnershipPrior = legsForPrior ? calculatePulseWithOwnership(legsForPrior, ownershipMap) : null
 
   const concentration = buildConcentration(customer.data)
   const trailerRead = buildTrailerRead(trailer.data, trailersRes.data)
@@ -224,6 +294,8 @@ export async function fetchBoardroom({ from, to, basis = 'delivery' }) {
 
   return {
     pulse,
+    pulseWithOwnership,
+    pulseWithOwnershipPrior,
     driverRows,
     dispatcherRows: dispatcher.data || [],
     concentration,
