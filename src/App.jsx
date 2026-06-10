@@ -46,6 +46,9 @@ import SetPassword from './pages/auth/SetPassword'
 // Lazy — the lane map carries its own geo data (US outline + city
 // coordinates), so it loads as a separate chunk only when visited.
 const LaneFlowMap = lazy(() => import('./pages/fleet/loads/lanes/LaneFlowMap'))
+// Lazy — the Boardroom pulls several rollups plus the lane and contribution
+// data layers at once; keep it out of the main bundle.
+const Boardroom = lazy(() => import('./pages/fleet/loads/boardroom/Boardroom'))
 
 export default function App() {
   return (
@@ -76,6 +79,11 @@ export default function App() {
               <Route path="fleet/cost" element={<FleetCost />} />
               <Route path="fleet/loads/import" element={<LoadsImport />} />
               <Route path="fleet/profitability" element={<Profitability />} />
+              <Route path="fleet/profitability/boardroom" element={
+                <Suspense fallback={<div className="p-8 text-sm text-gray-400 dark:text-slate-500">Loading the Boardroom…</div>}>
+                  <Boardroom />
+                </Suspense>
+              } />
               <Route path="fleet/profitability/spotlight" element={<Spotlight dimension="driver" />} />
               <Route path="fleet/profitability/contribution" element={<Contribution />} />
               <Route path="fleet/profitability/lanes" element={
