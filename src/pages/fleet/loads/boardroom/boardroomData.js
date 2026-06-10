@@ -300,7 +300,7 @@ export async function fetchBoardroom({ from, to, basis = 'delivery' }) {
     dispatcherRows: dispatcher.data || [],
     concentration,
     trailerRead,
-    lanes: laneAgg ? { count: laneAgg.totals.lanes, payers } : null,
+    lanes: laneAgg || null,
     contribution,
     insights,
     days,
