@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider } from './contexts/AuthContext'
 import { ThemeProvider } from './contexts/ThemeContext'
@@ -41,6 +42,10 @@ import Profitability from './pages/fleet/loads/Profitability'
 import Spotlight from './pages/fleet/loads/spotlight/Spotlight'
 import SetPassword from './pages/auth/SetPassword'
 
+// Lazy — the lane map carries its own geo data (US outline + city
+// coordinates), so it loads as a separate chunk only when visited.
+const LaneFlowMap = lazy(() => import('./pages/fleet/loads/lanes/LaneFlowMap'))
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -71,6 +76,11 @@ export default function App() {
               <Route path="fleet/loads/import" element={<LoadsImport />} />
               <Route path="fleet/profitability" element={<Profitability />} />
               <Route path="fleet/profitability/spotlight" element={<Spotlight dimension="driver" />} />
+              <Route path="fleet/profitability/lanes" element={
+                <Suspense fallback={<div className="p-8 text-sm text-gray-400 dark:text-slate-500">Loading lane map…</div>}>
+                  <LaneFlowMap />
+                </Suspense>
+              } />
               {/* Financial Controls */}
               <Route path="financial-controls/debt-schedule" element={<DebtSchedule />} />
               <Route path="financial-controls/debt-schedule/:loanId" element={<LoanDetail />} />

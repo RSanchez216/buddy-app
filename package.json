@@ -19,6 +19,7 @@
     "@tiptap/starter-kit": "^3.22.5",
     "@tiptap/suggestion": "^3.22.5",
     "chart.js": "^4.5.1",
+    "d3-geo": "^3.1.1",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
     "react": "^19.2.4",
@@ -27,6 +28,7 @@
     "react-router-dom": "^7.14.0",
     "tailwindcss": "^4.2.2",
     "tippy.js": "^6.3.7",
+    "topojson-client": "^3.1.0",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
