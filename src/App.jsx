@@ -40,6 +40,7 @@ import FleetCost from './pages/fleet/FleetCost'
 import LoadsImport from './pages/fleet/loads/LoadsImport'
 import Profitability from './pages/fleet/loads/Profitability'
 import Spotlight from './pages/fleet/loads/spotlight/Spotlight'
+import Contribution from './pages/fleet/loads/contribution/Contribution'
 import SetPassword from './pages/auth/SetPassword'
 
 // Lazy — the lane map carries its own geo data (US outline + city
@@ -76,6 +77,7 @@ export default function App() {
               <Route path="fleet/loads/import" element={<LoadsImport />} />
               <Route path="fleet/profitability" element={<Profitability />} />
               <Route path="fleet/profitability/spotlight" element={<Spotlight dimension="driver" />} />
+              <Route path="fleet/profitability/contribution" element={<Contribution />} />
               <Route path="fleet/profitability/lanes" element={
                 <Suspense fallback={<div className="p-8 text-sm text-gray-400 dark:text-slate-500">Loading lane map…</div>}>
                   <LaneFlowMap />
