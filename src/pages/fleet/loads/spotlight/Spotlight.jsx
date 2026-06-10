@@ -120,6 +120,10 @@ export default function Spotlight({ dimension = 'driver' }) {
   // Plain function — the React Compiler handles memoization; a manual
   // useCallback here fights its inference of config.Card.
   const Card = config.Card
+  const handleWeekSelect = useCallback((from, to) => {
+    setPreset('custom')
+    setRange({ from, to })
+  }, [])
   const renderCard = (entry, { focused }) => (
     <Card
       entry={entry}
@@ -133,6 +137,8 @@ export default function Spotlight({ dimension = 'driver' }) {
       rank={sorted.indexOf(entry) + 1}
       total={sorted.length}
       sortLabel={sortDef.label.toLowerCase()}
+      activeWeekFrom={range.from}
+      onWeekSelect={handleWeekSelect}
     />
   )
 

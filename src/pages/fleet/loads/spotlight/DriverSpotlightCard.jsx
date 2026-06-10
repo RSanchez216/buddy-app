@@ -86,7 +86,7 @@ function BenchmarkStrip({ entry }) {
 }
 
 // 8-week gross bars; the right-most bar is the most recent window.
-function TrendSparkline({ entry, trend }) {
+function TrendSparkline({ entry, trend, activeWeekFrom, onWeekSelect }) {
   const series = useMemo(
     () => (trend || []).map(w => w.byKey.get(entry.id)?.gross ?? 0),
     [trend, entry.id]
@@ -94,20 +94,34 @@ function TrendSparkline({ entry, trend }) {
   if (!trend) return <div className="h-10 rounded-lg bg-gray-50 dark:bg-white/[0.03] animate-pulse" />
   const max = Math.max(...series, 1)
   const allZero = series.every(v => v === 0)
+  const activeIndex = trend.findIndex(w => w.from === activeWeekFrom)
+
+  const handleKeyDown = (e, i) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      onWeekSelect?.(trend[i].from, trend[i].to)
+    }
+  }
+
   return (
     <div>
       <div className="flex items-end gap-1 h-10">
         {series.map((v, i) => (
-          <div
+          <button
             key={i}
-            className={`flex-1 rounded-t ${i === series.length - 1 ? 'bg-orange-500/90' : 'bg-gray-300 dark:bg-slate-600/60'}`}
+            onClick={() => onWeekSelect?.(trend[i].from, trend[i].to)}
+            onKeyDown={(e) => handleKeyDown(e, i)}
+            className={`flex-1 rounded-t transition-all cursor-pointer hover:opacity-75 ${activeIndex === i ? 'bg-orange-500/90 ring-1 ring-orange-400' : 'bg-gray-300 dark:bg-slate-600/60 hover:bg-gray-400 dark:hover:bg-slate-600'}`}
             style={{ height: `${Math.max((v / max) * 100, v > 0 ? 6 : 2)}%` }}
-            title={`${trend[i].from} → ${trend[i].to}: ${fmtMoney(v)}`}
+            title={`${trend[i].from} – ${trend[i].to}: ${fmtMoney(v)}`}
+            aria-label={`Week of ${trend[i].from}: ${fmtMoney(v)}`}
+            role="button"
+            tabIndex={0}
           />
         ))}
       </div>
       <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-1">
-        {allZero ? 'No realized revenue in the last 8 weeks' : 'Weekly gross — last 8 weeks (current window highlighted)'}
+        {allZero ? 'No realized revenue in the last 8 weeks' : 'Weekly gross — last 8 weeks (click a bar to select that week)'}
       </p>
     </div>
   )
@@ -160,7 +174,7 @@ const ROADMAP = [
   { label: 'Driver pay', desc: 'settlement deductions' },
 ]
 
-function DriverSpotlightCard({ entry, lanes, trend, rangeDays, effDays, periodLabel, basis = 'delivery', focused, rank, total, sortLabel }) {
+function DriverSpotlightCard({ entry, lanes, trend, rangeDays, effDays, periodLabel, basis = 'delivery', focused, rank, total, sortLabel, activeWeekFrom, onWeekSelect }) {
   const m = entry.metrics
   const hs = HEALTH_STYLES[entry.health.level]
   // Idle days only count days that have actually happened — a mid-week
@@ -286,7 +300,7 @@ function DriverSpotlightCard({ entry, lanes, trend, rangeDays, effDays, periodLa
 
         {/* Trend + contribution + roadmap */}
         <div className="flex flex-col min-h-0 gap-3 overflow-y-auto pr-1">
-          <TrendSparkline entry={entry} trend={trend} />
+          <TrendSparkline entry={entry} trend={trend} activeWeekFrom={activeWeekFrom} onWeekSelect={onWeekSelect} />
 
           {/* Contribution — real but PARTIAL: equipment & purchase only */}
           <div className="rounded-xl border border-gray-100 dark:border-white/[0.06] bg-gray-50/60 dark:bg-white/[0.02] px-3 py-2">
