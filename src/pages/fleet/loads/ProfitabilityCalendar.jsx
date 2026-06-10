@@ -69,11 +69,12 @@ function assignTracks(chips) {
 }
 
 // Summarize a driver's week: trips, miles, gross, rpm, booked, idle days.
-// Only realized legs count for trips/miles/gross (delivery_date in week).
-function driverSummary(legs, weekStart, weekEnd) {
-  const realized = legs.filter(l => !l.is_projected && l.delivery_date >= weekStart && l.delivery_date <= weekEnd)
+// Only realized legs count for trips/miles/gross (basis_date in week).
+function driverSummary(legs, weekStart, weekEnd, basis = 'delivery') {
+  const basisDate = l => l[`${basis}_date`] || l.delivery_date
+  const realized = legs.filter(l => !l.is_projected && basisDate(l) >= weekStart && basisDate(l) <= weekEnd)
   const booked = legs.filter(l => l.is_projected)
-  const realDays = new Set(realized.map(l => l.delivery_date))
+  const realDays = new Set(realized.map(basisDate))
   const trips = new Set(realized.map(l => l.load_id)).size
   const miles = realized.reduce((s, l) => s + Number(l.leg_total_miles || 0), 0)
   const gross = realized.reduce((s, l) => s + Number(l.leg_revenue || 0), 0)
@@ -84,7 +85,7 @@ function driverSummary(legs, weekStart, weekEnd) {
   return { trips, miles, gross, rpm, bookedCount, bookedRevenue, idleDays }
 }
 
-export default function ProfitabilityCalendar({ weekStart, weekEnd }) {
+export default function ProfitabilityCalendar({ weekStart, weekEnd, basis = 'delivery' }) {
   const toast = useToast()
   const [legs, setLegs] = useState([])
   const [loading, setLoading] = useState(true)
@@ -93,16 +94,20 @@ export default function ProfitabilityCalendar({ weekStart, weekEnd }) {
   useEffect(() => {
     (async () => {
       setLoading(true)
-      const { data, error } = await supabase.from('v_load_leg_profit')
+      let q = supabase.from('v_load_leg_profit')
         .select('leg_id,load_id,load_number,driver_id,driver_display,truck_display,trailer_display,pickup_date,delivery_date,leg_revenue,leg_total_miles,linehaul,status,is_projected,origin,destination')
-        .lte('pickup_date', weekEnd)
         .not('status', 'ilike', 'canceled')
-        .gte('delivery_date', weekStart)
+      if (basis === 'pickup') {
+        q = q.gte('pickup_date', weekStart).lte('pickup_date', weekEnd)
+      } else {
+        q = q.gte('delivery_date', weekStart).lte('delivery_date', weekEnd)
+      }
+      const { data, error } = await q
       if (error) { toast.error("Couldn't load calendar", error); setLoading(false); return }
       setLegs(data || [])
       setLoading(false)
     })()
-  }, [weekStart, weekEnd, toast])
+  }, [weekStart, weekEnd, toast, basis])
 
   // Group by driver; keyed by driver_id || driver_display
   const drivers = useMemo(() => {
@@ -119,11 +124,11 @@ export default function ProfitabilityCalendar({ weekStart, weekEnd }) {
     }
     // Sort by weekly realized gross descending
     return Array.from(map.values()).sort((a, b) => {
-      const aGross = driverSummary(a.legs, weekStart, weekEnd).gross
-      const bGross = driverSummary(b.legs, weekStart, weekEnd).gross
+      const aGross = driverSummary(a.legs, weekStart, weekEnd, basis).gross
+      const bGross = driverSummary(b.legs, weekStart, weekEnd, basis).gross
       return bGross - aGross
     })
-  }, [legs, weekStart, weekEnd])
+  }, [legs, weekStart, weekEnd, basis])
 
   // Filter by search
   const filtered = useMemo(
@@ -134,8 +139,8 @@ export default function ProfitabilityCalendar({ weekStart, weekEnd }) {
   // Footer: week totals (sum all drivers' summaries)
   const weekTotals = useMemo(() => {
     const allLegs = filtered.flatMap(d => d.legs)
-    return driverSummary(allLegs, weekStart, weekEnd)
-  }, [filtered, weekStart, weekEnd])
+    return driverSummary(allLegs, weekStart, weekEnd, basis)
+  }, [filtered, weekStart, weekEnd, basis])
 
   // Day labels (Mon–Sun); today highlight
   const today = new Date(); today.setHours(0, 0, 0, 0)
@@ -202,7 +207,7 @@ export default function ProfitabilityCalendar({ weekStart, weekEnd }) {
 
           {/* Driver rows */}
           {filtered.map(driver => {
-            const summary = driverSummary(driver.legs, weekStart, weekEnd)
+            const summary = driverSummary(driver.legs, weekStart, weekEnd, basis)
             const trucks    = [...new Set(driver.legs.map(l => l.truck_display).filter(Boolean))]
             const trailers  = [...new Set(driver.legs.map(l => l.trailer_display).filter(Boolean))]
             const truckLabel   = trucks.length === 1 ? trucks[0] : trucks.length > 1 ? `varies (${trucks.length})` : '—'

@@ -317,14 +317,14 @@ export default function Profitability() {
           {/* Resolved span so "This week" isn't ambiguous. Updates live with
               preset/custom changes; inclusive of both endpoints. */}
           <p className="text-[11px] text-gray-400 dark:text-slate-500">
-            {PRESET_LABEL[preset]} · <span className="font-medium text-gray-500 dark:text-slate-400">{formatRange(range.from, range.to)}</span> · by {basis} date
+            {PRESET_LABEL[preset]} · <span className="font-medium text-gray-500 dark:text-slate-400">{formatRange(range.from, range.to)}</span> · by delivery date
           </p>
         </div>
       </div>
 
       {/* Table or Calendar view */}
       {calendarView && dimension === 'driver' ? (
-        <ProfitabilityCalendar weekStart={range.from} weekEnd={range.to} basis={basis} />
+        <ProfitabilityCalendar weekStart={range.from} weekEnd={range.to} />
       ) : (
         <>
       {/* Rollup table. Vertical scroll lives on this container so the header

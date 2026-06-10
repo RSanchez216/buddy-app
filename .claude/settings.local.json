@@ -8,7 +8,32 @@
       "Bash(npx eslint *)",
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(git stash *)",
+      "Bash(git checkout *)",
+      "Bash(git merge *)",
+      "Bash(git fetch *)",
+      "Bash(git ls-tree *)",
+      "Bash(xargs grep -l \"set_updated_at\")",
+      "PowerShell(\\(Get-Content \"C:\\\\Users\\\\rsanc\\\\Dropbox\\\\BUDDY APP\\\\supabase\\\\migrations\\\\20260502000001_driver_purchases_phase1.sql\"\\) | Select-String -Pattern \"set_updated_at\" -Context 5,0 | Select-Object -First 15)",
+      "mcp__claude_ai_Supabase__list_projects",
+      "Bash(git pull *)",
+      "Bash(npx vite *)",
+      "Bash(git commit -m '@ *)",
+      "Bash(git commit *)",
+      "Bash(git rebase *)",
+      "Bash(xargs grep -l \"loads\\\\|Loads\\\\|/fleet/loads\")",
+      "Bash(cp /tmp/plan_test.mjs ./_plan_test.mjs)",
+      "Bash(node ./_plan_test.mjs)",
+      "Bash(rm -f ./_plan_test.mjs)",
+      "Bash(npx esbuild *)",
+      "Bash(node ./_plan_bundle.mjs)",
+      "Bash(rm -f ./_plan_test.mjs ./_plan_bundle.mjs)",
+      "Bash(ls node_modules/esbuild/bin/)",
+      "Bash(ls node_modules/.bin/esbuild*)",
+      "Bash(ls node_modules/vite/node_modules/esbuild/bin/)",
+      "Bash(node --import ./_register.mjs ./_plan_test.mjs)",
+      "Bash(node -e ' *)"
     ]
   }
 }
