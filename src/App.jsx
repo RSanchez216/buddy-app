@@ -38,6 +38,7 @@ import DriverDetail from './pages/fleet/DriverDetail'
 import FleetCost from './pages/fleet/FleetCost'
 import LoadsImport from './pages/fleet/loads/LoadsImport'
 import Profitability from './pages/fleet/loads/Profitability'
+import Spotlight from './pages/fleet/loads/spotlight/Spotlight'
 import SetPassword from './pages/auth/SetPassword'
 
 export default function App() {
@@ -69,6 +70,7 @@ export default function App() {
               <Route path="fleet/cost" element={<FleetCost />} />
               <Route path="fleet/loads/import" element={<LoadsImport />} />
               <Route path="fleet/profitability" element={<Profitability />} />
+              <Route path="fleet/profitability/spotlight" element={<Spotlight dimension="driver" />} />
               {/* Financial Controls */}
               <Route path="financial-controls/debt-schedule" element={<DebtSchedule />} />
               <Route path="financial-controls/debt-schedule/:loanId" element={<LoanDetail />} />

@@ -33,7 +33,8 @@
       "Bash(ls node_modules/.bin/esbuild*)",
       "Bash(ls node_modules/vite/node_modules/esbuild/bin/)",
       "Bash(node --import ./_register.mjs ./_plan_test.mjs)",
-      "Bash(node -e ' *)"
+      "Bash(node -e ' *)",
+      "mcp__claude_ai_Supabase__list_migrations"
     ]
   }
 }
