@@ -103,6 +103,8 @@ export default function Contribution() {
   const [basis, setBasis] = useState('delivery')
   const [sort, setSort] = useState({ key: 'contribution', dir: 'desc' })
   const [query, setQuery] = useState('')
+  const [negativeFilter, setNegativeFilter] = useState(false)
+  const [ownershipFilter, setOwnershipFilter] = useState('all') // 'all' | 'company' | 'driver_owned'
 
   // Async results live with the key they were fetched for — a dimension /
   // period / basis change invalidates them by derivation, no reset effects.
@@ -129,10 +131,30 @@ export default function Contribution() {
 
   const filtered = useMemo(() => {
     if (!data) return []
+    let rows = data.rows
+
+    // Apply ownership filter
+    if (ownershipFilter !== 'all') {
+      if (ownershipFilter === 'company') {
+        rows = rows.filter(r => r.ownershipStage && r.ownershipStage !== 'driver_owned')
+      } else if (ownershipFilter === 'driver_owned') {
+        rows = rows.filter(r => r.ownershipStage === 'driver_owned')
+      }
+    }
+
+    // Apply negative filter
+    if (negativeFilter) {
+      rows = rows.filter(r => r.contribution < 0)
+    }
+
+    // Apply text filter
     const q = query.trim().toLowerCase()
-    if (!q) return data.rows
-    return data.rows.filter(r => r.name?.toLowerCase().includes(q) || r.sub?.toLowerCase().includes(q))
-  }, [data, query])
+    if (q) {
+      rows = rows.filter(r => r.name?.toLowerCase().includes(q) || r.sub?.toLowerCase().includes(q))
+    }
+
+    return rows
+  }, [data, query, negativeFilter, ownershipFilter])
 
   const sorted = useMemo(() => {
     const col = COLUMNS.find(c => c.key === sort.key) || COLUMNS[3]
@@ -201,6 +223,11 @@ export default function Contribution() {
               <button key={k} onClick={() => setDimension(k)} className={`px-3 py-1.5 whitespace-nowrap shrink-0 ${dimension === k ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400'}`}>{lbl}</button>
             ))}
           </div>
+          <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700 text-xs shrink-0">
+            {[['all', 'All'], ['company', 'Company'], ['driver_owned', 'Owner-op']].map(([k, lbl]) => (
+              <button key={k} onClick={() => setOwnershipFilter(k)} className={`px-3 py-1.5 whitespace-nowrap shrink-0 ${ownershipFilter === k ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400'}`}>{lbl}</button>
+            ))}
+          </div>
           <input
             type="text"
             value={query}
@@ -241,17 +268,25 @@ export default function Contribution() {
           { label: '− Equipment cost', value: fmtSignedMoney(-totals.equipCost), tone: 'text-amber-600 dark:text-amber-400' },
           { label: '− Purchase deductions', value: fmtSignedMoney(-totals.purchase), tone: 'text-fuchsia-600 dark:text-fuchsia-400' },
           { label: '= Fleet contribution', value: fmtSignedMoney(totals.contribution), tone: totals.contribution >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400', big: true },
-          { label: `Negative ${nounSingular}s`, value: loading ? '—' : String(totals.negatives), tone: totals.negatives > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400' },
+          { label: `Negative ${nounSingular}s`, value: loading ? '—' : String(totals.negatives), tone: totals.negatives > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400', clickable: true },
         ].map(c => (
-          <div key={c.label} className={`${S.card} px-4 py-3 ${c.big ? 'ring-1 ring-orange-500/30' : ''}`}>
+          <div key={c.label} className={`${S.card} px-4 py-3 ${c.big ? 'ring-1 ring-orange-500/30' : ''} ${c.clickable ? 'cursor-pointer hover:shadow-md transition-shadow' : ''} ${c.clickable && negativeFilter ? 'ring-2 ring-rose-500/50' : ''}`} onClick={() => c.clickable && setNegativeFilter(!negativeFilter)}>
             <div className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">{c.label}</div>
-            <div className={`mt-0.5 font-mono font-bold ${c.big ? 'text-xl' : 'text-lg'} ${c.tone || 'text-gray-900 dark:text-white'}`}>{loading ? '…' : c.value}</div>
+            <div className={`mt-0.5 font-mono font-bold ${c.big ? 'text-xl' : 'text-lg'} ${c.tone || 'text-gray-900 dark:text-white'} flex items-center justify-between`}>
+              <span>{loading ? '…' : c.value}</span>
+              {c.clickable && negativeFilter && <span className="text-xs text-gray-400 dark:text-slate-500 font-normal ml-2">✕</span>}
+            </div>
           </div>
         ))}
       </div>
-      <p className="text-[11px] text-gray-400 dark:text-slate-500 -mt-1">
-        Contribution = realized revenue − equipment carrying cost (monthly cost × {data ? data.days : '…'} days ÷ 30.44) − truck-purchase deduction.
-        Coming next on the road to net margin: fuel · driver pay · insurance.
+      <p className="text-[11px] text-gray-400 dark:text-slate-500 -mt-1 space-y-1">
+        <div>
+          Contribution = realized revenue − equipment carrying cost (monthly cost × {data ? data.days : '…'} days ÷ 30.44) − truck-purchase deduction.
+          Coming next on the road to net margin: fuel · driver pay · insurance.
+        </div>
+        <div className="text-amber-700 dark:text-amber-400">
+          <strong>Owner-operator contribution is gross of driver settlement:</strong> MANAS hasn't modeled the owner-operator share yet, so their figures are overstated and will compress most when driver pay lands. <strong>Company trucks</strong> are the meaningful read today.
+        </div>
       </p>
 
       {/* ── Ranked table ── */}
@@ -345,6 +380,16 @@ function FragmentRow({ row, rank, negative, expanded, onToggle, days, dimension 
         <td className={S.td}>
           <div className="flex items-center gap-2">
             <span className={`font-medium ${negative ? 'text-rose-700 dark:text-rose-300' : 'text-gray-900 dark:text-slate-100'}`}>{row.name || '—'}</span>
+            {row.ownershipStage === 'driver_owned' && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-500/15 text-blue-700 dark:text-blue-400 font-semibold whitespace-nowrap" title="Owner-operator: contribution is gross of driver settlement">
+                owner-op
+              </span>
+            )}
+            {row.ownershipStage && row.ownershipStage !== 'driver_owned' && row.ownershipStage !== 'unknown' && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 dark:bg-purple-500/15 text-purple-700 dark:text-purple-400 font-semibold whitespace-nowrap">
+                company
+              </span>
+            )}
             {negative && (
               <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-rose-100 dark:bg-rose-500/15 text-rose-700 dark:text-rose-400 font-semibold whitespace-nowrap" title="Loses money before driver pay & fuel are even counted">
                 losing money

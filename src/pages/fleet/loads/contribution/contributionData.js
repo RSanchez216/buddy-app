@@ -73,15 +73,20 @@ function buildDriverRows({ rollupRows, drivers, trucks, trailers, costByUnit, pu
     // cost prorated to the window. driver_owned is a true $0 to the company;
     // anything the cost view can't price is counted as unknown and flagged,
     // never silently treated as free.
-    let knownMonthly = 0, unknownUnits = 0
+    let knownMonthly = 0, unknownUnits = 0, ownershipStage = 'unknown'
     const units = []
+    const ownerships = new Set()
     for (const u of [...myTrucks.map(t => ({ ...t, etype: 'truck' })), ...myTrailers.map(t => ({ ...t, etype: 'trailer' }))]) {
       const cost = costByUnit.get(`${u.etype}:${u.id}`)
       const monthly = cost?.monthly_cost != null ? Number(cost.monthly_cost) : null
       if (monthly != null) knownMonthly += monthly
       else if (cost?.cost_source !== 'driver_owned') unknownUnits++
+      if (cost?.ownership_stage) ownerships.add(cost.ownership_stage)
       units.push({ etype: u.etype, unitNumber: u.unit_number, monthly, source: cost?.cost_source || 'unknown' })
     }
+    // If all trucks are driver-owned, ownership is driver_owned; otherwise use first ownership_stage found
+    if (ownerships.has('driver_owned') && ownerships.size === 1) ownershipStage = 'driver_owned'
+    else if (ownerships.size > 0) ownershipStage = [...ownerships][0]
 
     let purchase = 0, purchaseCount = 0
     for (const p of (driverId ? (purchasesByDriver.get(driverId) || []) : [])) {
@@ -95,6 +100,7 @@ function buildDriverRows({ rollupRows, drivers, trucks, trailers, costByUnit, pu
       sub: myTrucks.map(t => t.unit_number).filter(Boolean).join(' · ') || null,
       unmatched: !driverId,
       status: master && master.current_status !== 'active' ? master.current_status : null,
+      ownershipStage,
       ...rollupMetrics(row),
       equipCost: knownMonthly * days / DAYS_PER_MONTH,
       equipMonthly: knownMonthly,
@@ -164,6 +170,7 @@ function buildTruckRows({ rollupRows, drivers, trucks, eqCost, costByUnit, purch
       sub: driver?.full_name || null,
       unmatched: !truckId,
       status: flags[0] || null,
+      ownershipStage: cost?.ownership_stage || 'unknown',
       ...rollupMetrics(row),
       equipCost: (monthly || 0) * days / DAYS_PER_MONTH,
       equipMonthly: monthly || 0,
@@ -207,7 +214,7 @@ export async function fetchContribution({ dimension, from, to, basis = 'delivery
     supabase.from('drivers').select('id, full_name, internal_id, current_status, carrier'),
     supabase.from('trucks').select('id, unit_number, driver_id, carrier'),
     supabase.from('trailers').select('id, unit_number, driver_id, trailer_type'),
-    supabase.from('fleet_equipment_cost').select('etype, id, unit_number, cost_source, monthly_cost, operational_status, is_total_loss'),
+    supabase.from('fleet_equipment_cost').select('etype, id, unit_number, cost_source, ownership_stage, monthly_cost, operational_status, is_total_loss'),
     supabase.from('driver_purchases').select('id, driver_id, truck_number'),
     supabase.from('driver_purchase_payments')
       .select('driver_purchase_id, expected_amount')
