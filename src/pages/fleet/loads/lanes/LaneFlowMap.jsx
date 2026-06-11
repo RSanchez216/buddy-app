@@ -18,12 +18,14 @@ const LEADERBOARD_SORTS = [
   { key: 'loads', label: 'Loads', fn: (a, b) => b.loads - a.loads || b.revenue - a.revenue },
 ]
 
+// options: [key, label, disabled?] — disabled keeps the pill visible so the
+// toolbar has the same shape in every view; it just can't be picked here.
 function Pills({ value, onChange, options, title }) {
   return (
     <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700 text-xs shrink-0" title={title}>
-      {options.map(([k, lbl]) => (
-        <button key={k} onClick={() => onChange(k)}
-          className={`px-3 py-1.5 whitespace-nowrap shrink-0 ${value === k ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5'}`}>
+      {options.map(([k, lbl, disabled]) => (
+        <button key={k} disabled={disabled} onClick={() => onChange(k)}
+          className={`px-3 py-1.5 whitespace-nowrap shrink-0 ${disabled ? 'text-gray-300 dark:text-slate-600 cursor-not-allowed' : value === k ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5'}`}>
           {lbl}
         </button>
       ))}
@@ -229,22 +231,32 @@ export default function LaneFlowMap() {
         </div>
       </div>
 
-      {/* ── Controls ── */}
-      <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex items-center flex-wrap gap-2">
+      {/* ── KPI band ── */}
+      {agg && agg.totals.legs > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          <Kpi label="Lanes" value={fmtNum(distinctLanes)} sub={offMapLanes ? `${offMapLanes} off-map` : 'all on map'} />
+          <Kpi label="Loads" value={fmtNum(agg.totals.legs)} sub={view === 'booked' ? 'booked' : 'delivered'} />
+          <Kpi label={view === 'booked' ? 'Booked revenue' : 'Revenue'} value={fmtMoney(agg.totals.revenue)} sub={`${fmtNum(agg.totals.miles)} mi`} />
+          <Kpi label="$/mile" value={agg.totals.rpm == null ? '—' : `${fmtRpm(agg.totals.rpm)}/mi`} sub="all lanes" />
+          <Kpi label="Map coverage" value={agg.coverage == null ? '—' : `${Math.round(agg.coverage * 100)}%`} sub="of loads geocoded" />
+        </div>
+      )}
+
+      {/* ── Controls — one toolbar that sits right against the map, so changing
+          a filter and seeing the result never needs a scroll. Every control is
+          present in both views (disabled when not applicable) so the bar keeps
+          the exact same shape switching Lanes ↔ Heat. ── */}
+      <div className="flex items-center flex-wrap gap-2">
           <Pills value={mapMode} onChange={switchMapMode} title="Lanes = origin→destination arcs · Heat = where freight concentrates"
             options={[['lanes', 'Lanes'], ['heat', 'Heat']]} />
           <Pills value={view} onChange={setView} title="Realized = delivered revenue · Booked = projected revenue on upcoming loads"
             options={[['realized', 'Realized'], ['booked', 'Booked']]} />
           <Pills value={weight} onChange={setWeight}
-            title={mapMode === 'heat' ? 'Heat intensity: revenue sum, load count, or revenue-weighted average $/mile' : 'What arc thickness represents'}
-            options={mapMode === 'heat'
-              ? [['revenue', 'Weight: revenue'], ['loads', 'Weight: loads'], ['rpm', 'Weight: $/mile']]
-              : [['revenue', 'Weight: revenue'], ['loads', 'Weight: loads']]} />
-          {mapMode === 'lanes' && (
-            <Pills value={colorBy} onChange={setColorBy} title="Arc color: $/mile gradient, or one categorical color per trailer type"
-              options={[['rpm', 'Color: $/mi'], ['type', 'Color: type']]} />
-          )}
+            title={mapMode === 'heat' ? 'Heat intensity: revenue sum, load count, or revenue-weighted average $/mile' : 'What arc thickness represents — $/mile weighting applies to the Heat view'}
+            options={[['revenue', 'Weight: revenue'], ['loads', 'Weight: loads'], ['rpm', 'Weight: $/mile', mapMode !== 'heat']]} />
+          <Pills value={colorBy} onChange={setColorBy}
+            title={mapMode === 'heat' ? 'Arc color applies to the Lanes view' : 'Arc color: $/mile gradient, or one categorical color per trailer type'}
+            options={[['rpm', 'Color: $/mi', mapMode === 'heat'], ['type', 'Color: type', mapMode === 'heat']]} />
           {typeOptions.length > 1 && (
             <div className="flex items-center gap-1 flex-wrap">
               {typeOptions.map(t => {
@@ -319,9 +331,7 @@ export default function LaneFlowMap() {
               )}
             </div>
           )}
-        </div>
-        <div className="flex flex-col gap-1.5 lg:items-end">
-          <div className="flex flex-wrap items-center gap-2">
+        <div className="ml-auto flex flex-wrap items-center gap-2">
             <button onClick={() => shiftRange(-1)} className="px-2 py-1.5 text-xs font-medium rounded border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors" title="Previous period">◀</button>
             <Pills value={preset} onChange={setPresetRange} options={[['week', 'This week'], ['month', 'This month'], ['custom', 'Custom']]} />
             <button onClick={() => shiftRange(1)} className="px-2 py-1.5 text-xs font-medium rounded border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors" title="Next period">▶</button>
@@ -333,21 +343,9 @@ export default function LaneFlowMap() {
                 <input type="date" className={`${S.input} w-[9rem]`} value={range.to} onChange={e => setRange(r => ({ ...r, to: e.target.value }))} />
               </div>
             )}
-          </div>
-          <p className="text-[11px] text-gray-400 dark:text-slate-500">{PRESET_LABEL[preset]} · {formatRange(range.from, range.to)} · by {basis} date</p>
         </div>
+        <p className="basis-full text-[11px] text-gray-400 dark:text-slate-500 text-right -mt-1">{PRESET_LABEL[preset]} · {formatRange(range.from, range.to)} · by {basis} date</p>
       </div>
-
-      {/* ── KPI band ── */}
-      {agg && agg.totals.legs > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-          <Kpi label="Lanes" value={fmtNum(distinctLanes)} sub={offMapLanes ? `${offMapLanes} off-map` : 'all on map'} />
-          <Kpi label="Loads" value={fmtNum(agg.totals.legs)} sub={view === 'booked' ? 'booked' : 'delivered'} />
-          <Kpi label={view === 'booked' ? 'Booked revenue' : 'Revenue'} value={fmtMoney(agg.totals.revenue)} sub={`${fmtNum(agg.totals.miles)} mi`} />
-          <Kpi label="$/mile" value={agg.totals.rpm == null ? '—' : `${fmtRpm(agg.totals.rpm)}/mi`} sub="all lanes" />
-          <Kpi label="Map coverage" value={agg.coverage == null ? '—' : `${Math.round(agg.coverage * 100)}%`} sub="of loads geocoded" />
-        </div>
-      )}
 
       {/* ── Map + leaderboard ── */}
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_400px]">
