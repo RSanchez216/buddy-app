@@ -11,16 +11,21 @@ import { fmtMoney, fmtNum, fmtRpm } from '../spotlight/spotlightShared'
 
 const CELL = 26 // grid cell size in the 975×610 projected frame
 
-// Default thermal ramp (cool indigo → hot yellow). When a single trailer
-// type is isolated, the ramp is rebuilt around that type's categorical
-// color so screenshots are self-identifying.
-const DEFAULT_STOPS = ['#6366f1', '#fb923c', '#fde047']
+// Classic bright thermal ramp (green → yellow → orange → red) — saturated
+// enough to read on the light theme, where pastels wash out. When a single
+// trailer type is isolated, the ramp is rebuilt around that type's
+// categorical color (pale → type color → deep) so screenshots are
+// self-identifying.
+const DEFAULT_STOPS = ['#22c55e', '#facc15', '#f97316', '#ef4444']
 function rampStops(tintColor) {
   if (!tintColor) return DEFAULT_STOPS
-  return [lerpHex(tintColor, '#1e293b', 0.55), tintColor, lerpHex(tintColor, '#ffffff', 0.55)]
+  return [lerpHex(tintColor, '#ffffff', 0.5), tintColor, lerpHex(tintColor, '#1e293b', 0.45)]
 }
 function rampColor(stops, t) {
-  return t <= 0.5 ? lerpHex(stops[0], stops[1], t * 2) : lerpHex(stops[1], stops[2], (t - 0.5) * 2)
+  const n = stops.length - 1
+  const x = Math.min(1, Math.max(0, t)) * n
+  const i = Math.min(n - 1, Math.floor(x))
+  return lerpHex(stops[i], stops[i + 1], x - i)
 }
 
 const METRIC_META = {
@@ -94,7 +99,7 @@ export default function LaneHeatCanvas({ lanes, metric, tintColor }) {
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto block select-none" role="img" aria-label="US map of freight density">
         <defs>
           <filter id="laneHeatBlur" x="-30%" y="-30%" width="160%" height="160%">
-            <feGaussianBlur stdDeviation={CELL * 0.55} />
+            <feGaussianBlur stdDeviation={CELL * 0.5} />
           </filter>
         </defs>
 
@@ -109,7 +114,7 @@ export default function LaneHeatCanvas({ lanes, metric, tintColor }) {
             const t = scale.t(valOf(c))
             return (
               <rect key={c.key} x={c.cx * CELL} y={c.cy * CELL} width={CELL} height={CELL}
-                fill={rampColor(stops, t)} opacity={0.25 + t * 0.65} />
+                fill={rampColor(stops, t)} opacity={0.45 + t * 0.5} />
             )
           })}
         </g>
@@ -128,7 +133,7 @@ export default function LaneHeatCanvas({ lanes, metric, tintColor }) {
           <p className="text-[9px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">{meta.label}</p>
           <div className="mt-1 flex items-center gap-1.5 text-[10px] text-gray-500 dark:text-slate-400">
             <span className="font-mono">{meta.fmt(scale.lo)}</span>
-            <span className="h-1.5 w-20 rounded-full" style={{ background: `linear-gradient(90deg, ${rampColor(stops, 0)}, ${rampColor(stops, 0.5)}, ${rampColor(stops, 1)})` }} />
+            <span className="h-1.5 w-20 rounded-full" style={{ background: `linear-gradient(90deg, ${stops.join(', ')})` }} />
             <span className="font-mono">{meta.fmt(scale.hi)}{scale.clamped ? '+' : ''}</span>
           </div>
         </div>
