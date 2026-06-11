@@ -409,10 +409,21 @@ function Tractor({ animRef }) {
     let wheelsGroup = null
     let cab = null
     let cabSize = 0
+    // Limo tint for glass panes whose materials are shared with non-glass
+    // parts (the "vidrio" meshes reuse chassis materials) — assign per mesh.
+    const tintMat = new THREE.MeshStandardMaterial({
+      color: '#070a10',
+      roughness: 0.18,
+      metalness: 0.85,
+    })
     scene.traverse((o) => {
       if (/^ruedas/i.test(o.name)) wheelsGroup = o
       if (!o.isMesh) return
       o.castShadow = true
+      if (/vidrio/i.test(o.name) || /vidrio/i.test(o.parent?.name ?? '')) {
+        o.material = tintMat
+        return
+      }
       const mat = o.material
       if (!mat) return
       // Cab body (material "AZUL" — ships red): repaint white so the
@@ -471,14 +482,17 @@ function Tractor({ animRef }) {
   return (
     <group>
       <primitive object={scene} />
+      {/* Large MANAS mark on the sleeper side panel — the one big
+          uninterrupted cab surface (door placement clipped against the
+          window mesh). */}
       {cabMesh &&
         [1, -1].map((side) => (
           <Decal
             key={side}
             mesh={{ current: cabMesh }}
-            position={[side * 1.45, 2.1, -1.45]}
+            position={[side * 1.5, 2.35, -3.5]}
             rotation={[0, (side * Math.PI) / 2, 0]}
-            scale={[0.85, 0.85 / logoAspect, 0.8]}
+            scale={[1.7, 1.7 / logoAspect, 1]}
           >
             <meshStandardMaterial
               map={logo}
