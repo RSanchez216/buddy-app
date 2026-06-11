@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useToast } from '../../../../contexts/ToastContext'
 import { S } from '../../../../lib/styles'
+import LaneHeatCanvas from './LaneHeatCanvas'
 import LaneMapCanvas from './LaneMapCanvas'
-import { aggregateLanes, fetchLaneLegs, makeRpmScale, makeWidthScale, pickPayers, RPM_NULL_COLOR } from './laneData'
+import { aggregateLanes, fetchLaneLegs, fetchTrailerTypes, makeRpmScale, makeTypeColorMap, makeWidthScale, pickPayers, resolveLegTypes, RPM_NULL_COLOR, UNKNOWN_TYPE } from './laneData'
 import { fmtMoney, fmtNum, fmtRpm, formatRange, shiftYmd, spanDays, thisMonth, thisWeek } from '../spotlight/spotlightShared'
 
 // Lane Flow Map — where the money moves, geographically. Every leg in the
@@ -30,6 +31,15 @@ function Pills({ value, onChange, options, title }) {
   )
 }
 
+function TypeBadge({ type, color }) {
+  return (
+    <span className="inline-flex items-center gap-1 px-1.5 py-px rounded-full border border-gray-200 dark:border-white/10 text-[10px] font-medium text-gray-600 dark:text-slate-300 whitespace-nowrap">
+      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: color }} />
+      {type}
+    </span>
+  )
+}
+
 function Kpi({ label, value, sub }) {
   return (
     <div className={`${S.card} px-4 py-3`}>
@@ -46,30 +56,90 @@ export default function LaneFlowMap() {
   const [range, setRange] = useState(thisWeek)
   const [basis, setBasis] = useState('delivery')
   const [view, setView] = useState('realized') // realized | booked
-  const [weight, setWeight] = useState('revenue') // arc thickness: revenue | loads
+  const [weight, setWeight] = useState('revenue') // intensity: revenue | loads | rpm (rpm is heat-only)
+  const [colorBy, setColorBy] = useState('rpm') // arc color: rpm | type
+  const [mapMode, setMapMode] = useState('lanes') // lanes (arcs) | heat (density)
+  function switchMapMode(m) {
+    setMapMode(m)
+    // $/mile is an average — meaningful as heat intensity, not as arc
+    // thickness, so leaving Heat falls back to revenue weighting.
+    if (m === 'lanes' && weight === 'rpm') setWeight('revenue')
+  }
   const [sortKey, setSortKey] = useState('revenue')
-  const [dispatcherFilter, setDispatcherFilter] = useState(null) // null = all
   const [dispatcherSearchOpen, setDispatcherSearchOpen] = useState(false)
   const [dispatcherSearchQuery, setDispatcherSearchQuery] = useState('')
+  const dispatcherInputRef = useRef(null)
 
   // Fetched legs are stored with the period key they belong to, so a
   // period/basis change invalidates them by derivation (Spotlight pattern).
   const dataKey = `${range.from}|${range.to}|${basis}`
   const [legState, setLegState] = useState({ key: null, legs: null })
-  useEffect(() => { setDispatcherFilter(null) }, [dataKey])
+
+  // Dispatcher filter is keyed to the data window like the selection below —
+  // changing period/basis resets it by derivation, no reset effect needed.
+  const [dispFilterState, setDispFilterState] = useState({ key: null, id: null })
+  const dispatcherFilter = dispFilterState.key === dataKey ? dispFilterState.id : null
+  const setDispatcherFilter = useCallback((id) => setDispFilterState({ key: dataKey, id }), [dataKey])
+
+  const clearDispatcherFilter = useCallback((reopen) => {
+    setDispatcherFilter(null)
+    setDispatcherSearchQuery('')
+    setDispatcherSearchOpen(!!reopen)
+    if (reopen) dispatcherInputRef.current?.focus()
+  }, [setDispatcherFilter])
   useEffect(() => {
     let stale = false
-    fetchLaneLegs({ from: range.from, to: range.to, basis })
-      .then(legs => { if (!stale) setLegState({ key: dataKey, legs }) })
+    Promise.all([
+      fetchLaneLegs({ from: range.from, to: range.to, basis }),
+      // Trailer type is resolved by a live join at render time — legs gain
+      // trailers days later via the weekly assignment upload, so the type is
+      // never snapshotted. A failed trailers fetch degrades to all-Unknown.
+      fetchTrailerTypes().catch(() => new Map()),
+    ])
+      .then(([legs, typeById]) => { if (!stale) setLegState({ key: dataKey, legs, typeById }) })
       .catch(err => {
         if (!stale) {
           toast.error("Couldn't load lane data", err)
-          setLegState({ key: dataKey, legs: [] })
+          setLegState({ key: dataKey, legs: [], typeById: new Map() })
         }
       })
     return () => { stale = true }
   }, [dataKey, range.from, range.to, basis, toast])
   const loading = legState.key !== dataKey
+
+  const typedLegs = useMemo(
+    () => (legState.legs ? resolveLegTypes(legState.legs, legState.typeById) : null),
+    [legState],
+  )
+
+  // Type list is derived from the data so new trailer types appear on their
+  // own; Unknown sorts last when present.
+  const typeOptions = useMemo(() => {
+    if (!typedLegs) return []
+    const set = new Set(typedLegs.map(l => l.trailer_type))
+    const known = [...set].filter(t => t !== UNKNOWN_TYPE).sort((a, b) => a.localeCompare(b))
+    return set.has(UNKNOWN_TYPE) ? [...known, UNKNOWN_TYPE] : known
+  }, [typedLegs])
+
+  const typeColorMap = useMemo(() => makeTypeColorMap(typeOptions), [typeOptions])
+  const typeColorFor = useCallback((t) => typeColorMap.get(t) || RPM_NULL_COLOR, [typeColorMap])
+
+  // Trailer-type filter, window-keyed like the dispatcher filter.
+  // null = all types, otherwise the array of types kept.
+  const [typeFilterState, setTypeFilterState] = useState({ key: null, sel: null })
+  const typeFilter = typeFilterState.key === dataKey ? typeFilterState.sel : null
+  function toggleType(t) {
+    // Functional update so rapid clicks can't act on a stale selection.
+    setTypeFilterState(s => {
+      const cur = s.key === dataKey ? s.sel : null
+      let next
+      if (!cur) next = [t] // from "all", the first click isolates that type
+      else if (cur.includes(t)) next = cur.filter(x => x !== t)
+      else next = [...cur, t]
+      if (!next.length || next.length >= typeOptions.length) next = null
+      return { key: dataKey, sel: next }
+    })
+  }
 
   const dispatchers = useMemo(() => {
     if (!legState.legs) return []
@@ -87,16 +157,21 @@ export default function LaneFlowMap() {
   }, [dispatchers, dispatcherSearchQuery])
 
   const filteredLegs = useMemo(() => {
-    if (!legState.legs || !dispatcherFilter) return legState.legs
-    return legState.legs.filter(l => l.dispatcher_id === dispatcherFilter)
-  }, [legState.legs, dispatcherFilter])
+    if (!typedLegs) return typedLegs
+    let legs = typedLegs
+    if (dispatcherFilter) legs = legs.filter(l => l.dispatcher_id === dispatcherFilter)
+    if (typeFilter) legs = legs.filter(l => typeFilter.includes(l.trailer_type))
+    return legs
+  }, [typedLegs, dispatcherFilter, typeFilter])
 
+  // Lanes split per trailer type so every $/mi row is type-pure — a mixed
+  // corridor becomes one row per type, never a blended rate.
   const agg = useMemo(
-    () => (loading ? null : aggregateLanes(filteredLegs, view)),
+    () => (loading ? null : aggregateLanes(filteredLegs, view, { byType: true })),
     [loading, filteredLegs, view],
   )
   const rpmScale = useMemo(() => (agg ? makeRpmScale(agg.lanes) : null), [agg])
-  const widthFor = useMemo(() => (agg ? makeWidthScale(agg.lanes, weight) : null), [agg, weight])
+  const widthFor = useMemo(() => (agg ? makeWidthScale(agg.lanes, weight === 'rpm' ? 'revenue' : weight) : null), [agg, weight])
 
   const sortDef = LEADERBOARD_SORTS.find(s => s.key === sortKey) || LEADERBOARD_SORTS[0]
   const ranked = useMemo(() => (agg ? [...agg.lanes].sort(sortDef.fn) : []), [agg, sortDef])
@@ -123,7 +198,17 @@ export default function LaneFlowMap() {
     })
   }
 
-  const offMapLanes = agg ? agg.lanes.filter(l => !l.geocoded).length : 0
+  // Lane KPIs count distinct corridors, not the type-split rows.
+  const distinctLanes = agg ? new Set(agg.lanes.map(l => `${l.origin} → ${l.destination}`)).size : 0
+  const offMapLanes = agg ? new Set(agg.lanes.filter(l => !l.geocoded).map(l => `${l.origin} → ${l.destination}`)).size : 0
+  const typesPresent = useMemo(
+    () => (agg ? typeOptions.filter(t => agg.lanes.some(l => l.trailerType === t)) : []),
+    [agg, typeOptions],
+  )
+  const laneColorFor = colorBy === 'type' ? (lane) => typeColorFor(lane.trailerType) : null
+  // Isolating a single trailer type tints the heat ramp toward that type's
+  // color so a screenshot identifies itself.
+  const heatTint = typeFilter && typeFilter.length === 1 ? typeColorFor(typeFilter[0]) : null
   const dateCol = basis === 'pickup' ? 'pickup_date' : 'delivery_date'
 
   return (
@@ -147,22 +232,68 @@ export default function LaneFlowMap() {
       {/* ── Controls ── */}
       <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-center flex-wrap gap-2">
+          <Pills value={mapMode} onChange={switchMapMode} title="Lanes = origin→destination arcs · Heat = where freight concentrates"
+            options={[['lanes', 'Lanes'], ['heat', 'Heat']]} />
           <Pills value={view} onChange={setView} title="Realized = delivered revenue · Booked = projected revenue on upcoming loads"
             options={[['realized', 'Realized'], ['booked', 'Booked']]} />
-          <Pills value={weight} onChange={setWeight} title="What arc thickness represents"
-            options={[['revenue', 'Weight: revenue'], ['loads', 'Weight: loads']]} />
+          <Pills value={weight} onChange={setWeight}
+            title={mapMode === 'heat' ? 'Heat intensity: revenue sum, load count, or revenue-weighted average $/mile' : 'What arc thickness represents'}
+            options={mapMode === 'heat'
+              ? [['revenue', 'Weight: revenue'], ['loads', 'Weight: loads'], ['rpm', 'Weight: $/mile']]
+              : [['revenue', 'Weight: revenue'], ['loads', 'Weight: loads']]} />
+          {mapMode === 'lanes' && (
+            <Pills value={colorBy} onChange={setColorBy} title="Arc color: $/mile gradient, or one categorical color per trailer type"
+              options={[['rpm', 'Color: $/mi'], ['type', 'Color: type']]} />
+          )}
+          {typeOptions.length > 1 && (
+            <div className="flex items-center gap-1 flex-wrap">
+              {typeOptions.map(t => {
+                const active = !typeFilter || typeFilter.includes(t)
+                return (
+                  <button key={t} onClick={() => toggleType(t)}
+                    title={typeFilter ? 'Click to add or remove this trailer type' : 'Click to isolate this trailer type'}
+                    className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full border text-[11px] transition-colors ${active ? 'border-gray-300 dark:border-white/20 text-gray-700 dark:text-slate-200 bg-white dark:bg-white/5' : 'border-gray-200 dark:border-white/10 text-gray-400 dark:text-slate-600 opacity-60'}`}>
+                    <span className="w-2 h-2 rounded-full shrink-0" style={{ background: typeColorFor(t), opacity: active ? 1 : 0.4 }} />
+                    {t}
+                  </button>
+                )
+              })}
+              {typeFilter && (
+                <button onClick={() => setTypeFilterState({ key: dataKey, sel: null })}
+                  className="text-[11px] text-orange-600 dark:text-orange-400 hover:underline px-1" title="Show all trailer types">
+                  All types
+                </button>
+              )}
+            </div>
+          )}
           {dispatchers.length > 1 && (
             <div className="relative">
               <input
+                ref={dispatcherInputRef}
                 type="text"
                 value={dispatcherFilter ? (dispatchers.find(d => d.id === dispatcherFilter)?.name || '') : dispatcherSearchQuery}
-                onChange={e => { setDispatcherSearchQuery(e.target.value); setDispatcherSearchOpen(true) }}
+                onChange={e => {
+                  // Editing while a dispatcher is selected turns the text into a
+                  // fresh search — emptying the box can never leave a stale filter.
+                  if (dispatcherFilter) setDispatcherFilter(null)
+                  setDispatcherSearchQuery(e.target.value)
+                  setDispatcherSearchOpen(true)
+                }}
                 onFocus={() => setDispatcherSearchOpen(true)}
                 onBlur={() => setTimeout(() => setDispatcherSearchOpen(false), 150)}
-                placeholder={dispatcherFilter ? '—' : 'Filter dispatchers…'}
-                className={`${S.input} w-32 text-xs ${dispatcherFilter ? 'ring-2 ring-orange-400/50' : ''}`}
-                title="Search and filter by dispatcher"
+                onKeyDown={e => { if (e.key === 'Escape') clearDispatcherFilter(false) }}
+                placeholder="Filter dispatchers…"
+                className={`${S.input} w-32 text-xs ${dispatcherFilter ? 'pr-7 ring-2 ring-orange-400/50' : ''}`}
+                title="Search and filter by dispatcher — ✕ or Escape resets to all"
               />
+              {dispatcherFilter && (
+                <button
+                  onMouseDown={e => { e.preventDefault(); clearDispatcherFilter(true) }}
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 w-4 h-4 flex items-center justify-center rounded-full text-[10px] leading-none text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-white/10"
+                  title="Clear dispatcher filter (back to all dispatchers)"
+                  aria-label="Clear dispatcher filter"
+                >✕</button>
+              )}
               {dispatcherSearchOpen && (
                 <div className="absolute z-50 mt-1 w-48 rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-[#12132e] shadow-lg overflow-hidden">
                   <button
@@ -210,7 +341,7 @@ export default function LaneFlowMap() {
       {/* ── KPI band ── */}
       {agg && agg.totals.legs > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-          <Kpi label="Lanes" value={fmtNum(agg.totals.lanes)} sub={offMapLanes ? `${offMapLanes} off-map` : 'all on map'} />
+          <Kpi label="Lanes" value={fmtNum(distinctLanes)} sub={offMapLanes ? `${offMapLanes} off-map` : 'all on map'} />
           <Kpi label="Loads" value={fmtNum(agg.totals.legs)} sub={view === 'booked' ? 'booked' : 'delivered'} />
           <Kpi label={view === 'booked' ? 'Booked revenue' : 'Revenue'} value={fmtMoney(agg.totals.revenue)} sub={`${fmtNum(agg.totals.miles)} mi`} />
           <Kpi label="$/mile" value={agg.totals.rpm == null ? '—' : `${fmtRpm(agg.totals.rpm)}/mi`} sub="all lanes" />
@@ -224,9 +355,18 @@ export default function LaneFlowMap() {
         <div className="rounded-3xl border border-gray-200 dark:border-white/10 bg-gradient-to-b from-white to-gray-50 dark:from-[#12132e] dark:to-[#0a0a18] overflow-hidden">
           <div className="flex items-center justify-between flex-wrap gap-2 px-5 pt-4">
             <p className="text-xs font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">
-              {view === 'booked' ? 'Booked flow' : 'Realized flow'} · {formatRange(range.from, range.to)}
+              {view === 'booked' ? 'Booked' : 'Realized'} {mapMode === 'heat' ? 'heat' : 'flow'} · {formatRange(range.from, range.to)}
             </p>
-            {rpmScale && (
+            {mapMode === 'heat' ? null : colorBy === 'type' && typesPresent.length > 0 ? (
+              <div className="flex items-center gap-2.5 flex-wrap text-[10px] text-gray-400 dark:text-slate-500">
+                {typesPresent.map(t => (
+                  <span key={t} className="inline-flex items-center gap-1">
+                    <span className="rounded-full" style={{ background: typeColorFor(t), height: 3, width: 12 }} />
+                    {t}
+                  </span>
+                ))}
+              </div>
+            ) : rpmScale && (
               <div className="flex items-center gap-2 text-[10px] text-gray-400 dark:text-slate-500">
                 <span className="font-mono">{fmtRpm(rpmScale.domain[0])}/mi</span>
                 <span className="h-1.5 w-24 rounded-full" style={{ background: `linear-gradient(90deg, ${rpmScale.colorAt(0)}, ${rpmScale.colorAt(0.5)}, ${rpmScale.colorAt(1)})` }} />
@@ -242,26 +382,43 @@ export default function LaneFlowMap() {
             </div>
           ) : (
             <div className="px-2 pb-1">
-              <LaneMapCanvas
-                lanes={agg.lanes}
-                cities={agg.cities}
-                colorFor={rpmScale.color}
-                widthFor={widthFor}
-                selectedKey={selectedKey}
-                onSelect={setSelected}
-              />
+              {/* Both layers stay mounted and cross-fade on toggle; the
+                  transition collapses under prefers-reduced-motion. */}
+              <div className="relative">
+                <div className={`transition-opacity duration-300 motion-reduce:transition-none ${mapMode === 'heat' ? 'opacity-0 pointer-events-none absolute inset-0' : 'opacity-100'}`} aria-hidden={mapMode === 'heat'}>
+                  <LaneMapCanvas
+                    lanes={agg.lanes}
+                    cities={agg.cities}
+                    colorFor={rpmScale.color}
+                    widthFor={widthFor}
+                    selectedKey={selectedKey}
+                    onSelect={setSelected}
+                    laneColorFor={laneColorFor || undefined}
+                    typeColorFor={typeColorFor}
+                  />
+                </div>
+                <div className={`transition-opacity duration-300 motion-reduce:transition-none ${mapMode === 'lanes' ? 'opacity-0 pointer-events-none absolute inset-0' : 'opacity-100'}`} aria-hidden={mapMode === 'lanes'}>
+                  <LaneHeatCanvas lanes={agg.lanes} metric={weight} tintColor={heatTint} />
+                </div>
+              </div>
             </div>
           )}
           <div className="flex items-center justify-between flex-wrap gap-2 px-5 pb-3 pt-1">
             <p className="text-[11px] text-gray-400 dark:text-slate-500">
               {agg && agg.coverage != null && agg.coverage < 1
                 ? `Geocode coverage: ${Math.round(agg.coverage * 100)}% of loads — the rest stay in the table below.`
-                : 'Hover an arc for the lane, click to pin it.'}
+                : mapMode === 'heat' ? 'Hover a hot area for what drives it.' : 'Hover an arc for the lane, click to pin it.'}
             </p>
-            <p className="text-[11px] text-gray-400 dark:text-slate-500 flex items-center gap-1.5">
-              <span className="inline-block w-4 h-0.5 rounded-full bg-gray-400 dark:bg-slate-400" style={{ height: 2 }} /> thin = light volume
-              <span className="inline-block w-4 rounded-full bg-gray-400 dark:bg-slate-400" style={{ height: 5 }} /> thick = heavy volume
-            </p>
+            {mapMode === 'heat' ? (
+              <p className="text-[11px] text-gray-400 dark:text-slate-500">
+                Each load glows at its origin and destination — brighter = more {weight === 'rpm' ? 'revenue per mile' : weight === 'loads' ? 'loads' : 'revenue'}.
+              </p>
+            ) : (
+              <p className="text-[11px] text-gray-400 dark:text-slate-500 flex items-center gap-1.5">
+                <span className="inline-block w-4 h-0.5 rounded-full bg-gray-400 dark:bg-slate-400" style={{ height: 2 }} /> thin = light volume
+                <span className="inline-block w-4 rounded-full bg-gray-400 dark:bg-slate-400" style={{ height: 5 }} /> thick = heavy volume
+              </p>
+            )}
           </div>
         </div>
 
@@ -277,6 +434,7 @@ export default function LaneFlowMap() {
                   <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">{lbl}{payers.strict && <span className="normal-case tracking-normal"> · 2+ loads</span>}</p>
                   <p className={`text-lg font-bold font-mono leading-tight mt-0.5 ${cls}`}>{fmtRpm(lane.rpm)}/mi</p>
                   <p className="text-[11px] text-gray-500 dark:text-slate-400 truncate" title={lane.key}>{lane.origin} → {lane.destination}</p>
+                  {lane.trailerType && <p className="mt-0.5"><TypeBadge type={lane.trailerType} color={typeColorFor(lane.trailerType)} /></p>}
                   <p className="text-[10px] text-gray-400 dark:text-slate-500">{lane.loads} load{lane.loads === 1 ? '' : 's'} · {fmtMoney(lane.revenue)}</p>
                 </button>
               ))}
@@ -310,6 +468,7 @@ export default function LaneFlowMap() {
                         <td className="px-3 py-2">
                           <p className="font-medium text-gray-900 dark:text-slate-200 leading-tight">{lane.origin}</p>
                           <p className="text-gray-400 dark:text-slate-500 leading-tight">→ {lane.destination}{!lane.geocoded && <span className="ml-1 text-amber-600 dark:text-amber-400" title="This lane couldn't be geocoded, so it isn't drawn on the map.">⌀ off-map</span>}</p>
+                          {lane.trailerType && <p className="mt-1 leading-none"><TypeBadge type={lane.trailerType} color={typeColorFor(lane.trailerType)} /></p>}
                         </td>
                         <td className="px-2 py-2 text-right font-mono text-gray-600 dark:text-slate-400">{lane.loads}</td>
                         <td className="px-2 py-2 text-right font-mono text-gray-900 dark:text-slate-200">{fmtMoney(lane.revenue)}</td>
@@ -330,6 +489,7 @@ export default function LaneFlowMap() {
                 <div className="min-w-0">
                   <p className="text-xs font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">Loads on this lane</p>
                   <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{selectedLane.origin} <span className="text-orange-500">→</span> {selectedLane.destination}</p>
+                  {selectedLane.trailerType && <p className="mt-1"><TypeBadge type={selectedLane.trailerType} color={typeColorFor(selectedLane.trailerType)} /></p>}
                 </div>
                 <button onClick={() => setSelected(null)} className="text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 text-sm leading-none px-1" title="Clear selection">✕</button>
               </div>
@@ -346,6 +506,7 @@ export default function LaneFlowMap() {
                         <p className="text-gray-400 dark:text-slate-500 truncate">{leg[dateCol] || '—'} · {leg.customer_name || '—'}</p>
                         <p className="text-gray-400 dark:text-slate-500 truncate text-[11px]">Dispatcher: {leg.dispatcher_name || '—'}</p>
                         <p className="text-gray-400 dark:text-slate-500 truncate text-[11px]">Driver: {leg.driver_display || '—'}</p>
+                        <p className="text-gray-400 dark:text-slate-500 truncate text-[11px]">Trailer: {leg.trailer_display || '—'}{leg.trailer_type ? ` · ${leg.trailer_type}` : ''}</p>
                       </div>
                       <div className="text-right shrink-0">
                         <p className="font-mono text-gray-900 dark:text-slate-200">{fmtMoney(leg.leg_revenue)}</p>

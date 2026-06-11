@@ -18,7 +18,7 @@ export async function fetchLaneLegs({ from, to, basis = 'delivery' }) {
   const out = []
   for (let page = 0; ; page++) {
     const { data, error } = await supabase.from('v_load_leg_profit')
-      .select('leg_id, load_id, load_number, status, is_projected, pickup_date, delivery_date, origin, destination, leg_revenue, leg_total_miles, customer_name, dispatcher_id, dispatcher_name, driver_display')
+      .select('leg_id, load_id, load_number, status, is_projected, pickup_date, delivery_date, origin, destination, leg_revenue, leg_total_miles, customer_name, dispatcher_id, dispatcher_name, driver_display, trailer_id, trailer_display')
       .gte(dateCol, from).lte(dateCol, to)
       .order(dateCol, { ascending: true }).order('leg_id', { ascending: true })
       .range(page * 1000, page * 1000 + 999)
@@ -29,8 +29,49 @@ export async function fetchLaneLegs({ from, to, basis = 'delivery' }) {
   return out
 }
 
+// ── Trailer types ───────────────────────────────────────────────────────
+// Loads imports carry only a trailer number — the type lives on the trailer
+// profile, and legs can gain a trailer days later via the weekly assignment
+// upload. So the type is resolved live at render time (leg.trailer_id →
+// trailers.trailer_type), never snapshotted at import.
+export const UNKNOWN_TYPE = 'Unknown'
+
+export async function fetchTrailerTypes() {
+  const { data, error } = await supabase.from('trailers').select('id, trailer_type')
+  if (error) throw error
+  const byId = new Map()
+  for (const t of data || []) byId.set(t.id, t.trailer_type || null)
+  return byId
+}
+
+// Annotate legs with their live-resolved type. No trailer assigned yet, an
+// unmatched trailer_id, or a typeless profile all bucket as "Unknown" —
+// visible in every filter/leaderboard, never silently dropped.
+export function resolveLegTypes(legs, typeById) {
+  return (legs || []).map(l => ({
+    ...l,
+    trailer_type: (l.trailer_id != null && typeById?.get(l.trailer_id)) || UNKNOWN_TYPE,
+  }))
+}
+
+// Categorical palette for trailer types — assigned to the sorted type list
+// so the same type keeps its color across chips, badges, arcs, and legends.
+// Unknown is always gray.
+const TYPE_PALETTE = ['#38bdf8', '#fb923c', '#2dd4bf', '#c084fc', '#f472b6', '#facc15', '#4ade80', '#fb7185']
+export const UNKNOWN_TYPE_COLOR = '#64748b'
+export function makeTypeColorMap(types) {
+  const m = new Map()
+  const known = [...new Set(types)].filter(t => t && t !== UNKNOWN_TYPE).sort((a, b) => a.localeCompare(b))
+  known.forEach((t, i) => m.set(t, TYPE_PALETTE[i % TYPE_PALETTE.length]))
+  m.set(UNKNOWN_TYPE, UNKNOWN_TYPE_COLOR)
+  return m
+}
+
 // legs → { lanes, cities, totals, coverage } for one view (realized|booked).
-export function aggregateLanes(allLegs, view) {
+// With byType, lanes split per trailer type (key gains the type, rows carry
+// trailerType + typeIndex) so every $/mi figure is type-pure; the default
+// keeps the original one-row-per-lane shape (Boardroom relies on it).
+export function aggregateLanes(allLegs, view, { byType = false } = {}) {
   const legs = (allLegs || []).filter(l => (view === 'booked' ? l.is_projected : !l.is_projected))
   const byLane = new Map()
   const byCity = new Map()
@@ -44,7 +85,8 @@ export function aggregateLanes(allLegs, view) {
     const miles = Number(leg.leg_total_miles) || 0
     totRevenue += revenue; totMiles += miles
 
-    const key = `${origin} → ${destination}`
+    const type = byType ? (leg.trailer_type || UNKNOWN_TYPE) : null
+    const key = byType ? `${origin} → ${destination} · ${type}` : `${origin} → ${destination}`
     let lane = byLane.get(key)
     if (!lane) {
       const oCoord = CITY_COORDS[origin] || null
@@ -53,6 +95,7 @@ export function aggregateLanes(allLegs, view) {
         key, origin, destination, oCoord, dCoord,
         geocoded: !!(oCoord && dCoord),
         loads: 0, revenue: 0, miles: 0, legs: [],
+        ...(byType ? { trailerType: type } : {}),
       }
       byLane.set(key, lane)
     }
@@ -74,6 +117,21 @@ export function aggregateLanes(allLegs, view) {
     lane.avgMiles = lane.loads > 0 ? lane.miles / lane.loads : 0
   }
 
+  if (byType) {
+    // Same-corridor type rows get an index so the map can fan their arcs
+    // apart instead of drawing them exactly on top of each other.
+    const byPair = new Map()
+    for (const lane of lanes) {
+      const pair = `${lane.origin} → ${lane.destination}`
+      if (!byPair.has(pair)) byPair.set(pair, [])
+      byPair.get(pair).push(lane)
+    }
+    for (const group of byPair.values()) {
+      group.sort((a, b) => b.revenue - a.revenue)
+      group.forEach((l, i) => { l.typeIndex = i })
+    }
+  }
+
   return {
     lanes,
     cities: [...byCity.values()],
@@ -89,7 +147,7 @@ export function aggregateLanes(allLegs, view) {
 }
 
 // ── Scales ──────────────────────────────────────────────────────────────
-function lerpHex(a, b, t) {
+export function lerpHex(a, b, t) {
   const pa = [1, 3, 5].map(i => parseInt(a.slice(i, i + 2), 16))
   const pb = [1, 3, 5].map(i => parseInt(b.slice(i, i + 2), 16))
   return '#' + pa.map((v, i) => Math.round(v + (pb[i] - v) * t).toString(16).padStart(2, '0')).join('')
@@ -97,7 +155,7 @@ function lerpHex(a, b, t) {
 const RPM_STOPS = ['#f43f5e', '#fbbf24', '#34d399'] // weak → mid → strong $/mile
 export const RPM_NULL_COLOR = '#64748b'
 
-function quantile(sorted, p) {
+export function quantile(sorted, p) {
   if (!sorted.length) return 0
   const idx = (sorted.length - 1) * p
   const lo = Math.floor(idx), hi = Math.ceil(idx)
