@@ -11,21 +11,33 @@ import { fmtMoney, fmtNum, fmtRpm } from '../spotlight/spotlightShared'
 
 const CELL = 26 // grid cell size in the 975×610 projected frame
 
-// Classic bright thermal ramp (green → yellow → orange → red) — saturated
-// enough to read on the light theme, where pastels wash out. When a single
-// trailer type is isolated, the ramp is rebuilt around that type's
-// categorical color (pale → type color → deep) so screenshots are
-// self-identifying.
-const DEFAULT_STOPS = ['#22c55e', '#facc15', '#f97316', '#ef4444']
-function rampStops(tintColor) {
-  if (!tintColor) return DEFAULT_STOPS
-  return [lerpHex(tintColor, '#ffffff', 0.5), tintColor, lerpHex(tintColor, '#1e293b', 0.45)]
+// Google-Maps-style heat: every cell stamps a soft radial *density* splat;
+// overlapping splats accumulate, and an SVG color-transfer filter maps the
+// accumulated density through green → lime → yellow → orange → red — so red
+// only appears where freight genuinely piles up, while light activity reads
+// as merging green halos. Isolating a single trailer type swaps in a ramp
+// built around that type's categorical color (pale → type → deep).
+const HEAT_COLORS = ['#22c55e', '#84cc16', '#facc15', '#f97316', '#dc2626']
+function heatPalette(tintColor) {
+  if (!tintColor) return HEAT_COLORS
+  return [
+    lerpHex(tintColor, '#ffffff', 0.55),
+    lerpHex(tintColor, '#ffffff', 0.3),
+    tintColor,
+    lerpHex(tintColor, '#1e293b', 0.25),
+    lerpHex(tintColor, '#1e293b', 0.5),
+  ]
 }
-function rampColor(stops, t) {
-  const n = stops.length - 1
-  const x = Math.min(1, Math.max(0, t)) * n
-  const i = Math.min(n - 1, Math.floor(x))
-  return lerpHex(stops[i], stops[i + 1], x - i)
+// Density (alpha) → color lookup tables for feComponentTransfer. The first
+// color is doubled so the faint outer halo stays at the palette's low end.
+function heatTables(palette) {
+  const unit = (hex) => [1, 3, 5].map(i => (parseInt(hex.slice(i, i + 2), 16) / 255).toFixed(3))
+  const cols = [palette[0], ...palette].map(unit)
+  return {
+    r: cols.map(c => c[0]).join(' '),
+    g: cols.map(c => c[1]).join(' '),
+    b: cols.map(c => c[2]).join(' '),
+  }
 }
 
 const METRIC_META = {
@@ -82,7 +94,8 @@ export default function LaneHeatCanvas({ lanes, metric, tintColor }) {
     return { lo, hi, clamped, t: (v) => (hi <= lo ? 0.5 : Math.min(1, Math.max(0, (v - lo) / (hi - lo)))) }
   }, [grid, metric])
 
-  const stops = rampStops(tintColor)
+  const stops = heatPalette(tintColor)
+  const tables = heatTables(stops)
   const meta = METRIC_META[metric] || METRIC_META.revenue
   const valOf = (c) => (metric === 'rpm' ? c.rpm : c[metric])
   const drawn = scale ? grid.filter(c => valOf(c) != null && valOf(c) > 0) : []
@@ -98,8 +111,24 @@ export default function LaneHeatCanvas({ lanes, metric, tintColor }) {
     <div ref={wrapRef} className="relative">
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto block select-none" role="img" aria-label="US map of freight density">
         <defs>
-          <filter id="laneHeatBlur" x="-30%" y="-30%" width="160%" height="160%">
-            <feGaussianBlur stdDeviation={CELL * 0.22} />
+          <radialGradient id="laneHeatSplat">
+            <stop offset="0%" stopColor="#000" stopOpacity="1" />
+            <stop offset="35%" stopColor="#000" stopOpacity="0.62" />
+            <stop offset="70%" stopColor="#000" stopOpacity="0.22" />
+            <stop offset="100%" stopColor="#000" stopOpacity="0" />
+          </radialGradient>
+          {/* Recolors accumulated splat density through the heat palette.
+              sRGB interpolation keeps the table colors true to the hex values. */}
+          <filter id="laneHeatRamp" filterUnits="userSpaceOnUse"
+            x={-CELL * 2} y={-CELL * 2} width={W + CELL * 4} height={H + CELL * 4}
+            colorInterpolationFilters="sRGB">
+            <feColorMatrix type="matrix" values="0 0 0 1 0  0 0 0 1 0  0 0 0 1 0  0 0 0 1 0" />
+            <feComponentTransfer>
+              <feFuncR type="table" tableValues={tables.r} />
+              <feFuncG type="table" tableValues={tables.g} />
+              <feFuncB type="table" tableValues={tables.b} />
+              <feFuncA type="table" tableValues="0 0.6 0.78 0.88 0.95 0.98" />
+            </feComponentTransfer>
           </filter>
         </defs>
 
@@ -108,17 +137,13 @@ export default function LaneHeatCanvas({ lanes, metric, tintColor }) {
         <path d={STATES_OUTLINE} fill="none" strokeWidth="0.75" className="stroke-gray-300 dark:stroke-white/[0.07]" />
         <path d={NATION_OUTLINE} fill="none" strokeWidth="1" className="stroke-gray-300 dark:stroke-white/[0.12]" />
 
-        {/* Solid heat cells — full-strength color like the arc view (the soft
-            translucent look washed out on the light theme); a light blur only
-            smooths the cell edges, and hotter cells draw on top. */}
-        <g filter="url(#laneHeatBlur)">
-          {[...drawn].sort((a, b) => scale.t(valOf(a)) - scale.t(valOf(b))).map(c => {
-            const t = scale.t(valOf(c))
-            return (
-              <rect key={c.key} x={c.cx * CELL} y={c.cy * CELL} width={CELL} height={CELL}
-                fill={rampColor(stops, t)} />
-            )
-          })}
+        {/* Density splats — the ramp filter recolors their accumulated alpha,
+            so blobs merge organically and red emerges only at real hot spots. */}
+        <g filter="url(#laneHeatRamp)">
+          {drawn.map(c => (
+            <circle key={c.key} cx={(c.cx + 0.5) * CELL} cy={(c.cy + 0.5) * CELL} r={CELL * 1.7}
+              fill="url(#laneHeatSplat)" opacity={0.3 + scale.t(valOf(c)) * 0.7} />
+          ))}
         </g>
 
         {/* Invisible hit cells for the tooltip (drawn unblurred, on top) */}
