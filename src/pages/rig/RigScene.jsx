@@ -24,7 +24,7 @@ import {
   useTexture,
 } from '@react-three/drei'
 import {
-  FIFTH_WHEEL_Z,
+  DAY_NIGHT_PERIOD,
   MANAS_LOGO_URL,
   MOCK_TOP_CUSTOMER,
   RIG_STATES,
@@ -40,6 +40,7 @@ import {
   makeLaneDashTexture,
   makePlankTexture,
   makeReflectiveTapeTexture,
+  makeWindowsTexture,
 } from './rigTextures'
 
 useGLTF.preload(TRACTOR_URL)
@@ -48,9 +49,16 @@ useTexture.preload(MANAS_LOGO_URL)
 
 const DAMP = 2.4 // ≈96% settled in ~1.5s
 
+// Deterministic pseudo-random for scenery layout (stable across renders,
+// keeps the render pure for the react-hooks lint).
+function rnd(seed) {
+  return Math.abs(Math.sin(seed * 127.1 + 311.7) * 43758.5453) % 1
+}
+
 /* ------------------------------------------------------------------ */
-/* Atmosphere: fog, background, lights, env intensity — all lerped     */
-/* toward the active state's targets so the weather shifts, not snaps. */
+/* Atmosphere: fog, background, lights, env intensity — health-state   */
+/* targets lerped over ~1.5s, then modulated by a slow day/night cycle */
+/* so the rig drives through daylight and darkness.                    */
 /* ------------------------------------------------------------------ */
 function Atmosphere({ rigState, animRef }) {
   const scene = useThree((s) => s.scene)
@@ -81,6 +89,7 @@ function Atmosphere({ rigState, animRef }) {
   }
 
   useEffect(() => {
+    if (import.meta.env.DEV) window.__rigScene = scene // debug/verification hook, dev only
     const fog = new THREE.Fog(cur.current.fogColor.clone(), cur.current.fogNear, cur.current.fogFar)
     scene.fog = fog
     scene.background = cur.current.bg.clone()
@@ -90,7 +99,7 @@ function Atmosphere({ rigState, animRef }) {
     }
   }, [scene])
 
-  useFrame((_, rawDt) => {
+  useFrame(({ clock }, rawDt) => {
     const dt = Math.min(rawDt, 0.1)
     const t = RIG_STATES[rigState]
     const c = cur.current
@@ -112,22 +121,28 @@ function Atmosphere({ rigState, animRef }) {
     c.tilt = THREE.MathUtils.damp(c.tilt, t.tilt, DAMP, dt)
     c.shudder = THREE.MathUtils.damp(c.shudder, t.shudder, DAMP, dt)
 
+    // Day/night: cosine cycle starting at full day. Night darkens the
+    // state's look (never brightens it), so stalling stays grim.
+    const day = 0.5 + 0.5 * Math.cos((clock.elapsedTime / DAY_NIGHT_PERIOD) * Math.PI * 2)
+    const bright = 0.35 + 0.65 * day
+    animRef.current.night = 1 - day
+
     if (scene.fog) {
-      scene.fog.color.copy(c.fogColor)
+      scene.fog.color.copy(c.fogColor).multiplyScalar(bright)
       scene.fog.near = c.fogNear
       scene.fog.far = c.fogFar
     }
-    if (scene.background?.isColor) scene.background.copy(c.bg)
-    scene.environmentIntensity = c.envIntensity
+    if (scene.background?.isColor) scene.background.copy(c.bg).multiplyScalar(bright)
+    scene.environmentIntensity = c.envIntensity * (0.3 + 0.7 * day)
     if (keyRef.current) {
       keyRef.current.color.copy(c.keyColor)
-      keyRef.current.intensity = c.keyIntensity
+      keyRef.current.intensity = c.keyIntensity * bright
     }
     if (rimRef.current) {
       rimRef.current.color.copy(c.rimColor)
       rimRef.current.intensity = c.rimIntensity
     }
-    if (hemiRef.current) hemiRef.current.intensity = c.hemiIntensity
+    if (hemiRef.current) hemiRef.current.intensity = c.hemiIntensity * bright
 
     animRef.current.speed = c.laneSpeed
     animRef.current.bobAmp = c.bobAmp
@@ -173,8 +188,9 @@ function Road({ animRef }) {
   const DASH_TILE = 6 // meters of road per dash tile (240 / 40)
 
   useFrame((_, dt) => {
-    // Rig faces +z and "drives" forward: dashes flow toward −z.
-    dash.offset.y += (animRef.current.speed * Math.min(dt, 0.1)) / DASH_TILE
+    // Rig faces +z and drives forward: the road flows backward past it,
+    // so the dash pattern scrolls toward −z.
+    dash.offset.y -= (animRef.current.speed * Math.min(dt, 0.1)) / DASH_TILE
   })
 
   return (
@@ -200,9 +216,182 @@ function Road({ animRef }) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Tractor: spins its wheels. Wheel meshes live under the GLB group    */
-/* "ruedas de camion_42" with pivots baked at the model origin, so we  */
-/* recenter each wheel geometry on its own hub once (idempotent).      */
+/* Scenery: an infinite belt of biome segments (city → mountains →     */
+/* desert) scrolling past on both sides at road speed. Distant         */
+/* silhouettes only; fog provides the depth falloff, and city windows  */
+/* glow when the day cycle reaches night.                              */
+/* ------------------------------------------------------------------ */
+const SEG_LEN = 60
+const SEG_COUNT = 6
+const BELT_LEN = SEG_LEN * SEG_COUNT
+const BIOME_ORDER = ['city', 'mountain', 'desert', 'city', 'mountain', 'desert']
+
+function buildSegmentItems(biome, segIndex) {
+  const items = []
+  for (const side of [1, -1]) {
+    const base = segIndex * 97 + (side === 1 ? 0 : 49)
+    if (biome === 'city') {
+      const n = 6 + Math.floor(rnd(base) * 4)
+      for (let j = 0; j < n; j++) {
+        const s = base + j * 7
+        const h = 7 + rnd(s + 1) * 24
+        items.push({
+          kind: 'building',
+          pos: [side * (26 + rnd(s + 2) * 38), h / 2, (rnd(s + 3) - 0.5) * SEG_LEN],
+          scale: [4 + rnd(s + 4) * 6, h, 4 + rnd(s + 5) * 6],
+        })
+      }
+    } else if (biome === 'mountain') {
+      const n = 3 + Math.floor(rnd(base) * 3)
+      for (let j = 0; j < n; j++) {
+        const s = base + j * 11
+        const h = 16 + rnd(s + 1) * 26
+        const r = 10 + rnd(s + 2) * 14
+        items.push({
+          kind: 'peak',
+          pos: [side * (40 + rnd(s + 3) * 45), h / 2 - 0.5, (rnd(s + 4) - 0.5) * SEG_LEN],
+          scale: [r, h, r],
+          rot: [0, rnd(s + 5) * Math.PI, 0],
+        })
+      }
+    } else {
+      // desert: low dunes + a few saguaros
+      const n = 3 + Math.floor(rnd(base) * 3)
+      for (let j = 0; j < n; j++) {
+        const s = base + j * 13
+        items.push({
+          kind: 'dune',
+          pos: [side * (28 + rnd(s + 1) * 45), 0, (rnd(s + 2) - 0.5) * SEG_LEN],
+          scale: [12 + rnd(s + 3) * 14, 2.2 + rnd(s + 4) * 2.4, 10 + rnd(s + 5) * 12],
+        })
+      }
+      const c = 2 + Math.floor(rnd(base + 5) * 3)
+      for (let j = 0; j < c; j++) {
+        const s = base + 31 + j * 17
+        const h = 2.6 + rnd(s + 1) * 2
+        items.push({
+          kind: 'cactus',
+          pos: [side * (16 + rnd(s + 2) * 26), h / 2, (rnd(s + 3) - 0.5) * SEG_LEN],
+          scale: [0.5, h, 0.5],
+        })
+      }
+    }
+  }
+  return items
+}
+
+function Scenery({ animRef }) {
+  const beltRef = useRef()
+  const distRef = useRef(0)
+
+  const geos = useMemo(
+    () => ({
+      building: new THREE.BoxGeometry(1, 1, 1),
+      peak: new THREE.ConeGeometry(1, 1, 6),
+      dune: new THREE.SphereGeometry(1, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2),
+      cactus: new THREE.CylinderGeometry(1, 1, 1, 8),
+    }),
+    [],
+  )
+  // One shared material per kind — the building one animates its window
+  // glow with the day cycle.
+  const mats = useMemo(() => {
+    const winTex = makeWindowsTexture()
+    return {
+      building: new THREE.MeshStandardMaterial({
+        map: winTex,
+        emissiveMap: winTex,
+        emissive: new THREE.Color('#ffd9a0'),
+        emissiveIntensity: 0.3,
+        color: '#46505f',
+        roughness: 0.9,
+      }),
+      peak: new THREE.MeshStandardMaterial({ color: '#1c2330', roughness: 1, flatShading: true }),
+      dune: new THREE.MeshStandardMaterial({ color: '#3a2f1f', roughness: 1 }),
+      cactus: new THREE.MeshStandardMaterial({ color: '#26402a', roughness: 0.95 }),
+    }
+  }, [])
+  const segments = useMemo(
+    () => BIOME_ORDER.map((biome, i) => buildSegmentItems(biome, i)),
+    [],
+  )
+
+  useFrame((_, dt) => {
+    distRef.current += animRef.current.speed * Math.min(dt, 0.1)
+    const d = distRef.current
+    const belt = beltRef.current
+    if (belt) {
+      for (let i = 0; i < belt.children.length; i++) {
+        belt.children[i].position.z = 60 - ((i * SEG_LEN + d) % BELT_LEN)
+      }
+    }
+    mats.building.emissiveIntensity = 0.25 + 1.6 * (animRef.current.night ?? 0)
+  })
+
+  return (
+    <group ref={beltRef}>
+      {segments.map((items, i) => (
+        <group key={i}>
+          {items.map((it, j) => (
+            <mesh
+              key={j}
+              geometry={geos[it.kind]}
+              material={mats[it.kind]}
+              position={it.pos}
+              scale={it.scale}
+              rotation={it.rot || [0, 0, 0]}
+            />
+          ))}
+        </group>
+      ))}
+    </group>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Shared spinning axle: tire cylinders + hub caps + axle rod, rotated */
+/* at road speed / wheel radius. unitScale converts local units to     */
+/* meters (the trailer GLB group is scaled 0.315).                     */
+/* ------------------------------------------------------------------ */
+function SpinAxle({ z, y, radius, sideX, width, hubRadius, rodRadius, unitScale, animRef }) {
+  const ref = useRef()
+
+  useFrame((_, dt) => {
+    if (ref.current) {
+      ref.current.rotation.x += (animRef.current.speed / (radius * unitScale)) * Math.min(dt, 0.1)
+    }
+  })
+
+  return (
+    <group ref={ref} position={[0, y, z]}>
+      {[1, -1].map((side) => (
+        <group key={side}>
+          <mesh rotation={[0, 0, Math.PI / 2]} position={[side * sideX, 0, 0]} castShadow>
+            <cylinderGeometry args={[radius, radius, width, 24]} />
+            <meshStandardMaterial color="#141519" roughness={0.92} />
+          </mesh>
+          <mesh
+            rotation={[0, (side * Math.PI) / 2, 0]}
+            position={[side * (sideX + width / 2 + 0.02 / unitScale), 0, 0]}
+          >
+            <circleGeometry args={[hubRadius, 20]} />
+            <meshStandardMaterial color="#454a55" roughness={0.45} metalness={0.6} />
+          </mesh>
+        </group>
+      ))}
+      <mesh rotation={[0, 0, Math.PI / 2]}>
+        <cylinderGeometry args={[rodRadius, rodRadius, sideX * 2, 10]} />
+        <meshStandardMaterial color="#1a1c22" roughness={0.8} />
+      </mesh>
+    </group>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Tractor: white cab, tinted glass, MANAS door decals, spinning       */
+/* wheels. Wheel meshes live under the GLB group "ruedas de camion_42" */
+/* with pivots baked at the model origin, so we recenter each wheel    */
+/* geometry on its own hub once (idempotent).                          */
 /* ------------------------------------------------------------------ */
 function Tractor({ animRef }) {
   const { scene } = useGLTF(TRACTOR_URL)
@@ -222,17 +411,35 @@ function Tractor({ animRef }) {
     let cabSize = 0
     scene.traverse((o) => {
       if (/^ruedas/i.test(o.name)) wheelsGroup = o
-      if (o.isMesh) {
-        o.castShadow = true
-        // Cab body (material "AZUL") — decal target for door logos.
-        if (o.material && /azul/i.test(o.material.name)) {
-          if (!o.geometry.boundingBox) o.geometry.computeBoundingBox()
-          const s = o.geometry.boundingBox.getSize(new THREE.Vector3())
-          if (s.x * s.y * s.z > cabSize) {
-            cabSize = s.x * s.y * s.z
-            cab = o
-          }
+      if (!o.isMesh) return
+      o.castShadow = true
+      const mat = o.material
+      if (!mat) return
+      // Cab body (material "AZUL" — ships red): repaint white so the
+      // MANAS mark reads. Drop the base map in case it carries the paint.
+      if (/azul/i.test(mat.name)) {
+        mat.color.set('#e9edf2')
+        mat.map = null
+        mat.roughness = 0.32
+        mat.metalness = 0.12
+        mat.needsUpdate = true
+        if (!o.geometry.boundingBox) o.geometry.computeBoundingBox()
+        const s = o.geometry.boundingBox.getSize(new THREE.Vector3())
+        if (s.x * s.y * s.z > cabSize) {
+          cabSize = s.x * s.y * s.z
+          cab = o
         }
+      }
+      // Glass ("glass1") and windshield ("DARK"): limo tint — the GLB cab
+      // has no interior, so nothing to see.
+      if (/^(glass|dark$)/i.test(mat.name)) {
+        if ('transmission' in mat) mat.transmission = 0
+        mat.transparent = false
+        mat.opacity = 1
+        mat.color.set('#070a10')
+        mat.roughness = 0.18
+        mat.metalness = 0.85
+        mat.needsUpdate = true
       }
     })
     wheelsGroup?.traverse((o) => {
@@ -256,6 +463,7 @@ function Tractor({ animRef }) {
   }, [scene])
 
   useFrame((_, dt) => {
+    // ω = v/r, positive about +x = rolling toward +z (forward).
     const w = (animRef.current.speed / WHEEL_RADIUS) * Math.min(dt, 0.1)
     for (const wheel of spinRef.current) wheel.rotation.x += w
   })
@@ -309,7 +517,7 @@ function SideBranding({ map, aspect, y, width }) {
   ))
 }
 
-function VanTrailer({ variant }) {
+function VanTrailer({ variant, animRef }) {
   const { scene } = useGLTF(TRAILER_URL)
   const logo = useTexture(MANAS_LOGO_URL)
   const logoAspect = logo.image ? logo.image.width / logo.image.height : 1
@@ -320,6 +528,13 @@ function VanTrailer({ variant }) {
     model.traverse((o) => {
       if (!o.isMesh) return
       o.castShadow = true
+      // The GLB's rear bogie is one merged mesh (both axles, both sides) —
+      // it can't spin. Hide its tires/hubs; SpinAxle replaces them. The
+      // suspension frame ("Black_material") stays.
+      if (o.material && /^(tire|wheel)/i.test(o.material.name)) {
+        o.visible = false
+        return
+      }
       if (variant !== 'dryvan' && o.material && /trailer_white/i.test(o.material.name)) {
         if (!bodyMat) {
           bodyMat = o.material.clone()
@@ -345,6 +560,21 @@ function VanTrailer({ variant }) {
   return (
     <group scale={TRAILER_SCALE}>
       <primitive object={model} />
+      {/* replacement bogie at the GLB's axle stations (local units) */}
+      {[-35.4, -38.85].map((z) => (
+        <SpinAxle
+          key={z}
+          z={z}
+          y={1.8}
+          radius={1.62}
+          sideX={2.28}
+          width={1.55}
+          hubRadius={0.85}
+          rodRadius={0.26}
+          unitScale={TRAILER_SCALE}
+          animRef={animRef}
+        />
+      ))}
       {variant !== 'customer' && <SideBranding map={logo} aspect={logoAspect} y={8.9} width={7.5} />}
       {variant === 'customer' && wordmark && (
         <SideBranding map={wordmark} aspect={1024 / 192} y={7.6} width={24} />
@@ -378,11 +608,9 @@ function ReeferUnit() {
 
 // Procedural flatbed, built in real-world meters. Front face sits at the
 // same world z as the van variants' front face.
-function Flatbed() {
+function Flatbed({ animRef }) {
   const planks = useMemo(() => makePlankTexture(), [])
   const tape = useMemo(() => makeReflectiveTapeTexture(), [])
-  const wheelGeo = useMemo(() => new THREE.CylinderGeometry(0.5, 0.5, 0.95, 24), [])
-  const axles = [-10.3, -11.7]
 
   return (
     <group position={[0, 0, -0.77]}>
@@ -414,30 +642,27 @@ function Flatbed() {
         <meshStandardMaterial color="#1a1c22" roughness={0.8} />
       </mesh>
       {/* rear axle group */}
-      {axles.map((z) =>
-        [1, -1].map((side) => (
-          <group key={`${z}${side}`} position={[side * 0.82, 0.5, z]}>
-            <mesh geometry={wheelGeo} rotation={[0, 0, Math.PI / 2]} castShadow>
-              <meshStandardMaterial color="#141519" roughness={0.92} />
-            </mesh>
-            <mesh rotation={[0, (side * Math.PI) / 2, 0]} position={[side * 0.49, 0, 0]}>
-              <circleGeometry args={[0.26, 20]} />
-              <meshStandardMaterial color="#3b3f48" roughness={0.5} metalness={0.6} />
-            </mesh>
-          </group>
-        )),
-      )}
-      <mesh position={[0, 0.5, -11]} rotation={[0, 0, Math.PI / 2]}>
-        <cylinderGeometry args={[0.09, 0.09, 2.1, 10]} />
-        <meshStandardMaterial color="#1a1c22" roughness={0.8} />
-      </mesh>
+      {[-10.3, -11.7].map((z) => (
+        <SpinAxle
+          key={z}
+          z={z}
+          y={0.5}
+          radius={0.5}
+          sideX={0.82}
+          width={0.95}
+          hubRadius={0.26}
+          rodRadius={0.09}
+          unitScale={1}
+          animRef={animRef}
+        />
+      ))}
     </group>
   )
 }
 
 // Swap wrapper: shrink the outgoing trailer, then mount and grow the new
 // one (~200 ms each way). All variants share the hitch position.
-function Trailer({ type }) {
+function Trailer({ type, animRef }) {
   const [shown, setShown] = useState(type)
   const pivotRef = useRef()
 
@@ -456,7 +681,7 @@ function Trailer({ type }) {
       <group position={[0, 1.9, -7.2]}>
         <group ref={pivotRef}>
           <group position={[0, -1.9, 7.2]}>
-            {shown === 'flatbed' ? <Flatbed /> : <VanTrailer variant={shown} />}
+            {shown === 'flatbed' ? <Flatbed animRef={animRef} /> : <VanTrailer variant={shown} animRef={animRef} />}
           </group>
         </group>
       </group>
@@ -487,7 +712,7 @@ function Rig({ animRef, trailerType }) {
   return (
     <group ref={groupRef}>
       <Tractor animRef={animRef} />
-      <Trailer type={trailerType} />
+      <Trailer type={trailerType} animRef={animRef} />
     </group>
   )
 }
@@ -551,6 +776,7 @@ export default function RigScene({ rigState, trailerType }) {
     bobFreq: 1.3,
     tilt: 0,
     shudder: 0,
+    night: 0,
   })
 
   return (
@@ -563,6 +789,7 @@ export default function RigScene({ rigState, trailerType }) {
       <Atmosphere rigState={rigState} animRef={animRef} />
       <Suspense fallback={<SceneLoader />}>
         <Road animRef={animRef} />
+        <Scenery animRef={animRef} />
         <Rig animRef={animRef} trailerType={trailerType} />
         <ContactShadows position={[0, 0.005, -7]} scale={34} far={4} blur={2.2} opacity={0.55} resolution={512} frames={Infinity} />
       </Suspense>

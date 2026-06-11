@@ -86,9 +86,27 @@ export function makeCustomerWordmarkTexture(name) {
     ctx.font = '700 96px Arial, Helvetica, sans-serif'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText(name.toLowerCase(), w / 2, h / 2)
+    ctx.fillText(name, w / 2, h / 2)
   })
   tex.wrapS = THREE.ClampToEdgeWrapping
   tex.wrapT = THREE.ClampToEdgeWrapping
+  return tex
+}
+
+// Lit-window grid for city silhouettes; doubles as map + emissiveMap so the
+// windows glow at night (emissiveIntensity animated with the day cycle).
+export function makeWindowsTexture() {
+  const tex = canvasTexture(64, 128, (ctx, w, h) => {
+    ctx.fillStyle = '#070a10'
+    ctx.fillRect(0, 0, w, h)
+    for (let y = 6; y < h - 4; y += 8) {
+      for (let x = 4; x < w - 4; x += 8) {
+        if (Math.random() < 0.55) {
+          ctx.fillStyle = Math.random() < 0.8 ? '#f0c98a' : '#bcd2e8'
+          ctx.fillRect(x, y, 3, 4)
+        }
+      }
+    }
+  })
   return tex
 }

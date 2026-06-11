@@ -22,6 +22,9 @@ export const FIFTH_WHEEL_Z = -7.0
 const KINGPIN_LOCAL_Z = -6.4
 export const TRAILER_GROUP_Z = FIFTH_WHEEL_Z - KINGPIN_LOCAL_Z * TRAILER_SCALE // ≈ −4.98
 
+// Full day→night→day cycle length, seconds.
+export const DAY_NIGHT_PERIOD = 80
+
 export const RIG_STATES = {
   cruising: {
     word: 'CRUISING',
