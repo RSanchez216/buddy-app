@@ -1,20 +1,11 @@
 import { useMemo, useRef, useState } from 'react'
-import { geoAlbersUsa, geoPath } from 'd3-geo'
-import { feature, mesh } from 'topojson-client'
-import usTopo from './usStatesAlbers.json'
 import { WIDTH_RANGE } from './laneData'
+import { MAP_W as W, MAP_H as H, NATION_OUTLINE, projection, STATES_OUTLINE } from './mapShared'
 import { fmtMoney, fmtNum, fmtRpm } from '../spotlight/spotlightShared'
 
-// SVG US map with freight arcs. The us-atlas topology is pre-projected to
-// a 975×610 AlbersUSA frame, so states render with a bare geoPath() and
-// cities go through the matching geoAlbersUsa() projection (same scale/
-// translate us-atlas used). Everything is plain SVG — no map library.
-
-const W = 975, H = 610
-const projection = geoAlbersUsa().scale(1300).translate([W / 2, H / 2])
-const statePath = geoPath()
-const STATES_OUTLINE = statePath(mesh(usTopo, usTopo.objects.states, (a, b) => a !== b))
-const NATION_OUTLINE = statePath(feature(usTopo, usTopo.objects.nation))
+// SVG US map with freight arcs — plain SVG, no map library. The projection
+// and pre-projected state outlines live in mapShared.js (shared with the
+// heat view).
 
 // Quadratic arc bowing toward the top of the map — reads as a flight path
 // and keeps direction unambiguous together with the dash-flow animation.

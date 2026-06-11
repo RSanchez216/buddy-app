@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useToast } from '../../../../contexts/ToastContext'
 import { S } from '../../../../lib/styles'
+import LaneHeatCanvas from './LaneHeatCanvas'
 import LaneMapCanvas from './LaneMapCanvas'
 import { aggregateLanes, fetchLaneLegs, fetchTrailerTypes, makeRpmScale, makeTypeColorMap, makeWidthScale, pickPayers, resolveLegTypes, RPM_NULL_COLOR, UNKNOWN_TYPE } from './laneData'
 import { fmtMoney, fmtNum, fmtRpm, formatRange, shiftYmd, spanDays, thisMonth, thisWeek } from '../spotlight/spotlightShared'
@@ -55,8 +56,15 @@ export default function LaneFlowMap() {
   const [range, setRange] = useState(thisWeek)
   const [basis, setBasis] = useState('delivery')
   const [view, setView] = useState('realized') // realized | booked
-  const [weight, setWeight] = useState('revenue') // arc thickness: revenue | loads
+  const [weight, setWeight] = useState('revenue') // intensity: revenue | loads | rpm (rpm is heat-only)
   const [colorBy, setColorBy] = useState('rpm') // arc color: rpm | type
+  const [mapMode, setMapMode] = useState('lanes') // lanes (arcs) | heat (density)
+  function switchMapMode(m) {
+    setMapMode(m)
+    // $/mile is an average — meaningful as heat intensity, not as arc
+    // thickness, so leaving Heat falls back to revenue weighting.
+    if (m === 'lanes' && weight === 'rpm') setWeight('revenue')
+  }
   const [sortKey, setSortKey] = useState('revenue')
   const [dispatcherSearchOpen, setDispatcherSearchOpen] = useState(false)
   const [dispatcherSearchQuery, setDispatcherSearchQuery] = useState('')
@@ -121,12 +129,16 @@ export default function LaneFlowMap() {
   const [typeFilterState, setTypeFilterState] = useState({ key: null, sel: null })
   const typeFilter = typeFilterState.key === dataKey ? typeFilterState.sel : null
   function toggleType(t) {
-    let next
-    if (!typeFilter) next = [t] // from "all", the first click isolates that type
-    else if (typeFilter.includes(t)) next = typeFilter.filter(x => x !== t)
-    else next = [...typeFilter, t]
-    if (!next.length || next.length >= typeOptions.length) next = null
-    setTypeFilterState({ key: dataKey, sel: next })
+    // Functional update so rapid clicks can't act on a stale selection.
+    setTypeFilterState(s => {
+      const cur = s.key === dataKey ? s.sel : null
+      let next
+      if (!cur) next = [t] // from "all", the first click isolates that type
+      else if (cur.includes(t)) next = cur.filter(x => x !== t)
+      else next = [...cur, t]
+      if (!next.length || next.length >= typeOptions.length) next = null
+      return { key: dataKey, sel: next }
+    })
   }
 
   const dispatchers = useMemo(() => {
@@ -159,7 +171,7 @@ export default function LaneFlowMap() {
     [loading, filteredLegs, view],
   )
   const rpmScale = useMemo(() => (agg ? makeRpmScale(agg.lanes) : null), [agg])
-  const widthFor = useMemo(() => (agg ? makeWidthScale(agg.lanes, weight) : null), [agg, weight])
+  const widthFor = useMemo(() => (agg ? makeWidthScale(agg.lanes, weight === 'rpm' ? 'revenue' : weight) : null), [agg, weight])
 
   const sortDef = LEADERBOARD_SORTS.find(s => s.key === sortKey) || LEADERBOARD_SORTS[0]
   const ranked = useMemo(() => (agg ? [...agg.lanes].sort(sortDef.fn) : []), [agg, sortDef])
@@ -194,6 +206,9 @@ export default function LaneFlowMap() {
     [agg, typeOptions],
   )
   const laneColorFor = colorBy === 'type' ? (lane) => typeColorFor(lane.trailerType) : null
+  // Isolating a single trailer type tints the heat ramp toward that type's
+  // color so a screenshot identifies itself.
+  const heatTint = typeFilter && typeFilter.length === 1 ? typeColorFor(typeFilter[0]) : null
   const dateCol = basis === 'pickup' ? 'pickup_date' : 'delivery_date'
 
   return (
@@ -217,12 +232,19 @@ export default function LaneFlowMap() {
       {/* ── Controls ── */}
       <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-center flex-wrap gap-2">
+          <Pills value={mapMode} onChange={switchMapMode} title="Lanes = origin→destination arcs · Heat = where freight concentrates"
+            options={[['lanes', 'Lanes'], ['heat', 'Heat']]} />
           <Pills value={view} onChange={setView} title="Realized = delivered revenue · Booked = projected revenue on upcoming loads"
             options={[['realized', 'Realized'], ['booked', 'Booked']]} />
-          <Pills value={weight} onChange={setWeight} title="What arc thickness represents"
-            options={[['revenue', 'Weight: revenue'], ['loads', 'Weight: loads']]} />
-          <Pills value={colorBy} onChange={setColorBy} title="Arc color: $/mile gradient, or one categorical color per trailer type"
-            options={[['rpm', 'Color: $/mi'], ['type', 'Color: type']]} />
+          <Pills value={weight} onChange={setWeight}
+            title={mapMode === 'heat' ? 'Heat intensity: revenue sum, load count, or revenue-weighted average $/mile' : 'What arc thickness represents'}
+            options={mapMode === 'heat'
+              ? [['revenue', 'Weight: revenue'], ['loads', 'Weight: loads'], ['rpm', 'Weight: $/mile']]
+              : [['revenue', 'Weight: revenue'], ['loads', 'Weight: loads']]} />
+          {mapMode === 'lanes' && (
+            <Pills value={colorBy} onChange={setColorBy} title="Arc color: $/mile gradient, or one categorical color per trailer type"
+              options={[['rpm', 'Color: $/mi'], ['type', 'Color: type']]} />
+          )}
           {typeOptions.length > 1 && (
             <div className="flex items-center gap-1 flex-wrap">
               {typeOptions.map(t => {
@@ -333,9 +355,9 @@ export default function LaneFlowMap() {
         <div className="rounded-3xl border border-gray-200 dark:border-white/10 bg-gradient-to-b from-white to-gray-50 dark:from-[#12132e] dark:to-[#0a0a18] overflow-hidden">
           <div className="flex items-center justify-between flex-wrap gap-2 px-5 pt-4">
             <p className="text-xs font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">
-              {view === 'booked' ? 'Booked flow' : 'Realized flow'} · {formatRange(range.from, range.to)}
+              {view === 'booked' ? 'Booked' : 'Realized'} {mapMode === 'heat' ? 'heat' : 'flow'} · {formatRange(range.from, range.to)}
             </p>
-            {colorBy === 'type' && typesPresent.length > 0 ? (
+            {mapMode === 'heat' ? null : colorBy === 'type' && typesPresent.length > 0 ? (
               <div className="flex items-center gap-2.5 flex-wrap text-[10px] text-gray-400 dark:text-slate-500">
                 {typesPresent.map(t => (
                   <span key={t} className="inline-flex items-center gap-1">
@@ -360,28 +382,43 @@ export default function LaneFlowMap() {
             </div>
           ) : (
             <div className="px-2 pb-1">
-              <LaneMapCanvas
-                lanes={agg.lanes}
-                cities={agg.cities}
-                colorFor={rpmScale.color}
-                widthFor={widthFor}
-                selectedKey={selectedKey}
-                onSelect={setSelected}
-                laneColorFor={laneColorFor || undefined}
-                typeColorFor={typeColorFor}
-              />
+              {/* Both layers stay mounted and cross-fade on toggle; the
+                  transition collapses under prefers-reduced-motion. */}
+              <div className="relative">
+                <div className={`transition-opacity duration-300 motion-reduce:transition-none ${mapMode === 'heat' ? 'opacity-0 pointer-events-none absolute inset-0' : 'opacity-100'}`} aria-hidden={mapMode === 'heat'}>
+                  <LaneMapCanvas
+                    lanes={agg.lanes}
+                    cities={agg.cities}
+                    colorFor={rpmScale.color}
+                    widthFor={widthFor}
+                    selectedKey={selectedKey}
+                    onSelect={setSelected}
+                    laneColorFor={laneColorFor || undefined}
+                    typeColorFor={typeColorFor}
+                  />
+                </div>
+                <div className={`transition-opacity duration-300 motion-reduce:transition-none ${mapMode === 'lanes' ? 'opacity-0 pointer-events-none absolute inset-0' : 'opacity-100'}`} aria-hidden={mapMode === 'lanes'}>
+                  <LaneHeatCanvas lanes={agg.lanes} metric={weight} tintColor={heatTint} />
+                </div>
+              </div>
             </div>
           )}
           <div className="flex items-center justify-between flex-wrap gap-2 px-5 pb-3 pt-1">
             <p className="text-[11px] text-gray-400 dark:text-slate-500">
               {agg && agg.coverage != null && agg.coverage < 1
                 ? `Geocode coverage: ${Math.round(agg.coverage * 100)}% of loads — the rest stay in the table below.`
-                : 'Hover an arc for the lane, click to pin it.'}
+                : mapMode === 'heat' ? 'Hover a hot area for what drives it.' : 'Hover an arc for the lane, click to pin it.'}
             </p>
-            <p className="text-[11px] text-gray-400 dark:text-slate-500 flex items-center gap-1.5">
-              <span className="inline-block w-4 h-0.5 rounded-full bg-gray-400 dark:bg-slate-400" style={{ height: 2 }} /> thin = light volume
-              <span className="inline-block w-4 rounded-full bg-gray-400 dark:bg-slate-400" style={{ height: 5 }} /> thick = heavy volume
-            </p>
+            {mapMode === 'heat' ? (
+              <p className="text-[11px] text-gray-400 dark:text-slate-500">
+                Each load glows at its origin and destination — brighter = more {weight === 'rpm' ? 'revenue per mile' : weight === 'loads' ? 'loads' : 'revenue'}.
+              </p>
+            ) : (
+              <p className="text-[11px] text-gray-400 dark:text-slate-500 flex items-center gap-1.5">
+                <span className="inline-block w-4 h-0.5 rounded-full bg-gray-400 dark:bg-slate-400" style={{ height: 2 }} /> thin = light volume
+                <span className="inline-block w-4 rounded-full bg-gray-400 dark:bg-slate-400" style={{ height: 5 }} /> thick = heavy volume
+              </p>
+            )}
           </div>
         </div>
 

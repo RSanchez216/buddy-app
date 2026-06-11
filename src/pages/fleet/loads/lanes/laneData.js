@@ -147,7 +147,7 @@ export function aggregateLanes(allLegs, view, { byType = false } = {}) {
 }
 
 // ── Scales ──────────────────────────────────────────────────────────────
-function lerpHex(a, b, t) {
+export function lerpHex(a, b, t) {
   const pa = [1, 3, 5].map(i => parseInt(a.slice(i, i + 2), 16))
   const pb = [1, 3, 5].map(i => parseInt(b.slice(i, i + 2), 16))
   return '#' + pa.map((v, i) => Math.round(v + (pb[i] - v) * t).toString(16).padStart(2, '0')).join('')
@@ -155,7 +155,7 @@ function lerpHex(a, b, t) {
 const RPM_STOPS = ['#f43f5e', '#fbbf24', '#34d399'] // weak → mid → strong $/mile
 export const RPM_NULL_COLOR = '#64748b'
 
-function quantile(sorted, p) {
+export function quantile(sorted, p) {
   if (!sorted.length) return 0
   const idx = (sorted.length - 1) * p
   const lo = Math.floor(idx), hi = Math.ceil(idx)
