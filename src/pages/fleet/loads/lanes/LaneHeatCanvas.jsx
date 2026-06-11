@@ -99,7 +99,7 @@ export default function LaneHeatCanvas({ lanes, metric, tintColor }) {
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto block select-none" role="img" aria-label="US map of freight density">
         <defs>
           <filter id="laneHeatBlur" x="-30%" y="-30%" width="160%" height="160%">
-            <feGaussianBlur stdDeviation={CELL * 0.5} />
+            <feGaussianBlur stdDeviation={CELL * 0.22} />
           </filter>
         </defs>
 
@@ -108,13 +108,15 @@ export default function LaneHeatCanvas({ lanes, metric, tintColor }) {
         <path d={STATES_OUTLINE} fill="none" strokeWidth="0.75" className="stroke-gray-300 dark:stroke-white/[0.07]" />
         <path d={NATION_OUTLINE} fill="none" strokeWidth="1" className="stroke-gray-300 dark:stroke-white/[0.12]" />
 
-        {/* Glow field — blurred cells read as a continuous surface */}
+        {/* Solid heat cells — full-strength color like the arc view (the soft
+            translucent look washed out on the light theme); a light blur only
+            smooths the cell edges, and hotter cells draw on top. */}
         <g filter="url(#laneHeatBlur)">
-          {drawn.map(c => {
+          {[...drawn].sort((a, b) => scale.t(valOf(a)) - scale.t(valOf(b))).map(c => {
             const t = scale.t(valOf(c))
             return (
               <rect key={c.key} x={c.cx * CELL} y={c.cy * CELL} width={CELL} height={CELL}
-                fill={rampColor(stops, t)} opacity={0.45 + t * 0.5} />
+                fill={rampColor(stops, t)} />
             )
           })}
         </g>
