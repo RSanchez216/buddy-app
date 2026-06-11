@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useToast } from '../../../../contexts/ToastContext'
 import { S } from '../../../../lib/styles'
 import LaneMapCanvas from './LaneMapCanvas'
@@ -48,15 +48,27 @@ export default function LaneFlowMap() {
   const [view, setView] = useState('realized') // realized | booked
   const [weight, setWeight] = useState('revenue') // arc thickness: revenue | loads
   const [sortKey, setSortKey] = useState('revenue')
-  const [dispatcherFilter, setDispatcherFilter] = useState(null) // null = all
   const [dispatcherSearchOpen, setDispatcherSearchOpen] = useState(false)
   const [dispatcherSearchQuery, setDispatcherSearchQuery] = useState('')
+  const dispatcherInputRef = useRef(null)
 
   // Fetched legs are stored with the period key they belong to, so a
   // period/basis change invalidates them by derivation (Spotlight pattern).
   const dataKey = `${range.from}|${range.to}|${basis}`
   const [legState, setLegState] = useState({ key: null, legs: null })
-  useEffect(() => { setDispatcherFilter(null) }, [dataKey])
+
+  // Dispatcher filter is keyed to the data window like the selection below —
+  // changing period/basis resets it by derivation, no reset effect needed.
+  const [dispFilterState, setDispFilterState] = useState({ key: null, id: null })
+  const dispatcherFilter = dispFilterState.key === dataKey ? dispFilterState.id : null
+  const setDispatcherFilter = useCallback((id) => setDispFilterState({ key: dataKey, id }), [dataKey])
+
+  const clearDispatcherFilter = useCallback((reopen) => {
+    setDispatcherFilter(null)
+    setDispatcherSearchQuery('')
+    setDispatcherSearchOpen(!!reopen)
+    if (reopen) dispatcherInputRef.current?.focus()
+  }, [setDispatcherFilter])
   useEffect(() => {
     let stale = false
     fetchLaneLegs({ from: range.from, to: range.to, basis })
@@ -154,15 +166,31 @@ export default function LaneFlowMap() {
           {dispatchers.length > 1 && (
             <div className="relative">
               <input
+                ref={dispatcherInputRef}
                 type="text"
                 value={dispatcherFilter ? (dispatchers.find(d => d.id === dispatcherFilter)?.name || '') : dispatcherSearchQuery}
-                onChange={e => { setDispatcherSearchQuery(e.target.value); setDispatcherSearchOpen(true) }}
+                onChange={e => {
+                  // Editing while a dispatcher is selected turns the text into a
+                  // fresh search — emptying the box can never leave a stale filter.
+                  if (dispatcherFilter) setDispatcherFilter(null)
+                  setDispatcherSearchQuery(e.target.value)
+                  setDispatcherSearchOpen(true)
+                }}
                 onFocus={() => setDispatcherSearchOpen(true)}
                 onBlur={() => setTimeout(() => setDispatcherSearchOpen(false), 150)}
-                placeholder={dispatcherFilter ? '—' : 'Filter dispatchers…'}
-                className={`${S.input} w-32 text-xs ${dispatcherFilter ? 'ring-2 ring-orange-400/50' : ''}`}
-                title="Search and filter by dispatcher"
+                onKeyDown={e => { if (e.key === 'Escape') clearDispatcherFilter(false) }}
+                placeholder="Filter dispatchers…"
+                className={`${S.input} w-32 text-xs ${dispatcherFilter ? 'pr-7 ring-2 ring-orange-400/50' : ''}`}
+                title="Search and filter by dispatcher — ✕ or Escape resets to all"
               />
+              {dispatcherFilter && (
+                <button
+                  onMouseDown={e => { e.preventDefault(); clearDispatcherFilter(true) }}
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 w-4 h-4 flex items-center justify-center rounded-full text-[10px] leading-none text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-white/10"
+                  title="Clear dispatcher filter (back to all dispatchers)"
+                  aria-label="Clear dispatcher filter"
+                >✕</button>
+              )}
               {dispatcherSearchOpen && (
                 <div className="absolute z-50 mt-1 w-48 rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-[#12132e] shadow-lg overflow-hidden">
                   <button
