@@ -4,6 +4,7 @@ import { S } from '../../../../lib/styles'
 import LaneHeatCanvas from './LaneHeatCanvas'
 import LaneMapCanvas from './LaneMapCanvas'
 import { aggregateLanes, fetchLaneLegs, fetchTrailerTypes, makeRpmScale, makeTypeColorMap, makeWidthScale, pickPayers, resolveLegTypes, RPM_NULL_COLOR, UNKNOWN_TYPE } from './laneData'
+import { binHeatCells } from './mapShared'
 import { fmtMoney, fmtNum, fmtRpm, formatRange, shiftYmd, spanDays, thisMonth, thisWeek } from '../spotlight/spotlightShared'
 
 // Lane Flow Map — where the money moves, geographically. Every leg in the
@@ -39,6 +40,34 @@ function TypeBadge({ type, color }) {
       <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: color }} />
       {type}
     </span>
+  )
+}
+
+// One load-leg line item — shared by the "Loads on this lane" card (arc
+// click) and the "Loads in this area" card (heat-spot click).
+function LegRow({ leg, dateCol, rpmScale, showLane }) {
+  const legRpm = leg.leg_total_miles > 0 ? leg.leg_revenue / leg.leg_total_miles : null
+  return (
+    <li className="px-4 py-2.5 flex items-center justify-between gap-3 text-xs">
+      <div className="min-w-0">
+        <p className="font-medium text-gray-900 dark:text-slate-200 truncate">
+          #{leg.load_number || leg.load_id}
+          {leg.is_projected && <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-50 dark:bg-cyan-500/10 text-cyan-700 dark:text-cyan-400">Booked</span>}
+        </p>
+        {showLane && <p className="text-gray-400 dark:text-slate-500 truncate text-[11px]">{leg.origin} → {leg.destination}</p>}
+        <p className="text-gray-400 dark:text-slate-500 truncate">{leg[dateCol] || '—'} · {leg.customer_name || '—'}</p>
+        <p className="text-gray-400 dark:text-slate-500 truncate text-[11px]">Dispatcher: {leg.dispatcher_name || '—'}</p>
+        <p className="text-gray-400 dark:text-slate-500 truncate text-[11px]">Driver: {leg.driver_display || '—'}</p>
+        <p className="text-gray-400 dark:text-slate-500 truncate text-[11px]">Trailer: {leg.trailer_display || '—'}{leg.trailer_type ? ` · ${leg.trailer_type}` : ''}</p>
+      </div>
+      <div className="text-right shrink-0">
+        <p className="font-mono text-gray-900 dark:text-slate-200">{fmtMoney(leg.leg_revenue)}</p>
+        <p className="font-mono text-[11px]" style={{ color: rpmScale ? rpmScale.color(legRpm) : undefined }}>
+          {legRpm != null ? `${fmtRpm(legRpm)}/mi` : '—'}
+        </p>
+        <p className="font-mono text-gray-400 dark:text-slate-500">{fmtNum(leg.leg_total_miles)} mi</p>
+      </div>
+    </li>
   )
 }
 
@@ -187,6 +216,14 @@ export default function LaneFlowMap() {
   const selectedKey = selState.key === selKey ? selState.lane : null
   const setSelected = useCallback((lane) => setSelState({ key: selKey, lane }), [selKey])
   const selectedLane = selectedKey && agg ? agg.lanes.find(l => l.key === selectedKey) : null
+
+  // Heat-spot selection mirrors the lane selection: clicking a hot cell pins
+  // it and the side panel lists the loads touching that area.
+  const heatCells = useMemo(() => (agg ? binHeatCells(agg.lanes) : []), [agg])
+  const [heatCellState, setHeatCellState] = useState({ key: null, cell: null })
+  const selectedCellKey = heatCellState.key === selKey ? heatCellState.cell : null
+  const setSelectedCell = useCallback((k) => setHeatCellState({ key: selKey, cell: k }), [selKey])
+  const selectedCell = selectedCellKey ? heatCells.find(c => c.key === selectedCellKey) : null
 
   function setPresetRange(p) {
     setPreset(p)
@@ -396,7 +433,8 @@ export default function LaneFlowMap() {
                   />
                 </div>
                 <div className={`transition-opacity duration-300 motion-reduce:transition-none ${mapMode === 'lanes' ? 'opacity-0 pointer-events-none absolute inset-0' : 'opacity-100'}`} aria-hidden={mapMode === 'lanes'}>
-                  <LaneHeatCanvas lanes={agg.lanes} metric={weight} tintColor={heatTint} />
+                  <LaneHeatCanvas cells={heatCells} metric={weight} tintColor={heatTint}
+                    selectedKey={selectedCellKey} onSelect={setSelectedCell} />
                 </div>
               </div>
             </div>
@@ -492,30 +530,24 @@ export default function LaneFlowMap() {
                 <button onClick={() => setSelected(null)} className="text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 text-sm leading-none px-1" title="Clear selection">✕</button>
               </div>
               <ul className="divide-y divide-gray-50 dark:divide-white/[0.03] max-h-72 overflow-y-auto">
-                {selectedLane.legs.map(leg => {
-                  const legRpm = leg.leg_total_miles > 0 ? leg.leg_revenue / leg.leg_total_miles : null
-                  return (
-                    <li key={leg.leg_id} className="px-4 py-2.5 flex items-center justify-between gap-3 text-xs">
-                      <div className="min-w-0">
-                        <p className="font-medium text-gray-900 dark:text-slate-200 truncate">
-                          #{leg.load_number || leg.load_id}
-                          {leg.is_projected && <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-50 dark:bg-cyan-500/10 text-cyan-700 dark:text-cyan-400">Booked</span>}
-                        </p>
-                        <p className="text-gray-400 dark:text-slate-500 truncate">{leg[dateCol] || '—'} · {leg.customer_name || '—'}</p>
-                        <p className="text-gray-400 dark:text-slate-500 truncate text-[11px]">Dispatcher: {leg.dispatcher_name || '—'}</p>
-                        <p className="text-gray-400 dark:text-slate-500 truncate text-[11px]">Driver: {leg.driver_display || '—'}</p>
-                        <p className="text-gray-400 dark:text-slate-500 truncate text-[11px]">Trailer: {leg.trailer_display || '—'}{leg.trailer_type ? ` · ${leg.trailer_type}` : ''}</p>
-                      </div>
-                      <div className="text-right shrink-0">
-                        <p className="font-mono text-gray-900 dark:text-slate-200">{fmtMoney(leg.leg_revenue)}</p>
-                        <p className="font-mono text-[11px]" style={{ color: rpmScale ? rpmScale.color(legRpm) : undefined }}>
-                          {legRpm != null ? `${fmtRpm(legRpm)}/mi` : '—'}
-                        </p>
-                        <p className="font-mono text-gray-400 dark:text-slate-500">{fmtNum(leg.leg_total_miles)} mi</p>
-                      </div>
-                    </li>
-                  )
-                })}
+                {selectedLane.legs.map(leg => <LegRow key={leg.leg_id} leg={leg} dateCol={dateCol} rpmScale={rpmScale} />)}
+              </ul>
+            </div>
+          )}
+
+          {/* Loads touching the pinned heat spot (heat view's lane click) */}
+          {mapMode === 'heat' && selectedCell && (
+            <div className={`${S.card} overflow-hidden`}>
+              <div className="flex items-start justify-between gap-2 px-4 py-3 border-b border-gray-100 dark:border-white/5">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">Loads in this area</p>
+                  <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{selectedCell.topCity || 'Selected area'}</p>
+                  <p className="text-[11px] text-gray-400 dark:text-slate-500">{selectedCell.legs.length} load{selectedCell.legs.length === 1 ? '' : 's'} · {fmtMoney(selectedCell.revenue)} touching</p>
+                </div>
+                <button onClick={() => setSelectedCell(null)} className="text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 text-sm leading-none px-1" title="Clear selection">✕</button>
+              </div>
+              <ul className="divide-y divide-gray-50 dark:divide-white/[0.03] max-h-72 overflow-y-auto">
+                {selectedCell.legs.map(leg => <LegRow key={leg.leg_id} leg={leg} dateCol={dateCol} rpmScale={rpmScale} showLane />)}
               </ul>
             </div>
           )}

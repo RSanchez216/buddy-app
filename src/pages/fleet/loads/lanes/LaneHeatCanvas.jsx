@@ -1,15 +1,13 @@
 import { useMemo, useRef, useState } from 'react'
 import { lerpHex, quantile } from './laneData'
-import { MAP_W as W, MAP_H as H, NATION_OUTLINE, projection, STATES_OUTLINE } from './mapShared'
+import { HEAT_CELL as CELL, MAP_W as W, MAP_H as H, NATION_OUTLINE, STATES_OUTLINE } from './mapShared'
 import { fmtMoney, fmtNum, fmtRpm } from '../spotlight/spotlightShared'
 
 // Heat view: the same filtered legs as the arc view, binned into a square
-// grid over the same AlbersUSA frame and blurred into a glowing density
-// field — no mapping dependency beyond what the arcs already use. Each leg
-// contributes its geocoded origin and destination point; off-map legs are
-// excluded exactly as in the arc view.
-
-const CELL = 26 // grid cell size in the 975×610 projected frame
+// grid (binHeatCells in mapShared) over the same AlbersUSA frame — no
+// mapping dependency beyond what the arcs already use. Clicking a hot spot
+// selects its cell so the page can show the loads behind it, mirroring the
+// arc view's lane click.
 
 // Google-Maps-style heat: every cell stamps a soft radial *density* splat;
 // overlapping splats accumulate, and an SVG color-transfer filter maps the
@@ -46,42 +44,10 @@ const METRIC_META = {
   rpm: { label: 'Avg $/mile (revenue-weighted)', fmt: (v) => `${fmtRpm(v)}/mi` },
 }
 
-export default function LaneHeatCanvas({ lanes, metric, tintColor }) {
+export default function LaneHeatCanvas({ cells, metric, tintColor, selectedKey, onSelect }) {
   const wrapRef = useRef(null)
   const [hover, setHover] = useState(null) // { key, x, y, w }
-
-  const grid = useMemo(() => {
-    const cells = new Map()
-    for (const lane of lanes) {
-      if (!lane.geocoded) continue
-      const o = projection([lane.oCoord[1], lane.oCoord[0]])
-      const d = projection([lane.dCoord[1], lane.dCoord[0]])
-      if (!o || !d) continue
-      for (const leg of lane.legs) {
-        const revenue = Number(leg.leg_revenue) || 0
-        const miles = Number(leg.leg_total_miles) || 0
-        const rpm = miles > 0 ? revenue / miles : null
-        for (const [p, city] of [[o, lane.origin], [d, lane.destination]]) {
-          const cx = Math.floor(p[0] / CELL), cy = Math.floor(p[1] / CELL)
-          const key = `${cx},${cy}`
-          let c = cells.get(key)
-          if (!c) { c = { key, cx, cy, revenue: 0, loads: 0, wNum: 0, wDen: 0, cities: new Map() }; cells.set(key, c) }
-          c.revenue += revenue
-          c.loads++
-          // $/mile is an average, never a sum: revenue-weighted so one hot
-          // load outweighs many cheap ones, and unpriced legs don't drag.
-          if (rpm != null) { c.wNum += rpm * revenue; c.wDen += revenue }
-          c.cities.set(city, (c.cities.get(city) || 0) + revenue)
-        }
-      }
-    }
-    const list = [...cells.values()]
-    for (const c of list) {
-      c.rpm = c.wDen > 0 ? c.wNum / c.wDen : null
-      c.topCity = [...c.cities.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || null
-    }
-    return list
-  }, [lanes])
+  const grid = cells
 
   const scale = useMemo(() => {
     const vals = grid.map(c => (metric === 'rpm' ? c.rpm : c[metric])).filter(v => v != null && v > 0).sort((a, b) => a - b)
@@ -146,11 +112,25 @@ export default function LaneHeatCanvas({ lanes, metric, tintColor }) {
           ))}
         </g>
 
-        {/* Invisible hit cells for the tooltip (drawn unblurred, on top) */}
+        {/* Selection ring — pinned hot spot, like a pinned arc in the lane view */}
+        {selectedKey && (() => {
+          const c = drawn.find(x => x.key === selectedKey)
+          if (!c) return null
+          const cx = (c.cx + 0.5) * CELL, cy = (c.cy + 0.5) * CELL
+          return (
+            <g pointerEvents="none">
+              <circle cx={cx} cy={cy} r={CELL * 0.95} fill="none" strokeWidth="4.5" opacity="0.85" className="stroke-white dark:stroke-[#0a0a18]" />
+              <circle cx={cx} cy={cy} r={CELL * 0.95} fill="none" stroke="#f97316" strokeWidth="2.25" />
+            </g>
+          )
+        })()}
+
+        {/* Invisible hit cells for hover + click (drawn unblurred, on top) */}
         {drawn.map(c => (
           <rect key={`hit-${c.key}`} x={c.cx * CELL} y={c.cy * CELL} width={CELL} height={CELL}
             fill="transparent" className="cursor-pointer"
-            onMouseMove={e => move(e, c.key)} onMouseLeave={() => setHover(null)} />
+            onMouseMove={e => move(e, c.key)} onMouseLeave={() => setHover(null)}
+            onClick={() => onSelect && onSelect(c.key === selectedKey ? null : c.key)} />
         ))}
       </svg>
 
