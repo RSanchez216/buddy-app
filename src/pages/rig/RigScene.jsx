@@ -1,0 +1,572 @@
+/* eslint-disable react-hooks/immutability -- a three.js scene graph is
+   imperatively mutated by design (fog, light colors, texture offsets, wheel
+   rotations are per-frame mutations); the rule models React state, not GL. */
+/*
+ * The Rig — interactive 3D company-health scene.
+ *
+ * Models are free community assets from Sketchfab (CC Attribution),
+ * compressed with gltf-transform (draco + webp, node hierarchy preserved):
+ *  - /models/tractor.glb        — "Freightliner Cascadia 2020"
+ *                                 TODO: fill exact Sketchfab author credit
+ *  - /models/trailer-dryvan.glb — "Truck Trailer Free"
+ *                                 TODO: fill exact Sketchfab author credit
+ */
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import * as THREE from 'three'
+import { Canvas, useFrame, useThree } from '@react-three/fiber'
+import {
+  ContactShadows,
+  Decal,
+  Environment,
+  Html,
+  OrbitControls,
+  useGLTF,
+  useTexture,
+} from '@react-three/drei'
+import {
+  FIFTH_WHEEL_Z,
+  MANAS_LOGO_URL,
+  MOCK_TOP_CUSTOMER,
+  RIG_STATES,
+  TRACTOR_URL,
+  TRAILER_GROUP_Z,
+  TRAILER_SCALE,
+  TRAILER_URL,
+  WHEEL_RADIUS,
+} from './rigConfig'
+import {
+  makeAsphaltTexture,
+  makeCustomerWordmarkTexture,
+  makeLaneDashTexture,
+  makePlankTexture,
+  makeReflectiveTapeTexture,
+} from './rigTextures'
+
+useGLTF.preload(TRACTOR_URL)
+useGLTF.preload(TRAILER_URL)
+useTexture.preload(MANAS_LOGO_URL)
+
+const DAMP = 2.4 // ≈96% settled in ~1.5s
+
+/* ------------------------------------------------------------------ */
+/* Atmosphere: fog, background, lights, env intensity — all lerped     */
+/* toward the active state's targets so the weather shifts, not snaps. */
+/* ------------------------------------------------------------------ */
+function Atmosphere({ rigState, animRef }) {
+  const scene = useThree((s) => s.scene)
+  const keyRef = useRef()
+  const rimRef = useRef()
+  const hemiRef = useRef()
+
+  const cur = useRef(null)
+  if (cur.current === null) {
+    const s = RIG_STATES[rigState]
+    cur.current = {
+      bg: new THREE.Color(s.bg),
+      fogColor: new THREE.Color(s.fogColor),
+      fogNear: s.fogNear,
+      fogFar: s.fogFar,
+      keyColor: new THREE.Color(s.keyColor),
+      keyIntensity: s.keyIntensity,
+      rimColor: new THREE.Color(s.rimColor),
+      rimIntensity: s.rimIntensity,
+      hemiIntensity: s.hemiIntensity,
+      envIntensity: s.envIntensity,
+      laneSpeed: s.laneSpeed,
+      bobAmp: s.bobAmp,
+      bobFreq: s.bobFreq,
+      tilt: s.tilt,
+      shudder: s.shudder,
+    }
+  }
+
+  useEffect(() => {
+    const fog = new THREE.Fog(cur.current.fogColor.clone(), cur.current.fogNear, cur.current.fogFar)
+    scene.fog = fog
+    scene.background = cur.current.bg.clone()
+    return () => {
+      scene.fog = null
+      scene.background = null
+    }
+  }, [scene])
+
+  useFrame((_, rawDt) => {
+    const dt = Math.min(rawDt, 0.1)
+    const t = RIG_STATES[rigState]
+    const c = cur.current
+    const k = 1 - Math.exp(-DAMP * dt)
+
+    c.bg.lerp(_tmpColor.set(t.bg), k)
+    c.fogColor.lerp(_tmpColor.set(t.fogColor), k)
+    c.fogNear = THREE.MathUtils.damp(c.fogNear, t.fogNear, DAMP, dt)
+    c.fogFar = THREE.MathUtils.damp(c.fogFar, t.fogFar, DAMP, dt)
+    c.keyColor.lerp(_tmpColor.set(t.keyColor), k)
+    c.keyIntensity = THREE.MathUtils.damp(c.keyIntensity, t.keyIntensity, DAMP, dt)
+    c.rimColor.lerp(_tmpColor.set(t.rimColor), k)
+    c.rimIntensity = THREE.MathUtils.damp(c.rimIntensity, t.rimIntensity, DAMP, dt)
+    c.hemiIntensity = THREE.MathUtils.damp(c.hemiIntensity, t.hemiIntensity, DAMP, dt)
+    c.envIntensity = THREE.MathUtils.damp(c.envIntensity, t.envIntensity, DAMP, dt)
+    c.laneSpeed = THREE.MathUtils.damp(c.laneSpeed, t.laneSpeed, DAMP, dt)
+    c.bobAmp = THREE.MathUtils.damp(c.bobAmp, t.bobAmp, DAMP, dt)
+    c.bobFreq = THREE.MathUtils.damp(c.bobFreq, t.bobFreq, DAMP, dt)
+    c.tilt = THREE.MathUtils.damp(c.tilt, t.tilt, DAMP, dt)
+    c.shudder = THREE.MathUtils.damp(c.shudder, t.shudder, DAMP, dt)
+
+    if (scene.fog) {
+      scene.fog.color.copy(c.fogColor)
+      scene.fog.near = c.fogNear
+      scene.fog.far = c.fogFar
+    }
+    if (scene.background?.isColor) scene.background.copy(c.bg)
+    scene.environmentIntensity = c.envIntensity
+    if (keyRef.current) {
+      keyRef.current.color.copy(c.keyColor)
+      keyRef.current.intensity = c.keyIntensity
+    }
+    if (rimRef.current) {
+      rimRef.current.color.copy(c.rimColor)
+      rimRef.current.intensity = c.rimIntensity
+    }
+    if (hemiRef.current) hemiRef.current.intensity = c.hemiIntensity
+
+    animRef.current.speed = c.laneSpeed
+    animRef.current.bobAmp = c.bobAmp
+    animRef.current.bobFreq = c.bobFreq
+    animRef.current.tilt = c.tilt
+    animRef.current.shudder = c.shudder
+  })
+
+  return (
+    <>
+      <directionalLight
+        ref={keyRef}
+        position={[9, 13, 7]}
+        castShadow
+        shadow-mapSize={[1024, 1024]}
+        shadow-camera-left={-16}
+        shadow-camera-right={16}
+        shadow-camera-top={16}
+        shadow-camera-bottom={-16}
+        shadow-camera-far={45}
+        shadow-bias={-0.0004}
+      />
+      <directionalLight ref={rimRef} position={[-11, 6, -16]} />
+      <hemisphereLight ref={hemiRef} args={['#27344c', '#06070c']} />
+      <Suspense fallback={null}>
+        <Environment preset={RIG_STATES[rigState].envPreset} background={false} />
+      </Suspense>
+    </>
+  )
+}
+const _tmpColor = new THREE.Color()
+
+/* ------------------------------------------------------------------ */
+/* Road: asphalt plane + animated dashed lane lines + solid edge lines */
+/* ------------------------------------------------------------------ */
+function Road({ animRef }) {
+  const asphalt = useMemo(() => makeAsphaltTexture(), [])
+  const dash = useMemo(() => {
+    const t = makeLaneDashTexture()
+    t.repeat.set(1, 40)
+    return t
+  }, [])
+  const DASH_TILE = 6 // meters of road per dash tile (240 / 40)
+
+  useFrame((_, dt) => {
+    // Rig faces +z and "drives" forward: dashes flow toward −z.
+    dash.offset.y += (animRef.current.speed * Math.min(dt, 0.1)) / DASH_TILE
+  })
+
+  return (
+    <group>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+        <planeGeometry args={[300, 300]} />
+        <meshStandardMaterial map={asphalt} color="#9aa0ad" roughness={0.94} metalness={0} />
+      </mesh>
+      {[-1.85, 1.85].map((x) => (
+        <mesh key={x} rotation={[-Math.PI / 2, 0, 0]} position={[x, 0.012, -8]}>
+          <planeGeometry args={[0.15, 240]} />
+          <meshBasicMaterial map={dash} color="#cdd5e2" transparent toneMapped={false} />
+        </mesh>
+      ))}
+      {[-5.6, 5.6].map((x) => (
+        <mesh key={x} rotation={[-Math.PI / 2, 0, 0]} position={[x, 0.01, -8]}>
+          <planeGeometry args={[0.12, 240]} />
+          <meshBasicMaterial color="#3c4253" toneMapped={false} />
+        </mesh>
+      ))}
+    </group>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Tractor: spins its wheels. Wheel meshes live under the GLB group    */
+/* "ruedas de camion_42" with pivots baked at the model origin, so we  */
+/* recenter each wheel geometry on its own hub once (idempotent).      */
+/* ------------------------------------------------------------------ */
+function Tractor({ animRef }) {
+  const { scene } = useGLTF(TRACTOR_URL)
+  const spinRef = useRef([])
+  const logo = useTexture(MANAS_LOGO_URL)
+  const logoAspect = logo.image ? logo.image.width / logo.image.height : 1
+  const [cabMesh, setCabMesh] = useState(null)
+
+  useEffect(() => {
+    logo.colorSpace = THREE.SRGBColorSpace
+  }, [logo])
+
+  useEffect(() => {
+    const spin = []
+    let wheelsGroup = null
+    let cab = null
+    let cabSize = 0
+    scene.traverse((o) => {
+      if (/^ruedas/i.test(o.name)) wheelsGroup = o
+      if (o.isMesh) {
+        o.castShadow = true
+        // Cab body (material "AZUL") — decal target for door logos.
+        if (o.material && /azul/i.test(o.material.name)) {
+          if (!o.geometry.boundingBox) o.geometry.computeBoundingBox()
+          const s = o.geometry.boundingBox.getSize(new THREE.Vector3())
+          if (s.x * s.y * s.z > cabSize) {
+            cabSize = s.x * s.y * s.z
+            cab = o
+          }
+        }
+      }
+    })
+    wheelsGroup?.traverse((o) => {
+      if (!o.isMesh) return
+      const geo = o.geometry
+      if (!geo.userData.wheelCenter) {
+        geo.computeBoundingBox()
+        const size = geo.boundingBox.getSize(new THREE.Vector3())
+        // wheel-shaped: round in YZ, thin along the X axle
+        const round = Math.abs(size.y - size.z) < 0.2 * Math.max(size.y, size.z)
+        if (!round || size.x > Math.max(size.y, size.z) * 1.2) return
+        const center = geo.boundingBox.getCenter(new THREE.Vector3())
+        geo.translate(-center.x, -center.y, -center.z)
+        geo.userData.wheelCenter = center
+      }
+      o.position.copy(geo.userData.wheelCenter)
+      spin.push(o)
+    })
+    spinRef.current = spin
+    setCabMesh(cab)
+  }, [scene])
+
+  useFrame((_, dt) => {
+    const w = (animRef.current.speed / WHEEL_RADIUS) * Math.min(dt, 0.1)
+    for (const wheel of spinRef.current) wheel.rotation.x += w
+  })
+
+  return (
+    <group>
+      <primitive object={scene} />
+      {cabMesh &&
+        [1, -1].map((side) => (
+          <Decal
+            key={side}
+            mesh={{ current: cabMesh }}
+            position={[side * 1.45, 2.1, -1.45]}
+            rotation={[0, (side * Math.PI) / 2, 0]}
+            scale={[0.85, 0.85 / logoAspect, 0.8]}
+          >
+            <meshStandardMaterial
+              map={logo}
+              transparent
+              polygonOffset
+              polygonOffsetFactor={-10}
+              depthWrite={false}
+              roughness={0.5}
+            />
+          </Decal>
+        ))}
+    </group>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Trailer variants                                                    */
+/* ------------------------------------------------------------------ */
+
+// Side branding as wall-hugging planes (trailer-local units, 1 ≈ 0.315 m).
+// drei <Decal> projects in world space, which misplaces inside this scaled
+// group — and the van walls are flat, so planes are visually identical.
+function SideBranding({ map, aspect, y, width }) {
+  return [1, -1].map((side) => (
+    <mesh key={side} position={[side * 3.58, y, -20]} rotation={[0, (side * Math.PI) / 2, 0]}>
+      <planeGeometry args={[width, width / aspect]} />
+      <meshStandardMaterial
+        map={map}
+        transparent
+        polygonOffset
+        polygonOffsetFactor={-10}
+        depthWrite={false}
+        roughness={0.5}
+      />
+    </mesh>
+  ))
+}
+
+function VanTrailer({ variant }) {
+  const { scene } = useGLTF(TRAILER_URL)
+  const logo = useTexture(MANAS_LOGO_URL)
+  const logoAspect = logo.image ? logo.image.width / logo.image.height : 1
+
+  const model = useMemo(() => {
+    const model = scene.clone(true)
+    let bodyMat = null
+    model.traverse((o) => {
+      if (!o.isMesh) return
+      o.castShadow = true
+      if (variant !== 'dryvan' && o.material && /trailer_white/i.test(o.material.name)) {
+        if (!bodyMat) {
+          bodyMat = o.material.clone()
+          if (variant === 'reefer') {
+            bodyMat.color.set('#eef2f4')
+            bodyMat.roughness = 0.35
+          } else if (variant === 'customer') {
+            bodyMat.color.set('#0f81dd') // deep #1399FF-family blue
+            bodyMat.roughness = 0.45
+          }
+        }
+        o.material = bodyMat
+      }
+    })
+    return model
+  }, [scene, variant])
+
+  const wordmark = useMemo(
+    () => (variant === 'customer' ? makeCustomerWordmarkTexture(MOCK_TOP_CUSTOMER.replace(/ Inc$/i, '')) : null),
+    [variant],
+  )
+
+  return (
+    <group scale={TRAILER_SCALE}>
+      <primitive object={model} />
+      {variant !== 'customer' && <SideBranding map={logo} aspect={logoAspect} y={8.9} width={7.5} />}
+      {variant === 'customer' && wordmark && (
+        <SideBranding map={wordmark} aspect={1024 / 192} y={7.6} width={24} />
+      )}
+      {variant === 'reefer' && <ReeferUnit />}
+    </group>
+  )
+}
+
+// Procedural refrigeration unit on the trailer's front face (local units).
+function ReeferUnit() {
+  return (
+    <group position={[0, 5.2, -1.85]}>
+      <mesh castShadow>
+        <boxGeometry args={[5.2, 6, 1.3]} />
+        <meshStandardMaterial color="#2b2e35" roughness={0.55} metalness={0.35} />
+      </mesh>
+      {[1.2, 0.3, -0.6, -1.5].map((y) => (
+        <mesh key={y} position={[0, y, 0.68]}>
+          <boxGeometry args={[4.4, 0.28, 0.06]} />
+          <meshStandardMaterial color="#15171c" roughness={0.8} />
+        </mesh>
+      ))}
+      <mesh position={[0, -2.4, 0.4]} castShadow>
+        <boxGeometry args={[3.2, 1.1, 1.9]} />
+        <meshStandardMaterial color="#1d1f25" roughness={0.6} metalness={0.3} />
+      </mesh>
+    </group>
+  )
+}
+
+// Procedural flatbed, built in real-world meters. Front face sits at the
+// same world z as the van variants' front face.
+function Flatbed() {
+  const planks = useMemo(() => makePlankTexture(), [])
+  const tape = useMemo(() => makeReflectiveTapeTexture(), [])
+  const wheelGeo = useMemo(() => new THREE.CylinderGeometry(0.5, 0.5, 0.95, 24), [])
+  const axles = [-10.3, -11.7]
+
+  return (
+    <group position={[0, 0, -0.77]}>
+      {/* deck */}
+      <mesh position={[0, 1.38, -6.5]} castShadow>
+        <boxGeometry args={[2.6, 0.26, 13]} />
+        <meshStandardMaterial color="#23262d" roughness={0.6} metalness={0.5} />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 1.515, -6.5]}>
+        <planeGeometry args={[2.52, 12.9]} />
+        <meshStandardMaterial map={planks} roughness={0.85} />
+      </mesh>
+      {/* side rails with reflective tape */}
+      {[1, -1].map((side) => (
+        <mesh key={side} rotation={[0, (side * Math.PI) / 2, 0]} position={[side * 1.305, 1.38, -6.5]}>
+          <planeGeometry args={[12.9, 0.18]} />
+          <meshStandardMaterial map={tape} roughness={0.4} />
+        </mesh>
+      ))}
+      {/* frame rails + kingpin riser */}
+      {[0.55, -0.55].map((x) => (
+        <mesh key={x} position={[x, 1.05, -6.8]} castShadow>
+          <boxGeometry args={[0.14, 0.34, 11.6]} />
+          <meshStandardMaterial color="#15161b" roughness={0.85} />
+        </mesh>
+      ))}
+      <mesh position={[0, 1.15, -0.9]}>
+        <boxGeometry args={[1.1, 0.28, 1.7]} />
+        <meshStandardMaterial color="#1a1c22" roughness={0.8} />
+      </mesh>
+      {/* rear axle group */}
+      {axles.map((z) =>
+        [1, -1].map((side) => (
+          <group key={`${z}${side}`} position={[side * 0.82, 0.5, z]}>
+            <mesh geometry={wheelGeo} rotation={[0, 0, Math.PI / 2]} castShadow>
+              <meshStandardMaterial color="#141519" roughness={0.92} />
+            </mesh>
+            <mesh rotation={[0, (side * Math.PI) / 2, 0]} position={[side * 0.49, 0, 0]}>
+              <circleGeometry args={[0.26, 20]} />
+              <meshStandardMaterial color="#3b3f48" roughness={0.5} metalness={0.6} />
+            </mesh>
+          </group>
+        )),
+      )}
+      <mesh position={[0, 0.5, -11]} rotation={[0, 0, Math.PI / 2]}>
+        <cylinderGeometry args={[0.09, 0.09, 2.1, 10]} />
+        <meshStandardMaterial color="#1a1c22" roughness={0.8} />
+      </mesh>
+    </group>
+  )
+}
+
+// Swap wrapper: shrink the outgoing trailer, then mount and grow the new
+// one (~200 ms each way). All variants share the hitch position.
+function Trailer({ type }) {
+  const [shown, setShown] = useState(type)
+  const pivotRef = useRef()
+
+  useFrame((_, dt) => {
+    const g = pivotRef.current
+    if (!g) return
+    const target = shown === type ? 1 : 0.001
+    const next = THREE.MathUtils.damp(g.scale.x, target, 16, Math.min(dt, 0.1))
+    g.scale.setScalar(next)
+    if (shown !== type && next < 0.05) setShown(type)
+  })
+
+  return (
+    <group position={[0, 0, TRAILER_GROUP_Z]}>
+      {/* pivot at trailer mid so the swap scales around its center */}
+      <group position={[0, 1.9, -7.2]}>
+        <group ref={pivotRef}>
+          <group position={[0, -1.9, 7.2]}>
+            {shown === 'flatbed' ? <Flatbed /> : <VanTrailer variant={shown} />}
+          </group>
+        </group>
+      </group>
+    </group>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Rig: tractor + trailer with suspension bob / tilt / shudder         */
+/* ------------------------------------------------------------------ */
+function Rig({ animRef, trailerType }) {
+  const groupRef = useRef()
+
+  useFrame(({ clock }) => {
+    const g = groupRef.current
+    if (!g) return
+    const a = animRef.current
+    const t = clock.elapsedTime
+    const bob = Math.sin(t * a.bobFreq * Math.PI * 2) * a.bobAmp
+    // occasional shudder burst (headwind only)
+    const window_ = Math.max(0, Math.sin(t * 0.6) - 0.9) * 10
+    const shudder = a.shudder * window_ * Math.sin(t * 41) * 0.004
+    g.position.y = bob + shudder * 0.4
+    g.rotation.x = a.tilt + bob * 0.12
+    g.rotation.z = shudder
+  })
+
+  return (
+    <group ref={groupRef}>
+      <Tractor animRef={animRef} />
+      <Trailer type={trailerType} />
+    </group>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Controls: damped orbit, framed distances, never under the road.     */
+/* Auto-rotates slowly after 8 s idle.                                 */
+/* ------------------------------------------------------------------ */
+function RigControls() {
+  const controlsRef = useRef()
+  const nowRef = useRef(0)
+  const lastInteractRef = useRef(-20)
+
+  useFrame(({ clock }) => {
+    nowRef.current = clock.elapsedTime
+    const c = controlsRef.current
+    if (c) c.autoRotate = nowRef.current - lastInteractRef.current > 8
+  })
+
+  return (
+    <OrbitControls
+      ref={controlsRef}
+      makeDefault
+      target={[0, 1.8, -8.5]}
+      enableDamping
+      dampingFactor={0.08}
+      enablePan={false}
+      minDistance={8}
+      maxDistance={30}
+      minPolarAngle={0.3}
+      maxPolarAngle={1.45}
+      autoRotateSpeed={0.3}
+      onStart={() => {
+        lastInteractRef.current = Infinity
+      }}
+      onEnd={() => {
+        lastInteractRef.current = nowRef.current
+      }}
+    />
+  )
+}
+
+function SceneLoader() {
+  return (
+    <Html center>
+      <div className="flex flex-col items-center gap-3" style={{ pointerEvents: 'none' }}>
+        <div className="h-3 w-3 rounded-full bg-[#e9c984] animate-ping" />
+        <div className="text-[11px] tracking-[0.35em] text-[#e9c984]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+          LOADING RIG
+        </div>
+      </div>
+    </Html>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+export default function RigScene({ rigState, trailerType }) {
+  const animRef = useRef({
+    speed: RIG_STATES[rigState].laneSpeed,
+    bobAmp: 0.02,
+    bobFreq: 1.3,
+    tilt: 0,
+    shudder: 0,
+  })
+
+  return (
+    <Canvas
+      shadows
+      dpr={[1, 2]}
+      camera={{ position: [15.5, 5, 9], fov: 40 }}
+      gl={{ antialias: true }}
+    >
+      <Atmosphere rigState={rigState} animRef={animRef} />
+      <Suspense fallback={<SceneLoader />}>
+        <Road animRef={animRef} />
+        <Rig animRef={animRef} trailerType={trailerType} />
+        <ContactShadows position={[0, 0.005, -7]} scale={34} far={4} blur={2.2} opacity={0.55} resolution={512} frames={Infinity} />
+      </Suspense>
+      <RigControls />
+    </Canvas>
+  )
+}
