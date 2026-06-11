@@ -445,6 +445,12 @@ function Tractor({ animRef }) {
       }
       // Glass ("glass1") and windshield ("DARK"): limo tint — the GLB cab
       // has no interior, so nothing to see.
+      // Yellow dash/catwalk accents show through the open windshield
+      // aperture in front of the blocker — mute them to dark hardware gray.
+      if (/^color_yellow/i.test(mat.name)) {
+        mat.color.set('#23262d')
+        mat.needsUpdate = true
+      }
       if (/^(glass|dark$)/i.test(mat.name)) {
         if ('transmission' in mat) mat.transmission = 0
         mat.transparent = false
@@ -487,27 +493,22 @@ function Tractor({ animRef }) {
     <group>
       <primitive object={scene} />
       {/* The GLB ships with an OPEN windshield aperture (its "parabrisa"
-          mesh is just the wiper trim) — cover it with a tinted pane so the
-          unmodeled interior stays hidden. */}
-      {/* Plane fitted to the aperture: base on the wiper-trim line
-          (y 2.2, z −0.72), raked ~21° back to the roofline. */}
-      <mesh position={[0, 2.58, -0.9]} rotation={[-0.39, 0, 0]}>
-        <planeGeometry args={[1.7, 0.85]} />
-        <meshStandardMaterial
-          color="#04060a"
-          roughness={0.45}
-          metalness={0.3}
-          envMapIntensity={0.25}
-          side={THREE.DoubleSide}
-        />
+          mesh is just the wiper trim). A fitted exterior pane always shows
+          an edge (rectangle vs. trapezoid aperture), so instead: a matte
+          near-black blocker RECESSED inside the cab — oversized on
+          purpose, its edges hide behind the body shell, and the aperture
+          reads as deep tint from every angle. */}
+      <mesh position={[0, 2.5, -1.18]} rotation={[-0.39, 0, 0]}>
+        <planeGeometry args={[2.2, 1.5]} />
+        <meshStandardMaterial color="#05070a" roughness={0.95} metalness={0} side={THREE.DoubleSide} />
       </mesh>
       {/* MANAS marks: large on each sleeper side panel — the one big
           uninterrupted cab surface (door placement clipped against the
           window mesh) — plus hood and roof-fairing tops, projected down. */}
       {cabMesh &&
         [
-          { key: 'left', position: [1.5, 2.15, -3.85], rotation: [0, Math.PI / 2, 0], size: 1.1 },
-          { key: 'right', position: [-1.5, 2.15, -3.85], rotation: [0, -Math.PI / 2, 0], size: 1.1 },
+          { key: 'left', position: [1.5, 2.4, -2.95], rotation: [0, Math.PI / 2, 0], size: 0.95 },
+          { key: 'right', position: [-1.5, 2.4, -2.95], rotation: [0, -Math.PI / 2, 0], size: 0.95 },
           { key: 'hood', position: [0, 1.9, 0.12], rotation: [-Math.PI / 2, 0, 0], size: 0.85 },
         ].map((d) => (
           <Decal
