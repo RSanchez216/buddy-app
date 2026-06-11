@@ -18,17 +18,20 @@ const NATION_OUTLINE = statePath(feature(usTopo, usTopo.objects.nation))
 
 // Quadratic arc bowing toward the top of the map — reads as a flight path
 // and keeps direction unambiguous together with the dash-flow animation.
-function arcPath(a, b) {
+// `lift` fans same-corridor arcs apart (type-split lanes share endpoints).
+function arcPath(a, b, lift = 0) {
   const dx = b[0] - a[0], dy = b[1] - a[1]
   const dist = Math.hypot(dx, dy)
   if (dist < 2) return null // same-city move; rendered as a loop ring instead
   let px = -dy / dist, py = dx / dist
   if (py > 0) { px = -px; py = -py }
-  const k = dist * 0.18
+  const k = dist * (0.18 + 0.06 * lift)
   return `M${a[0]},${a[1]} Q${(a[0] + b[0]) / 2 + px * k},${(a[1] + b[1]) / 2 + py * k} ${b[0]},${b[1]}`
 }
 
-export default function LaneMapCanvas({ lanes, cities, colorFor, widthFor, selectedKey, onSelect }) {
+// laneColorFor (whole-lane → color) and typeColorFor (trailer type → color)
+// are optional; without them the canvas behaves exactly as before.
+export default function LaneMapCanvas({ lanes, cities, colorFor, widthFor, selectedKey, onSelect, laneColorFor, typeColorFor }) {
   const wrapRef = useRef(null)
   const [hover, setHover] = useState(null) // { key, x, y }
 
@@ -41,7 +44,7 @@ export default function LaneMapCanvas({ lanes, cities, colorFor, widthFor, selec
       const a = projection([lane.oCoord[1], lane.oCoord[0]])
       const b = projection([lane.dCoord[1], lane.dCoord[0]])
       if (!a || !b) continue
-      out.push({ lane, a, b, d: arcPath(a, b) })
+      out.push({ lane, a, b, d: arcPath(a, b, lane.typeIndex || 0) })
     }
     // Thin lanes first so the money lanes draw on top.
     return out.sort((x, y) => x.lane.revenue - y.lane.revenue)
@@ -82,7 +85,7 @@ export default function LaneMapCanvas({ lanes, cities, colorFor, widthFor, selec
         {/* Arcs */}
         {drawn.map(({ lane, a, d }) => {
           const w = widthFor(lane)
-          const color = colorFor(lane.rpm)
+          const color = laneColorFor ? laneColorFor(lane) : colorFor(lane.rpm)
           const active = lane.key === selectedKey || lane.key === hover?.key
           // Heavy lanes draw near-solid; the long tail of one-load lanes
           // fades back so the picture reads as hierarchy, not spaghetti.
@@ -143,6 +146,15 @@ export default function LaneMapCanvas({ lanes, cities, colorFor, widthFor, selec
             <span className="text-gray-400 dark:text-slate-500">$/mile</span>
             <span className="font-mono font-semibold" style={{ color: colorFor(hoveredLane.rpm) }}>{fmtRpm(hoveredLane.rpm)}{hoveredLane.rpm != null && '/mi'}</span>
           </div>
+          {hoveredLane.trailerType && (
+            <div className="flex items-center justify-between text-[11px]">
+              <span className="text-gray-400 dark:text-slate-500">Trailer</span>
+              <span className="font-medium text-gray-700 dark:text-slate-300 inline-flex items-center gap-1.5">
+                {typeColorFor && <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: typeColorFor(hoveredLane.trailerType) }} />}
+                {hoveredLane.trailerType}
+              </span>
+            </div>
+          )}
         </div>
       )}
     </div>
