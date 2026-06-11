@@ -331,7 +331,7 @@ export default function LaneFlowMap() {
               )}
             </div>
           )}
-        <div className="ml-auto flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
             <button onClick={() => shiftRange(-1)} className="px-2 py-1.5 text-xs font-medium rounded border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors" title="Previous period">◀</button>
             <Pills value={preset} onChange={setPresetRange} options={[['week', 'This week'], ['month', 'This month'], ['custom', 'Custom']]} />
             <button onClick={() => shiftRange(1)} className="px-2 py-1.5 text-xs font-medium rounded border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors" title="Next period">▶</button>
@@ -344,7 +344,7 @@ export default function LaneFlowMap() {
               </div>
             )}
         </div>
-        <p className="basis-full text-[11px] text-gray-400 dark:text-slate-500 text-right -mt-1">{PRESET_LABEL[preset]} · {formatRange(range.from, range.to)} · by {basis} date</p>
+        <p className="basis-full text-[11px] text-gray-400 dark:text-slate-500 -mt-1">{PRESET_LABEL[preset]} · {formatRange(range.from, range.to)} · by {basis} date</p>
       </div>
 
       {/* ── Map + leaderboard ── */}
