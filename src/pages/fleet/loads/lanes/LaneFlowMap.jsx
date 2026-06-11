@@ -225,6 +225,11 @@ export default function LaneFlowMap() {
   const setSelectedCell = useCallback((k) => setHeatCellState({ key: selKey, cell: k }), [selKey])
   const selectedCell = selectedCellKey ? heatCells.find(c => c.key === selectedCellKey) : null
 
+  // An active selection's detail card takes the leaderboard's slot in the
+  // side panel (small screens shouldn't scroll to find it); "← Leaderboard"
+  // brings the list back. Heat-spot selection wins while in the Heat view.
+  const activeDetail = mapMode === 'heat' && selectedCell ? 'cell' : selectedLane ? 'lane' : null
+
   function setPresetRange(p) {
     setPreset(p)
     if (p === 'week') setRange(thisWeek())
@@ -477,7 +482,8 @@ export default function LaneFlowMap() {
             </div>
           )}
 
-          {/* Leaderboard */}
+          {/* Leaderboard — hidden while a selection's detail card uses its slot */}
+          {!activeDetail && (
           <div className={`${S.card} overflow-hidden`}>
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-white/5">
               <p className="text-xs font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">Lane leaderboard</p>
@@ -517,9 +523,10 @@ export default function LaneFlowMap() {
               )}
             </div>
           </div>
+          )}
 
           {/* Loads on the selected lane */}
-          {selectedLane && (
+          {activeDetail === 'lane' && selectedLane && (
             <div className={`${S.card} overflow-hidden`}>
               <div className="flex items-start justify-between gap-2 px-4 py-3 border-b border-gray-100 dark:border-white/5">
                 <div className="min-w-0">
@@ -527,7 +534,9 @@ export default function LaneFlowMap() {
                   <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{selectedLane.origin} <span className="text-orange-500">→</span> {selectedLane.destination}</p>
                   {selectedLane.trailerType && <p className="mt-1"><TypeBadge type={selectedLane.trailerType} color={typeColorFor(selectedLane.trailerType)} /></p>}
                 </div>
-                <button onClick={() => setSelected(null)} className="text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 text-sm leading-none px-1" title="Clear selection">✕</button>
+                <button onClick={() => setSelected(null)}
+                  className="shrink-0 text-[11px] font-medium text-orange-600 dark:text-orange-400 hover:underline"
+                  title="Clear selection and show the lane leaderboard">← Leaderboard</button>
               </div>
               <ul className="divide-y divide-gray-50 dark:divide-white/[0.03] max-h-72 overflow-y-auto">
                 {selectedLane.legs.map(leg => <LegRow key={leg.leg_id} leg={leg} dateCol={dateCol} rpmScale={rpmScale} />)}
@@ -536,7 +545,7 @@ export default function LaneFlowMap() {
           )}
 
           {/* Loads touching the pinned heat spot (heat view's lane click) */}
-          {mapMode === 'heat' && selectedCell && (
+          {activeDetail === 'cell' && selectedCell && (
             <div className={`${S.card} overflow-hidden`}>
               <div className="flex items-start justify-between gap-2 px-4 py-3 border-b border-gray-100 dark:border-white/5">
                 <div className="min-w-0">
@@ -544,7 +553,9 @@ export default function LaneFlowMap() {
                   <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{selectedCell.topCity || 'Selected area'}</p>
                   <p className="text-[11px] text-gray-400 dark:text-slate-500">{selectedCell.legs.length} load{selectedCell.legs.length === 1 ? '' : 's'} · {fmtMoney(selectedCell.revenue)} touching</p>
                 </div>
-                <button onClick={() => setSelectedCell(null)} className="text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 text-sm leading-none px-1" title="Clear selection">✕</button>
+                <button onClick={() => setSelectedCell(null)}
+                  className="shrink-0 text-[11px] font-medium text-orange-600 dark:text-orange-400 hover:underline"
+                  title="Clear selection and show the lane leaderboard">← Leaderboard</button>
               </div>
               <ul className="divide-y divide-gray-50 dark:divide-white/[0.03] max-h-72 overflow-y-auto">
                 {selectedCell.legs.map(leg => <LegRow key={leg.leg_id} leg={leg} dateCol={dateCol} rpmScale={rpmScale} showLane />)}
