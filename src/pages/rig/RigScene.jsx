@@ -415,6 +415,7 @@ function Tractor({ animRef }) {
       color: '#070a10',
       roughness: 0.18,
       metalness: 0.85,
+      side: THREE.DoubleSide, // glass normals face inward in places
     })
     scene.traverse((o) => {
       if (/^ruedas/i.test(o.name)) wheelsGroup = o
@@ -450,6 +451,7 @@ function Tractor({ animRef }) {
         mat.color.set('#070a10')
         mat.roughness = 0.18
         mat.metalness = 0.85
+        mat.side = THREE.DoubleSide // windshield normals face inward
         mat.needsUpdate = true
       }
     })
@@ -482,17 +484,31 @@ function Tractor({ animRef }) {
   return (
     <group>
       <primitive object={scene} />
-      {/* Large MANAS mark on the sleeper side panel — the one big
+      {/* The GLB ships with an OPEN windshield aperture (its "parabrisa"
+          mesh is just the wiper trim) — cover it with a tinted pane so the
+          unmodeled interior stays hidden. */}
+      {/* Plane fitted to the aperture: base on the wiper-trim line
+          (y 2.2, z −0.72), raked ~21° back to the roofline. */}
+      <mesh position={[0, 2.61, -0.86]} rotation={[-0.39, 0, 0]}>
+        <planeGeometry args={[1.95, 0.9]} />
+        <meshStandardMaterial color="#070a10" roughness={0.15} metalness={0.85} side={THREE.DoubleSide} />
+      </mesh>
+      {/* MANAS marks: large on each sleeper side panel — the one big
           uninterrupted cab surface (door placement clipped against the
-          window mesh). */}
+          window mesh) — plus hood and roof-fairing tops, projected down. */}
       {cabMesh &&
-        [1, -1].map((side) => (
+        [
+          { key: 'left', position: [1.5, 2.2, -3.6], rotation: [0, Math.PI / 2, 0], size: 1.3 },
+          { key: 'right', position: [-1.5, 2.2, -3.6], rotation: [0, -Math.PI / 2, 0], size: 1.3 },
+          { key: 'hood', position: [0, 1.9, 0.12], rotation: [-Math.PI / 2, 0, 0], size: 0.85 },
+          { key: 'roof', position: [0, 4.3, -3.2], rotation: [-Math.PI / 2, 0, 0], size: 1.6 },
+        ].map((d) => (
           <Decal
-            key={side}
+            key={d.key}
             mesh={{ current: cabMesh }}
-            position={[side * 1.5, 2.35, -3.5]}
-            rotation={[0, (side * Math.PI) / 2, 0]}
-            scale={[1.7, 1.7 / logoAspect, 1]}
+            position={d.position}
+            rotation={d.rotation}
+            scale={[d.size, d.size / logoAspect, 1.2]}
           >
             <meshStandardMaterial
               map={logo}
