@@ -67,6 +67,57 @@ input:-webkit-autofill:focus {
   animation: soft-pulse 1.5s ease-in-out infinite;
 }
 
+/* ── Lifeline (cash-runway) animations ──────────────────────────────────────
+   The chart's intro reveal sweeps a clipPath rect left → right (the EKG
+   draw-on); the submerged below-zero region breathes slowly (dread, not
+   alarm); today's point and the breach beacon emit a heartbeat ring.
+   prefers-reduced-motion collapses everything to instant static states. */
+@keyframes lifeline-reveal {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+.lifeline-reveal {
+  transform-box: fill-box;
+  transform-origin: left center;
+  animation: lifeline-reveal 1.8s cubic-bezier(0.65, 0, 0.35, 1) 0.15s both;
+}
+
+@keyframes lifeline-submerged {
+  0%, 100% { fill-opacity: 0.16; }
+  50%      { fill-opacity: 0.38; }
+}
+.lifeline-submerged {
+  animation: lifeline-submerged 2.8s ease-in-out infinite;
+}
+
+@keyframes lifeline-beat {
+  0%       { transform: scale(1); opacity: 0.8; }
+  70%, 100% { transform: scale(3.2); opacity: 0; }
+}
+.lifeline-beat {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: lifeline-beat 2.4s ease-out infinite;
+}
+
+@keyframes lifeline-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.lifeline-fade-in      { animation: lifeline-fade 0.8s ease-out 0.4s both; }
+.lifeline-fade-in-late { animation: lifeline-fade 0.8s ease-out 1.9s both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .lifeline-reveal,
+  .lifeline-submerged,
+  .lifeline-beat,
+  .lifeline-fade-in,
+  .lifeline-fade-in-late {
+    animation: none;
+  }
+  .lifeline-submerged { fill-opacity: 0.25; }
+}
+
 /* Tippy "buddy-naked" theme — used by the @-mention popup. The Tiptap
    suggestion plugin renders MentionList inside a .tippy-box, but we want
    MentionList to control the entire visual surface (matching the rest

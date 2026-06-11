@@ -33,6 +33,7 @@ const Icons = {
   cost:      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1" /></svg>,
   map:       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" /></svg>,
   boardroom: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 4h18v11H3V4zm6 15l3-4 3 4M8 12l2.5-3 2 2L16 7" /></svg>,
+  lifeline:  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 12h4l2.5-6 4 12L16 12h5" /></svg>,
 }
 
 // ── Nav item ───────────────────────────────────────────────────────────────
@@ -169,6 +170,7 @@ export default function Layout() {
           {/* Cash Flow */}
           <NavSection id="cash-flow" label="Cash Flow" withDivider>
             <NavItem to="/cash-flow/payment-calendar" label="Payment Calendar" icon={Icons.calendar} onClick={close} />
+            <NavItem to="/cash-flow/lifeline" label="Lifeline" icon={Icons.lifeline} onClick={close} />
           </NavSection>
 
           {/* Settings */}
