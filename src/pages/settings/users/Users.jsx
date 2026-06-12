@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../contexts/AuthContext'
@@ -6,6 +6,7 @@ import { S } from '../../../lib/styles'
 import { ROLE_LABEL, rolePill, statusPill, fmtDateTime } from './userUtils'
 import InviteUserModal from './InviteUserModal'
 import EditUserDrawer from './EditUserDrawer'
+import Pages from './Pages'
 import { useToast } from '../../../contexts/ToastContext'
 
 const ORANGE_BTN = 'flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 text-white rounded-xl transition-all shadow-lg shadow-orange-500/20'
@@ -13,6 +14,7 @@ const ORANGE_BTN = 'flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-o
 export default function Users() {
   const { profile, loading: authLoading, isAdmin } = useAuth()
   const toast = useToast()
+  const [tab, setTab] = useState('users') // 'users' or 'pages'
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [showInvite, setShowInvite] = useState(false)
@@ -63,11 +65,6 @@ export default function Users() {
     setLoading(false)
   }
 
-  const activeAdminCount = useMemo(
-    () => users.filter(u => u.role === 'admin' && u.status === 'active').length,
-    [users]
-  )
-
   async function resendInvite(u) {
     setOpenMenuId(null)
     try {
@@ -116,8 +113,39 @@ export default function Users() {
     return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500" /></div>
   }
 
+  const TabSwitch = () => (
+    <div className="flex gap-2">
+      {['users', 'pages'].map(tabName => (
+        <button
+          key={tabName}
+          onClick={() => setTab(tabName)}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            tab === tabName
+              ? 'bg-orange-500 text-white'
+              : 'bg-gray-100 dark:bg-white/5 text-gray-700 dark:text-slate-300 hover:bg-gray-200 dark:hover:bg-white/10'
+          }`}
+        >
+          {tabName === 'users' ? 'Users' : 'Pages'}
+        </button>
+      ))}
+    </div>
+  )
+
+  if (tab === 'pages') {
+    return (
+      <div className="space-y-5">
+        <TabSwitch />
+        <Pages />
+      </div>
+    )
+  }
+
+  const activeAdminCount = users.filter(u => u.role === 'admin' && u.status === 'active').length
+
   return (
     <div className="space-y-5">
+      <TabSwitch />
+
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Users</h1>
