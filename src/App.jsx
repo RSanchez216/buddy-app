@@ -82,10 +82,15 @@ export default function App() {
             } />
             <Route path="/" element={
               <ProtectedRoute>
+                <Navigate to="/fleet/profitability/lanes" replace />
+              </ProtectedRoute>
+            } />
+            <Route path="/" element={
+              <ProtectedRoute>
                 <Layout />
               </ProtectedRoute>
             }>
-              <Route index element={<Dashboard />} />
+              <Route path="dashboard" element={<Dashboard />} />
               <Route path="vendors" element={<VendorMaster />} />
               <Route path="invoices" element={<InvoiceInbox />} />
               <Route path="transactions" element={<TransactionFeed />} />
@@ -145,7 +150,7 @@ export default function App() {
               <Route path="settings/driver-purchase-statuses" element={<SettingsDriverPurchaseStatuses />} />
               <Route path="settings/users" element={<SettingsUsers />} />
             </Route>
-            <Route path="*" element={<Navigate to="/" replace />} />
+            <Route path="*" element={<Navigate to="/fleet/profitability/lanes" replace />} />
           </Routes>
           </ToastProvider>
         </AuthProvider>

@@ -172,7 +172,7 @@ export default function Layout() {
 
           {/* PAYABLES */}
           <NavSection id="payables" label="Payables" withDivider>
-            <NavItem to="/" label="Dashboard" icon={Icons.dashboard} end onClick={close} />
+            <NavItem to="/dashboard" label="Dashboard" icon={Icons.dashboard} onClick={close} />
             <NavItem to="/vendors" label="Vendor Master" icon={Icons.vendors} onClick={close} />
             <NavItem to="/invoices" label="Invoice Inbox" icon={Icons.invoices} onClick={close} />
             <NavItem to="/transactions" label="Transaction Feed" icon={Icons.txns} onClick={close} />
