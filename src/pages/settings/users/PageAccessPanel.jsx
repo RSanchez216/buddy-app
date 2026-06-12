@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase } from '../../../lib/supabase'
 import { S } from '../../../lib/styles'
 import { useToast } from '../../../contexts/ToastContext'
 
-export default function PageAccessPanel({ user, onClose }) {
+export default function PageAccessPanel({ user }) {
   const toast = useToast()
   const [pages, setPages] = useState([])
   const [userAccess, setUserAccess] = useState({}) // page_key -> access_level
@@ -11,11 +11,7 @@ export default function PageAccessPanel({ user, onClose }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
-  useEffect(() => {
-    load()
-  }, [user?.id])
-
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true)
     setError('')
 
@@ -50,7 +46,11 @@ export default function PageAccessPanel({ user, onClose }) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [user?.id])
+
+  useEffect(() => {
+    load()
+  }, [load])
 
   const pagesByGroup = useMemo(() => {
     const groups = {}

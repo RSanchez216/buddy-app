@@ -29,7 +29,7 @@ export default function AcceptInvite() {
 
       try {
         // Try to get the user via the invite token
-        const { data, error: err } = await supabase.auth.getSession()
+        const { data } = await supabase.auth.getSession()
 
         // If no session yet and we have a token, we need the user to set password
         if (!data.session && token) {
