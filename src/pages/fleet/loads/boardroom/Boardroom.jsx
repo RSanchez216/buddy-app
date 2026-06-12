@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useToast } from '../../../../contexts/ToastContext'
 import { S } from '../../../../lib/styles'
 import { fetchBoardroom, pctDelta } from './boardroomData'
