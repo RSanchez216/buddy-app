@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
+import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { BuddyLogoSmall } from '../components/BuddyLogo'
 import NotificationBell from './NotificationBell'
@@ -40,7 +41,9 @@ const Icons = {
 // ── Nav item ───────────────────────────────────────────────────────────────
 // Always reserves a 2px left border so the active orange marker doesn't
 // shift the chip's width when it appears.
-function NavItem({ to, label, icon, end = false, onClick }) {
+// visible prop controls whether the item should be shown (default true)
+function NavItem({ to, label, icon, end = false, onClick, visible = true }) {
+  if (!visible) return null
   return (
     <NavLink
       to={to} end={end} onClick={onClick}
@@ -61,7 +64,8 @@ function NavItem({ to, label, icon, end = false, onClick }) {
 // ── Collapsible section ────────────────────────────────────────────────────
 // `withDivider` adds a thin top divider + spacing — set on every section
 // after the first to visually separate groups.
-function NavSection({ id, label, badge, children, defaultOpen = true, withDivider = false }) {
+// visibleCount: number of visible items in this section (passed by parent)
+function NavSection({ id, label, badge, children, defaultOpen = true, withDivider = false, visibleCount = 0 }) {
   const [open, setOpen] = useState(() => {
     const stored = localStorage.getItem(`buddy-nav-${id}`)
     return stored !== null ? stored === 'true' : defaultOpen
@@ -72,6 +76,9 @@ function NavSection({ id, label, badge, children, defaultOpen = true, withDivide
     setOpen(next)
     localStorage.setItem(`buddy-nav-${id}`, String(next))
   }
+
+  // Hide the entire section if no visible items
+  if (visibleCount === 0) return null
 
   return (
     <div className={`mb-1 ${withDivider ? 'mt-3 pt-3 border-t border-gray-200 dark:border-white/5' : ''}`}>
@@ -111,8 +118,35 @@ function NavSection({ id, label, badge, children, defaultOpen = true, withDivide
 export default function Layout() {
   const { isAdmin } = useAuth()
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [accessibleRoutes, setAccessibleRoutes] = useState(new Set()) // routes user can see
 
   const close = () => setSidebarOpen(false)
+
+  useEffect(() => {
+    const loadAccessiblePages = async () => {
+      try {
+        const { data, error } = await supabase.rpc('my_pages')
+        if (error) {
+          console.error('Failed to load accessible pages:', error)
+          return
+        }
+        const routes = new Set((data || []).map(p => p.route))
+        setAccessibleRoutes(routes)
+      } catch (e) {
+        console.error('Error loading accessible pages:', e)
+      }
+    }
+    loadAccessiblePages()
+  }, [])
+
+  // Count visible items per section for hiding empty groups
+  const visibleCounts = {
+    today: ['/rig', '/fleet/profitability/boardroom', '/fleet/profitability/lanes', '/cash-flow/lifeline'].filter(r => accessibleRoutes.has(r)).length,
+    money: ['/cash-flow/payment-calendar', '/financial-controls/debt-schedule', '/financial-controls/driver-purchases'].filter(r => accessibleRoutes.has(r)).length,
+    profitability: ['/fleet/profitability', '/fleet/profitability/spotlight', '/fleet/profitability/contribution'].filter(r => accessibleRoutes.has(r)).length,
+    fleet: ['/fleet/trucks', '/fleet/trailers', '/fleet/drivers', '/fleet/cost', '/fleet/loads/import'].filter(r => accessibleRoutes.has(r)).length,
+    payables: ['/dashboard', '/vendors', '/invoices', '/transactions', '/reports'].filter(r => accessibleRoutes.has(r)).length,
+  }
 
   return (
     <div className="min-h-screen flex bg-gray-50 dark:bg-[#09091a]">
@@ -140,50 +174,52 @@ export default function Layout() {
         <nav className="flex-1 p-2.5 space-y-3 overflow-y-auto min-h-0">
 
           {/* TODAY — pinned at top */}
-          <NavSection id="today" label="Today">
-            <NavItem to="/rig" label="The Rig" icon={Icons.truck} onClick={close} />
-            <NavItem to="/fleet/profitability/boardroom" label="Boardroom" icon={Icons.boardroom} onClick={close} />
-            <NavItem to="/fleet/profitability/lanes" label="Lane Map" icon={Icons.map} onClick={close} />
-            <NavItem to="/cash-flow/lifeline" label="Lifeline" icon={Icons.lifeline} onClick={close} />
+          <NavSection id="today" label="Today" visibleCount={visibleCounts.today}>
+            <NavItem to="/rig" label="The Rig" icon={Icons.truck} onClick={close} visible={accessibleRoutes.has('/rig')} />
+            <NavItem to="/fleet/profitability/boardroom" label="Boardroom" icon={Icons.boardroom} onClick={close} visible={accessibleRoutes.has('/fleet/profitability/boardroom')} />
+            <NavItem to="/fleet/profitability/lanes" label="Lane Map" icon={Icons.map} onClick={close} visible={accessibleRoutes.has('/fleet/profitability/lanes')} />
+            <NavItem to="/cash-flow/lifeline" label="Lifeline" icon={Icons.lifeline} onClick={close} visible={accessibleRoutes.has('/cash-flow/lifeline')} />
           </NavSection>
 
           {/* MONEY */}
-          <NavSection id="money" label="Money" withDivider>
-            <NavItem to="/cash-flow/payment-calendar" label="Payment Calendar" icon={Icons.calendar} onClick={close} />
-            <NavItem to="/financial-controls/debt-schedule" label="Debt Schedule" icon={Icons.debt} onClick={close} />
-            <NavItem to="/financial-controls/driver-purchases" label="Driver Purchases" icon={Icons.driverSale} onClick={close} />
+          <NavSection id="money" label="Money" withDivider visibleCount={visibleCounts.money}>
+            <NavItem to="/cash-flow/payment-calendar" label="Payment Calendar" icon={Icons.calendar} onClick={close} visible={accessibleRoutes.has('/cash-flow/payment-calendar')} />
+            <NavItem to="/financial-controls/debt-schedule" label="Debt Schedule" icon={Icons.debt} onClick={close} visible={accessibleRoutes.has('/financial-controls/debt-schedule')} />
+            <NavItem to="/financial-controls/driver-purchases" label="Driver Purchases" icon={Icons.driverSale} onClick={close} visible={accessibleRoutes.has('/financial-controls/driver-purchases')} />
           </NavSection>
 
           {/* PROFITABILITY */}
-          <NavSection id="profitability" label="Profitability" withDivider>
-            <NavItem to="/fleet/profitability" label="Profitability" icon={Icons.cost} end onClick={close} />
-            <NavItem to="/fleet/profitability/spotlight" label="Driver Spotlight" icon={Icons.driver} onClick={close} />
-            <NavItem to="/fleet/profitability/contribution" label="Contribution" icon={Icons.report} onClick={close} />
+          <NavSection id="profitability" label="Profitability" withDivider visibleCount={visibleCounts.profitability}>
+            <NavItem to="/fleet/profitability" label="Profitability" icon={Icons.cost} end onClick={close} visible={accessibleRoutes.has('/fleet/profitability')} />
+            <NavItem to="/fleet/profitability/spotlight" label="Driver Spotlight" icon={Icons.driver} onClick={close} visible={accessibleRoutes.has('/fleet/profitability/spotlight')} />
+            <NavItem to="/fleet/profitability/contribution" label="Contribution" icon={Icons.report} onClick={close} visible={accessibleRoutes.has('/fleet/profitability/contribution')} />
           </NavSection>
 
           {/* FLEET */}
-          <NavSection id="fleet" label="Fleet" withDivider>
-            <NavItem to="/fleet/trucks" label="Trucks" icon={Icons.truck} onClick={close} />
-            <NavItem to="/fleet/trailers" label="Trailers" icon={Icons.trailer} onClick={close} />
-            <NavItem to="/fleet/drivers" label="Drivers" icon={Icons.driver} onClick={close} />
-            <NavItem to="/fleet/cost" label="Equipment Cost" icon={Icons.cost} onClick={close} />
-            <NavItem to="/fleet/loads/import" label="Loads Import" icon={Icons.truck} onClick={close} />
+          <NavSection id="fleet" label="Fleet" withDivider visibleCount={visibleCounts.fleet}>
+            <NavItem to="/fleet/trucks" label="Trucks" icon={Icons.truck} onClick={close} visible={accessibleRoutes.has('/fleet/trucks')} />
+            <NavItem to="/fleet/trailers" label="Trailers" icon={Icons.trailer} onClick={close} visible={accessibleRoutes.has('/fleet/trailers')} />
+            <NavItem to="/fleet/drivers" label="Drivers" icon={Icons.driver} onClick={close} visible={accessibleRoutes.has('/fleet/drivers')} />
+            <NavItem to="/fleet/cost" label="Equipment Cost" icon={Icons.cost} onClick={close} visible={accessibleRoutes.has('/fleet/cost')} />
+            <NavItem to="/fleet/loads/import" label="Loads Import" icon={Icons.truck} onClick={close} visible={accessibleRoutes.has('/fleet/loads/import')} />
           </NavSection>
 
           {/* PAYABLES */}
-          <NavSection id="payables" label="Payables" withDivider>
-            <NavItem to="/dashboard" label="Dashboard" icon={Icons.dashboard} onClick={close} />
-            <NavItem to="/vendors" label="Vendor Master" icon={Icons.vendors} onClick={close} />
-            <NavItem to="/invoices" label="Invoice Inbox" icon={Icons.invoices} onClick={close} />
-            <NavItem to="/transactions" label="Transaction Feed" icon={Icons.txns} onClick={close} />
-            <NavItem to="/reports" label="Monthly Report" icon={Icons.report} onClick={close} />
+          <NavSection id="payables" label="Payables" withDivider visibleCount={visibleCounts.payables}>
+            <NavItem to="/dashboard" label="Dashboard" icon={Icons.dashboard} onClick={close} visible={accessibleRoutes.has('/dashboard')} />
+            <NavItem to="/vendors" label="Vendor Master" icon={Icons.vendors} onClick={close} visible={accessibleRoutes.has('/vendors')} />
+            <NavItem to="/invoices" label="Invoice Inbox" icon={Icons.invoices} onClick={close} visible={accessibleRoutes.has('/invoices')} />
+            <NavItem to="/transactions" label="Transaction Feed" icon={Icons.txns} onClick={close} visible={accessibleRoutes.has('/transactions')} />
+            <NavItem to="/reports" label="Monthly Report" icon={Icons.report} onClick={close} visible={accessibleRoutes.has('/reports')} />
           </NavSection>
         </nav>
 
-        {/* SETTINGS — pinned footer at bottom, always visible */}
-        <div className="shrink-0 p-2.5 border-t border-gray-200 dark:border-white/5">
-          <NavItem to="/settings" label="Settings" icon={Icons.gear} onClick={close} />
-        </div>
+        {/* SETTINGS — pinned footer at bottom, admin-only */}
+        {isAdmin && (
+          <div className="shrink-0 p-2.5 border-t border-gray-200 dark:border-white/5">
+            <NavItem to="/settings" label="Settings" icon={Icons.gear} onClick={close} />
+          </div>
+        )}
 
       </aside>
 

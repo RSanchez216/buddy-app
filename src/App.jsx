@@ -4,8 +4,10 @@ import { AuthProvider } from './contexts/AuthContext'
 import { ThemeProvider } from './contexts/ThemeContext'
 import { ToastProvider } from './contexts/ToastContext'
 import ProtectedRoute from './components/ProtectedRoute'
+import RequirePageAccess from './components/RequirePageAccess'
 import Layout from './components/Layout'
 import Login from './pages/Login'
+import NoAccess from './pages/NoAccess'
 import Dashboard from './pages/Dashboard'
 import VendorMaster from './pages/VendorMaster'
 import InvoiceInbox from './pages/InvoiceInbox'
@@ -44,6 +46,7 @@ import Profitability from './pages/fleet/loads/Profitability'
 import Spotlight from './pages/fleet/loads/spotlight/Spotlight'
 import Contribution from './pages/fleet/loads/contribution/Contribution'
 import SetPassword from './pages/auth/SetPassword'
+import SmartLanding from './pages/SmartLanding'
 
 // Lazy — the lane map carries its own geo data (US outline + city
 // coordinates), so it loads as a separate chunk only when visited.
@@ -85,7 +88,12 @@ export default function App() {
             } />
             <Route path="/" element={
               <ProtectedRoute>
-                <Navigate to="/fleet/profitability/lanes" replace />
+                <SmartLanding />
+              </ProtectedRoute>
+            } />
+            <Route path="/no-access" element={
+              <ProtectedRoute>
+                <NoAccess />
               </ProtectedRoute>
             } />
             <Route path="/" element={
@@ -93,45 +101,51 @@ export default function App() {
                 <Layout />
               </ProtectedRoute>
             }>
-              <Route path="dashboard" element={<Dashboard />} />
-              <Route path="vendors" element={<VendorMaster />} />
-              <Route path="invoices" element={<InvoiceInbox />} />
-              <Route path="transactions" element={<TransactionFeed />} />
-              <Route path="reports" element={<MonthlyReport />} />
+              <Route path="dashboard" element={<RequirePageAccess pageKey="dashboard"><Dashboard /></RequirePageAccess>} />
+              <Route path="vendors" element={<RequirePageAccess pageKey="vendors"><VendorMaster /></RequirePageAccess>} />
+              <Route path="invoices" element={<RequirePageAccess pageKey="invoices"><InvoiceInbox /></RequirePageAccess>} />
+              <Route path="transactions" element={<RequirePageAccess pageKey="transactions"><TransactionFeed /></RequirePageAccess>} />
+              <Route path="reports" element={<RequirePageAccess pageKey="reports"><MonthlyReport /></RequirePageAccess>} />
               {/* Fleet Inventory */}
-              <Route path="fleet/trucks" element={<TrucksList />} />
-              <Route path="fleet/trucks/:id" element={<TruckDetail />} />
-              <Route path="fleet/trailers" element={<TrailersList />} />
-              <Route path="fleet/trailers/:id" element={<TrailerDetail />} />
-              <Route path="fleet/drivers" element={<DriversList />} />
-              <Route path="fleet/drivers/:id" element={<DriverDetail />} />
-              <Route path="fleet/cost" element={<FleetCost />} />
-              <Route path="fleet/loads/import" element={<LoadsImport />} />
-              <Route path="fleet/profitability" element={<Profitability />} />
+              <Route path="fleet/trucks" element={<RequirePageAccess pageKey="fleet/trucks"><TrucksList /></RequirePageAccess>} />
+              <Route path="fleet/trucks/:id" element={<RequirePageAccess pageKey="fleet/trucks"><TruckDetail /></RequirePageAccess>} />
+              <Route path="fleet/trailers" element={<RequirePageAccess pageKey="fleet/trailers"><TrailersList /></RequirePageAccess>} />
+              <Route path="fleet/trailers/:id" element={<RequirePageAccess pageKey="fleet/trailers"><TrailerDetail /></RequirePageAccess>} />
+              <Route path="fleet/drivers" element={<RequirePageAccess pageKey="fleet/drivers"><DriversList /></RequirePageAccess>} />
+              <Route path="fleet/drivers/:id" element={<RequirePageAccess pageKey="fleet/drivers"><DriverDetail /></RequirePageAccess>} />
+              <Route path="fleet/cost" element={<RequirePageAccess pageKey="fleet/cost"><FleetCost /></RequirePageAccess>} />
+              <Route path="fleet/loads/import" element={<RequirePageAccess pageKey="fleet/loads/import"><LoadsImport /></RequirePageAccess>} />
+              <Route path="fleet/profitability" element={<RequirePageAccess pageKey="fleet/profitability"><Profitability /></RequirePageAccess>} />
               <Route path="fleet/profitability/boardroom" element={
-                <Suspense fallback={<div className="p-8 text-sm text-gray-400 dark:text-slate-500">Loading the Boardroom…</div>}>
-                  <Boardroom />
-                </Suspense>
+                <RequirePageAccess pageKey="fleet/profitability/boardroom">
+                  <Suspense fallback={<div className="p-8 text-sm text-gray-400 dark:text-slate-500">Loading the Boardroom…</div>}>
+                    <Boardroom />
+                  </Suspense>
+                </RequirePageAccess>
               } />
-              <Route path="fleet/profitability/spotlight" element={<Spotlight dimension="driver" />} />
-              <Route path="fleet/profitability/contribution" element={<Contribution />} />
+              <Route path="fleet/profitability/spotlight" element={<RequirePageAccess pageKey="fleet/profitability/spotlight"><Spotlight dimension="driver" /></RequirePageAccess>} />
+              <Route path="fleet/profitability/contribution" element={<RequirePageAccess pageKey="fleet/profitability/contribution"><Contribution /></RequirePageAccess>} />
               <Route path="fleet/profitability/lanes" element={
-                <Suspense fallback={<div className="p-8 text-sm text-gray-400 dark:text-slate-500">Loading lane map…</div>}>
-                  <LaneFlowMap />
-                </Suspense>
+                <RequirePageAccess pageKey="fleet/profitability/lanes">
+                  <Suspense fallback={<div className="p-8 text-sm text-gray-400 dark:text-slate-500">Loading lane map…</div>}>
+                    <LaneFlowMap />
+                  </Suspense>
+                </RequirePageAccess>
               } />
               {/* Financial Controls */}
-              <Route path="financial-controls/debt-schedule" element={<DebtSchedule />} />
-              <Route path="financial-controls/debt-schedule/:loanId" element={<LoanDetail />} />
-              <Route path="financial-controls/driver-purchases" element={<DriverPurchasesPage />} />
-              <Route path="financial-controls/driver-purchases/:id" element={<DriverPurchaseDetail />} />
+              <Route path="financial-controls/debt-schedule" element={<RequirePageAccess pageKey="financial-controls/debt-schedule"><DebtSchedule /></RequirePageAccess>} />
+              <Route path="financial-controls/debt-schedule/:loanId" element={<RequirePageAccess pageKey="financial-controls/debt-schedule"><LoanDetail /></RequirePageAccess>} />
+              <Route path="financial-controls/driver-purchases" element={<RequirePageAccess pageKey="financial-controls/driver-purchases"><DriverPurchasesPage /></RequirePageAccess>} />
+              <Route path="financial-controls/driver-purchases/:id" element={<RequirePageAccess pageKey="financial-controls/driver-purchases"><DriverPurchaseDetail /></RequirePageAccess>} />
               <Route path="notifications" element={<NotificationsPage />} />
               {/* Cash Flow */}
-              <Route path="cash-flow/payment-calendar" element={<PaymentCalendar />} />
+              <Route path="cash-flow/payment-calendar" element={<RequirePageAccess pageKey="cash-flow/payment-calendar"><PaymentCalendar /></RequirePageAccess>} />
               <Route path="cash-flow/lifeline" element={
-                <Suspense fallback={<div className="p-8 text-sm text-gray-400 dark:text-slate-500">Loading Lifeline…</div>}>
-                  <Lifeline />
-                </Suspense>
+                <RequirePageAccess pageKey="cash-flow/lifeline">
+                  <Suspense fallback={<div className="p-8 text-sm text-gray-400 dark:text-slate-500">Loading Lifeline…</div>}>
+                    <Lifeline />
+                  </Suspense>
+                </RequirePageAccess>
               } />
               {/* Settings */}
               <Route path="settings">
