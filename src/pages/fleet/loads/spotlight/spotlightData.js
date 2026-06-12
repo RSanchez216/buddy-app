@@ -29,7 +29,7 @@ export async function fetchDriverDeck({ from, to, basis = 'delivery' }) {
   // mid-week "This week" doesn't count future days as idle. Equipment cost
   // proration still uses the full window (it accrues regardless).
   const effDays = elapsedDays(from, to)
-  const [rollup, trailerRollup, driversRes, trucksRes, trailersRes, eqCostRes, purchasesRes, paymentsRes] = await Promise.all([
+  const [rollup, trailerRollup, driversRes, trucksRes, trailersRes, eqCostRes, purchasesRes, paymentsRes, payEstimateRes] = await Promise.all([
     supabase.rpc('load_profit_rollup', { p_dimension: 'driver', p_from: from, p_to: to, p_basis: basis }),
     supabase.rpc('load_profit_rollup', { p_dimension: 'trailer', p_from: from, p_to: to, p_basis: basis }),
     supabase.from('drivers').select('id, full_name, internal_id, current_status, driver_type, carrier'),
@@ -40,6 +40,7 @@ export async function fetchDriverDeck({ from, to, basis = 'delivery' }) {
     supabase.from('driver_purchase_payments')
       .select('driver_purchase_id, period_start, period_end, expected_amount, actual_amount, reconciled')
       .lte('period_start', to).gte('period_end', from),
+    supabase.rpc('driver_pay_estimate_rollup', { p_from: from, p_to: to, p_basis: basis }),
   ])
   if (rollup.error) throw rollup.error
 
@@ -52,6 +53,7 @@ export async function fetchDriverDeck({ from, to, basis = 'delivery' }) {
   const costByUnit = new Map((eqCostRes.data || []).map(r => [`${r.etype}:${r.id}`, r]))
   const purchasesByDriver = groupBy(purchasesRes.data, 'driver_id')
   const paymentsByPurchase = groupBy(paymentsRes.data, 'driver_purchase_id')
+  const payEstimateByDriver = new Map((payEstimateRes.data || []).map(r => [r.driver_id, r]))
 
   // Like-for-like benchmark: $/mile per trailer type, from the same period's
   // per-trailer rollup joined to trailers.trailer_type. Realized legs only —
@@ -122,6 +124,9 @@ export async function fetchDriverDeck({ from, to, basis = 'delivery' }) {
     const benchmarkRpm = trailerType && byType.has(trailerType) ? byType.get(trailerType).rpm : fleetRpm
     const benchmarkScope = trailerType && byType.has(trailerType) ? trailerType : 'fleet'
 
+    // Estimated driver compensation — from driver_pay_estimate_rollup
+    const payEstimate = driverId ? payEstimateByDriver.get(driverId) : null
+
     return {
       id: driverId || `raw:${rawName}`,
       driverId,
@@ -140,6 +145,13 @@ export async function fetchDriverDeck({ from, to, basis = 'delivery' }) {
       benchmarkRpm,
       benchmarkScope,
       health: healthSignal({ ...metrics, benchmarkRpm }, effDays),
+      payEstimate: payEstimate ? {
+        loads: payEstimate.loads,
+        estDriverPay: Number(payEstimate.est_driver_pay) || 0,
+        estCompanyContribution: Number(payEstimate.est_company_contribution) || 0,
+        hasMissingComp: payEstimate.has_missing_comp || false,
+        hasContract: payEstimate.has_contract || false,
+      } : null,
     }
   }
 

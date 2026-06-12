@@ -269,6 +269,43 @@ function DriverSpotlightCard({ entry, lanes, trend, rangeDays, effDays, periodLa
           />
           <StatTile label="Booked pipeline" tone="cyan" value={m.booked > 0 ? fmtMoney(m.booked) : '—'} sub={m.bookedLoads > 0 ? `${fmtNum(m.bookedLoads)} load${m.bookedLoads === 1 ? '' : 's'} upcoming` : 'nothing booked'} />
         </div>
+
+        {/* Estimated driver compensation block */}
+        {entry.payEstimate && (
+          <div className="mt-3 rounded-lg border border-blue-200 dark:border-blue-500/20 bg-blue-50/60 dark:bg-blue-500/[0.06] px-3 py-2">
+            <div className="flex items-center justify-between gap-2 mb-1.5">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-blue-700 dark:text-blue-400">
+                Estimated driver comp
+              </p>
+              <span className="text-[9px] px-1.5 py-px rounded-full bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-400 font-medium">estimated</span>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {entry.payEstimate.hasContract ? (
+                <div>
+                  <p className="text-[10px] text-blue-600 dark:text-blue-400">Est. driver pay</p>
+                  <p className="text-sm font-mono font-semibold text-blue-900 dark:text-blue-200">{entry.payEstimate.estDriverPay > 0 ? fmtMoney(entry.payEstimate.estDriverPay) : '—'}</p>
+                </div>
+              ) : (
+                <div>
+                  <p className="text-[10px] text-blue-600 dark:text-blue-400">Est. driver pay</p>
+                  <p className="text-sm font-mono font-semibold text-blue-900 dark:text-blue-200">{fmtMoney(entry.payEstimate.estDriverPay)}</p>
+                </div>
+              )}
+              <div>
+                <p className="text-[10px] text-blue-600 dark:text-blue-400">Est. company earn</p>
+                <p className="text-sm font-mono font-semibold text-blue-900 dark:text-blue-200">
+                  {entry.payEstimate.hasContract ? 'TBD' : fmtMoney(entry.payEstimate.estCompanyContribution)}
+                </p>
+              </div>
+            </div>
+            {entry.payEstimate.hasMissingComp && (
+              <p className="text-[10px] text-amber-700 dark:text-amber-400 mt-1.5 pt-1.5 border-t border-blue-200 dark:border-blue-500/20">
+                ⚠ Missing rate — estimated numbers unavailable
+              </p>
+            )}
+          </div>
+        )}
+
         <div className="mt-3">
           <BenchmarkStrip entry={entry} />
         </div>
