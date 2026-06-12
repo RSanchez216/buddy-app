@@ -333,10 +333,10 @@ export default function Contribution() {
       <p className="text-[11px] text-gray-600 dark:text-slate-500 -mt-1 space-y-1">
         <div>
           Contribution = realized revenue − equipment carrying cost (monthly cost × {data ? data.days : '…'} days ÷ 30.44) − truck-purchase deduction.
-          Coming next on the road to net margin: fuel · driver pay · insurance.
+          Coming next on the road to net margin: fuel · insurance. Driver pay is estimated on the Est. Driver Pay toggle.
         </div>
         <div className="text-amber-700 dark:text-amber-400">
-          <strong>Owner-operator contribution is gross of driver settlement:</strong> MANAS hasn't modeled the owner-operator share yet, so their figures are overstated and will compress most when driver pay lands. <strong>Company trucks</strong> are the meaningful read today.
+          <strong>On this equipment view, owner-operator contribution is gross of the driver's share,</strong> so it reads high. Use the <strong>Est. Driver Pay toggle</strong> or <strong>Profitability → Est. vs Act.</strong> for the driver-pay-adjusted read.
         </div>
       </p>
 
@@ -490,8 +490,7 @@ export default function Contribution() {
         )}
         {dimension === 'truck' && <p>The truck view subtracts each truck&apos;s own carrying cost; trailer costs are attributed to drivers in the driver view.</p>}
         <p>
-          Revenue, miles, equipment carrying cost, and purchase deductions are live BUDDY data. Fuel, insurance, and driver
-          pay — and therefore true net margin — are not connected yet and are never estimated here.
+          Revenue, miles, equipment carrying cost, and purchase deductions are live BUDDY data. Driver pay is estimated on the Est. Driver Pay toggle and reconciled to actuals on Profitability → Est. vs Act. Fuel and insurance aren't connected yet, so true net margin is still pending.
         </p>
       </div>
     </div>

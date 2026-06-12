@@ -171,7 +171,6 @@ function ContributionLine({ label, value, sign, strong, note }) {
 const ROADMAP = [
   { label: 'Fuel', desc: 'per-load fuel spend' },
   { label: 'Insurance', desc: 'per-unit premiums' },
-  { label: 'Driver pay', desc: 'settlement deductions' },
 ]
 
 function DriverSpotlightCard({ entry, lanes, trend, rangeDays, effDays, periodLabel, basis = 'delivery', focused, rank, total, sortLabel, activeWeekFrom, onWeekSelect }) {
@@ -379,7 +378,7 @@ function DriverSpotlightCard({ entry, lanes, trend, rangeDays, effDays, periodLa
               </div>
             ))}
             <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-1.5 leading-snug">
-              Once these connect, this card shows true <span className="font-semibold text-gray-500 dark:text-slate-400">net margin</span> — no estimates shown until the data is real.
+              Driver pay is estimated above. Once fuel and insurance connect, this card shows true <span className="font-semibold text-gray-500 dark:text-slate-400">net margin</span>.
             </p>
           </div>
         </div>
