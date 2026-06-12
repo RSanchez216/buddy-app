@@ -1,11 +1,8 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useEffect, useState } from 'react'
 import { useToast } from '../../../../contexts/ToastContext'
 import { S } from '../../../../lib/styles'
 import { fetchBoardroom, pctDelta } from './boardroomData'
 import { fmtMoney, fmtNum, fmtRpm, formatRange, shiftYmd, spanDays, thisMonth, thisWeek } from '../spotlight/spotlightShared'
-
-const BoardroomLanePanel = lazy(() => import('./BoardroomLanePanel'))
 
 // The Boardroom — the owner-facing command center. One screen-projectable
 // page that assembles the fleet's profit story: pulse metrics counting up,
@@ -576,16 +573,7 @@ export default function Boardroom() {
         )}
       </div>
 
-      {/* ── Lane Flow Map (embedded live) ── */}
-      {loading ? (
-        <div className={`${S.card} h-96 animate-pulse`} />
-      ) : (
-        <Suspense fallback={<div className={`${S.card} h-96 animate-pulse`} />}>
-          <BoardroomLanePanel laneAgg={data?.lanes} />
-        </Suspense>
-      )}
-
-      {/* ── 5 · Deep views hub ── */}
+      {/* ── Go Deeper hub ── */}
       <div>
         <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-400 dark:text-slate-500 mb-2">Go deeper</p>
         <div className="grid sm:grid-cols-2 gap-3">
@@ -611,9 +599,9 @@ export default function Boardroom() {
 
       {/* ── Honesty footer ── */}
       <p className="text-[11px] text-gray-400 dark:text-slate-500 text-center max-w-3xl mx-auto pb-2">
-        Revenue, miles, $/mile, lanes (map embedded live), broker concentration, ownership split, utilization, and the
-        equipment-cost contribution are real BUDDY data for the selected window. Driver pay, fuel, insurance — and
-        therefore true net margin — are not connected yet and are never estimated on this screen.
+        Revenue, miles, $/mile, broker concentration, ownership split, utilization, and the equipment-cost contribution
+        are real BUDDY data for the selected window. Driver pay, fuel, insurance — and therefore true net margin — are
+        not connected yet and are never estimated on this screen.
       </p>
     </div>
   )
