@@ -34,6 +34,7 @@ const Icons = {
   map:       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" /></svg>,
   boardroom: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 4h18v11H3V4zm6 15l3-4 3 4M8 12l2.5-3 2 2L16 7" /></svg>,
   lifeline:  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 12h4l2.5-6 4 12L16 12h5" /></svg>,
+  gear:      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>,
 }
 
 // ── Nav item ───────────────────────────────────────────────────────────────
@@ -136,73 +137,54 @@ export default function Layout() {
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 p-2.5 space-y-3 overflow-y-auto">
+        <nav className="flex-1 p-2.5 space-y-3 overflow-y-auto flex flex-col">
 
-          {/* AP Control */}
-          <NavSection id="ap-control" label="AP Control">
-            <NavItem to="/"          label="Dashboard"        icon={Icons.dashboard} end onClick={close} />
-            <NavItem to="/vendors"   label="Vendor Master"    icon={Icons.vendors}   onClick={close} />
-            <NavItem to="/invoices"  label="Invoice Inbox"    icon={Icons.invoices}  onClick={close} />
-            <NavItem to="/transactions" label="Transaction Feed" icon={Icons.txns}   onClick={close} />
-            <NavItem to="/reports"   label="Monthly Report"   icon={Icons.report}    onClick={close} />
-          </NavSection>
-
-          {/* Fleet */}
-          <NavSection id="fleet" label="Fleet" withDivider>
-            <NavItem to="/fleet/trucks"   label="Trucks"   icon={Icons.truck}   onClick={close} />
-            <NavItem to="/fleet/trailers" label="Trailers" icon={Icons.trailer} onClick={close} />
-            <NavItem to="/fleet/drivers"  label="Drivers"  icon={Icons.driver}  onClick={close} />
-            <NavItem to="/fleet/cost"     label="Equipment Cost" icon={Icons.cost} onClick={close} />
-            <NavItem to="/fleet/loads/import" label="Loads Import" icon={Icons.truck} onClick={close} />
-            <NavItem to="/fleet/profitability" label="Profitability" icon={Icons.cost} end onClick={close} />
-            <NavItem to="/fleet/profitability/boardroom" label="Boardroom" icon={Icons.boardroom} onClick={close} />
+          {/* TODAY — pinned at top */}
+          <NavSection id="today" label="Today">
             <NavItem to="/rig" label="The Rig" icon={Icons.truck} onClick={close} />
-            <NavItem to="/fleet/profitability/spotlight" label="Driver Spotlight" icon={Icons.driver} onClick={close} />
-            <NavItem to="/fleet/profitability/contribution" label="Contribution" icon={Icons.report} onClick={close} />
+            <NavItem to="/fleet/profitability/boardroom" label="Boardroom" icon={Icons.boardroom} onClick={close} />
             <NavItem to="/fleet/profitability/lanes" label="Lane Map" icon={Icons.map} onClick={close} />
-          </NavSection>
-
-          {/* Financial Controls */}
-          <NavSection id="financial-controls" label="Financial Controls" withDivider>
-            <NavItem to="/financial-controls/debt-schedule"    label="Debt Schedule"    icon={Icons.debt}        onClick={close} />
-            <NavItem to="/financial-controls/driver-purchases" label="Driver Purchases" icon={Icons.driverSale}  onClick={close} />
-          </NavSection>
-
-          {/* Cash Flow */}
-          <NavSection id="cash-flow" label="Cash Flow" withDivider>
-            <NavItem to="/cash-flow/payment-calendar" label="Payment Calendar" icon={Icons.calendar} onClick={close} />
             <NavItem to="/cash-flow/lifeline" label="Lifeline" icon={Icons.lifeline} onClick={close} />
           </NavSection>
 
-          {/* Settings */}
-          <NavSection id="settings" label="Settings" defaultOpen={false} withDivider>
-            <NavItem to="/settings/departments"       label="Departments"       icon={Icons.dept}     onClick={close} />
-            <NavItem to="/settings/vendor-categories" label="Vendor Categories" icon={Icons.category} onClick={close} />
-            <NavItem to="/settings/payment-methods"   label="Payment Methods"   icon={Icons.payment}  onClick={close} />
-            <NavItem to="/settings/loan-entities"     label="Loan Entities"     icon={Icons.entity}   onClick={close} />
-            <NavItem to="/settings/carriers"          label="Carriers"          icon={Icons.truck}    onClick={close} />
-            <NavItem to="/settings/loan-lenders"      label="Loan Lenders"      icon={Icons.lender}   onClick={close} />
-            <NavItem to="/settings/funding-accounts"  label="Funding & Sources" icon={Icons.bank}     onClick={close} />
-            <NavItem to="/settings/equipment-types"   label="Equipment Types"   icon={Icons.truck}    onClick={close} />
-            <NavItem to="/settings/expense-categories" label="Expense Categories" icon={Icons.category} onClick={close} />
-            <NavItem to="/settings/factors"           label="Factors"           icon={Icons.lender}   onClick={close} />
-            <NavItem to="/settings/recurring-expenses" label="Recurring Expenses" icon={Icons.calendar} onClick={close} />
-            <NavItem to="/settings/driver-purchase-statuses" label="Driver Purchase Statuses" icon={Icons.flag} onClick={close} />
-            {isAdmin && (
-              <NavItem to="/settings/users" label="Users" icon={Icons.users} onClick={close} />
-            )}
+          {/* MONEY */}
+          <NavSection id="money" label="Money" withDivider>
+            <NavItem to="/cash-flow/payment-calendar" label="Payment Calendar" icon={Icons.calendar} onClick={close} />
+            <NavItem to="/financial-controls/debt-schedule" label="Debt Schedule" icon={Icons.debt} onClick={close} />
+            <NavItem to="/financial-controls/driver-purchases" label="Driver Purchases" icon={Icons.driverSale} onClick={close} />
           </NavSection>
 
-          {/* Placeholder for future tools */}
-          <div className="pt-1">
-            <div className="flex items-center gap-2 px-3 py-1.5">
-              <div className="flex-1 h-px bg-gray-100 dark:bg-white/5" />
-              <span className="text-[9px] text-gray-300 dark:text-slate-700 font-medium tracking-widest uppercase">More tools</span>
-              <div className="flex-1 h-px bg-gray-100 dark:bg-white/5" />
-            </div>
-            <div className="px-3 py-2 text-[11px] text-gray-300 dark:text-slate-700 italic text-center">
-              Fleet, HR & more coming soon
-            </div>
+          {/* PROFITABILITY */}
+          <NavSection id="profitability" label="Profitability" withDivider>
+            <NavItem to="/fleet/profitability" label="Profitability" icon={Icons.cost} end onClick={close} />
+            <NavItem to="/fleet/profitability/spotlight" label="Driver Spotlight" icon={Icons.driver} onClick={close} />
+            <NavItem to="/fleet/profitability/contribution" label="Contribution" icon={Icons.report} onClick={close} />
+          </NavSection>
+
+          {/* FLEET */}
+          <NavSection id="fleet" label="Fleet" withDivider>
+            <NavItem to="/fleet/trucks" label="Trucks" icon={Icons.truck} onClick={close} />
+            <NavItem to="/fleet/trailers" label="Trailers" icon={Icons.trailer} onClick={close} />
+            <NavItem to="/fleet/drivers" label="Drivers" icon={Icons.driver} onClick={close} />
+            <NavItem to="/fleet/cost" label="Equipment Cost" icon={Icons.cost} onClick={close} />
+            <NavItem to="/fleet/loads/import" label="Loads Import" icon={Icons.truck} onClick={close} />
+          </NavSection>
+
+          {/* PAYABLES */}
+          <NavSection id="payables" label="Payables" withDivider>
+            <NavItem to="/" label="Dashboard" icon={Icons.dashboard} end onClick={close} />
+            <NavItem to="/vendors" label="Vendor Master" icon={Icons.vendors} onClick={close} />
+            <NavItem to="/invoices" label="Invoice Inbox" icon={Icons.invoices} onClick={close} />
+            <NavItem to="/transactions" label="Transaction Feed" icon={Icons.txns} onClick={close} />
+            <NavItem to="/reports" label="Monthly Report" icon={Icons.report} onClick={close} />
+          </NavSection>
+
+          {/* Spacer to push Settings to bottom */}
+          <div className="flex-1" />
+
+          {/* SETTINGS — pinned at bottom, single link */}
+          <div className="mt-3 pt-3 border-t border-gray-200 dark:border-white/5">
+            <NavItem to="/settings" label="Settings" icon={Icons.gear} onClick={close} />
           </div>
         </nav>
 
