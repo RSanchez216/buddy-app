@@ -498,8 +498,8 @@ function Tractor({ animRef }) {
           near-black blocker RECESSED inside the cab — oversized on
           purpose, its edges hide behind the body shell, and the aperture
           reads as deep tint from every angle. */}
-      <mesh position={[0, 2.5, -1.18]} rotation={[-0.39, 0, 0]}>
-        <planeGeometry args={[2.2, 1.5]} />
+      <mesh position={[0, 2.38, -1.18]} rotation={[-0.39, 0, 0]}>
+        <planeGeometry args={[2.0, 1.0]} />
         <meshStandardMaterial color="#05070a" roughness={0.95} metalness={0} side={THREE.DoubleSide} />
       </mesh>
       {/* MANAS marks: large on each sleeper side panel — the one big
