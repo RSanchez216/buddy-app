@@ -136,8 +136,8 @@ export default function Layout() {
           </div>
         </div>
 
-        {/* Navigation */}
-        <nav className="flex-1 p-2.5 space-y-3 overflow-y-auto flex flex-col">
+        {/* Navigation — scrollable middle section */}
+        <nav className="flex-1 p-2.5 space-y-3 overflow-y-auto">
 
           {/* TODAY — pinned at top */}
           <NavSection id="today" label="Today">
@@ -178,15 +178,12 @@ export default function Layout() {
             <NavItem to="/transactions" label="Transaction Feed" icon={Icons.txns} onClick={close} />
             <NavItem to="/reports" label="Monthly Report" icon={Icons.report} onClick={close} />
           </NavSection>
-
-          {/* Spacer to push Settings to bottom */}
-          <div className="flex-1" />
-
-          {/* SETTINGS — pinned at bottom, single link */}
-          <div className="mt-3 pt-3 border-t border-gray-200 dark:border-white/5">
-            <NavItem to="/settings" label="Settings" icon={Icons.gear} onClick={close} />
-          </div>
         </nav>
+
+        {/* SETTINGS — pinned footer at bottom, always visible */}
+        <div className="shrink-0 p-2.5 border-t border-gray-200 dark:border-white/5">
+          <NavItem to="/settings" label="Settings" icon={Icons.gear} onClick={close} />
+        </div>
 
       </aside>
 
