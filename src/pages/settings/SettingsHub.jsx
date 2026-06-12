@@ -6,6 +6,12 @@ import { S } from '../../lib/styles'
 
 const SETTINGS_GROUPS = [
   {
+    title: 'Administration',
+    items: [
+      { label: 'Users & Access', route: '/settings/users', description: 'Manage user accounts, roles, and page access permissions' },
+    ],
+  },
+  {
     title: 'Organization',
     items: [
       { label: 'Departments', route: '/settings/departments', description: 'Organizational structure and department hierarchy' },

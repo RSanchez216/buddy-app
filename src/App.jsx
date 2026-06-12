@@ -24,6 +24,7 @@ import SettingsFactors from './pages/settings/Factors'
 import SettingsRecurringExpenses from './pages/settings/RecurringExpenses'
 import SettingsUsers from './pages/settings/users/Users'
 import SettingsLayout from './pages/settings/SettingsLayout'
+import AcceptInvite from './pages/AcceptInvite'
 import DebtSchedule from './pages/financial-controls/DebtSchedule'
 import LoanDetail from './pages/financial-controls/LoanDetail'
 import DriverPurchasesPage from './pages/driver-purchases/DriverPurchasesPage'
@@ -69,6 +70,7 @@ export default function App() {
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/auth/set-password" element={<SetPassword />} />
+            <Route path="/accept-invite" element={<AcceptInvite />} />
             <Route path="/rig" element={
               <ProtectedRoute>
                 <Suspense fallback={

@@ -5,6 +5,7 @@ import { useAuth } from '../../../contexts/AuthContext'
 import { S } from '../../../lib/styles'
 import Select from '../../../components/Select'
 import { ROLES, ROLE_LABEL, rolePill, statusPill, fmtDateTime } from './userUtils'
+import PageAccessPanel from './PageAccessPanel'
 import { useToast } from '../../../contexts/ToastContext'
 
 const ORANGE_BTN = 'px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 disabled:bg-gray-200 dark:disabled:bg-slate-700 disabled:text-gray-400 dark:disabled:text-slate-500 text-white rounded-xl transition-all'
@@ -20,6 +21,7 @@ export default function EditUserDrawer({ open, user, onClose, onChange, onSucces
   const [saving, setSaving] = useState(false)
   const [busy, setBusy] = useState(false) // for resend / reset / deactivate
   const [error, setError] = useState('')
+  const [showAccessPanel, setShowAccessPanel] = useState(false)
 
   useEffect(() => {
     if (!open || !user) return
@@ -166,6 +168,7 @@ export default function EditUserDrawer({ open, user, onClose, onChange, onSucces
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <button onClick={() => setShowAccessPanel(true)} disabled={busy} className={ACTION_BTN}>Manage access</button>
             {user.status === 'pending' && (
               <button onClick={resendInvite} disabled={busy} className={ACTION_BTN}>Resend invite</button>
             )}
@@ -190,6 +193,33 @@ export default function EditUserDrawer({ open, user, onClose, onChange, onSucces
           </button>
         </div>
       </div>
+
+      {/* Page Access Panel Modal */}
+      {showAccessPanel && createPortal(
+        <div className="fixed inset-0 z-[101] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 dark:bg-black/75 backdrop-blur-sm" onClick={() => setShowAccessPanel(false)} />
+          <div className="relative bg-white dark:bg-[#0d0d1f] border border-gray-200 dark:border-white/10 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-white/5">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Manage page access</h3>
+                <p className="text-xs text-gray-500 dark:text-slate-500 mt-0.5">{user.full_name || user.email}</p>
+              </div>
+              <button onClick={() => setShowAccessPanel(false)} className="text-gray-400 hover:text-gray-700 dark:hover:text-slate-200">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="overflow-y-auto flex-1 p-5">
+              <PageAccessPanel user={user} onClose={() => setShowAccessPanel(false)} />
+            </div>
+            <div className="border-t border-gray-100 dark:border-white/5 p-4 flex items-center justify-end">
+              <button onClick={() => setShowAccessPanel(false)} className={S.btnCancel}>Done</button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>,
     document.body
   )
