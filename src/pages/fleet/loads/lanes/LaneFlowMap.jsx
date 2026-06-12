@@ -89,7 +89,7 @@ export default function LaneFlowMap() {
   const [view, setView] = useState('realized') // realized | booked
   const [weight, setWeight] = useState('revenue') // intensity: revenue | loads | rpm (rpm is heat-only)
   const [colorBy, setColorBy] = useState('rpm') // arc color: rpm | type
-  const [mapMode, setMapMode] = useState('lanes') // lanes (arcs) | heat (density)
+  const [mapMode, setMapMode] = useState('heat') // lanes (arcs) | heat (density)
   function switchMapMode(m) {
     setMapMode(m)
     // $/mile is an average — meaningful as heat intensity, not as arc
