@@ -49,6 +49,9 @@ const LaneFlowMap = lazy(() => import('./pages/fleet/loads/lanes/LaneFlowMap'))
 // Lazy — the Boardroom pulls several rollups plus the lane and contribution
 // data layers at once; keep it out of the main bundle.
 const Boardroom = lazy(() => import('./pages/fleet/loads/boardroom/Boardroom'))
+// Lazy — the Settings hub consolidates 9 reference-data screens; keep it
+// out of the main bundle as a navigation hub.
+const SettingsHub = lazy(() => import('./pages/settings/SettingsHub'))
 // Lazy — Lifeline is a destination screen (chart engine + animations), not a
 // daily-driver list; keep the main bundle lean.
 const Lifeline = lazy(() => import('./pages/cash-flow/lifeline/Lifeline'))
@@ -123,6 +126,11 @@ export default function App() {
                 </Suspense>
               } />
               {/* Settings */}
+              <Route path="settings" element={
+                <Suspense fallback={<div className="p-8 text-sm text-gray-400 dark:text-slate-500">Loading Settings…</div>}>
+                  <SettingsHub />
+                </Suspense>
+              } />
               <Route path="settings/departments" element={<SettingsDepartments />} />
               <Route path="settings/vendor-categories" element={<SettingsVendorCategories />} />
               <Route path="settings/payment-methods" element={<SettingsPaymentMethods />} />
