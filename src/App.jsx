@@ -23,6 +23,7 @@ import SettingsExpenseCategories from './pages/settings/ExpenseCategories'
 import SettingsFactors from './pages/settings/Factors'
 import SettingsRecurringExpenses from './pages/settings/RecurringExpenses'
 import SettingsUsers from './pages/settings/users/Users'
+import SettingsLayout from './pages/settings/SettingsLayout'
 import DebtSchedule from './pages/financial-controls/DebtSchedule'
 import LoanDetail from './pages/financial-controls/LoanDetail'
 import DriverPurchasesPage from './pages/driver-purchases/DriverPurchasesPage'
@@ -131,24 +132,28 @@ export default function App() {
                 </Suspense>
               } />
               {/* Settings */}
-              <Route path="settings" element={
-                <Suspense fallback={<div className="p-8 text-sm text-gray-400 dark:text-slate-500">Loading Settings…</div>}>
-                  <SettingsHub />
-                </Suspense>
-              } />
-              <Route path="settings/departments" element={<SettingsDepartments />} />
-              <Route path="settings/vendor-categories" element={<SettingsVendorCategories />} />
-              <Route path="settings/payment-methods" element={<SettingsPaymentMethods />} />
-              <Route path="settings/loan-entities" element={<SettingsLoanEntities />} />
-              <Route path="settings/carriers" element={<SettingsCarriers />} />
-              <Route path="settings/loan-lenders" element={<SettingsLoanLenders />} />
-              <Route path="settings/funding-accounts" element={<SettingsFundingAccounts />} />
-              <Route path="settings/equipment-types" element={<SettingsEquipmentTypes />} />
-              <Route path="settings/expense-categories" element={<SettingsExpenseCategories />} />
-              <Route path="settings/factors" element={<SettingsFactors />} />
-              <Route path="settings/recurring-expenses" element={<SettingsRecurringExpenses />} />
-              <Route path="settings/driver-purchase-statuses" element={<SettingsDriverPurchaseStatuses />} />
-              <Route path="settings/users" element={<SettingsUsers />} />
+              <Route path="settings">
+                <Route index element={
+                  <Suspense fallback={<div className="p-8 text-sm text-gray-400 dark:text-slate-500">Loading Settings…</div>}>
+                    <SettingsHub />
+                  </Suspense>
+                } />
+                <Route element={<SettingsLayout />}>
+                  <Route path="departments" element={<SettingsDepartments />} />
+                  <Route path="vendor-categories" element={<SettingsVendorCategories />} />
+                  <Route path="payment-methods" element={<SettingsPaymentMethods />} />
+                  <Route path="loan-entities" element={<SettingsLoanEntities />} />
+                  <Route path="carriers" element={<SettingsCarriers />} />
+                  <Route path="loan-lenders" element={<SettingsLoanLenders />} />
+                  <Route path="funding-accounts" element={<SettingsFundingAccounts />} />
+                  <Route path="equipment-types" element={<SettingsEquipmentTypes />} />
+                  <Route path="expense-categories" element={<SettingsExpenseCategories />} />
+                  <Route path="factors" element={<SettingsFactors />} />
+                  <Route path="recurring-expenses" element={<SettingsRecurringExpenses />} />
+                  <Route path="driver-purchase-statuses" element={<SettingsDriverPurchaseStatuses />} />
+                  <Route path="users" element={<SettingsUsers />} />
+                </Route>
+              </Route>
             </Route>
             <Route path="*" element={<Navigate to="/fleet/profitability/lanes" replace />} />
           </Routes>
