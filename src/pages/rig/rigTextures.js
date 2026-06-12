@@ -172,6 +172,25 @@ export function makeTrailerWrapTexture() {
   return tex
 }
 
+// Thin tapered red accent swoosh for the cab's upper sleeper line
+// (design-1 reference). Transparent strip, drawn fat-left → thin-right.
+export function makeAccentStripeTexture() {
+  const tex = canvasTexture(512, 64, (ctx, w, h) => {
+    ctx.clearRect(0, 0, w, h)
+    ctx.fillStyle = '#c0242b'
+    ctx.beginPath()
+    ctx.moveTo(0, h * 0.15)
+    ctx.bezierCurveTo(w * 0.4, h * 0.05, w * 0.7, h * 0.25, w, h * 0.42)
+    ctx.lineTo(w, h * 0.58)
+    ctx.bezierCurveTo(w * 0.7, h * 0.55, w * 0.4, h * 0.95, 0, h * 0.85)
+    ctx.closePath()
+    ctx.fill()
+  })
+  tex.wrapS = THREE.ClampToEdgeWrapping
+  tex.wrapT = THREE.ClampToEdgeWrapping
+  return tex
+}
+
 // Lit-window grid for city silhouettes; doubles as map + emissiveMap so the
 // windows glow at night (emissiveIntensity animated with the day cycle).
 export function makeWindowsTexture() {

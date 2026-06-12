@@ -35,6 +35,7 @@ import {
   WHEEL_RADIUS,
 } from './rigConfig'
 import {
+  makeAccentStripeTexture,
   makeAsphaltTexture,
   makeCustomerWordmarkTexture,
   makeLaneDashTexture,
@@ -399,6 +400,7 @@ function Tractor({ animRef }) {
   const spinRef = useRef([])
   const logo = useTexture(MANAS_LOGO_URL)
   const logoAspect = logo.image ? logo.image.width / logo.image.height : 1
+  const accentStripe = useMemo(() => makeAccentStripeTexture(), [])
   const [cabMesh, setCabMesh] = useState(null)
 
   useEffect(() => {
@@ -503,24 +505,27 @@ function Tractor({ animRef }) {
         <planeGeometry args={[2.0, 1.0]} />
         <meshStandardMaterial color="#05070a" roughness={0.95} metalness={0} side={THREE.DoubleSide} />
       </mesh>
-      {/* MANAS marks: large on each sleeper side panel — the one big
-          uninterrupted cab surface (door placement clipped against the
-          window mesh) — plus hood and roof-fairing tops, projected down. */}
+      {/* MANAS marks: as large as the white sleeper panel allows (the
+          black rear pillar is a separate dark-plastic mesh decals can't
+          print on), the hood top, and a design-1-style red accent swoosh
+          along each upper sleeper line. */}
       {cabMesh &&
         [
-          { key: 'left', position: [1.5, 2.3, -3.05], rotation: [0, Math.PI / 2, 0], size: 1.45 },
-          { key: 'right', position: [-1.5, 2.3, -3.05], rotation: [0, -Math.PI / 2, 0], size: 1.45 },
-          { key: 'hood', position: [0, 1.9, 0.12], rotation: [-Math.PI / 2, 0, 0], size: 0.85 },
+          { key: 'left', position: [1.5, 2.3, -2.83], rotation: [0, Math.PI / 2, 0], scale: [1.2, 1.2 / logoAspect, 1.2] },
+          { key: 'right', position: [-1.5, 2.3, -2.83], rotation: [0, -Math.PI / 2, 0], scale: [1.2, 1.2 / logoAspect, 1.2] },
+          { key: 'hood', position: [0, 1.9, 0.12], rotation: [-Math.PI / 2, 0, 0], scale: [0.85, 0.85 / logoAspect, 1.2] },
+          { key: 'stripe-l', position: [1.45, 3.32, -2.9], rotation: [0, Math.PI / 2, 0], scale: [2.6, 0.34, 1.2], map: 'stripe' },
+          { key: 'stripe-r', position: [-1.45, 3.32, -2.9], rotation: [0, -Math.PI / 2, 0], scale: [2.6, 0.34, 1.2], map: 'stripe' },
         ].map((d) => (
           <Decal
             key={d.key}
             mesh={{ current: cabMesh }}
             position={d.position}
             rotation={d.rotation}
-            scale={[d.size, d.size / logoAspect, 1.2]}
+            scale={d.scale}
           >
             <meshStandardMaterial
-              map={logo}
+              map={d.map === 'stripe' ? accentStripe : logo}
               transparent
               polygonOffset
               polygonOffsetFactor={-10}
@@ -540,9 +545,9 @@ function Tractor({ animRef }) {
 // Side branding as wall-hugging planes (trailer-local units, 1 ≈ 0.315 m).
 // drei <Decal> projects in world space, which misplaces inside this scaled
 // group — and the van walls are flat, so planes are visually identical.
-function SideBranding({ map, aspect, y, width, opaque = false }) {
+function SideBranding({ map, aspect, y, width, z = -20, opaque = false }) {
   return [1, -1].map((side) => (
-    <mesh key={side} position={[side * 3.58, y, -20]} rotation={[0, (side * Math.PI) / 2, 0]}>
+    <mesh key={side} position={[side * 3.58, y, z]} rotation={[0, (side * Math.PI) / 2, 0]}>
       <planeGeometry args={[width, width / aspect]} />
       <meshStandardMaterial
         map={map}
@@ -617,7 +622,9 @@ function VanTrailer({ variant, animRef }) {
           animRef={animRef}
         />
       ))}
-      {variant === 'dryvan' && wrap && <SideBranding map={wrap} aspect={4} y={8.2} width={37} opaque />}
+      {variant === 'dryvan' && wrap && (
+        <SideBranding map={wrap} aspect={4.21} y={8.1} width={40} z={-22.5} opaque />
+      )}
       {variant === 'reefer' && <SideBranding map={logo} aspect={logoAspect} y={8.9} width={7.5} />}
       {variant === 'customer' && wordmark && (
         <SideBranding map={wordmark} aspect={1024 / 192} y={7.6} width={24} />
