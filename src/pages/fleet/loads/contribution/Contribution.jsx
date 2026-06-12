@@ -97,11 +97,13 @@ function RowDetail({ row, days, dimension }) {
 export default function Contribution() {
   const toast = useToast()
 
+  const [viewMode, setViewMode] = useState('equipment') // 'equipment' | 'driver-pay'
   const [dimension, setDimension] = useState('truck')
   const [preset, setPreset] = useState('month')
   const [range, setRange] = useState(thisMonth)
   const [basis, setBasis] = useState('delivery')
   const [sort, setSort] = useState({ key: 'contribution', dir: 'desc' })
+  const [driverPaySort, setDriverPaySort] = useState({ key: 'estCompanyContribution', dir: 'desc' })
   const [query, setQuery] = useState('')
   const [negativeFilter, setNegativeFilter] = useState(false)
   const [ownershipFilter, setOwnershipFilter] = useState('all') // 'all' | 'company' | 'driver_owned'
@@ -109,7 +111,9 @@ export default function Contribution() {
   // Async results live with the key they were fetched for — a dimension /
   // period / basis change invalidates them by derivation, no reset effects.
   const dataKey = `${dimension}|${range.from}|${range.to}|${basis}`
+  const driverPayKey = `driver-pay|${range.from}|${range.to}|${basis}`
   const [dataState, setDataState] = useState({ key: null, data: null })
+  const [driverPayState, setDriverPayState] = useState({ key: null, data: null })
   const [expandState, setExpandState] = useState({ key: null, id: null })
 
   useEffect(() => {
@@ -124,6 +128,30 @@ export default function Contribution() {
       })
     return () => { stale = true }
   }, [dataKey, dimension, range.from, range.to, basis, toast])
+
+  // Fetch driver pay estimates (parallel to equipment data, always driver-keyed)
+  useEffect(() => {
+    let stale = false
+    const fetchDriverPay = async () => {
+      try {
+        const { supabase } = await import('../../../lib/supabase')
+        const { data, error } = await supabase.rpc('driver_pay_estimate_rollup', {
+          p_from: range.from,
+          p_to: range.to,
+          p_basis: basis,
+        })
+        if (error) throw error
+        if (!stale) setDriverPayState({ key: driverPayKey, data: data || [] })
+      } catch (err) {
+        if (!stale) {
+          console.error('Failed to load driver pay data:', err)
+          setDriverPayState({ key: driverPayKey, data: [] })
+        }
+      }
+    }
+    fetchDriverPay()
+    return () => { stale = true }
+  }, [driverPayKey, range.from, range.to, basis])
 
   const loading = dataState.key !== dataKey
   const data = loading ? null : dataState.data
@@ -182,6 +210,20 @@ export default function Contribution() {
     return t
   }, [filtered])
 
+  // Driver pay totals
+  const driverPayData = driverPayState.key === driverPayKey ? driverPayState.data : null
+  const driverPayTotals = useMemo(() => {
+    if (!driverPayData) return null
+    const t = { loads: 0, linehaul: 0, estDriverPay: 0, estCompanyContribution: 0 }
+    for (const d of driverPayData) {
+      t.loads += Number(d.loads) || 0
+      t.linehaul += Number(d.linehaul_revenue) || 0
+      t.estDriverPay += Number(d.est_driver_pay) || 0
+      t.estCompanyContribution += Number(d.est_company_contribution) || 0
+    }
+    return t
+  }, [driverPayData])
+
   function setPresetRange(p) {
     setPreset(p)
     if (p === 'week') setRange(thisWeek())
@@ -215,19 +257,28 @@ export default function Contribution() {
         </p>
       </div>
 
-      {/* ── Controls: dimension · filter · period · basis ── */}
+      {/* ── Controls: view · dimension · filter · period · basis ── */}
       <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-center flex-wrap gap-2">
           <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-slate-700 text-xs shrink-0">
-            {[['truck', 'By truck'], ['driver', 'By driver']].map(([k, lbl]) => (
-              <button key={k} onClick={() => setDimension(k)} className={`px-3 py-1.5 whitespace-nowrap shrink-0 ${dimension === k ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-700 dark:text-slate-400'}`}>{lbl}</button>
+            {[['equipment', 'Equipment Contrib'], ['driver-pay', 'Est. Driver Pay']].map(([k, lbl]) => (
+              <button key={k} onClick={() => setViewMode(k)} className={`px-3 py-1.5 whitespace-nowrap shrink-0 ${viewMode === k ? 'bg-blue-500 text-white font-semibold' : 'text-gray-700 dark:text-slate-400'}`}>{lbl}</button>
             ))}
           </div>
-          <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-slate-700 text-xs shrink-0">
-            {[['all', 'All'], ['company', 'Company'], ['driver_owned', 'Owner-op']].map(([k, lbl]) => (
-              <button key={k} onClick={() => setOwnershipFilter(k)} className={`px-3 py-1.5 whitespace-nowrap shrink-0 ${ownershipFilter === k ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-700 dark:text-slate-400'}`}>{lbl}</button>
-            ))}
-          </div>
+          {viewMode === 'equipment' && (
+            <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-slate-700 text-xs shrink-0">
+              {[['truck', 'By truck'], ['driver', 'By driver']].map(([k, lbl]) => (
+                <button key={k} onClick={() => setDimension(k)} className={`px-3 py-1.5 whitespace-nowrap shrink-0 ${dimension === k ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-700 dark:text-slate-400'}`}>{lbl}</button>
+              ))}
+            </div>
+          )}
+          {viewMode === 'equipment' && (
+            <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-slate-700 text-xs shrink-0">
+              {[['all', 'All'], ['company', 'Company'], ['driver_owned', 'Owner-op']].map(([k, lbl]) => (
+                <button key={k} onClick={() => setOwnershipFilter(k)} className={`px-3 py-1.5 whitespace-nowrap shrink-0 ${ownershipFilter === k ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-700 dark:text-slate-400'}`}>{lbl}</button>
+              ))}
+            </div>
+          )}
           <input
             type="text"
             value={query}
@@ -289,56 +340,136 @@ export default function Contribution() {
         </div>
       </p>
 
-      {/* ── Ranked table ── */}
-      <div className={`${S.card} overflow-hidden`}>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className={S.tableHead}>
-              <tr>
-                <th className={`${S.th} w-10`}>#</th>
-                <th className={S.th}>{dimension === 'truck' ? 'Truck · driver' : 'Driver · trucks'}</th>
-                {COLUMNS.map(c => (
-                  <th key={c.key} className={`${S.th} text-right cursor-pointer select-none hover:text-gray-700 dark:hover:text-slate-300`} onClick={() => toggleSort(c.key)}>
-                    {c.label}{sort.key === c.key ? (sort.dir === 'desc' ? ' ↓' : ' ↑') : ''}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr><td colSpan={8} className="px-4 py-12 text-center text-sm text-gray-600 dark:text-slate-500 animate-pulse">Crunching the leaderboard…</td></tr>
-              ) : sorted.length === 0 ? (
-                <tr><td colSpan={8} className="px-4 py-12 text-center text-sm text-gray-600 dark:text-slate-500">No {nounSingular}s with activity or carrying cost in this window.</td></tr>
-              ) : sorted.map((r, i) => {
-                const negative = r.contribution < 0
-                const expanded = expandedId === r.id
-                return (
-                  <FragmentRow
-                    key={r.id}
-                    row={r} rank={i + 1} negative={negative} expanded={expanded}
-                    onToggle={() => setExpandState({ key: dataKey, id: expanded ? null : r.id })}
-                    days={data.days} dimension={dimension}
-                  />
-                )
-              })}
-            </tbody>
-            {!loading && sorted.length > 0 && (
-              <tfoot>
-                <tr className="border-t border-gray-300 dark:border-white/10 bg-gray-50 dark:bg-white/[0.02] font-semibold">
-                  <td className={S.td} />
-                  <td className={`${S.td} text-gray-700 dark:text-slate-200`}>Fleet total · {sorted.length} {nounSingular}s</td>
-                  <td className={`${S.td} text-right font-mono`}>{fmtMoney(totals.revenue)}</td>
-                  <td className={`${S.td} text-right font-mono text-amber-600 dark:text-amber-400`}>{fmtSignedMoney(-totals.equipCost)}</td>
-                  <td className={`${S.td} text-right font-mono text-fuchsia-600 dark:text-fuchsia-400`}>{fmtSignedMoney(-totals.purchase)}</td>
-                  <td className={`${S.td} text-right font-mono ${totals.contribution >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>{fmtSignedMoney(totals.contribution)}</td>
-                  <td className={`${S.td} text-right font-mono`}>{fmtCpm(totals.cpm)}</td>
-                  <td className={S.td} />
+      {/* ── Equipment Contribution Table ── */}
+      {viewMode === 'equipment' && (
+        <div className={`${S.card} overflow-hidden`}>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className={S.tableHead}>
+                <tr>
+                  <th className={`${S.th} w-10`}>#</th>
+                  <th className={S.th}>{dimension === 'truck' ? 'Truck · driver' : 'Driver · trucks'}</th>
+                  {COLUMNS.map(c => (
+                    <th key={c.key} className={`${S.th} text-right cursor-pointer select-none hover:text-gray-700 dark:hover:text-slate-300`} onClick={() => toggleSort(c.key)}>
+                      {c.label}{sort.key === c.key ? (sort.dir === 'desc' ? ' ↓' : ' ↑') : ''}
+                    </th>
+                  ))}
                 </tr>
-              </tfoot>
-            )}
-          </table>
+              </thead>
+              <tbody>
+                {loading ? (
+                  <tr><td colSpan={8} className="px-4 py-12 text-center text-sm text-gray-600 dark:text-slate-500 animate-pulse">Crunching the leaderboard…</td></tr>
+                ) : sorted.length === 0 ? (
+                  <tr><td colSpan={8} className="px-4 py-12 text-center text-sm text-gray-600 dark:text-slate-500">No {nounSingular}s with activity or carrying cost in this window.</td></tr>
+                ) : sorted.map((r, i) => {
+                  const negative = r.contribution < 0
+                  const expanded = expandedId === r.id
+                  return (
+                    <FragmentRow
+                      key={r.id}
+                      row={r} rank={i + 1} negative={negative} expanded={expanded}
+                      onToggle={() => setExpandState({ key: dataKey, id: expanded ? null : r.id })}
+                      days={data.days} dimension={dimension}
+                    />
+                  )
+                })}
+              </tbody>
+              {!loading && sorted.length > 0 && (
+                <tfoot>
+                  <tr className="border-t border-gray-300 dark:border-white/10 bg-gray-50 dark:bg-white/[0.02] font-semibold">
+                    <td className={S.td} />
+                    <td className={`${S.td} text-gray-700 dark:text-slate-200`}>Fleet total · {sorted.length} {nounSingular}s</td>
+                    <td className={`${S.td} text-right font-mono`}>{fmtMoney(totals.revenue)}</td>
+                    <td className={`${S.td} text-right font-mono text-amber-600 dark:text-amber-400`}>{fmtSignedMoney(-totals.equipCost)}</td>
+                    <td className={`${S.td} text-right font-mono text-fuchsia-600 dark:text-fuchsia-400`}>{fmtSignedMoney(-totals.purchase)}</td>
+                    <td className={`${S.td} text-right font-mono ${totals.contribution >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>{fmtSignedMoney(totals.contribution)}</td>
+                    <td className={`${S.td} text-right font-mono`}>{fmtCpm(totals.cpm)}</td>
+                    <td className={S.td} />
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* ── Estimated Driver Contribution Table ── */}
+      {viewMode === 'driver-pay' && (
+        <div>
+          {/* Fleet totals strip for driver pay */}
+          {driverPayTotals && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+              {[
+                { label: 'Total loads', value: fmtNum(driverPayTotals.loads), tone: '' },
+                { label: 'Linehaul revenue', value: fmtMoney(driverPayTotals.linehaul), tone: '' },
+                { label: 'Est. driver pay', value: fmtMoney(driverPayTotals.estDriverPay), tone: 'text-blue-600 dark:text-blue-400' },
+                { label: 'Est. company earn', value: fmtMoney(driverPayTotals.estCompanyContribution), tone: 'text-emerald-600 dark:text-emerald-400', big: true },
+              ].map(c => (
+                <div key={c.label} className={`${S.card} px-4 py-3 ${c.big ? 'ring-1 ring-blue-500/30' : ''}`}>
+                  <div className="text-[10px] font-semibold uppercase tracking-widest text-gray-600 dark:text-slate-500">{c.label}</div>
+                  <div className={`mt-0.5 font-mono font-bold ${c.big ? 'text-xl' : 'text-lg'} ${c.tone || 'text-gray-900 dark:text-white'}`}>
+                    {c.value}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className={`${S.card} overflow-hidden`}>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className={S.tableHead}>
+                  <tr>
+                    <th className={`${S.th} w-10`}>#</th>
+                    <th className={S.th}>Driver · type</th>
+                    {[
+                      { key: 'loads', label: 'Loads' },
+                      { key: 'linehaul_revenue', label: 'Linehaul revenue' },
+                      { key: 'est_driver_pay', label: 'Est. driver pay' },
+                      { key: 'est_company_contribution', label: 'Est. company earn' },
+                    ].map(c => (
+                      <th key={c.key} className={`${S.th} text-right cursor-pointer select-none hover:text-gray-700 dark:hover:text-slate-300`} onClick={() => setDriverPaySort(s => (s.key === c.key ? { key: c.key, dir: s.dir === 'desc' ? 'asc' : 'desc' } : { key: c.key, dir: 'desc' }))}>
+                        {c.label}{driverPaySort.key === c.key ? (driverPaySort.dir === 'desc' ? ' ↓' : ' ↑') : ''}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {!driverPayData ? (
+                    <tr><td colSpan={6} className="px-4 py-12 text-center text-sm text-gray-600 dark:text-slate-500 animate-pulse">Loading driver pay estimates…</td></tr>
+                  ) : driverPayData.length === 0 ? (
+                    <tr><td colSpan={6} className="px-4 py-12 text-center text-sm text-gray-600 dark:text-slate-500">No drivers with loads in this window.</td></tr>
+                  ) : [...driverPayData].sort((a, b) => {
+                    const av = driverPaySort.key === 'loads' ? Number(a.loads) : driverPaySort.key === 'linehaul_revenue' ? Number(a.linehaul_revenue) : driverPaySort.key === 'est_driver_pay' ? Number(a.est_driver_pay) : Number(a.est_company_contribution)
+                    const bv = driverPaySort.key === 'loads' ? Number(b.loads) : driverPaySort.key === 'linehaul_revenue' ? Number(b.linehaul_revenue) : driverPaySort.key === 'est_driver_pay' ? Number(b.est_driver_pay) : Number(b.est_company_contribution)
+                    return (av - bv) * (driverPaySort.dir === 'desc' ? -1 : 1)
+                  }).map((d, i) => (
+                    <tr key={d.driver_id} className="border-b border-gray-100 dark:border-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.02]">
+                      <td className={`${S.td} font-mono text-gray-400 dark:text-slate-500 text-xs`}>{i + 1}</td>
+                      <td className={`${S.td} font-medium`}>
+                        <div className="text-gray-900 dark:text-slate-200">{d.driver_name}</div>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          {d.driver_type && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-slate-700/40 text-gray-600 dark:text-slate-400">{d.driver_type}</span>}
+                          {d.has_contract && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400">Contract rules TBD</span>}
+                          {d.has_missing_comp && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400">⚠ Needs rate</span>}
+                        </div>
+                      </td>
+                      <td className={`${S.td} text-right font-mono`}>{fmtNum(d.loads)}</td>
+                      <td className={`${S.td} text-right font-mono`}>{fmtMoney(d.linehaul_revenue)}</td>
+                      <td className={`${S.td} text-right font-mono text-blue-600 dark:text-blue-400`}>{d.has_missing_comp ? '—' : fmtMoney(d.est_driver_pay)}</td>
+                      <td className={`${S.td} text-right font-mono ${d.has_contract ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{d.has_contract ? 'TBD' : fmtMoney(d.est_company_contribution)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <p className="text-[11px] text-blue-700 dark:text-blue-400 mt-3 -mb-1 px-4 py-2 rounded-lg bg-blue-50 dark:bg-blue-500/10">
+            <strong>Estimated driver contribution</strong> = service charge (owner-op) or revenue − estimated driver pay (company driver). Driver pay is estimated from compensation rate. Fuel, tolls, and equipment costs are not included yet — this is partial contribution, not net profit.
+          </p>
+        </div>
+      )}
 
       {/* ── Honesty footer ── */}
       <div className="text-[11px] text-gray-600 dark:text-slate-500 space-y-1 max-w-4xl">
