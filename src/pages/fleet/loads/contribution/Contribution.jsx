@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useToast } from '../../../../contexts/ToastContext'
 import { S } from '../../../../lib/styles'
+import { supabase } from '../../../../lib/supabase'
 import { fetchContribution } from './contributionData'
 import { fmtMoney, fmtNum, formatRange, shiftYmd, spanDays, thisMonth, thisWeek } from '../spotlight/spotlightShared'
 
@@ -134,7 +135,6 @@ export default function Contribution() {
     let stale = false
     const fetchDriverPay = async () => {
       try {
-        const { supabase } = await import('../../../lib/supabase')
         const { data, error } = await supabase.rpc('driver_pay_estimate_rollup', {
           p_from: range.from,
           p_to: range.to,

@@ -43,6 +43,7 @@ export async function fetchDriverDeck({ from, to, basis = 'delivery' }) {
     supabase.rpc('driver_pay_estimate_rollup', { p_from: from, p_to: to, p_basis: basis }),
   ])
   if (rollup.error) throw rollup.error
+  if (payEstimateRes.error) throw payEstimateRes.error
 
   const drivers = driversRes.data || []
   const trucks = trucksRes.data || []
