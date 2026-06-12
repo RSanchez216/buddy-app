@@ -2,6 +2,7 @@
 // Phase 1: mock data via the demo state switcher; Phase 2 wires live
 // profitability + cash-flow data into rigState and the net figure.
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import RigScene from './RigScene'
 import { MOCK_TOP_CUSTOMER, RIG_STATES, TRAILER_OPTIONS } from './rigConfig'
 
@@ -86,11 +87,20 @@ export default function RigPage() {
 
         {/* bottom row */}
         <div className="flex items-end justify-between gap-4">
-          <div
-            className="text-[9px] text-slate-600 tracking-[0.18em]"
-            style={{ fontFamily: MONO }}
-          >
-            MODEL: COMMUNITY ASSET · PHASE 1 PREVIEW
+          <div className="flex flex-col gap-1.5">
+            <Link
+              to="/fleet/profitability/boardroom"
+              className="pointer-events-auto w-fit rounded-full border border-slate-700/60 bg-black/40 px-3 py-1 text-[10px] text-slate-400 tracking-[0.2em] backdrop-blur transition-colors hover:text-slate-200"
+              style={{ fontFamily: MONO }}
+            >
+              ← BOARDROOM
+            </Link>
+            <div
+              className="text-[9px] text-slate-600 tracking-[0.18em]"
+              style={{ fontFamily: MONO }}
+            >
+              MODEL: COMMUNITY ASSET · PHASE 1 PREVIEW
+            </div>
           </div>
 
           {/* trailer picker */}

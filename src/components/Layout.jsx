@@ -156,6 +156,7 @@ export default function Layout() {
             <NavItem to="/fleet/loads/import" label="Loads Import" icon={Icons.truck} onClick={close} />
             <NavItem to="/fleet/profitability" label="Profitability" icon={Icons.cost} end onClick={close} />
             <NavItem to="/fleet/profitability/boardroom" label="Boardroom" icon={Icons.boardroom} onClick={close} />
+            <NavItem to="/rig" label="The Rig" icon={Icons.truck} onClick={close} />
             <NavItem to="/fleet/profitability/spotlight" label="Driver Spotlight" icon={Icons.driver} onClick={close} />
             <NavItem to="/fleet/profitability/contribution" label="Contribution" icon={Icons.report} onClick={close} />
             <NavItem to="/fleet/profitability/lanes" label="Lane Map" icon={Icons.map} onClick={close} />
