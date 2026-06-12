@@ -40,6 +40,7 @@ import {
   makeLaneDashTexture,
   makePlankTexture,
   makeReflectiveTapeTexture,
+  makeTrailerWrapTexture,
   makeWindowsTexture,
 } from './rigTextures'
 
@@ -507,8 +508,8 @@ function Tractor({ animRef }) {
           window mesh) — plus hood and roof-fairing tops, projected down. */}
       {cabMesh &&
         [
-          { key: 'left', position: [1.5, 2.4, -2.95], rotation: [0, Math.PI / 2, 0], size: 0.95 },
-          { key: 'right', position: [-1.5, 2.4, -2.95], rotation: [0, -Math.PI / 2, 0], size: 0.95 },
+          { key: 'left', position: [1.5, 2.3, -3.05], rotation: [0, Math.PI / 2, 0], size: 1.45 },
+          { key: 'right', position: [-1.5, 2.3, -3.05], rotation: [0, -Math.PI / 2, 0], size: 1.45 },
           { key: 'hood', position: [0, 1.9, 0.12], rotation: [-Math.PI / 2, 0, 0], size: 0.85 },
         ].map((d) => (
           <Decal
@@ -539,16 +540,16 @@ function Tractor({ animRef }) {
 // Side branding as wall-hugging planes (trailer-local units, 1 ≈ 0.315 m).
 // drei <Decal> projects in world space, which misplaces inside this scaled
 // group — and the van walls are flat, so planes are visually identical.
-function SideBranding({ map, aspect, y, width }) {
+function SideBranding({ map, aspect, y, width, opaque = false }) {
   return [1, -1].map((side) => (
     <mesh key={side} position={[side * 3.58, y, -20]} rotation={[0, (side * Math.PI) / 2, 0]}>
       <planeGeometry args={[width, width / aspect]} />
       <meshStandardMaterial
         map={map}
-        transparent
+        transparent={!opaque}
         polygonOffset
         polygonOffsetFactor={-10}
-        depthWrite={false}
+        depthWrite={opaque}
         roughness={0.5}
       />
     </mesh>
@@ -594,6 +595,9 @@ function VanTrailer({ variant, animRef }) {
     () => (variant === 'customer' ? makeCustomerWordmarkTexture(MOCK_TOP_CUSTOMER.replace(/ Inc$/i, '')) : null),
     [variant],
   )
+  // Dry van wears the full MANAS stripe wrap (red/black sweeps + badge);
+  // the reefer stays clean white with just the mark.
+  const wrap = useMemo(() => (variant === 'dryvan' ? makeTrailerWrapTexture() : null), [variant])
 
   return (
     <group scale={TRAILER_SCALE}>
@@ -613,7 +617,8 @@ function VanTrailer({ variant, animRef }) {
           animRef={animRef}
         />
       ))}
-      {variant !== 'customer' && <SideBranding map={logo} aspect={logoAspect} y={8.9} width={7.5} />}
+      {variant === 'dryvan' && wrap && <SideBranding map={wrap} aspect={4} y={8.2} width={37} opaque />}
+      {variant === 'reefer' && <SideBranding map={logo} aspect={logoAspect} y={8.9} width={7.5} />}
       {variant === 'customer' && wordmark && (
         <SideBranding map={wordmark} aspect={1024 / 192} y={7.6} width={24} />
       )}
