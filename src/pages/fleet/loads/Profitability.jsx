@@ -4,6 +4,7 @@ import { useToast } from '../../../contexts/ToastContext'
 import { S } from '../../../lib/styles'
 import Modal from '../../../components/Modal'
 import ProfitabilityCalendar from './ProfitabilityCalendar'
+import ProfitabilityVariance from './ProfitabilityVariance'
 
 // Loads ingest — Phase 3 profitability (revenue/productivity only; margin
 // comes when the cost side is wired). Rolls revenue + miles + $/mile up by
@@ -104,6 +105,7 @@ export default function Profitability() {
   const [preset, setPreset] = useState('week')
   const [range, setRange] = useState(thisWeek)
   const [calendarView, setCalendarView] = useState(false)
+  const [varianceView, setVarianceView] = useState(false)
   const [rows, setRows] = useState([])
   const [priorRows, setPriorRows] = useState([])
   const [loading, setLoading] = useState(true)
@@ -274,20 +276,27 @@ export default function Profitability() {
             >
               ▶
             </button>
-            {/* Table | Calendar toggle (Drivers dimension only) */}
+            {/* Table | Calendar | Estimate vs Actual toggle (Drivers dimension only) */}
             {dimension === 'driver' && (
               <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700 text-xs shrink-0">
                 <button
-                  onClick={() => setCalendarView(false)}
-                  className={`px-3 py-1.5 whitespace-nowrap shrink-0 ${!calendarView ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400'}`}
+                  onClick={() => { setCalendarView(false); setVarianceView(false) }}
+                  className={`px-3 py-1.5 whitespace-nowrap shrink-0 ${!calendarView && !varianceView ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400'}`}
                 >
                   Table
                 </button>
                 <button
-                  onClick={() => setCalendarView(true)}
-                  className={`px-3 py-1.5 whitespace-nowrap shrink-0 ${calendarView ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400'}`}
+                  onClick={() => { setCalendarView(true); setVarianceView(false) }}
+                  className={`px-3 py-1.5 whitespace-nowrap shrink-0 ${calendarView && !varianceView ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400'}`}
                 >
                   Calendar
+                </button>
+                <button
+                  onClick={() => { setVarianceView(true); setCalendarView(false) }}
+                  className={`px-3 py-1.5 whitespace-nowrap shrink-0 ${varianceView ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400'}`}
+                  title="Estimate vs actual settled driver pay and company contribution"
+                >
+                  Est. vs Act.
                 </button>
               </div>
             )}
@@ -322,8 +331,10 @@ export default function Profitability() {
         </div>
       </div>
 
-      {/* Table or Calendar view */}
-      {calendarView && dimension === 'driver' ? (
+      {/* Table or Calendar or Variance view */}
+      {varianceView && dimension === 'driver' ? (
+        <ProfitabilityVariance from={range.from} to={range.to} basis={basis} />
+      ) : calendarView && dimension === 'driver' ? (
         <ProfitabilityCalendar weekStart={range.from} weekEnd={range.to} basis={basis} />
       ) : (
         <>

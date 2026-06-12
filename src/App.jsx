@@ -42,6 +42,7 @@ import DriversList from './pages/fleet/DriversList'
 import DriverDetail from './pages/fleet/DriverDetail'
 import FleetCost from './pages/fleet/FleetCost'
 import LoadsImport from './pages/fleet/loads/LoadsImport'
+import SettlementsImport from './pages/fleet/settlements/SettlementsImport'
 import Profitability from './pages/fleet/loads/Profitability'
 import Spotlight from './pages/fleet/loads/spotlight/Spotlight'
 import Contribution from './pages/fleet/loads/contribution/Contribution'
@@ -115,6 +116,7 @@ export default function App() {
               <Route path="fleet/drivers/:id" element={<RequirePageAccess pageKey="fleet/drivers"><DriverDetail /></RequirePageAccess>} />
               <Route path="fleet/cost" element={<RequirePageAccess pageKey="fleet/cost"><FleetCost /></RequirePageAccess>} />
               <Route path="fleet/loads/import" element={<RequirePageAccess pageKey="fleet/loads/import"><LoadsImport /></RequirePageAccess>} />
+              <Route path="fleet/settlements/import" element={<RequirePageAccess pageKey="fleet/settlements/import"><SettlementsImport /></RequirePageAccess>} />
               <Route path="fleet/profitability" element={<RequirePageAccess pageKey="fleet/profitability"><Profitability /></RequirePageAccess>} />
               <Route path="fleet/profitability/boardroom" element={
                 <RequirePageAccess pageKey="fleet/profitability/boardroom">
