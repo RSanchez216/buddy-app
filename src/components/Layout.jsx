@@ -120,7 +120,7 @@ export default function Layout() {
       {sidebarOpen && <div className="fixed inset-0 bg-black/60 z-20 lg:hidden backdrop-blur-sm" onClick={close} />}
 
       {/* Sidebar */}
-      <aside className={`fixed inset-y-0 left-0 z-30 w-60 bg-white dark:bg-[#0d0d1f] border-r border-gray-200 dark:border-white/5 flex flex-col transform transition-transform duration-300 lg:translate-x-0 lg:static lg:z-auto ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+      <aside className={`fixed inset-y-0 left-0 z-30 w-60 bg-white dark:bg-[#0d0d1f] border-r border-gray-200 dark:border-white/5 flex flex-col transform transition-transform duration-300 lg:translate-x-0 lg:sticky lg:top-0 lg:h-screen lg:self-start lg:z-auto ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
 
         {/* Brand */}
         <div className="p-4 border-b border-gray-100 dark:border-white/5">
@@ -137,7 +137,7 @@ export default function Layout() {
         </div>
 
         {/* Navigation — scrollable middle section */}
-        <nav className="flex-1 p-2.5 space-y-3 overflow-y-auto">
+        <nav className="flex-1 p-2.5 space-y-3 overflow-y-auto min-h-0">
 
           {/* TODAY — pinned at top */}
           <NavSection id="today" label="Today">
