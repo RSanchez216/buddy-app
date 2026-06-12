@@ -52,6 +52,9 @@ const Boardroom = lazy(() => import('./pages/fleet/loads/boardroom/Boardroom'))
 // Lazy — Lifeline is a destination screen (chart engine + animations), not a
 // daily-driver list; keep the main bundle lean.
 const Lifeline = lazy(() => import('./pages/cash-flow/lifeline/Lifeline'))
+// Lazy — The Rig carries the whole three.js stack; it must never weigh on
+// any other route. Standalone preview, direct URL only (no nav entry yet).
+const RigPage = lazy(() => import('./pages/rig/RigPage'))
 
 export default function App() {
   return (
@@ -62,6 +65,18 @@ export default function App() {
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/auth/set-password" element={<SetPassword />} />
+            <Route path="/rig" element={
+              <ProtectedRoute>
+                <Suspense fallback={
+                  <div className="fixed inset-0 flex flex-col items-center justify-center gap-3 bg-[#05060d]">
+                    <div className="h-3 w-3 rounded-full bg-[#e9c984] animate-ping" />
+                    <div className="text-[11px] tracking-[0.35em] text-[#e9c984] font-mono">LOADING THE RIG…</div>
+                  </div>
+                }>
+                  <RigPage />
+                </Suspense>
+              </ProtectedRoute>
+            } />
             <Route path="/" element={
               <ProtectedRoute>
                 <Layout />
