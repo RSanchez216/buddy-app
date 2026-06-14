@@ -1,6 +1,6 @@
 import { memo, useMemo } from 'react'
 import { DriverStatusPill, DriverTypePill, trailerTypePillClasses } from '../../fleetUtils'
-import { fmtMoney, fmtMoney2, fmtNum, fmtRpm, monogram, nameHue, HEALTH_STYLES } from './spotlightShared'
+import { fmtMoney, fmtMoney2, fmtNum, fmtRpm, fmtDateShort, monogram, nameHue, HEALTH_STYLES, parseYmd } from './spotlightShared'
 
 // One driver's full dossier — the big card at the front of the deck.
 // Everything on it is live BUDDY data except the "Unlocking next" section,
@@ -127,7 +127,7 @@ function TrendSparkline({ entry, trend, activeWeekFrom, onWeekSelect }) {
   )
 }
 
-function LaneRow({ lane, tag }) {
+function LaneRow({ lane, tag, baseYear }) {
   const rpm = lane.leg_total_miles > 0 ? Number(lane.leg_revenue) / Number(lane.leg_total_miles) : null
   const tagStyle = tag === 'best'
     ? 'border-emerald-300/60 dark:border-emerald-500/30 bg-emerald-50/60 dark:bg-emerald-500/[0.06]'
@@ -149,6 +149,9 @@ function LaneRow({ lane, tag }) {
       <p className="text-[10px] font-mono text-gray-500 dark:text-slate-400 mt-0.5">
         {fmtMoney2(lane.leg_revenue)} · {fmtNum(lane.leg_total_miles)} mi · {rpm != null ? `${fmtRpm(rpm)}/mi` : '—'}
         {lane.customer_name && <span className="ml-1.5 text-gray-400 dark:text-slate-500 font-sans">· {lane.customer_name}</span>}
+      </p>
+      <p className="text-[10px] text-gray-500 dark:text-slate-400 mt-1">
+        PU {fmtDateShort(lane.pickup_date, baseYear)} · DEL {fmtDateShort(lane.delivery_date, baseYear)}
       </p>
     </div>
   )
@@ -181,6 +184,8 @@ function DriverSpotlightCard({ entry, lanes, trend, rangeDays, effDays, periodLa
   const utilDays = effDays ?? rangeDays
   const idleDays = Math.max(utilDays - m.activeDays, 0)
   const windowInProgress = utilDays < rangeDays
+  // Extract base year from the period start date for date formatting
+  const baseYear = activeWeekFrom ? parseYmd(activeWeekFrom)?.getFullYear() : null
 
   // Best / worst realized lane by $/mi (needs at least 2 priced lanes to be
   // a meaningful contrast).
@@ -328,7 +333,7 @@ function DriverSpotlightCard({ entry, lanes, trend, rangeDays, effDays, periodLa
               <p className="text-xs text-gray-400 dark:text-slate-500 italic pt-2">No loads in this window.</p>
             ) : (
               lanes.map(l => (
-                <LaneRow key={l.leg_id} lane={l} tag={l.leg_id === bestLaneId ? 'best' : l.leg_id === worstLaneId ? 'worst' : null} />
+                <LaneRow key={l.leg_id} lane={l} tag={l.leg_id === bestLaneId ? 'best' : l.leg_id === worstLaneId ? 'worst' : null} baseYear={baseYear} />
               ))
             )}
           </div>

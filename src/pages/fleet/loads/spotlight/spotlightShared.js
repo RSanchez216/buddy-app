@@ -57,6 +57,17 @@ export function fmtNum(n) {
   if (n == null) return '—'
   return Number(n).toLocaleString('en-US', { maximumFractionDigits: 0 })
 }
+
+// Format a date-only string (YYYY-MM-DD) to "Mon DD" or "Mon DD, YYYY" if year differs.
+// Safe from UTC parsing: uses local date parts.
+export function fmtDateShort(dateStr, baseYear) {
+  if (!dateStr) return '—'
+  const d = parseYmd(dateStr)
+  if (!d) return '—'
+  const opts = { month: 'short', day: 'numeric' }
+  if (baseYear && d.getFullYear() !== baseYear) opts.year = 'numeric'
+  return d.toLocaleDateString('en-US', opts)
+}
 export function fmtRpm(n) {
   return n == null ? '—' : `$${Number(n).toFixed(2)}`
 }
