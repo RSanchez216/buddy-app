@@ -68,6 +68,56 @@ export function fmtDateShort(dateStr, baseYear) {
   if (baseYear && d.getFullYear() !== baseYear) opts.year = 'numeric'
   return d.toLocaleDateString('en-US', opts)
 }
+
+// Format compensation formula captions for Spotlight comp block.
+// Returns { driverCaption, companyCaption } or { driverCaption: null, companyCaption: null } if not uniform.
+export function getCompFormulaLabels(payEstimate) {
+  if (!payEstimate || !payEstimate.compUniform) {
+    return { driverCaption: null, companyCaption: null }
+  }
+
+  const { compType, compValue, linehaulRevenue, totalMiles, estDriverPay, estCompanyContribution } = payEstimate
+  if (!compType || compValue == null) {
+    return { driverCaption: null, companyCaption: null }
+  }
+
+  const rev = linehaulRevenue != null ? Number(linehaulRevenue) : 0
+  const miles = totalMiles != null ? Number(totalMiles) : 0
+  const v = Number(compValue)
+  const driverPay = Number(estDriverPay) || 0
+  const companyEarn = Number(estCompanyContribution) || 0
+
+  // Format helpers
+  const fmtRate = (n) => {
+    if (n == null) return '—'
+    return Number(n).toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 })
+  }
+  const fmtPercent = (n) => {
+    const num = Number(n)
+    return Number.isInteger(num) ? `${num}%` : `${num.toFixed(1)}%`
+  }
+
+  if (compType === 'service_charge_pct') {
+    const driverPct = 100 - v
+    return {
+      driverCaption: `${fmtRate(rev)} × ${fmtPercent(driverPct)}`,
+      companyCaption: `${fmtRate(rev)} × ${fmtPercent(v)}% (service charge)`,
+    }
+  } else if (compType === 'rate_pct') {
+    return {
+      driverCaption: `${fmtRate(rev)} × ${fmtPercent(v)}`,
+      companyCaption: `${fmtRate(rev)} − ${fmtRate(driverPay)}`,
+    }
+  } else if (compType === 'rate_per_mile') {
+    const rateStr = v.toFixed(2)
+    return {
+      driverCaption: `${miles.toLocaleString()} mi × $${rateStr}/mi`,
+      companyCaption: `${fmtRate(rev)} − ${fmtRate(driverPay)}`,
+    }
+  }
+
+  return { driverCaption: null, companyCaption: null }
+}
 export function fmtRpm(n) {
   return n == null ? '—' : `$${Number(n).toFixed(2)}`
 }

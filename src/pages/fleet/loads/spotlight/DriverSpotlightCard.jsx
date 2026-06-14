@@ -1,6 +1,6 @@
 import { memo, useMemo } from 'react'
 import { DriverStatusPill, DriverTypePill, trailerTypePillClasses } from '../../fleetUtils'
-import { fmtMoney, fmtMoney2, fmtNum, fmtRpm, fmtDateShort, monogram, nameHue, HEALTH_STYLES, parseYmd } from './spotlightShared'
+import { fmtMoney, fmtMoney2, fmtNum, fmtRpm, fmtDateShort, getCompFormulaLabels, monogram, nameHue, HEALTH_STYLES, parseYmd } from './spotlightShared'
 
 // One driver's full dossier — the big card at the front of the deck.
 // Everything on it is live BUDDY data except the "Unlocking next" section,
@@ -275,7 +275,9 @@ function DriverSpotlightCard({ entry, lanes, trend, rangeDays, effDays, periodLa
         </div>
 
         {/* Estimated driver compensation block */}
-        {entry.payEstimate && (
+        {entry.payEstimate && (() => {
+          const { driverCaption, companyCaption } = getCompFormulaLabels(entry.payEstimate)
+          return (
           <div className="mt-3 rounded-lg border border-blue-200 dark:border-blue-500/20 bg-blue-50/60 dark:bg-blue-500/[0.06] px-3 py-2">
             <div className="flex items-center justify-between gap-2 mb-1.5">
               <p className="text-[10px] font-bold uppercase tracking-widest text-blue-700 dark:text-blue-400">
@@ -293,6 +295,7 @@ function DriverSpotlightCard({ entry, lanes, trend, rangeDays, effDays, periodLa
                 <div>
                   <p className="text-[10px] text-blue-600 dark:text-blue-400">Est. driver pay</p>
                   <p className="text-sm font-mono font-semibold text-blue-900 dark:text-blue-200">{fmtMoney(entry.payEstimate.estDriverPay)}</p>
+                  {driverCaption && <p className="text-[10px] text-blue-500 dark:text-blue-400 mt-0.5">{driverCaption}</p>}
                 </div>
               )}
               <div>
@@ -300,6 +303,7 @@ function DriverSpotlightCard({ entry, lanes, trend, rangeDays, effDays, periodLa
                 <p className="text-sm font-mono font-semibold text-blue-900 dark:text-blue-200">
                   {entry.payEstimate.hasContract ? 'TBD' : fmtMoney(entry.payEstimate.estCompanyContribution)}
                 </p>
+                {!entry.payEstimate.hasContract && companyCaption && <p className="text-[10px] text-blue-500 dark:text-blue-400 mt-0.5">{companyCaption}</p>}
               </div>
             </div>
             {entry.payEstimate.hasMissingComp && (
@@ -308,7 +312,7 @@ function DriverSpotlightCard({ entry, lanes, trend, rangeDays, effDays, periodLa
               </p>
             )}
           </div>
-        )}
+        )})()}
 
         <div className="mt-3">
           <BenchmarkStrip entry={entry} />
