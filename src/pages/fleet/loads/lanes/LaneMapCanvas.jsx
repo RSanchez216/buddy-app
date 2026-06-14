@@ -22,7 +22,9 @@ function arcPath(a, b, lift = 0) {
 
 // laneColorFor (whole-lane → color) and typeColorFor (trailer type → color)
 // are optional; without them the canvas behaves exactly as before.
-export default function LaneMapCanvas({ lanes, cities, colorFor, widthFor, selectedKey, onSelect, laneColorFor, typeColorFor }) {
+// selectedPhases (Set of phase strings) is used to distinguish in-transit arcs
+// from delivered arcs visually when both are shown.
+export default function LaneMapCanvas({ lanes, cities, colorFor, widthFor, selectedKey, onSelect, laneColorFor, typeColorFor, selectedPhases }) {
   const wrapRef = useRef(null)
   const [hover, setHover] = useState(null) // { key, x, y }
 
@@ -78,21 +80,27 @@ export default function LaneMapCanvas({ lanes, cities, colorFor, widthFor, selec
           const w = widthFor(lane)
           const color = laneColorFor ? laneColorFor(lane) : colorFor(lane.rpm)
           const active = lane.key === selectedKey || lane.key === hover?.key
+          // Check if this lane has in-transit loads (used for visual distinction)
+          const hasInTransit = selectedPhases && selectedPhases.size > 1 && lane.legs &&
+            lane.legs.some(l => l.load_phase === 'in_transit')
           // Heavy lanes draw near-solid; the long tail of one-load lanes
           // fades back so the picture reads as hierarchy, not spaghetti.
           const t = (w - WIDTH_RANGE[0]) / (WIDTH_RANGE[1] - WIDTH_RANGE[0])
           const baseOpacity = dimmed(lane.key) ? 0.07 : 0.2 + t * 0.72
+          // In-transit arcs are lighter to distinguish from delivered
+          const arcOpacity = hasInTransit ? baseOpacity * 0.65 : baseOpacity
           if (!d) {
             // Same-city move: a small ring at the city instead of an arc.
             return (
               <circle key={lane.key} cx={a[0]} cy={a[1]} r={6} fill="none" stroke={color} strokeWidth={w}
-                opacity={baseOpacity} className="transition-opacity duration-200" />
+                opacity={arcOpacity} className="transition-opacity duration-200" />
             )
           }
           return (
             <g key={lane.key}>
               <path d={d} fill="none" stroke={color} strokeWidth={active ? w + 0.75 : w} strokeLinecap="round"
-                opacity={active ? 1 : baseOpacity} className="transition-opacity duration-200"
+                opacity={active ? 1 : arcOpacity} className="transition-opacity duration-200"
+                strokeDasharray={hasInTransit ? "5 3" : undefined}
                 style={active ? { filter: `drop-shadow(0 0 6px ${color})` } : undefined} />
               {active && (
                 <path d={d} fill="none" strokeWidth={Math.max(1, w * 0.4)} strokeLinecap="round"

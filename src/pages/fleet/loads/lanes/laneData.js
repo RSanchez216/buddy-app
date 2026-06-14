@@ -18,7 +18,7 @@ export async function fetchLaneLegs({ from, to, basis = 'delivery' }) {
   const out = []
   for (let page = 0; ; page++) {
     const { data, error } = await supabase.from('v_load_leg_profit')
-      .select('leg_id, load_id, load_number, status, is_projected, pickup_date, delivery_date, origin, destination, leg_revenue, leg_total_miles, customer_name, dispatcher_id, dispatcher_name, driver_display, trailer_id, trailer_display')
+      .select('leg_id, load_id, load_number, status, is_projected, load_phase, pickup_date, delivery_date, origin, destination, leg_revenue, leg_total_miles, customer_name, dispatcher_id, dispatcher_name, driver_display, trailer_id, trailer_display')
       .gte(dateCol, from).lte(dateCol, to)
       .order(dateCol, { ascending: true }).order('leg_id', { ascending: true })
       .range(page * 1000, page * 1000 + 999)
@@ -67,12 +67,23 @@ export function makeTypeColorMap(types) {
   return m
 }
 
-// legs → { lanes, cities, totals, coverage } for one view (realized|booked).
-// With byType, lanes split per trailer type (key gains the type, rows carry
-// trailerType + typeIndex) so every $/mi figure is type-pure; the default
-// keeps the original one-row-per-lane shape (Boardroom relies on it).
-export function aggregateLanes(allLegs, view, { byType = false } = {}) {
-  const legs = (allLegs || []).filter(l => (view === 'booked' ? l.is_projected : !l.is_projected))
+// legs → { lanes, cities, totals, coverage } for selected phases.
+// Accepts either phases (array of 'booked'|'in_transit'|'delivered') or
+// legacy view ('booked'|'realized'). With byType, lanes split per trailer
+// type (key gains the type, rows carry trailerType + typeIndex) so every
+// $/mi figure is type-pure; the default keeps the original one-row-per-lane
+// shape (Boardroom relies on it).
+export function aggregateLanes(allLegs, phaseOrView, { byType = false } = {}) {
+  // Support both new phases array and legacy view string
+  let legs
+  if (Array.isArray(phaseOrView)) {
+    const phases = phaseOrView
+    legs = (allLegs || []).filter(l => phases.includes(l.load_phase))
+  } else {
+    // Legacy view parameter support (for Boardroom, etc.)
+    const view = phaseOrView
+    legs = (allLegs || []).filter(l => (view === 'booked' ? l.is_projected : !l.is_projected))
+  }
   const byLane = new Map()
   const byCity = new Map()
   let geocodedLegs = 0

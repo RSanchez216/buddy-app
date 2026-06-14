@@ -45,14 +45,19 @@ function TypeBadge({ type, color }) {
 
 // One load-leg line item — shared by the "Loads on this lane" card (arc
 // click) and the "Loads in this area" card (heat-spot click).
-function LegRow({ leg, dateCol, rpmScale, showLane }) {
+function LegRow({ leg, dateCol, rpmScale, showLane, showPhase }) {
   const legRpm = leg.leg_total_miles > 0 ? leg.leg_revenue / leg.leg_total_miles : null
+  const phaseLabels = { booked: 'Booked', in_transit: 'In transit', delivered: 'Delivered' }
   return (
     <li className="px-4 py-2.5 flex items-center justify-between gap-3 text-xs">
       <div className="min-w-0">
         <p className="font-medium text-gray-900 dark:text-slate-200 truncate">
           #{leg.load_number || leg.load_id}
-          {leg.is_projected && <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-50 dark:bg-cyan-500/10 text-cyan-700 dark:text-cyan-400">Booked</span>}
+          {showPhase && leg.load_phase && <span className={`ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full ${
+            leg.load_phase === 'booked' ? 'bg-cyan-50 dark:bg-cyan-500/10 text-cyan-700 dark:text-cyan-400' :
+            leg.load_phase === 'in_transit' ? 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400' :
+            'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+          }`}>{phaseLabels[leg.load_phase]}</span>}
         </p>
         {showLane && <p className="text-gray-400 dark:text-slate-500 truncate text-[11px]">{leg.origin} → {leg.destination}</p>}
         <p className="text-gray-400 dark:text-slate-500 truncate">{leg[dateCol] || '—'} · {leg.customer_name || '—'}</p>
@@ -86,7 +91,7 @@ export default function LaneFlowMap() {
   const [preset, setPreset] = useState('week')
   const [range, setRange] = useState(thisWeek)
   const [basis, setBasis] = useState('delivery')
-  const [view, setView] = useState('realized') // realized | booked
+  const [selectedPhases, setSelectedPhases] = useState(new Set(['in_transit', 'delivered'])) // booked | in_transit | delivered
   const [weight, setWeight] = useState('revenue') // intensity: revenue | loads | rpm (rpm is heat-only)
   const [colorBy, setColorBy] = useState('rpm') // arc color: rpm | type
   const [mapMode, setMapMode] = useState('heat') // lanes (arcs) | heat (density)
@@ -198,8 +203,8 @@ export default function LaneFlowMap() {
   // Lanes split per trailer type so every $/mi row is type-pure — a mixed
   // corridor becomes one row per type, never a blended rate.
   const agg = useMemo(
-    () => (loading ? null : aggregateLanes(filteredLegs, view, { byType: true })),
-    [loading, filteredLegs, view],
+    () => (loading ? null : aggregateLanes(filteredLegs, [...selectedPhases], { byType: true })),
+    [loading, filteredLegs, selectedPhases],
   )
   const rpmScale = useMemo(() => (agg ? makeRpmScale(agg.lanes) : null), [agg])
   const widthFor = useMemo(() => (agg ? makeWidthScale(agg.lanes, weight === 'rpm' ? 'revenue' : weight) : null), [agg, weight])
@@ -209,9 +214,23 @@ export default function LaneFlowMap() {
 
   const payers = useMemo(() => (agg ? pickPayers(agg.lanes) : null), [agg])
 
-  // Selection is keyed to (period, view): switching window or Realized/
-  // Booked clears it by derivation rather than a reset effect.
-  const selKey = `${dataKey}|${view}`
+  function togglePhase(phase) {
+    setSelectedPhases(prev => {
+      const next = new Set(prev)
+      if (next.has(phase)) {
+        // Don't allow deselecting if it's the only one selected
+        if (next.size > 1) next.delete(phase)
+      } else {
+        next.add(phase)
+      }
+      return next
+    })
+  }
+
+  // Selection is keyed to (period, phases): switching window or phases clears
+  // it by derivation rather than a reset effect.
+  const phasesKey = [...selectedPhases].sort().join('|')
+  const selKey = `${dataKey}|${phasesKey}`
   const [selState, setSelState] = useState({ key: null, lane: null })
   const selectedKey = selState.key === selKey ? selState.lane : null
   const setSelected = useCallback((lane) => setSelState({ key: selKey, lane }), [selKey])
@@ -277,8 +296,8 @@ export default function LaneFlowMap() {
       {agg && agg.totals.legs > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           <Kpi label="Lanes" value={fmtNum(distinctLanes)} sub={offMapLanes ? `${offMapLanes} off-map` : 'all on map'} />
-          <Kpi label="Loads" value={fmtNum(agg.totals.legs)} sub={view === 'booked' ? 'booked' : 'delivered'} />
-          <Kpi label={view === 'booked' ? 'Booked revenue' : 'Revenue'} value={fmtMoney(agg.totals.revenue)} sub={`${fmtNum(agg.totals.miles)} mi`} />
+          <Kpi label="Loads" value={fmtNum(agg.totals.legs)} sub={[...selectedPhases].sort().join(' + ')} />
+          <Kpi label="Revenue" value={fmtMoney(agg.totals.revenue)} sub={`${fmtNum(agg.totals.miles)} mi`} />
           <Kpi label="$/mile" value={agg.totals.rpm == null ? '—' : `${fmtRpm(agg.totals.rpm)}/mi`} sub="all lanes" />
           <Kpi label="Map coverage" value={agg.coverage == null ? '—' : `${Math.round(agg.coverage * 100)}%`} sub="of loads geocoded" />
         </div>
@@ -291,8 +310,23 @@ export default function LaneFlowMap() {
       <div className="flex items-center flex-wrap gap-2">
           <Pills value={mapMode} onChange={switchMapMode} title="Lanes = origin→destination arcs · Heat = where freight concentrates"
             options={[['lanes', 'Lanes'], ['heat', 'Heat']]} />
-          <Pills value={view} onChange={setView} title="Realized = delivered revenue · Booked = projected revenue on upcoming loads"
-            options={[['realized', 'Realized'], ['booked', 'Booked']]} />
+          <div className="flex items-center gap-1 flex-wrap">
+            {['booked', 'in_transit', 'delivered'].map(phase => {
+              const labels = { booked: 'Booked', in_transit: 'In transit', delivered: 'Delivered' }
+              const isSelected = selectedPhases.has(phase)
+              return (
+                <button key={phase} onClick={() => togglePhase(phase)}
+                  title={phase === 'in_transit' ? 'Picked up, not yet delivered' : phase === 'booked' ? 'Pickup date in the future' : 'Delivery date has passed'}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
+                    isSelected
+                      ? 'border-orange-300 dark:border-orange-500/40 bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-400'
+                      : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5'
+                  }`}>
+                  {labels[phase]}
+                </button>
+              )
+            })}
+          </div>
           <Pills value={weight} onChange={setWeight}
             title={mapMode === 'heat' ? 'Heat intensity: revenue sum, load count, or revenue-weighted average $/mile' : 'What arc thickness represents — $/mile weighting applies to the Heat view'}
             options={[['revenue', 'Weight: revenue'], ['loads', 'Weight: loads'], ['rpm', 'Weight: $/mile', mapMode !== 'heat']]} />
@@ -386,7 +420,10 @@ export default function LaneFlowMap() {
               </div>
             )}
         </div>
-        <p className="basis-full text-[11px] text-gray-400 dark:text-slate-500 -mt-1">{PRESET_LABEL[preset]} · {formatRange(range.from, range.to)} · by {basis} date</p>
+        <p className="basis-full text-[11px] text-gray-400 dark:text-slate-500 -mt-1">{[...selectedPhases].sort((a, b) => {
+            const order = { booked: 0, in_transit: 1, delivered: 2 }
+            return (order[a] ?? 3) - (order[b] ?? 3)
+          }).map(p => p === 'in_transit' ? 'In transit' : p.charAt(0).toUpperCase() + p.slice(1)).join(' + ')} · {formatRange(range.from, range.to)} · by {basis} date</p>
       </div>
 
       {/* ── Map + leaderboard ── */}
@@ -395,7 +432,10 @@ export default function LaneFlowMap() {
         <div className="rounded-3xl border border-gray-200 dark:border-white/10 bg-gradient-to-b from-white to-gray-50 dark:from-[#12132e] dark:to-[#0a0a18] overflow-hidden">
           <div className="flex items-center justify-between flex-wrap gap-2 px-5 pt-4">
             <p className="text-xs font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">
-              {view === 'booked' ? 'Booked' : 'Realized'} {mapMode === 'heat' ? 'heat' : 'flow'} · {formatRange(range.from, range.to)}
+              {[...selectedPhases].sort((a, b) => {
+                const order = { booked: 0, in_transit: 1, delivered: 2 }
+                return (order[a] ?? 3) - (order[b] ?? 3)
+              }).map(p => p === 'in_transit' ? 'In transit' : p.charAt(0).toUpperCase() + p.slice(1)).join(' + ')} {mapMode === 'heat' ? 'heat' : 'flow'} · {formatRange(range.from, range.to)}
             </p>
             {mapMode === 'heat' ? null : colorBy === 'type' && typesPresent.length > 0 ? (
               <div className="flex items-center gap-2.5 flex-wrap text-[10px] text-gray-400 dark:text-slate-500">
@@ -418,7 +458,7 @@ export default function LaneFlowMap() {
             <div className="aspect-[975/610] m-5 rounded-2xl bg-gray-100 dark:bg-white/[0.03] animate-pulse" />
           ) : agg.totals.legs === 0 ? (
             <div className="aspect-[975/610] flex items-center justify-center text-sm text-gray-400 dark:text-slate-500 px-8 text-center">
-              No {view === 'booked' ? 'booked' : 'delivered'} loads in this window. Try another period or switch the {view === 'booked' ? 'Realized' : 'Booked'} view.
+              No {[...selectedPhases].sort().join(' + ')} loads in this window. Try another period or select different phases.
             </div>
           ) : (
             <div className="px-2 pb-1">
@@ -435,6 +475,7 @@ export default function LaneFlowMap() {
                     onSelect={setSelected}
                     laneColorFor={laneColorFor || undefined}
                     typeColorFor={typeColorFor}
+                    selectedPhases={selectedPhases}
                   />
                 </div>
                 <div className={`transition-opacity duration-300 motion-reduce:transition-none ${mapMode === 'lanes' ? 'opacity-0 pointer-events-none absolute inset-0' : 'opacity-100'}`} aria-hidden={mapMode === 'lanes'}>
@@ -504,20 +545,42 @@ export default function LaneFlowMap() {
                     </tr>
                   </thead>
                   <tbody>
-                    {ranked.map(lane => (
+                    {ranked.map(lane => {
+                      // Show phase breakdown in leaderboard when multiple phases shown
+                      const phaseLabels = { booked: 'Booked', in_transit: 'In transit', delivered: 'Delivered' }
+                      const phaseBreakdown = selectedPhases.size > 1 && lane.legs ? (() => {
+                        const phases = new Map()
+                        for (const phase of ['booked', 'in_transit', 'delivered']) {
+                          phases.set(phase, lane.legs.filter(l => l.load_phase === phase).length)
+                        }
+                        return phases
+                      })() : null
+                      return (
                       <tr key={lane.key} onClick={() => setSelected(lane.key === selectedKey ? null : lane.key)}
                         className={`${S.tableRow} cursor-pointer ${selectedKey === lane.key ? 'bg-orange-50 dark:bg-orange-500/10' : ''}`}>
                         <td className="px-3 py-2">
                           <p className="font-medium text-gray-900 dark:text-slate-200 leading-tight">{lane.origin}</p>
                           <p className="text-gray-400 dark:text-slate-500 leading-tight">→ {lane.destination}{!lane.geocoded && <span className="ml-1 text-amber-600 dark:text-amber-400" title="This lane couldn't be geocoded, so it isn't drawn on the map.">⌀ off-map</span>}</p>
                           {lane.trailerType && <p className="mt-1 leading-none"><TypeBadge type={lane.trailerType} color={typeColorFor(lane.trailerType)} /></p>}
+                          {phaseBreakdown && (
+                            <p className="mt-1 text-[10px] text-gray-500 dark:text-slate-400 flex flex-wrap gap-1">
+                              {[...phaseBreakdown].map(([phase, count]) => count > 0 && (
+                                <span key={phase} className={`inline-block px-1.5 py-0.5 rounded-full ${
+                                  phase === 'booked' ? 'bg-cyan-50 dark:bg-cyan-500/10 text-cyan-700 dark:text-cyan-400' :
+                                  phase === 'in_transit' ? 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400' :
+                                  'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                                }`}>{phaseLabels[phase]} {count}</span>
+                              ))}
+                            </p>
+                          )}
                         </td>
                         <td className="px-2 py-2 text-right font-mono text-gray-600 dark:text-slate-400">{lane.loads}</td>
                         <td className="px-2 py-2 text-right font-mono text-gray-900 dark:text-slate-200">{fmtMoney(lane.revenue)}</td>
                         <td className="px-2 py-2 text-right font-mono font-semibold" style={{ color: rpmScale ? rpmScale.color(lane.rpm) : RPM_NULL_COLOR }}>{fmtRpm(lane.rpm)}</td>
                         <td className="px-3 py-2 text-right font-mono text-gray-600 dark:text-slate-400">{fmtNum(lane.avgMiles)}</td>
                       </tr>
-                    ))}
+                      )
+                    })}
                   </tbody>
                 </table>
               )}
@@ -539,7 +602,7 @@ export default function LaneFlowMap() {
                   title="Clear selection and show the lane leaderboard">← Leaderboard</button>
               </div>
               <ul className="divide-y divide-gray-50 dark:divide-white/[0.03] max-h-72 overflow-y-auto">
-                {selectedLane.legs.map(leg => <LegRow key={leg.leg_id} leg={leg} dateCol={dateCol} rpmScale={rpmScale} />)}
+                {selectedLane.legs.map(leg => <LegRow key={leg.leg_id} leg={leg} dateCol={dateCol} rpmScale={rpmScale} showPhase={selectedPhases.size > 1} />)}
               </ul>
             </div>
           )}
@@ -558,7 +621,7 @@ export default function LaneFlowMap() {
                   title="Clear selection and show the lane leaderboard">← Leaderboard</button>
               </div>
               <ul className="divide-y divide-gray-50 dark:divide-white/[0.03] max-h-72 overflow-y-auto">
-                {selectedCell.legs.map(leg => <LegRow key={leg.leg_id} leg={leg} dateCol={dateCol} rpmScale={rpmScale} showLane />)}
+                {selectedCell.legs.map(leg => <LegRow key={leg.leg_id} leg={leg} dateCol={dateCol} rpmScale={rpmScale} showLane showPhase={selectedPhases.size > 1} />)}
               </ul>
             </div>
           )}
@@ -567,8 +630,7 @@ export default function LaneFlowMap() {
 
       {/* ── Honesty footer ── */}
       <p className="text-[11px] text-gray-400 dark:text-slate-500 text-center max-w-3xl mx-auto">
-        Revenue, miles, and $/mile are live BUDDY data ({view === 'booked' ? 'Booked shows projected revenue on upcoming loads' : 'Realized shows delivered revenue'}).
-        City positions come from a bundled US Census gazetteer — loads whose city can't be placed stay in the table and are counted in the coverage figure.
+        Revenue, miles, and $/mile are live BUDDY data. City positions come from a bundled US Census gazetteer — loads whose city can't be placed stay in the table and are counted in the coverage figure.
         Fuel, insurance, and driver pay are not in BUDDY yet, so lane $/mile is a revenue signal, not net margin.
       </p>
     </div>
