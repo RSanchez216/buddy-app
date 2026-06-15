@@ -152,6 +152,11 @@ export async function fetchDriverDeck({ from, to, basis = 'delivery' }) {
         estCompanyContribution: Number(payEstimate.est_company_contribution) || 0,
         hasMissingComp: payEstimate.has_missing_comp || false,
         hasContract: payEstimate.has_contract || false,
+        compType: payEstimate.comp_type || null,
+        compValue: payEstimate.comp_value != null ? Number(payEstimate.comp_value) : null,
+        compUniform: payEstimate.comp_uniform || false,
+        linehaulRevenue: payEstimate.linehaul_revenue != null ? Number(payEstimate.linehaul_revenue) : 0,
+        totalMiles: payEstimate.total_miles != null ? Number(payEstimate.total_miles) : 0,
       } : null,
     }
   }
