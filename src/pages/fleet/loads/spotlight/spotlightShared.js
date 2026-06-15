@@ -101,7 +101,7 @@ export function getCompFormulaLabels(payEstimate) {
     const driverPct = 100 - v
     return {
       driverCaption: `${fmtRate(rev)} × ${fmtPercent(driverPct)}`,
-      companyCaption: `${fmtRate(rev)} × ${fmtPercent(v)}% (service charge)`,
+      companyCaption: `${fmtRate(rev)} × ${fmtPercent(v)} (service charge)`,
     }
   } else if (compType === 'rate_pct') {
     return {
@@ -110,8 +110,9 @@ export function getCompFormulaLabels(payEstimate) {
     }
   } else if (compType === 'rate_per_mile') {
     const rateStr = v.toFixed(2)
+    const roundedMiles = Math.round(miles)
     return {
-      driverCaption: `${miles.toLocaleString()} mi × $${rateStr}/mi`,
+      driverCaption: `${roundedMiles.toLocaleString()} mi × $${rateStr}/mi`,
       companyCaption: `${fmtRate(rev)} − ${fmtRate(driverPay)}`,
     }
   }
