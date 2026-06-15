@@ -65,6 +65,7 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState(new Set())
   const [bulkType, setBulkType] = useState('')
+  const [terminationPanelOpen, setTerminationPanelOpen] = useState(false)
 
   useEffect(() => {
     if (!open) {
@@ -72,6 +73,7 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
       setPossiblyTerminated([]); setTermActions({}); setCommitResult(null)
       setFilter('all'); setSearch(''); setSelected(new Set()); setBulkType('')
       setBulkAction(''); setBulkReason(''); setPendingBulkConfirm(false); setBulkToast('')
+      setTerminationPanelOpen(false)
     }
   }, [open])
 
@@ -505,124 +507,158 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
             </div>
 
             {possiblyTerminated.length > 0 && (
-              <div className={`${S.card} p-4`}>
-                <div className="mb-3">
-                  <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">⚠️ Possibly Terminated Drivers</p>
-                  <p className="text-xs text-gray-500 dark:text-slate-500 mt-0.5">
-                    These drivers were active in BUDDY but are missing from this upload. Review each — default is "Keep Active" so nothing terminates by accident.
-                  </p>
-                </div>
-
-                {/* Bulk action bar — set every row in one click, with per-row override after. */}
-                <div className="mb-3 rounded-xl bg-gray-50 dark:bg-white/[0.02] border border-gray-200 dark:border-white/5 p-3 space-y-2">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500">Bulk Action</p>
-                  {!pendingBulkConfirm ? (
-                    <>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <Select
-                          value={bulkAction}
-                          onChange={e => setBulkAction(e.target.value)}
-                          className="text-xs"
+              <div className={`${S.card}`}>
+                {/* Collapsible header — always visible */}
+                <button
+                  onClick={() => setTerminationPanelOpen(!terminationPanelOpen)}
+                  aria-expanded={terminationPanelOpen}
+                  className="w-full text-left p-4 hover:bg-gray-50 dark:hover:bg-white/[0.02] transition-colors"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+                          ⚠️ Possibly Terminated Drivers ({possiblyTerminated.length})
+                        </p>
+                        <svg
+                          className={`w-4 h-4 text-gray-600 dark:text-slate-400 flex-shrink-0 transition-transform ${
+                            terminationPanelOpen ? 'rotate-180' : ''
+                          }`}
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                          strokeWidth={2}
                         >
-                          <option value="">— Apply to all {possiblyTerminated.length}: —</option>
-                          {TERM_ACTIONS.filter(a => a.value !== 'keep_active').map(a => (
-                            <option key={a.value} value={a.value}>{a.label}</option>
-                          ))}
-                          <option value="keep_active">Reset all to Keep Active</option>
-                        </Select>
-                        <input
-                          className={`${S.input} text-xs flex-1 min-w-[260px]`}
-                          placeholder={
-                            bulkAction === 'terminate' ? defaultTerminationReason : 'Reason (optional)'
-                          }
-                          value={bulkReason}
-                          onChange={e => setBulkReason(e.target.value)}
-                          disabled={bulkAction === 'keep_active' || bulkAction === ''}
-                        />
-                        <button
-                          onClick={() => setPendingBulkConfirm(true)}
-                          disabled={!bulkAction}
-                          className={S.btnSave}
-                        >
-                          Apply to All {possiblyTerminated.length}
-                        </button>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                        </svg>
                       </div>
-                      {bulkToast && (
-                        <div className="text-xs text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5">
-                          <span>✓</span><span>{bulkToast}</span>
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    // Inline confirmation step (avoids nesting a Modal inside a Modal).
-                    <div className="space-y-2 text-sm">
-                      <p className="font-semibold text-gray-700 dark:text-slate-300">
-                        Apply "{bulkActionLabel}" to all {possiblyTerminated.length} drivers?
+                      <p className="text-xs text-gray-600 dark:text-slate-400 mb-1">
+                        These were active in BUDDY but aren't in this file. Default is "Keep Active" — nothing changes unless you act.
                       </p>
-                      {bulkAction === 'terminate' && (
-                        <p className="text-xs text-gray-600 dark:text-slate-400">
-                          Reason: <span className="italic">"{bulkEffectiveReason}"</span>
+                      {rows.length > 0 && rows.length < possiblyTerminated.length && (
+                        <p className="text-xs text-gray-500 dark:text-slate-500">
+                          Partial upload — only {rows.length} of {rows.length + possiblyTerminated.length} active drivers are in this file. The other {possiblyTerminated.length} are listed here for review only and stay active by default.
                         </p>
                       )}
-                      <p className="text-[11px] text-gray-500 dark:text-slate-500">
-                        Applied to all rows below. You can still override individual rows afterward.
-                      </p>
-                      <div className="flex justify-end gap-2">
-                        <button onClick={() => setPendingBulkConfirm(false)} className={S.btnCancel}>Cancel</button>
-                        <button onClick={applyBulkTerminations} className={S.btnSave}>
-                          Apply to All {possiblyTerminated.length}
-                        </button>
-                      </div>
                     </div>
-                  )}
-                </div>
+                  </div>
+                </button>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className={S.tableHead}>
-                      <tr>
-                        <th className={S.th}>ID#</th>
-                        <th className={S.th}>Name</th>
-                        <th className={S.th}>Last Seen</th>
-                        <th className={S.th}>Action</th>
-                        <th className={S.th}>Reason (if terminating)</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {possiblyTerminated.map(d => {
-                        const t = termActions[d.id] || { action: 'keep_active', reason: '' }
-                        return (
-                          <tr key={d.id} className={S.tableRow}>
-                            <td className={`${S.td} font-mono text-xs text-gray-500 dark:text-slate-400`}>{d.internal_id || '—'}</td>
-                            <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>{d.full_name}</td>
-                            <td className={`${S.td} text-xs text-gray-500 dark:text-slate-400`}>
-                              {d.last_seen_in_upload_at ? new Date(d.last_seen_in_upload_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Never'}
-                            </td>
-                            <td className={S.td}>
-                              <Select
-                                value={t.action}
-                                onChange={e => setTermActions(prev => ({ ...prev, [d.id]: { ...t, action: e.target.value } }))}
-                                className="text-xs"
-                              >
-                                {TERM_ACTIONS.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
-                              </Select>
-                            </td>
-                            <td className={S.td}>
-                              {t.action === 'terminate' && (
-                                <input
-                                  className={`${S.input} text-xs`}
-                                  placeholder="e.g. Left the company"
-                                  value={t.reason}
-                                  onChange={e => setTermActions(prev => ({ ...prev, [d.id]: { ...t, reason: e.target.value } }))}
-                                />
-                              )}
-                            </td>
+                {/* Expanded content */}
+                {terminationPanelOpen && (
+                  <div className="border-t border-gray-200 dark:border-white/5 p-4 space-y-3">
+                    {/* Bulk action bar — set every row in one click, with per-row override after. */}
+                    <div className="rounded-xl bg-gray-50 dark:bg-white/[0.02] border border-gray-200 dark:border-white/5 p-3 space-y-2">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500">Bulk Action</p>
+                      {!pendingBulkConfirm ? (
+                        <>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <Select
+                              value={bulkAction}
+                              onChange={e => setBulkAction(e.target.value)}
+                              className="text-xs"
+                            >
+                              <option value="">— Apply to all {possiblyTerminated.length}: —</option>
+                              {TERM_ACTIONS.filter(a => a.value !== 'keep_active').map(a => (
+                                <option key={a.value} value={a.value}>{a.label}</option>
+                              ))}
+                              <option value="keep_active">Reset all to Keep Active</option>
+                            </Select>
+                            <input
+                              className={`${S.input} text-xs flex-1 min-w-[260px]`}
+                              placeholder={
+                                bulkAction === 'terminate' ? defaultTerminationReason : 'Reason (optional)'
+                              }
+                              value={bulkReason}
+                              onChange={e => setBulkReason(e.target.value)}
+                              disabled={bulkAction === 'keep_active' || bulkAction === ''}
+                            />
+                            <button
+                              onClick={() => setPendingBulkConfirm(true)}
+                              disabled={!bulkAction}
+                              className={S.btnSave}
+                            >
+                              Apply to All {possiblyTerminated.length}
+                            </button>
+                          </div>
+                          {bulkToast && (
+                            <div className="text-xs text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5">
+                              <span>✓</span><span>{bulkToast}</span>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        // Inline confirmation step (avoids nesting a Modal inside a Modal).
+                        <div className="space-y-2 text-sm">
+                          <p className="font-semibold text-gray-700 dark:text-slate-300">
+                            Apply "{bulkActionLabel}" to all {possiblyTerminated.length} drivers?
+                          </p>
+                          {bulkAction === 'terminate' && (
+                            <p className="text-xs text-gray-600 dark:text-slate-400">
+                              Reason: <span className="italic">"{bulkEffectiveReason}"</span>
+                            </p>
+                          )}
+                          <p className="text-[11px] text-gray-500 dark:text-slate-500">
+                            Applied to all rows below. You can still override individual rows afterward.
+                          </p>
+                          <div className="flex justify-end gap-2">
+                            <button onClick={() => setPendingBulkConfirm(false)} className={S.btnCancel}>Cancel</button>
+                            <button onClick={applyBulkTerminations} className={S.btnSave}>
+                              Apply to All {possiblyTerminated.length}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead className={S.tableHead}>
+                          <tr>
+                            <th className={S.th}>ID#</th>
+                            <th className={S.th}>Name</th>
+                            <th className={S.th}>Last Seen</th>
+                            <th className={S.th}>Action</th>
+                            <th className={S.th}>Reason (if terminating)</th>
                           </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                        </thead>
+                        <tbody>
+                          {possiblyTerminated.map(d => {
+                            const t = termActions[d.id] || { action: 'keep_active', reason: '' }
+                            return (
+                              <tr key={d.id} className={S.tableRow}>
+                                <td className={`${S.td} font-mono text-xs text-gray-500 dark:text-slate-400`}>{d.internal_id || '—'}</td>
+                                <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>{d.full_name}</td>
+                                <td className={`${S.td} text-xs text-gray-500 dark:text-slate-400`}>
+                                  {d.last_seen_in_upload_at ? new Date(d.last_seen_in_upload_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Never'}
+                                </td>
+                                <td className={S.td}>
+                                  <Select
+                                    value={t.action}
+                                    onChange={e => setTermActions(prev => ({ ...prev, [d.id]: { ...t, action: e.target.value } }))}
+                                    className="text-xs"
+                                  >
+                                    {TERM_ACTIONS.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
+                                  </Select>
+                                </td>
+                                <td className={S.td}>
+                                  {t.action === 'terminate' && (
+                                    <input
+                                      className={`${S.input} text-xs`}
+                                      placeholder="e.g. Left the company"
+                                      value={t.reason}
+                                      onChange={e => setTermActions(prev => ({ ...prev, [d.id]: { ...t, reason: e.target.value } }))}
+                                    />
+                                  )}
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
