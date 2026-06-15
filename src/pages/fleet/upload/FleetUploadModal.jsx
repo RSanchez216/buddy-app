@@ -21,6 +21,7 @@ const STAGE_FILTERS = [
   { key: 'driver_owned',                 label: '👤 Driver' },
   { key: 'unclassified',                 label: '⚠️ Unclassified' },
   { key: 'duplicates',                   label: '🔁 Duplicates' },
+  { key: 'unit_conflicts',               label: '⚠️ Unit ID conflicts' },
 ]
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024
@@ -31,7 +32,7 @@ export default function FleetUploadModal({ kind, open, onClose, onCommitted }) {
   const fileInputRef = useRef(null)
 
   const [stage, setStage] = useState('pick') // pick | preview | done
-  const [fileName, setFileName] = useState('')
+  const [fileNames, setFileNames] = useState([]) // array of file names
   const [parsing, setParsing] = useState(false)
   const [parseErrors, setParseErrors] = useState([])
   const [rows, setRows] = useState([])
@@ -44,36 +45,125 @@ export default function FleetUploadModal({ kind, open, onClose, onCommitted }) {
 
   useEffect(() => {
     if (!open) {
-      setStage('pick'); setFileName(''); setParseErrors([]); setRows([]); setCommitResult(null)
+      setStage('pick'); setFileNames([]); setParseErrors([]); setRows([]); setCommitResult(null)
       setFilter('all'); setSearch(''); setSelected(new Set()); setBulkStage('')
     }
   }, [open])
 
-  async function handleFile(file) {
-    if (!file) return
-    if (file.size > MAX_FILE_BYTES) {
-      setParseErrors([`File is larger than 5 MB (${(file.size / 1024 / 1024).toFixed(1)} MB).`])
-      return
-    }
-    if (!/\.xlsx?$/i.test(file.name)) {
-      setParseErrors([`File must be .xlsx or .xls — got "${file.name}".`])
-      return
-    }
-    setFileName(file.name)
-    setParsing(true); setParseErrors([])
+  // Extract header keys from a parsed workbook, normalized for comparison
+  function getHeaderSignature(arrayBuffer) {
     try {
-      const buf = await file.arrayBuffer()
-      // Loan entities load first; lessor list filters out any vendor that
-      // clashes with a loan entity name so the entity rule wins on conflict.
+      const XLSX = require('xlsx')
+      const wb = XLSX.read(arrayBuffer, { type: 'array' })
+      const sheetName = wb.SheetNames[0]
+      const sheet = wb.Sheets[sheetName]
+      const raw = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false })
+      if (raw.length === 0) return null
+      const headerKeys = Object.keys(raw[0])
+        .map(k => k.trim().toLowerCase())
+        .sort()
+      return headerKeys.join('|')
+    } catch (e) {
+      return null
+    }
+  }
+
+  async function handleFiles(files) {
+    if (!files || files.length === 0) return
+
+    // Validate all files first
+    const fileArray = Array.from(files)
+    const fileErrors = []
+    for (const file of fileArray) {
+      if (file.size > MAX_FILE_BYTES) {
+        fileErrors.push(`${file.name}: File is larger than 5 MB (${(file.size / 1024 / 1024).toFixed(1)} MB).`)
+      }
+      if (!/\.xlsx?$/i.test(file.name)) {
+        fileErrors.push(`${file.name}: File must be .xlsx or .xls.`)
+      }
+    }
+    if (fileErrors.length > 0) {
+      setParseErrors(fileErrors)
+      return
+    }
+
+    setFileNames(fileArray.map(f => f.name))
+    setParsing(true)
+    setParseErrors([])
+
+    try {
+      // Load shared data once
       const loanEntities = await loadActiveLoanEntities()
       const [{ data: driversData }, knownLessors] = await Promise.all([
         supabase.from('drivers').select('id, internal_id, full_name'),
         loadKnownLessors(loanEntities),
       ])
       const allDrivers = driversData || []
-      const { rows: parsed, errors } = parseFleetWorkbook(buf, kind, allDrivers)
-      // VIN dedup lookup against the live table
-      const vins = parsed.map(p => p.vin)
+
+      // Parse all files and validate headers match
+      const parseResults = []
+      let firstSignature = null
+      const headerMismatches = []
+
+      for (const file of fileArray) {
+        const buf = await file.arrayBuffer()
+        const sig = getHeaderSignature(buf)
+        if (!sig) {
+          headerMismatches.push(`${file.name}: Could not extract headers.`)
+          continue
+        }
+        if (firstSignature === null) {
+          firstSignature = sig
+        } else if (sig !== firstSignature) {
+          headerMismatches.push(`${file.name}: Header columns don't match the first file.`)
+          continue
+        }
+        const { rows: parsed, errors } = parseFleetWorkbook(buf, kind, allDrivers)
+        parseResults.push({
+          fileName: file.name,
+          rows: parsed.map(r => ({ ...r, _sourceFile: file.name })),
+          errors,
+        })
+      }
+
+      // If any files had header mismatches, surface them and stop
+      if (headerMismatches.length > 0) {
+        setParseErrors(headerMismatches)
+        setFileNames([])
+        setParsing(false)
+        return
+      }
+
+      // Combine all rows from all files
+      const allErrors = []
+      const allRows = []
+      for (const result of parseResults) {
+        allRows.push(...result.rows)
+        allErrors.push(...result.errors.map(e => `${result.fileName}: ${e}`))
+      }
+
+      // Dedupe by Unit ID# within the combined set, tagging conflicts
+      const seenByUnitId = new Map() // unit_number → { rows, conflict }
+      for (const row of allRows) {
+        const key = row.unit_number
+        if (!seenByUnitId.has(key)) {
+          seenByUnitId.set(key, { rows: [], conflict: false })
+        }
+        seenByUnitId.get(key).rows.push(row)
+      }
+
+      // Mark duplicates as conflicts (needs resolution)
+      for (const { rows: unitRows, conflict } of seenByUnitId.values()) {
+        if (unitRows.length > 1) {
+          for (const row of unitRows) {
+            row._unitIdConflict = true
+            row._conflictFiles = unitRows.map(r => r._sourceFile)
+          }
+        }
+      }
+
+      // VIN dedup lookup against the live table (for all rows combined)
+      const vins = allRows.map(p => p.vin).filter(Boolean)
       const { data: existing } = vins.length
         ? await supabase
             .from(isTrailer ? 'trailers' : 'trucks')
@@ -82,7 +172,7 @@ export default function FleetUploadModal({ kind, open, onClose, onCommitted }) {
         : { data: [] }
       const existingMap = new Map((existing || []).map(e => [e.vin, e]))
 
-      const classified = parsed.map(row => {
+      const classified = allRows.map(row => {
         const cls = classifyOwnership(row.equipment_owner_raw, row.driver_id, knownLessors, allDrivers, loanEntities)
         const dupOf = existingMap.get(row.vin) || null
         return {
@@ -96,26 +186,29 @@ export default function FleetUploadModal({ kind, open, onClose, onCommitted }) {
           skip: false,
         }
       })
+
       setRows(classified)
-      setParseErrors(errors)
+      setParseErrors(allErrors)
       setStage('preview')
     } catch (e) {
-      setParseErrors([`Failed to parse workbook: ${e.message || e}`])
+      setParseErrors([`Failed to parse workbooks: ${e.message || e}`])
+      setFileNames([])
     } finally {
       setParsing(false)
     }
   }
 
-  function onPickFiles(e) { handleFile(e.target.files?.[0]) }
-  function onDrop(e) { e.preventDefault(); handleFile(e.dataTransfer.files?.[0]) }
+  function onPickFiles(e) { handleFiles(e.target.files) }
+  function onDrop(e) { e.preventDefault(); handleFiles(e.dataTransfer.files) }
   function onDragOver(e) { e.preventDefault() }
 
   // ── Preview derived state ─────────────────────────────────────────
   const counts = useMemo(() => {
-    const c = { total: rows.length, new: 0, duplicate: 0, driver_linked: 0, errors: 0, by_stage: { company_owned: 0, company_leased: 0, driver_owned: 0, unclassified: 0 } }
+    const c = { total: rows.length, new: 0, duplicate: 0, driver_linked: 0, unit_conflicts: 0, by_stage: { company_owned: 0, company_leased: 0, driver_owned: 0, unclassified: 0 } }
     for (const r of rows) {
       if (r.is_duplicate) c.duplicate++; else c.new++
       if (r.driver_id) c.driver_linked++
+      if (r._unitIdConflict) c.unit_conflicts++
       c.by_stage[r.ownership_stage] = (c.by_stage[r.ownership_stage] || 0) + 1
     }
     return c
@@ -125,7 +218,8 @@ export default function FleetUploadModal({ kind, open, onClose, onCommitted }) {
     const q = search.trim().toLowerCase()
     return rows.filter(r => {
       if (filter === 'duplicates' && !r.is_duplicate) return false
-      if (filter !== 'all' && filter !== 'duplicates' && r.ownership_stage !== filter) return false
+      if (filter === 'unit_conflicts' && !r._unitIdConflict) return false
+      if (filter !== 'all' && filter !== 'duplicates' && filter !== 'unit_conflicts' && r.ownership_stage !== filter) return false
       if (!q) return true
       return (r.unit_number || '').toLowerCase().includes(q)
         || (r.vin || '').toLowerCase().includes(q)
@@ -213,11 +307,12 @@ export default function FleetUploadModal({ kind, open, onClose, onCommitted }) {
               type="file"
               accept=".xlsx,.xls"
               onChange={onPickFiles}
+              multiple
               className="hidden"
             />
             <div className="text-4xl mb-2">📂</div>
             <p className="text-sm font-medium text-gray-700 dark:text-slate-300">
-              {parsing ? 'Parsing…' : `Drop .xlsx file here or click to browse`}
+              {parsing ? 'Parsing…' : `Drop .xlsx files here or click to browse`}
             </p>
             <p className="text-[11px] text-gray-500 dark:text-slate-500 mt-2">
               {isTrailer
@@ -232,9 +327,17 @@ export default function FleetUploadModal({ kind, open, onClose, onCommitted }) {
             {/* Summary header */}
             <div className={`${S.card} p-4 space-y-3`}>
               <div className="flex items-baseline justify-between">
-                <p className="text-sm font-semibold text-gray-700 dark:text-slate-300">
-                  {fileName} <span className="font-normal text-gray-500 dark:text-slate-500">· {counts.total} rows parsed</span>
-                </p>
+                <div className="text-sm font-semibold text-gray-700 dark:text-slate-300">
+                  {fileNames.length === 1 ? (
+                    <>
+                      {fileNames[0]} <span className="font-normal text-gray-500 dark:text-slate-500">· {counts.total} rows parsed</span>
+                    </>
+                  ) : (
+                    <>
+                      {fileNames.map(f => `${isTrailer ? 'Trailer' : 'Truck'} file`).join(', ')} ({fileNames.length} files) <span className="font-normal text-gray-500 dark:text-slate-500">· {counts.total} rows parsed</span>
+                    </>
+                  )}
+                </div>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
                 <SummaryGroup title="Classification">
@@ -262,6 +365,7 @@ export default function FleetUploadModal({ kind, open, onClose, onCommitted }) {
               {STAGE_FILTERS.map(f => {
                 const count = f.key === 'all' ? counts.total
                   : f.key === 'duplicates' ? counts.duplicate
+                  : f.key === 'unit_conflicts' ? counts.unit_conflicts
                   : (counts.by_stage[f.key] || 0)
                 const active = filter === f.key
                 return (
@@ -328,6 +432,7 @@ export default function FleetUploadModal({ kind, open, onClose, onCommitted }) {
                       </th>
                       <th className={S.th}>Driver</th>
                       <th className={S.th}>Status</th>
+                      {fileNames.length > 1 && <th className={S.th} title="Source file">File</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -384,6 +489,11 @@ export default function FleetUploadModal({ kind, open, onClose, onCommitted }) {
                               <button onClick={() => setRowSkip(idx, true)} className="ml-2 text-[11px] text-gray-400 hover:text-red-500" title="Skip this row">×</button>
                             )}
                           </td>
+                          {fileNames.length > 1 && (
+                            <td className={`${S.td} text-xs text-gray-600 dark:text-slate-400`} title={row._sourceFile}>
+                              {row._sourceFile ? row._sourceFile.replace(/\.xlsx?$/i, '') : '—'}
+                            </td>
+                          )}
                         </tr>
                       )
                     })}
@@ -406,7 +516,9 @@ export default function FleetUploadModal({ kind, open, onClose, onCommitted }) {
         {stage === 'done' && commitResult && (
           <>
             <div className={`${S.card} p-4 space-y-2`}>
-              <p className="text-sm font-medium text-gray-700 dark:text-slate-300">{fileName}</p>
+              <p className="text-sm font-medium text-gray-700 dark:text-slate-300">
+                {fileNames.length === 1 ? fileNames[0] : `${fileNames.length} files`}
+              </p>
               <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
                 <span className="text-gray-500 dark:text-slate-400">Inserted</span>
                 <span className="font-mono text-emerald-700 dark:text-emerald-400">{commitResult.inserted}</span>
