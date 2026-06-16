@@ -4,7 +4,7 @@ import { S } from '../../../../lib/styles'
 import SpotlightDeck from './SpotlightDeck'
 import DriverSpotlightCard from './DriverSpotlightCard'
 import { fetchDriverDeck, fetchLanes, fetchTrendWeeks } from './spotlightData'
-import { SORTS, formatRange, shiftYmd, spanDays, thisMonth, thisWeek } from './spotlightShared'
+import { SORTS, formatRange, shiftYmd, spanDays, thisMonth, thisWeek, ymd } from './spotlightShared'
 
 // Spotlight — a cover-flow deck of per-entity dossiers. Parameterized by
 // dimension so the same shell can later power per-truck / per-dispatcher /
@@ -91,17 +91,30 @@ export default function Spotlight({ dimension = 'driver' }) {
     }
   }, [focus, sorted, deckKey, range.from, range.to, basis, config])
 
+  // Determine which preset matches a given range (if any)
+  const getPresetForRange = useCallback((r) => {
+    const week = thisWeek()
+    const month = thisMonth()
+    if (r.from === week.from && r.to === week.to) return 'week'
+    if (r.from === month.from && r.to === month.to) return 'month'
+    return 'custom'
+  }, [])
+
   function setPresetRange(p) {
     setPreset(p)
     if (p === 'week') setRange(thisWeek())
     else if (p === 'month') setRange(thisMonth())
   }
+
   const shiftRange = useCallback((dir) => {
     setRange(r => {
       const span = spanDays(r.from, r.to)
-      return { from: shiftYmd(r.from, dir * span), to: shiftYmd(r.to, dir * span) }
+      const newRange = { from: shiftYmd(r.from, dir * span), to: shiftYmd(r.to, dir * span) }
+      // Update preset to match the new range (or 'custom' if it doesn't match week/month)
+      setPreset(getPresetForRange(newRange))
+      return newRange
     })
-  }, [])
+  }, [getPresetForRange])
 
   // ── Jump box ──
   const matches = useMemo(() => {
@@ -121,9 +134,11 @@ export default function Spotlight({ dimension = 'driver' }) {
   // useCallback here fights its inference of config.Card.
   const Card = config.Card
   const handleWeekSelect = useCallback((from, to) => {
-    setPreset('custom')
-    setRange({ from, to })
-  }, [])
+    const newRange = { from, to }
+    setRange(newRange)
+    // Set preset to match the selected week, or 'custom' if it doesn't match week/month
+    setPreset(getPresetForRange(newRange))
+  }, [getPresetForRange])
   const renderCard = (entry, { focused }) => (
     <Card
       entry={entry}
