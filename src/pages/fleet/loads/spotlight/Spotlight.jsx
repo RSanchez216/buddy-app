@@ -67,31 +67,48 @@ export default function Spotlight({ dimension = 'driver' }) {
   const sorted = useMemo(() => (deck ? [...deck.entries].sort(sortDef.fn) : []), [deck, sortDef])
   const rangeDays = spanDays(range.from, range.to)
 
-  // Track focused driver by ID, not index, so the same driver stays focused
-  // across period and sort changes. This preserves focus even if the driver has
-  // no activity in the new period (they'll still be in the deck with zero metrics).
+  // Track focused driver by ID and entry. The ID persists across period changes,
+  // and the entry is updated when the driver is found in the new deck. If the
+  // driver isn't in the new period's deck (no loads), we keep their entry and
+  // render them with an empty state — they never snap to a different driver.
   const [focusedDriverId, setFocusedDriverId] = useState(null)
+  const [focusedEntry, setFocusedEntry] = useState(null)
 
   // Calculate focus index by finding the focused driver in the sorted array.
-  // If the driver isn't found, fall back to 0 (shouldn't happen since all active
-  // drivers are included in the deck, even with zero activity).
+  // If not found, return -1 (off-deck) so we know to use focusedEntry directly.
   const focus = useMemo(() => {
-    if (!focusedDriverId || sorted.length === 0) return 0
+    if (!focusedDriverId || sorted.length === 0) return -1
     const idx = sorted.findIndex(e => e.driverId === focusedDriverId)
-    return idx >= 0 ? idx : 0
+    return idx >= 0 ? idx : -1
   }, [focusedDriverId, sorted])
+
+  // Update focusedEntry when the focused driver is found in the deck.
+  // If not found, keep the last known entry (empty state for that period).
+  useEffect(() => {
+    if (focus >= 0 && focus < sorted.length) {
+      setFocusedEntry(sorted[focus])
+    } else if (focus === -1 && focusedDriverId && sorted.length > 0) {
+      // Driver not in this period's deck — keep the last entry unchanged
+      // so they render with empty metrics for this period
+    }
+  }, [focus, focusedDriverId, sorted])
 
   const setFocus = useCallback((index) => {
     if (index >= 0 && index < sorted.length) {
-      setFocusedDriverId(sorted[index].driverId)
+      const entry = sorted[index]
+      setFocusedDriverId(entry.driverId)
+      setFocusedEntry(entry)
     }
   }, [sorted])
 
   // ── Lazy lane hydration: focused card + both neighbors ──
   useEffect(() => {
-    if (!sorted.length) return
-    for (const off of [0, 1, -1]) {
-      const entry = sorted[focus + off]
+    if (!focusedEntry) return
+    // If focused driver is off-deck (focus === -1), just hydrate them
+    // Otherwise, hydrate focused + neighbors
+    const indices = focus === -1 ? [null] : [0, 1, -1]
+    for (const off of indices) {
+      const entry = off === null ? focusedEntry : sorted[focus + off]
       if (!entry) continue
       const dKey = `${deckKey}|${entry.id}`
       if (requested.current.has(dKey)) continue
@@ -100,7 +117,7 @@ export default function Spotlight({ dimension = 'driver' }) {
         .then(rows => setDetailMap(m => ({ ...m, [dKey]: rows })))
         .catch(() => setDetailMap(m => ({ ...m, [dKey]: [] })))
     }
-  }, [focus, sorted, deckKey, range.from, range.to, basis, config])
+  }, [focus, focusedEntry, sorted, deckKey, range.from, range.to, basis, config])
 
   // Determine which preset matches a given range (if any)
   const getPresetForRange = useCallback((r) => {
@@ -138,7 +155,6 @@ export default function Spotlight({ dimension = 'driver' }) {
   }, [query, sorted])
   function jumpTo(index) { setFocus(index); setQuery('') }
 
-  const focusedEntry = sorted[focus]
   const periodLabel = `${PRESET_LABEL[preset]} · ${formatRange(range.from, range.to)}`
 
   // Plain function — the React Compiler handles memoization; a manual
@@ -150,23 +166,29 @@ export default function Spotlight({ dimension = 'driver' }) {
     // Set preset to match the selected week, or 'custom' if it doesn't match week/month
     setPreset(getPresetForRange(newRange))
   }, [getPresetForRange])
-  const renderCard = (entry, { focused }) => (
-    <Card
-      entry={entry}
-      lanes={detailMap[`${deckKey}|${entry.id}`]}
-      trend={trend}
-      rangeDays={rangeDays}
-      effDays={deck?.effDays ?? rangeDays}
-      periodLabel={formatRange(range.from, range.to)}
-      basis={basis}
-      focused={focused}
-      rank={sorted.indexOf(entry) + 1}
-      total={sorted.length}
-      sortLabel={sortDef.label.toLowerCase()}
-      activeWeekFrom={range.from}
-      onWeekSelect={handleWeekSelect}
-    />
-  )
+
+  // Render the focused card. When off-deck (focus === -1), show without rank/total.
+  const renderCard = (entry, { focused }) => {
+    const rank = focus >= 0 ? sorted.indexOf(entry) + 1 : null
+    const total = focus >= 0 ? sorted.length : null
+    return (
+      <Card
+        entry={entry}
+        lanes={detailMap[`${deckKey}|${entry.id}`]}
+        trend={trend}
+        rangeDays={rangeDays}
+        effDays={deck?.effDays ?? rangeDays}
+        periodLabel={formatRange(range.from, range.to)}
+        basis={basis}
+        focused={focused}
+        rank={rank}
+        total={total}
+        sortLabel={sortDef.label.toLowerCase()}
+        activeWeekFrom={range.from}
+        onWeekSelect={handleWeekSelect}
+      />
+    )
+  }
 
   return (
     <div className="space-y-4">
@@ -249,11 +271,26 @@ export default function Spotlight({ dimension = 'driver' }) {
         <div className="relative h-[680px]">
           <div className="absolute left-1/2 top-2 -translate-x-1/2 w-[min(860px,94vw)] h-[640px] rounded-3xl border border-gray-200 dark:border-white/10 bg-gradient-to-b from-white to-gray-50 dark:from-[#12132e] dark:to-[#0a0a18] animate-pulse" />
         </div>
-      ) : sorted.length === 0 ? (
+      ) : !focusedEntry ? (
         <div className={`${S.card} p-16 text-center text-sm text-gray-400 dark:text-slate-500`}>
           No {config.noun} with activity in this window. Import loads first, then check the date range.
         </div>
+      ) : focus === -1 ? (
+        // Off-deck: focused driver has no activity in this period — show with empty state
+        <>
+          {renderCard(focusedEntry, { focused: true })}
+          <div className="flex items-center justify-center gap-3">
+            <div className="w-56 h-1 rounded-full bg-gray-200 dark:bg-white/[0.06] overflow-hidden">
+              <div className="h-full rounded-full bg-orange-500" style={{ width: '0%' }} />
+            </div>
+            <p className="text-[11px] font-mono text-gray-400 dark:text-slate-500 whitespace-nowrap">
+              — / {sorted.length}
+              <span className="ml-2 font-sans text-gray-500 dark:text-slate-400">{focusedEntry.name}</span>
+            </p>
+          </div>
+        </>
       ) : (
+        // On-deck: render via SpotlightDeck carousel
         <>
           <SpotlightDeck
             items={sorted}
