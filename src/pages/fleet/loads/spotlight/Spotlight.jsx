@@ -67,14 +67,25 @@ export default function Spotlight({ dimension = 'driver' }) {
   const sorted = useMemo(() => (deck ? [...deck.entries].sort(sortDef.fn) : []), [deck, sortDef])
   const rangeDays = spanDays(range.from, range.to)
 
-  // Focus is keyed to (period, sort): a new order or window starts the deck
-  // back at card #1 by derivation.
-  const focusKey = `${deckKey}|${sortKey}`
-  const [focusState, setFocusState] = useState({ key: null, index: 0 })
-  const focus = focusState.key === focusKey
-    ? Math.min(focusState.index, Math.max(sorted.length - 1, 0))
-    : 0
-  const setFocus = useCallback((index) => setFocusState({ key: focusKey, index }), [focusKey])
+  // Track focused driver by ID, not index, so the same driver stays focused
+  // across period and sort changes. This preserves focus even if the driver has
+  // no activity in the new period (they'll still be in the deck with zero metrics).
+  const [focusedDriverId, setFocusedDriverId] = useState(null)
+
+  // Calculate focus index by finding the focused driver in the sorted array.
+  // If the driver isn't found, fall back to 0 (shouldn't happen since all active
+  // drivers are included in the deck, even with zero activity).
+  const focus = useMemo(() => {
+    if (!focusedDriverId || sorted.length === 0) return 0
+    const idx = sorted.findIndex(e => e.driverId === focusedDriverId)
+    return idx >= 0 ? idx : 0
+  }, [focusedDriverId, sorted])
+
+  const setFocus = useCallback((index) => {
+    if (index >= 0 && index < sorted.length) {
+      setFocusedDriverId(sorted[index].driverId)
+    }
+  }, [sorted])
 
   // ── Lazy lane hydration: focused card + both neighbors ──
   useEffect(() => {
