@@ -98,16 +98,6 @@ function formatFull(value, metric) {
   return fmtMoney(value)
 }
 
-// Determine if a hex color is dark (low luminance) and needs light text
-function needsLightText(hex) {
-  const c = hex.replace('#', '')
-  const r = parseInt(c.slice(0, 2), 16)
-  const g = parseInt(c.slice(2, 4), 16)
-  const b = parseInt(c.slice(4, 6), 16)
-  // perceived luminance (YIQ); < 140 → dark fill, needs light text
-  return (r * 0.299 + g * 0.587 + b * 0.114) < 140
-}
-
 export default function GeoHeatMap({ range, phases, pageTitle = 'Lanes by region & state' }) {
   const [view, setView] = useState('region') // region | state
   const [colorBy, setColorBy] = useState('gross') // loads | gross | avg | rpm
@@ -422,36 +412,39 @@ function SVGMap({ view, data, colorScale, colorBy, isDark }) {
           stroke={isDark ? 'rgba(255,255,255,.18)' : '#fff'}
           strokeWidth={1}
         />
-        {showOnMapLabel && (() => {
-          const c = color.replace('#', '')
-          const r = parseInt(c.slice(0, 2), 16), g = parseInt(c.slice(2, 4), 16), b = parseInt(c.slice(4, 6), 16)
-          const textColor = (r * 0.299 + g * 0.587 + b * 0.114) < 140 ? '#f8fafc' : '#1f2937'
-          return (
-            <>
-              {/* State abbreviation */}
-              <text
-                x={centroid[0]}
-                y={centroid[1] - 8}
-                textAnchor="middle"
-                fontSize="11"
-                fontWeight="500"
-                fill={textColor}
-              >
-                {abbr}
-              </text>
-              {/* Metric value */}
-              <text
-                x={centroid[0]}
-                y={centroid[1] + 6}
-                textAnchor="middle"
-                fontSize="11"
-                fill={textColor}
-              >
-                {formatCompact(metricValue, colorBy)}
-              </text>
-            </>
-          )
-        })()}
+        {showOnMapLabel && (
+          <>
+            {/* State abbreviation */}
+            <text
+              x={centroid[0]}
+              y={centroid[1] - 8}
+              textAnchor="middle"
+              fontSize="11"
+              fontWeight="500"
+              fill={isDark ? '#e2e8f0' : '#1f2937'}
+              paintOrder="stroke"
+              stroke={isDark ? '#0f172a' : '#ffffff'}
+              strokeWidth={3}
+              strokeLinejoin="round"
+            >
+              {abbr}
+            </text>
+            {/* Metric value */}
+            <text
+              x={centroid[0]}
+              y={centroid[1] + 6}
+              textAnchor="middle"
+              fontSize="11"
+              fill={isDark ? '#e2e8f0' : '#1f2937'}
+              paintOrder="stroke"
+              stroke={isDark ? '#0f172a' : '#ffffff'}
+              strokeWidth={3}
+              strokeLinejoin="round"
+            >
+              {formatCompact(metricValue, colorBy)}
+            </text>
+          </>
+        )}
         <title>
           {`${abbr}${
             stateData
