@@ -84,20 +84,41 @@ export default function Spotlight({ dimension = 'driver' }) {
     return idx >= 0 ? idx : -1  // Found: show at that index; Not found: off-deck
   }, [focusedDriverId, sorted])
 
-  // Update focusedEntry when the focused driver is found in the deck.
-  // If not found, keep the last known entry (empty state for that period).
-  // Initialize to first driver if deck just loaded and no focus yet.
+  // Make focusedDriverId the single source of truth by setting it on first load.
+  // Keep the focused driver across period changes, with empty state if they have no activity.
   useEffect(() => {
+    if (sorted.length === 0) return
+
+    // First load / nothing tracked yet: adopt the first driver AND anchor its ID.
+    if (!focusedDriverId) {
+      setFocusedDriverId(sorted[0].driverId)
+      setFocusedEntry(sorted[0])
+      return
+    }
+
+    // Focused driver is in this period's deck → show their entry with current metrics.
     if (focus >= 0 && focus < sorted.length) {
       setFocusedEntry(sorted[focus])
-    } else if (focus === -1 && focusedDriverId && sorted.length > 0) {
-      // Driver not in this period's deck — keep the last entry unchanged
-      // so they render with empty metrics for this period
-    } else if (focus === -1 && !focusedDriverId && sorted.length > 0 && !focusedEntry) {
-      // Deck just loaded and no driver was previously focused — init to first
-      setFocusedEntry(sorted[0])
+    } else if (focus === -1) {
+      // Focused driver has NO activity in this period → keep them focused with empty state.
+      // Render them with zero metrics (no jumps to sorted[0]).
+      setFocusedEntry(prev =>
+        prev && prev.driverId === focusedDriverId
+          ? {
+              ...prev,
+              loadCount: 0,
+              realizedLoads: 0,
+              bookedLoads: 0,
+              miles: 0,
+              gross: 0,
+              rpm: null,
+              activeDays: 0,
+              booked: 0,
+            }
+          : prev
+      )
     }
-  }, [focus, focusedDriverId, sorted, focusedEntry])
+  }, [focus, focusedDriverId, sorted])
 
   const setFocus = useCallback((index) => {
     if (index >= 0 && index < sorted.length) {
