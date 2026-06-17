@@ -75,11 +75,13 @@ export default function Spotlight({ dimension = 'driver' }) {
   const [focusedEntry, setFocusedEntry] = useState(null)
 
   // Calculate focus index by finding the focused driver in the sorted array.
-  // If not found, return -1 (off-deck) so we know to use focusedEntry directly.
+  // If no driver is focused yet, default to 0 (show carousel).
+  // If a driver is focused but not found in deck, return -1 (off-deck).
   const focus = useMemo(() => {
-    if (!focusedDriverId || sorted.length === 0) return -1
+    if (sorted.length === 0) return 0
+    if (!focusedDriverId) return 0  // No driver focused yet; show carousel at index 0
     const idx = sorted.findIndex(e => e.driverId === focusedDriverId)
-    return idx >= 0 ? idx : -1
+    return idx >= 0 ? idx : -1  // Found: show at that index; Not found: off-deck
   }, [focusedDriverId, sorted])
 
   // Update focusedEntry when the focused driver is found in the deck.
@@ -279,7 +281,7 @@ export default function Spotlight({ dimension = 'driver' }) {
         <div className={`${S.card} p-16 text-center text-sm text-gray-400 dark:text-slate-500`}>
           No {config.noun} with activity in this window. Import loads first, then check the date range.
         </div>
-      ) : focusedEntry && focus === -1 ? (
+      ) : focus === -1 && focusedDriverId && focusedEntry ? (
         // Off-deck: focused driver has no activity in this period — show with empty state
         <>
           {renderCard(focusedEntry, { focused: true })}
