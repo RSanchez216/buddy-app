@@ -228,9 +228,11 @@ export default function GeoHeatMap({ range, phases, pageTitle = 'Lanes by region
   return (
     <div className={`${S.card} space-y-4`}>
       <div>
-        <p className="text-xs font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500 mb-3">
-          {pageTitle}
-        </p>
+        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-orange-600 dark:text-orange-400 mb-1">
+          <span className="w-1.5 h-1.5 rounded-full bg-orange-500" /> Geography
+        </div>
+        <h2 className="text-xl font-bold text-gray-900 dark:text-white">Lanes by region & state</h2>
+        <p className="text-sm text-gray-500 dark:text-slate-500 mt-0.5">Where your freight runs across the five regions and individual states — colored by the metric you choose.</p>
 
         {/* Controls */}
         <div className="flex items-center flex-wrap gap-2 mb-4">
