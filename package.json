@@ -22,6 +22,7 @@
     "@tiptap/suggestion": "^3.22.5",
     "chart.js": "^4.5.1",
     "d3-geo": "^3.1.1",
+    "d3-interpolate": "^3.0.1",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
     "react": "^19.2.4",
@@ -32,6 +33,7 @@
     "three": "^0.184.0",
     "tippy.js": "^6.3.7",
     "topojson-client": "^3.1.0",
+    "us-atlas": "^3.0.1",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

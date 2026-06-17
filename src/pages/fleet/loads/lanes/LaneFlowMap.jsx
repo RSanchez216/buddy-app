@@ -3,6 +3,8 @@ import { useToast } from '../../../../contexts/ToastContext'
 import { S } from '../../../../lib/styles'
 import LaneHeatCanvas from './LaneHeatCanvas'
 import LaneMapCanvas from './LaneMapCanvas'
+import GeoHeatMap from './GeoHeatMap'
+import TopPerformers from './TopPerformers'
 import { aggregateLanes, fetchLaneLegs, fetchTrailerTypes, makeRpmScale, makeTypeColorMap, makeWidthScale, pickPayers, resolveLegTypes, RPM_NULL_COLOR, UNKNOWN_TYPE } from './laneData'
 import { binHeatCells } from './mapShared'
 import { fmtMoney, fmtNum, fmtRpm, formatRange, shiftYmd, spanDays, thisMonth, thisWeek } from '../spotlight/spotlightShared'
@@ -627,6 +629,19 @@ export default function LaneFlowMap() {
           )}
         </div>
       </div>
+
+      {/* ── Geo heat map section ── */}
+      <GeoHeatMap
+        range={range}
+        phases={selectedPhases}
+        pageTitle="Lanes by region & state"
+      />
+
+      {/* ── Top performers section ── */}
+      <TopPerformers
+        range={range}
+        phases={selectedPhases}
+      />
 
       {/* ── Honesty footer ── */}
       <p className="text-[11px] text-gray-400 dark:text-slate-500 text-center max-w-3xl mx-auto">
