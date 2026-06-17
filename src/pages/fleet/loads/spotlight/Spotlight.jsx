@@ -283,9 +283,9 @@ export default function Spotlight({ dimension = 'driver' }) {
             </div>
             {preset === 'custom' && (
               <>
-                <input type="date" className={`${S.input} w-auto shrink-0 min-w-[8.5rem]`} value={range.from} onChange={e => setRange(r => ({ ...r, from: e.target.value }))} />
+                <input type="date" className={`${S.input} !w-auto shrink-0 min-w-[8.5rem]`} value={range.from} onChange={e => setRange(r => ({ ...r, from: e.target.value }))} />
                 <span className="text-gray-400 text-xs shrink-0">→</span>
-                <input type="date" className={`${S.input} w-auto shrink-0 min-w-[8.5rem]`} value={range.to} onChange={e => setRange(r => ({ ...r, to: e.target.value }))} />
+                <input type="date" className={`${S.input} !w-auto shrink-0 min-w-[8.5rem]`} value={range.to} onChange={e => setRange(r => ({ ...r, to: e.target.value }))} />
               </>
             )}
           </div>
