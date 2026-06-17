@@ -84,14 +84,18 @@ export default function Spotlight({ dimension = 'driver' }) {
 
   // Update focusedEntry when the focused driver is found in the deck.
   // If not found, keep the last known entry (empty state for that period).
+  // Initialize to first driver if deck just loaded and no focus yet.
   useEffect(() => {
     if (focus >= 0 && focus < sorted.length) {
       setFocusedEntry(sorted[focus])
     } else if (focus === -1 && focusedDriverId && sorted.length > 0) {
       // Driver not in this period's deck — keep the last entry unchanged
       // so they render with empty metrics for this period
+    } else if (focus === -1 && !focusedDriverId && sorted.length > 0 && !focusedEntry) {
+      // Deck just loaded and no driver was previously focused — init to first
+      setFocusedEntry(sorted[0])
     }
-  }, [focus, focusedDriverId, sorted])
+  }, [focus, focusedDriverId, sorted, focusedEntry])
 
   const setFocus = useCallback((index) => {
     if (index >= 0 && index < sorted.length) {
@@ -271,11 +275,11 @@ export default function Spotlight({ dimension = 'driver' }) {
         <div className="relative h-[680px]">
           <div className="absolute left-1/2 top-2 -translate-x-1/2 w-[min(860px,94vw)] h-[640px] rounded-3xl border border-gray-200 dark:border-white/10 bg-gradient-to-b from-white to-gray-50 dark:from-[#12132e] dark:to-[#0a0a18] animate-pulse" />
         </div>
-      ) : !focusedEntry ? (
+      ) : sorted.length === 0 ? (
         <div className={`${S.card} p-16 text-center text-sm text-gray-400 dark:text-slate-500`}>
           No {config.noun} with activity in this window. Import loads first, then check the date range.
         </div>
-      ) : focus === -1 ? (
+      ) : focusedEntry && focus === -1 ? (
         // Off-deck: focused driver has no activity in this period — show with empty state
         <>
           {renderCard(focusedEntry, { focused: true })}
