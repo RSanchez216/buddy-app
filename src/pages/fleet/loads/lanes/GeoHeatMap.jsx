@@ -369,6 +369,9 @@ function SVGMap({ view, data, colorScale, colorBy, isDark }) {
   // Map state names to abbreviations
   const getStateAbbr = (name) => STATE_NAME_TO_ABBR[name] || name
 
+  // Small states that get external leader-line labels in State view
+  const SMALL_STATES = new Set(['VT', 'NH', 'MA', 'RI', 'CT', 'NJ', 'DE', 'MD', 'DC'])
+
   // Render state paths
   const statePaths = topoData.features.map((state) => {
     const abbr = getStateAbbr(state.properties.name)
@@ -383,6 +386,8 @@ function SVGMap({ view, data, colorScale, colorBy, isDark }) {
     const color = colorScale.color(metricValue)
     const path = pathGenerator(state)
     const centroid = pathGenerator.centroid(state)
+    const isSmallState = SMALL_STATES.has(abbr)
+    const showOnMapLabel = view === 'state' && metricValue != null && centroid && !isSmallState
 
     return (
       <g key={abbr}>
@@ -392,7 +397,7 @@ function SVGMap({ view, data, colorScale, colorBy, isDark }) {
           stroke={isDark ? 'rgba(255,255,255,.18)' : '#fff'}
           strokeWidth={1}
         />
-        {view === 'state' && metricValue != null && centroid && (
+        {showOnMapLabel && (
           <>
             {/* State abbreviation */}
             <text
@@ -427,6 +432,106 @@ function SVGMap({ view, data, colorScale, colorBy, isDark }) {
       </g>
     )
   })
+
+  // External labels for small states (State view only)
+  const externalLabels = view === 'state' ? (() => {
+    const smallStatesWithData = []
+
+    // Collect small states that have data, with their centroids
+    topoData.features.forEach((state) => {
+      const abbr = getStateAbbr(state.properties.name)
+      if (!SMALL_STATES.has(abbr)) return
+
+      const stateData = data.get(abbr)
+      const metricValue = stateData ? (
+        colorBy === 'legs' ? stateData.legs :
+        colorBy === 'gross' ? stateData.gross :
+        colorBy === 'avg' ? stateData.avg :
+        stateData.rpm
+      ) : null
+
+      if (metricValue == null) return
+
+      const centroid = pathGenerator.centroid(state)
+      smallStatesWithData.push({ abbr, metricValue, centroid })
+    })
+
+    // Sort by centroid y (top to bottom)
+    smallStatesWithData.sort((a, b) => a.centroid[1] - b.centroid[1])
+
+    // Position external labels in a vertical stack on the right
+    const gutterX = 930
+    const labelRowHeight = 34
+    const startY = 40
+    const lineColor = isDark ? 'rgba(255,255,255,0.38)' : 'rgba(0,0,0,0.38)'
+    const labelBg = isDark ? '#1e293b' : '#f3f4f6'
+    const labelBorder = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'
+
+    return smallStatesWithData.map((item, idx) => {
+      const labelY = startY + idx * labelRowHeight
+      const labelMidY = labelY + 17 // middle of label pill
+
+      return (
+        <g key={`external-${item.abbr}`}>
+          {/* Leader line from label to state centroid */}
+          <line
+            x1={gutterX - 6}
+            y1={labelMidY}
+            x2={item.centroid[0]}
+            y2={item.centroid[1]}
+            stroke={lineColor}
+            strokeWidth={0.75}
+          />
+          {/* Dot at state centroid */}
+          <circle
+            cx={item.centroid[0]}
+            cy={item.centroid[1]}
+            r={2}
+            fill={lineColor}
+          />
+          {/* External label pill */}
+          <g>
+            {/* Pill background */}
+            <rect
+              x={gutterX - 55}
+              y={labelY}
+              width={52}
+              height={24}
+              rx={4}
+              fill={labelBg}
+              stroke={labelBorder}
+              strokeWidth={0.5}
+            />
+            {/* State abbreviation */}
+            <text
+              x={gutterX - 29}
+              y={labelY + 8}
+              textAnchor="middle"
+              fontSize="11"
+              fontWeight="500"
+              fill={isDark ? '#e2e8f0' : '#1f2937'}
+            >
+              {item.abbr}
+            </text>
+            {/* Metric value */}
+            <text
+              x={gutterX - 29}
+              y={labelY + 18}
+              textAnchor="middle"
+              fontSize="10"
+              fill={isDark ? '#cbd5e1' : '#4b5563'}
+            >
+              {formatCompact(item.metricValue, colorBy)}
+            </text>
+            {/* Hover tooltip */}
+            <title>
+              {`${item.abbr}\ngross: ${formatFull(data.get(item.abbr).gross, 'gross')}\nloads: ${data.get(item.abbr).legs}\navg: ${formatFull(data.get(item.abbr).avg, 'avg')}\nRPM: ${formatFull(data.get(item.abbr).rpm, 'rpm')}`}
+            </title>
+          </g>
+        </g>
+      )
+    })
+  })() : null
 
   // Region labels if needed
   const regionLabels = view === 'region' ? Object.entries(REGIONS).map(([region, stateList]) => {
@@ -491,9 +596,10 @@ function SVGMap({ view, data, colorScale, colorBy, isDark }) {
   }).filter(Boolean) : null
 
   return (
-    <svg viewBox="0 0 900 560" className="w-full rounded-lg" style={{ background: isDark ? '#0d0d1f' : '#fafaf8' }}>
+    <svg viewBox={view === 'state' && externalLabels && externalLabels.length > 0 ? "0 0 1040 560" : "0 0 900 560"} className="w-full rounded-lg" style={{ background: isDark ? '#0d0d1f' : '#fafaf8' }}>
       <g>{statePaths}</g>
       {regionLabels && <g>{regionLabels}</g>}
+      {externalLabels && <g>{externalLabels}</g>}
     </svg>
   )
 }
