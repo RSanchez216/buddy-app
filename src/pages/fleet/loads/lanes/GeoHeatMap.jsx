@@ -423,7 +423,9 @@ function SVGMap({ view, data, colorScale, colorBy, isDark }) {
           strokeWidth={1}
         />
         {showOnMapLabel && (() => {
-          const textColor = needsLightText(color) ? '#f8fafc' : '#1f2937'
+          const c = color.replace('#', '')
+          const r = parseInt(c.slice(0, 2), 16), g = parseInt(c.slice(2, 4), 16), b = parseInt(c.slice(4, 6), 16)
+          const textColor = (r * 0.299 + g * 0.587 + b * 0.114) < 140 ? '#f8fafc' : '#1f2937'
           return (
             <>
               {/* State abbreviation */}
