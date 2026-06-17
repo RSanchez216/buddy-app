@@ -173,11 +173,20 @@ export default function GeoHeatMap({ range, phases, pageTitle = 'Lanes by region
         if (metric === 'gross') return d.gross
         if (metric === 'avg') return d.avg
         if (metric === 'rpm') return d.rpm
-        return 0
+        return null
       })
       .filter(v => v != null && v > 0)
 
-    if (values.length === 0) return null
+    if (values.length === 0) {
+      // Return a safe fallback scale even with no valid values
+      const ramp = isDark ? COLOR_RAMPS.dark : COLOR_RAMPS.light
+      const interpolator = interpolateRgbBasis(ramp)
+      return {
+        domain: [0, 1],
+        color: (value) => isDark ? NO_DATA_COLORS.dark : NO_DATA_COLORS.light,
+        colorAt: (t) => interpolator(Math.max(0, Math.min(1, t))),
+      }
+    }
 
     const min = Math.min(...values)
     const max = Math.max(...values)
@@ -283,7 +292,7 @@ export default function GeoHeatMap({ range, phases, pageTitle = 'Lanes by region
           </div>
         )}
 
-        {!loading && !error && data && data.size > 0 && colorScale && (
+        {!loading && !error && data && data.size > 0 && (
           <SVGMap
             view={view}
             data={data}
@@ -375,7 +384,11 @@ function SVGMap({ view, data, colorScale, colorBy, isDark }) {
   // Render state paths
   const statePaths = topoData.features.map((state) => {
     const abbr = getStateAbbr(state.properties.name)
-    const stateData = data.get(abbr)
+
+    // In Region view, get the region's data; in State view, get the state's data
+    const lookupKey = view === 'region' ? STATE_TO_REGION[abbr] : abbr
+    const stateData = lookupKey ? data.get(lookupKey) : null
+
     const metricValue = stateData ? (
       colorBy === 'legs' ? stateData.legs :
       colorBy === 'gross' ? stateData.gross :
@@ -383,7 +396,7 @@ function SVGMap({ view, data, colorScale, colorBy, isDark }) {
       stateData.rpm
     ) : null
 
-    const color = colorScale.color(metricValue)
+    const color = colorScale && colorScale.color ? colorScale.color(metricValue) : (isDark ? '#2c2c2a' : '#ECEAE3')
     const path = pathGenerator(state)
     const centroid = pathGenerator.centroid(state)
     const isSmallState = SMALL_STATES.has(abbr)
