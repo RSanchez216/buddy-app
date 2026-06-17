@@ -432,13 +432,19 @@ export default function LaneFlowMap() {
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_400px]">
         {/* Map card */}
         <div className="rounded-3xl border border-gray-200 dark:border-white/10 bg-gradient-to-b from-white to-gray-50 dark:from-[#12132e] dark:to-[#0a0a18] overflow-hidden">
-          <div className="flex items-center justify-between flex-wrap gap-2 px-5 pt-4">
-            <p className="text-xs font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">
-              {[...selectedPhases].sort((a, b) => {
-                const order = { booked: 0, in_transit: 1, delivered: 2 }
-                return (order[a] ?? 3) - (order[b] ?? 3)
-              }).map(p => p === 'in_transit' ? 'In transit' : p.charAt(0).toUpperCase() + p.slice(1)).join(' + ')} {mapMode === 'heat' ? 'heat' : 'flow'} · {formatRange(range.from, range.to)}
-            </p>
+          <div className="flex items-start justify-between flex-wrap gap-4 px-5 pt-4">
+            <div>
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-orange-600 dark:text-orange-400 mb-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-orange-500" /> Map
+              </div>
+              <h2 className="text-xl font-bold text-gray-900 dark:text-white">Origin → destination</h2>
+              <p className="text-sm text-gray-500 dark:text-slate-500 mt-0.5">
+                {[...selectedPhases].sort((a, b) => {
+                  const order = { booked: 0, in_transit: 1, delivered: 2 }
+                  return (order[a] ?? 3) - (order[b] ?? 3)
+                }).map(p => p === 'in_transit' ? 'In transit' : p.charAt(0).toUpperCase() + p.slice(1)).join(' + ')} {mapMode === 'heat' ? 'heat' : 'flow'} · {formatRange(range.from, range.to)}
+              </p>
+            </div>
             {mapMode === 'heat' ? null : colorBy === 'type' && typesPresent.length > 0 ? (
               <div className="flex items-center gap-2.5 flex-wrap text-[10px] text-gray-400 dark:text-slate-500">
                 {typesPresent.map(t => (
