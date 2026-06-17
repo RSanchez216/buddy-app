@@ -72,7 +72,7 @@ function Pills({ value, onChange, options, title }) {
 
 // Format a number compactly for on-map labels
 function formatCompact(value, metric) {
-  if (metric === 'legs') {
+  if (metric === 'loads') {
     return Math.round(value).toString()
   }
   if (metric === 'rpm') {
@@ -88,7 +88,7 @@ function formatCompact(value, metric) {
 
 // Format a number fully for tooltips/captions
 function formatFull(value, metric) {
-  if (metric === 'legs') {
+  if (metric === 'loads') {
     return Math.round(value).toString()
   }
   if (metric === 'rpm') {
@@ -169,7 +169,7 @@ export default function GeoHeatMap({ range, phases, pageTitle = 'Lanes by region
     const metric = colorBy
     const values = Array.from(data.values())
       .map(d => {
-        if (metric === 'legs') return d.legs
+        if (metric === 'loads') return d.legs
         if (metric === 'gross') return d.gross
         if (metric === 'avg') return d.avg
         if (metric === 'rpm') return d.rpm
@@ -210,8 +210,8 @@ export default function GeoHeatMap({ range, phases, pageTitle = 'Lanes by region
     const metric = colorBy
     const sorted = Array.from(data.values())
       .sort((a, b) => {
-        const aVal = metric === 'legs' ? a.legs : metric === 'gross' ? a.gross : metric === 'avg' ? a.avg : a.rpm
-        const bVal = metric === 'legs' ? b.legs : metric === 'gross' ? b.gross : metric === 'avg' ? b.avg : b.rpm
+        const aVal = metric === 'loads' ? a.legs : metric === 'gross' ? a.gross : metric === 'avg' ? a.avg : a.rpm
+        const bVal = metric === 'loads' ? b.legs : metric === 'gross' ? b.gross : metric === 'avg' ? b.avg : b.rpm
         return (bVal ?? 0) - (aVal ?? 0)
       })
       .slice(0, 3)
@@ -219,7 +219,7 @@ export default function GeoHeatMap({ range, phases, pageTitle = 'Lanes by region
   }, [data, colorBy])
 
   const metricLabel = {
-    legs: 'loads',
+    loads: 'loads',
     gross: 'gross $',
     avg: 'avg $/load',
     rpm: 'RPM',
@@ -332,7 +332,7 @@ export default function GeoHeatMap({ range, phases, pageTitle = 'Lanes by region
         <div className="text-[11px] text-gray-500 dark:text-slate-400">
           Top {view === 'region' ? 'regions' : 'states'} by {metricLabel}:{' '}
           {top3.map((item, i) => {
-            const val = colorBy === 'legs' ? item.legs : colorBy === 'gross' ? item.gross : colorBy === 'avg' ? item.avg : item.rpm
+            const val = colorBy === 'loads' ? item.legs : colorBy === 'gross' ? item.gross : colorBy === 'avg' ? item.avg : item.rpm
             return (
               <span key={i}>
                 {i > 0 && ' · '}
@@ -390,7 +390,7 @@ function SVGMap({ view, data, colorScale, colorBy, isDark }) {
     const stateData = lookupKey ? data.get(lookupKey) : null
 
     const metricValue = stateData ? (
-      colorBy === 'legs' ? stateData.legs :
+      colorBy === 'loads' ? stateData.legs :
       colorBy === 'gross' ? stateData.gross :
       colorBy === 'avg' ? stateData.avg :
       stateData.rpm
@@ -457,7 +457,7 @@ function SVGMap({ view, data, colorScale, colorBy, isDark }) {
 
       const stateData = data.get(abbr)
       const metricValue = stateData ? (
-        colorBy === 'legs' ? stateData.legs :
+        colorBy === 'loads' ? stateData.legs :
         colorBy === 'gross' ? stateData.gross :
         colorBy === 'avg' ? stateData.avg :
         stateData.rpm
@@ -566,7 +566,7 @@ function SVGMap({ view, data, colorScale, colorBy, isDark }) {
 
     const regionData = data.get(region)
     const metricValue = regionData ? (
-      colorBy === 'legs' ? regionData.legs :
+      colorBy === 'loads' ? regionData.legs :
       colorBy === 'gross' ? regionData.gross :
       colorBy === 'avg' ? regionData.avg :
       regionData.rpm
