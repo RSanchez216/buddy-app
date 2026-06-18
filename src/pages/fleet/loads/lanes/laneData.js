@@ -216,12 +216,14 @@ export function pickPayers(lanes) {
   for (const fit of tiers) {
     const priced = lanes.filter(fit)
     if (!priced.length) continue
-    let best = priced[0], worst = priced[0]
-    for (const l of priced) {
-      if (l.rpm > best.rpm) best = l
-      if (l.rpm < worst.rpm) worst = l
+    // Sort by rpm to clearly find max (best) and min (worst) — avoid any
+    // confusion from mixed min/max logic in a single loop.
+    const sorted = [...priced].sort((a, b) => (a.rpm ?? 0) - (b.rpm ?? 0))
+    return {
+      best: sorted[sorted.length - 1], // max rpm
+      worst: sorted[0], // min rpm
+      strict: fit === tiers[0],
     }
-    return { best, worst, strict: fit === tiers[0] }
   }
   return null
 }
