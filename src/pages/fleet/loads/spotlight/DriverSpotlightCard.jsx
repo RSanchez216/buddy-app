@@ -176,7 +176,7 @@ const ROADMAP = [
   { label: 'Insurance', desc: 'per-unit premiums' },
 ]
 
-function DriverSpotlightCard({ entry, lanes, trend, rangeDays, effDays, periodLabel, basis = 'delivery', focused, rank, total, sortLabel, activeWeekFrom, onWeekSelect }) {
+function DriverSpotlightCard({ entry, lanes, trend, rangeDays, effDays, periodLabel, basis = 'delivery', focused, rank, total, sortLabel, activeWeekFrom, onWeekSelect, photoUrl }) {
   const m = entry.metrics
   const hs = HEALTH_STYLES[entry.health.level]
   // Idle days only count days that have actually happened — a mid-week
@@ -208,7 +208,7 @@ function DriverSpotlightCard({ entry, lanes, trend, rangeDays, effDays, periodLa
       {/* ── Header ── */}
       <div className="px-6 pt-5 pb-4 border-b border-gray-100 dark:border-white/[0.06]">
         <div className="flex items-start gap-4">
-          <Avatar name={entry.name} photoUrl={entry.photoUrl} level={entry.health.level} />
+          <Avatar name={entry.name} photoUrl={photoUrl} level={entry.health.level} />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 flex-wrap">
               <h2 className="text-xl font-bold text-gray-900 dark:text-white truncate">{entry.name}</h2>

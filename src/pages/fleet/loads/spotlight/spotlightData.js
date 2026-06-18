@@ -32,7 +32,7 @@ export async function fetchDriverDeck({ from, to, basis = 'delivery' }) {
   const [rollup, trailerRollup, driversRes, trucksRes, trailersRes, eqCostRes, purchasesRes, paymentsRes, payEstimateRes] = await Promise.all([
     supabase.rpc('load_profit_rollup', { p_dimension: 'driver', p_from: from, p_to: to, p_basis: basis }),
     supabase.rpc('load_profit_rollup', { p_dimension: 'trailer', p_from: from, p_to: to, p_basis: basis }),
-    supabase.from('drivers').select('id, full_name, internal_id, current_status, driver_type, carrier'),
+    supabase.from('drivers').select('id, full_name, internal_id, current_status, driver_type, carrier, photo_path'),
     supabase.from('trucks').select('id, unit_number, driver_id, carrier, ownership_stage'),
     supabase.from('trailers').select('id, unit_number, driver_id, trailer_type, ownership_stage'),
     supabase.from('fleet_equipment_cost').select('etype, id, unit_number, cost_source, monthly_cost, weekly_cost'),
@@ -137,6 +137,7 @@ export async function fetchDriverDeck({ from, to, basis = 'delivery' }) {
       status: master?.current_status || null,
       driverType: master?.driver_type || null,
       carrier: master?.carrier || myTrucks.map(t => t.carrier).find(Boolean) || null,
+      photoPath: master?.photo_path || null,
       trucks: myTrucks,
       trailers: myTrailers,
       trailerType,

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useToast } from '../../../../contexts/ToastContext'
 import { S } from '../../../../lib/styles'
+import { supabase } from '../../../../lib/supabase'
 import SpotlightDeck from './SpotlightDeck'
 import DriverSpotlightCard from './DriverSpotlightCard'
 import { fetchDriverDeck, fetchLanes, fetchTrendWeeks } from './spotlightData'
@@ -39,6 +40,7 @@ export default function Spotlight({ dimension = 'driver' }) {
   const [deckState, setDeckState] = useState({ key: null, data: null })
   const [trendState, setTrendState] = useState({ key: null, data: null })
   const [detailMap, setDetailMap] = useState({}) // `${deckKey}|${entryId}` -> lanes[]
+  const [signedUrls, setSignedUrls] = useState({}) // photoPath -> signed URL
   const requested = useRef(new Set())
 
   // ── Deck load: one rollup pass per period; lanes hydrate per card ──
@@ -58,6 +60,30 @@ export default function Spotlight({ dimension = 'driver' }) {
       .catch(() => {})
     return () => { stale = true }
   }, [deckKey, range.from, range.to, basis, config, toast])
+
+  // ── Batch signed URLs for driver photos ──
+  useEffect(() => {
+    if (!deck) return
+    const photoPaths = deck.entries
+      .map(e => e.photoPath)
+      .filter(Boolean)
+    if (photoPaths.length === 0) return
+
+    supabase.storage
+      .from('driver-avatars')
+      .createSignedUrls(photoPaths, 3600)
+      .then(({ data, error }) => {
+        if (error) {
+          console.error('Failed to create signed URLs:', error)
+          return
+        }
+        const urls = {}
+        data?.forEach(({ path, signedUrl }) => {
+          urls[path] = signedUrl
+        })
+        setSignedUrls(urls)
+      })
+  }, [deck])
 
   const loading = deckState.key !== deckKey
   const deck = loading ? null : deckState.data
@@ -213,6 +239,7 @@ export default function Spotlight({ dimension = 'driver' }) {
         sortLabel={sortDef.label.toLowerCase()}
         activeWeekFrom={range.from}
         onWeekSelect={handleWeekSelect}
+        photoUrl={entry.photoPath ? signedUrls[entry.photoPath] : null}
       />
     )
   }

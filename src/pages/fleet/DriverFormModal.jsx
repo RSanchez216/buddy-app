@@ -7,6 +7,7 @@ import Select from '../../components/Select'
 import ComboBox from '../../components/ComboBox'
 import { DRIVER_TYPES, DRIVER_STATUSES } from './fleetUtils'
 import { useToast } from '../../contexts/ToastContext'
+import PhotoUploadField from './PhotoUploadField'
 
 // Add / edit modal for a single driver. UNIQUE(internal_id) is enforced by
 // the DB partial index; we surface a friendly error on the conflict.
@@ -251,6 +252,8 @@ export default function DriverFormModal({ open, editItem, onClose, onSaved }) {
           <input type="checkbox" checked={!!form.temporary_license} onChange={e => setForm(f => ({ ...f, temporary_license: e.target.checked }))} className="rounded" />
           Temporary license
         </label>
+
+        {editItem && <PhotoUploadField driverId={editItem.id} currentPhotoPath={editItem.photo_path} onPhotoUpdated={() => {}} />}
 
         <Field label="Notes">
           <textarea className={S.textarea} rows={2} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
