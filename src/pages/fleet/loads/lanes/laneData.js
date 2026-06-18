@@ -142,8 +142,38 @@ export function aggregateLanes(allLegs, phaseOrView, { byType = false } = {}) {
     }
   }
 
+  // Aggregate legs to load level for best/worst load ranking
+  const byLoad = new Map()
+  for (const leg of legs) {
+    const loadId = leg.load_id
+    if (!byLoad.has(loadId)) {
+      byLoad.set(loadId, {
+        load_id: loadId,
+        load_number: leg.load_number,
+        legs: [],
+        revenue: 0,
+        miles: 0,
+        trailer_type: leg.trailer_type || UNKNOWN_TYPE,
+      })
+    }
+    const load = byLoad.get(loadId)
+    load.legs.push(leg)
+    load.revenue += Number(leg.leg_revenue) || 0
+    load.miles += Number(leg.leg_total_miles) || 0
+  }
+
+  // Compute metrics and derive lane from first→last leg
+  const loads = [...byLoad.values()].map(load => ({
+    ...load,
+    rpm: load.miles > 0 ? load.revenue / load.miles : null,
+    // Lane = origin of first leg → destination of last leg (ordered by seq or appearance)
+    origin: load.legs[0]?.origin || '',
+    destination: load.legs[load.legs.length - 1]?.destination || '',
+  }))
+
   return {
     lanes,
+    loads,
     cities: [...byCity.values()],
     totals: {
       legs: legs.length,
@@ -226,4 +256,36 @@ export function pickPayers(lanes) {
     }
   }
   return null
+}
+
+// Best/worst individual loads, ranked by the specified metric.
+// metric: 'revenue' | 'rpm' | 'loads' (loads defaults to 'rpm')
+// Returns { best, worst } or null if no loads.
+export function pickLoads(loads, metric = 'rpm') {
+  if (!loads || !loads.length) return null
+
+  // 'loads' is a count and doesn't rank a single load; default to rpm
+  const rankBy = metric === 'loads' ? 'rpm' : metric
+
+  // Filter based on metric: revenue has no restrictions; rpm excludes 0-mile loads
+  let candidates = loads
+  if (rankBy === 'rpm') {
+    candidates = loads.filter(l => l.miles > 0 && l.rpm != null)
+  }
+  if (!candidates.length) return null
+
+  let best, worst
+  if (rankBy === 'revenue') {
+    // Sort by revenue (ascending), then pick min and max
+    const sorted = [...candidates].sort((a, b) => (a.revenue ?? 0) - (b.revenue ?? 0))
+    worst = sorted[0]
+    best = sorted[sorted.length - 1]
+  } else {
+    // rpm: sort by rpm (ascending)
+    const sorted = [...candidates].sort((a, b) => (a.rpm ?? 0) - (b.rpm ?? 0))
+    worst = sorted[0]
+    best = sorted[sorted.length - 1]
+  }
+
+  return { best, worst }
 }

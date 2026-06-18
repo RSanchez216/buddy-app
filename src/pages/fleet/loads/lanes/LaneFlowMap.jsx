@@ -5,7 +5,7 @@ import LaneHeatCanvas from './LaneHeatCanvas'
 import LaneMapCanvas from './LaneMapCanvas'
 import GeoHeatMap from './GeoHeatMap'
 import TopPerformers from './TopPerformers'
-import { aggregateLanes, fetchLaneLegs, fetchTrailerTypes, makeRpmScale, makeTypeColorMap, makeWidthScale, pickPayers, resolveLegTypes, RPM_NULL_COLOR, UNKNOWN_TYPE } from './laneData'
+import { aggregateLanes, fetchLaneLegs, fetchTrailerTypes, makeRpmScale, makeTypeColorMap, makeWidthScale, pickLoads, resolveLegTypes, RPM_NULL_COLOR, UNKNOWN_TYPE } from './laneData'
 import { binHeatCells } from './mapShared'
 import { fmtMoney, fmtNum, fmtRpm, formatRange, shiftYmd, spanDays, thisMonth, thisWeek } from '../spotlight/spotlightShared'
 
@@ -214,7 +214,7 @@ export default function LaneFlowMap() {
   const sortDef = LEADERBOARD_SORTS.find(s => s.key === sortKey) || LEADERBOARD_SORTS[0]
   const ranked = useMemo(() => (agg ? [...agg.lanes].sort(sortDef.fn) : []), [agg, sortDef])
 
-  const payers = useMemo(() => (agg ? pickPayers(agg.lanes) : null), [agg])
+  const bestWorstLoads = useMemo(() => (agg ? pickLoads(agg.loads, sortKey) : null), [agg, sortKey])
 
   function togglePhase(phase) {
     setSelectedPhases(prev => {
@@ -514,20 +514,24 @@ export default function LaneFlowMap() {
 
         {/* Side panel */}
         <div className="space-y-4 min-w-0">
-          {/* Best / worst payers */}
-          {payers && (
+          {/* Best / worst loads */}
+          {bestWorstLoads && (
             <div className="grid grid-cols-2 gap-3">
-              {[['Best payer', payers.best, 'text-emerald-600 dark:text-emerald-400'], ['Worst payer', payers.worst, 'text-rose-600 dark:text-rose-400']].map(([lbl, lane, cls]) => (
-                <button key={lbl} onClick={() => setSelected(lane.key === selectedKey ? null : lane.key)}
-                  title={payers.strict ? 'Among geocoded lanes with 2+ loads and a meaningful distance (50+ avg miles).' : 'Sparse window — shown among all priced lanes.'}
-                  className={`${S.card} px-4 py-3 text-left hover:border-orange-300 dark:hover:border-orange-500/30 transition-colors ${selectedKey === lane.key ? 'ring-2 ring-orange-500/40' : ''}`}>
-                  <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">{lbl}{payers.strict && <span className="normal-case tracking-normal"> · 2+ loads</span>}</p>
-                  <p className={`text-lg font-bold font-mono leading-tight mt-0.5 ${cls}`}>{fmtRpm(lane.rpm)}/mi</p>
-                  <p className="text-[11px] text-gray-500 dark:text-slate-400 truncate" title={lane.key}>{lane.origin} → {lane.destination}</p>
-                  {lane.trailerType && <p className="mt-0.5"><TypeBadge type={lane.trailerType} color={typeColorFor(lane.trailerType)} /></p>}
-                  <p className="text-[10px] text-gray-400 dark:text-slate-500">{lane.loads} load{lane.loads === 1 ? '' : 's'} · {fmtMoney(lane.revenue)}</p>
-                </button>
-              ))}
+              {[['Best load', bestWorstLoads.best, 'text-emerald-600 dark:text-emerald-400'], ['Worst load', bestWorstLoads.worst, 'text-rose-600 dark:text-rose-400']].map(([lbl, load, cls]) => {
+                const isRevenueBasis = sortKey === 'revenue'
+                const headline = isRevenueBasis ? fmtMoney(load.revenue) : `${fmtRpm(load.rpm)}/mi`
+                const secondary = isRevenueBasis ? `${fmtRpm(load.rpm)}/mi · ${fmtNum(load.miles)} mi` : `${fmtMoney(load.revenue)} · ${fmtNum(load.miles)} mi`
+                return (
+                  <div key={lbl} className={`${S.card} px-4 py-3 text-left`}>
+                    <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">{lbl}</p>
+                    <p className={`text-lg font-bold font-mono leading-tight mt-0.5 ${cls}`}>{headline}</p>
+                    <p className="text-[11px] text-gray-500 dark:text-slate-400 truncate" title={`${load.origin} → ${load.destination}`}>{load.origin} → {load.destination}</p>
+                    {load.trailer_type && <p className="mt-0.5"><TypeBadge type={load.trailer_type} color={typeColorFor(load.trailer_type)} /></p>}
+                    <p className="text-[10px] text-gray-400 dark:text-slate-500">#{load.load_number}</p>
+                    <p className="text-[10px] text-gray-400 dark:text-slate-500">{secondary}</p>
+                  </div>
+                )
+              })}
             </div>
           )}
 
