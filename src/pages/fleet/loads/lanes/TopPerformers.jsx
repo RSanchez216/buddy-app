@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
 import { supabase } from '../../../../lib/supabase'
 import { S } from '../../../../lib/styles'
 import { fmtMoney, fmtNum, fmtRpm } from '../spotlight/spotlightShared'
+import { exportToExcel, exportToPDF } from './exportTopPerformers'
 
 function Pills({ value, onChange, options, title }) {
   return (
@@ -102,7 +103,79 @@ function DispatcherRow({ dispatcher, rank }) {
   )
 }
 
-function LeaderboardSection({ title, data, isDriver, total }) {
+function ExportDropdown({ data, isDriver, range, phases }) {
+  const [isOpen, setIsOpen] = useState(false)
+  const [isExporting, setIsExporting] = useState(false)
+
+  const handleExport = async (format) => {
+    if (!data || data.length === 0) return
+
+    setIsExporting(true)
+    try {
+      const timestamp = new Date().toLocaleString('en-US', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      })
+
+      if (format === 'excel') {
+        await exportToExcel(data, isDriver, range, phases, timestamp)
+      } else if (format === 'pdf') {
+        // For PDF, we'd pass the SVG map here; for now, PDF exports without the map
+        await exportToPDF(data, isDriver, range, phases, timestamp, null)
+      }
+    } catch (err) {
+      console.error(`Export failed: ${err.message}`)
+      alert(`Failed to export: ${err.message}`)
+    } finally {
+      setIsExporting(false)
+      setIsOpen(false)
+    }
+  }
+
+  if (!data || data.length === 0) {
+    return (
+      <button className="px-3 py-1.5 text-xs text-gray-400 dark:text-slate-500 cursor-not-allowed">
+        Export
+      </button>
+    )
+  }
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        disabled={isExporting}
+        className="px-3 py-1.5 text-xs text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 rounded border border-gray-200 dark:border-slate-700 disabled:opacity-50"
+      >
+        Export {isOpen ? '▲' : '▾'}
+      </button>
+      {isOpen && (
+        <div className="absolute right-0 mt-1 bg-white dark:bg-[#1a1a2e] border border-gray-200 dark:border-slate-700 rounded shadow-lg z-10">
+          <button
+            onClick={() => handleExport('excel')}
+            disabled={isExporting}
+            className="w-full px-4 py-2 text-left text-xs text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-50"
+          >
+            Excel (.xlsx)
+          </button>
+          <button
+            onClick={() => handleExport('pdf')}
+            disabled={isExporting}
+            className="w-full px-4 py-2 text-left text-xs text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-50 border-t border-gray-100 dark:border-white/5"
+          >
+            PDF
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function LeaderboardSection({ title, data, isDriver, total, range, phases }) {
   const [expandedSort, setExpandedSort] = useState('gross') // gross | loads | rpm
   const [expanded, setExpanded] = useState(false)
 
@@ -133,16 +206,19 @@ function LeaderboardSection({ title, data, isDriver, total }) {
             Delivered + in transit · {total} total
           </p>
         </div>
-        <Pills
-          value={expandedSort}
-          onChange={setExpandedSort}
-          options={[
-            ['gross', 'Gross $', 'Rank by total billed revenue'],
-            ['loads', 'Loads', 'Rank by number of legs'],
-            ['rpm', 'RPM', 'Rank by revenue per mile'],
-          ]}
-          title="Sort metric"
-        />
+        <div className="flex items-center gap-2">
+          <Pills
+            value={expandedSort}
+            onChange={setExpandedSort}
+            options={[
+              ['gross', 'Gross $', 'Rank by total billed revenue'],
+              ['loads', 'Loads', 'Rank by number of legs'],
+              ['rpm', 'RPM', 'Rank by revenue per mile'],
+            ]}
+            title="Sort metric"
+          />
+          <ExportDropdown data={data} isDriver={isDriver} range={range} phases={phases} />
+        </div>
       </div>
 
       {/* Table */}
@@ -307,6 +383,8 @@ export default function TopPerformers({ range, phases }) {
             data={drivers}
             isDriver
             total={drivers?.length || 0}
+            range={range}
+            phases={phases}
           />
 
           {/* Top Dispatchers */}
@@ -315,6 +393,8 @@ export default function TopPerformers({ range, phases }) {
             data={dispatchers}
             isDriver={false}
             total={dispatchers?.length || 0}
+            range={range}
+            phases={phases}
           />
         </div>
       )}
