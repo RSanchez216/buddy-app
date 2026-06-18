@@ -146,7 +146,7 @@ export async function exportToPDF(data, isDriver, dateRange, phases, timestamp, 
       // Continue without map rather than failing the entire export
     }
   } else {
-    console.warn('No map SVG element found for PDF header')
+    console.warn('Map SVG not found for PDF header; proceeding without map image')
   }
 
   // Add title block

@@ -125,8 +125,8 @@ function ExportDropdown({ data, isDriver, range, phases }) {
       if (format === 'excel') {
         await exportToExcel(data, isDriver, range, phases, timestamp)
       } else if (format === 'pdf') {
-        // Get the GeoHeatMap SVG from the page (State view, RPM metric)
-        const mapSvg = document.querySelector('svg[viewBox*="900"]')
+        // Get the choropleth SVG (works in both Region and State views)
+        const mapSvg = document.getElementById('lane-geo-map-svg')
         await exportToPDF(data, isDriver, range, phases, timestamp, mapSvg)
       }
     } catch (err) {

@@ -623,7 +623,7 @@ function SVGMap({ view, data, colorScale, colorBy, isDark }) {
   }).filter(Boolean) : null
 
   return (
-    <svg viewBox={view === 'state' && externalLabels && externalLabels.length > 0 ? "0 0 1040 560" : "0 0 900 560"} className="w-full rounded-lg" style={{ background: isDark ? '#0d0d1f' : '#fafaf8' }}>
+    <svg id="lane-geo-map-svg" viewBox={view === 'state' && externalLabels && externalLabels.length > 0 ? "0 0 1040 560" : "0 0 900 560"} className="w-full rounded-lg" style={{ background: isDark ? '#0d0d1f' : '#fafaf8' }}>
       <g>{statePaths}</g>
       {regionLabels && <g>{regionLabels}</g>}
       {externalLabels && <g>{externalLabels}</g>}
