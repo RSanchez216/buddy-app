@@ -6,6 +6,10 @@
 
 import { supabase } from '../../../../lib/supabase'
 
+// Load statuses to exclude from best/worst ranking (e.g., TONU, cancellations).
+// Match is case-sensitive on the load's status value. Add more as needed.
+export const EXCLUDED_STATUSES = ['Tonu']
+
 // All legs in the window, paginated past Supabase's 1000-row cap so a
 // long custom range can't silently truncate. Reads from v_lane_geo which
 // provides DB-backed coordinates (origin_lat, origin_lng, dest_lat, dest_lng)
@@ -150,6 +154,7 @@ export function aggregateLanes(allLegs, phaseOrView, { byType = false } = {}) {
       byLoad.set(loadId, {
         load_id: loadId,
         load_number: leg.load_number,
+        status: leg.status,
         legs: [],
         revenue: 0,
         miles: 0,
@@ -288,4 +293,31 @@ export function pickLoads(loads, metric = 'rpm') {
   }
 
   return { best, worst }
+}
+
+// Best/worst individual loads by both revenue and rpm metrics simultaneously.
+// Excludes loads with statuses in the exclusion list (e.g., TONU).
+// Returns { bestByRevenue, worstByRevenue, bestByRpm, worstByRpm } or null if no loads.
+export function pickAllLoadMetrics(loads, excludedStatuses = []) {
+  if (!loads || !loads.length) return null
+
+  // Filter out excluded statuses (case-sensitive)
+  const candidates = loads.filter(l => !excludedStatuses.includes(l.status))
+  if (!candidates.length) return null
+
+  // By revenue (no 0-mile restriction)
+  const byRevenue = [...candidates].sort((a, b) => (a.revenue ?? 0) - (b.revenue ?? 0))
+  const bestByRevenue = byRevenue[byRevenue.length - 1]
+  const worstByRevenue = byRevenue[0]
+
+  // By rpm (exclude 0-mile loads to avoid divide-by-zero)
+  const validForRpm = candidates.filter(l => l.miles > 0 && l.rpm != null)
+  let bestByRpm = null, worstByRpm = null
+  if (validForRpm.length > 0) {
+    const byRpm = [...validForRpm].sort((a, b) => (a.rpm ?? 0) - (b.rpm ?? 0))
+    worstByRpm = byRpm[0]
+    bestByRpm = byRpm[byRpm.length - 1]
+  }
+
+  return { bestByRevenue, worstByRevenue, bestByRpm, worstByRpm }
 }

@@ -5,7 +5,7 @@ import LaneHeatCanvas from './LaneHeatCanvas'
 import LaneMapCanvas from './LaneMapCanvas'
 import GeoHeatMap from './GeoHeatMap'
 import TopPerformers from './TopPerformers'
-import { aggregateLanes, fetchLaneLegs, fetchTrailerTypes, makeRpmScale, makeTypeColorMap, makeWidthScale, pickLoads, resolveLegTypes, RPM_NULL_COLOR, UNKNOWN_TYPE } from './laneData'
+import { aggregateLanes, EXCLUDED_STATUSES, fetchLaneLegs, fetchTrailerTypes, makeRpmScale, makeTypeColorMap, makeWidthScale, pickAllLoadMetrics, resolveLegTypes, RPM_NULL_COLOR, UNKNOWN_TYPE } from './laneData'
 import { binHeatCells } from './mapShared'
 import { fmtMoney, fmtNum, fmtRpm, formatRange, shiftYmd, spanDays, thisMonth, thisWeek } from '../spotlight/spotlightShared'
 
@@ -214,7 +214,8 @@ export default function LaneFlowMap() {
   const sortDef = LEADERBOARD_SORTS.find(s => s.key === sortKey) || LEADERBOARD_SORTS[0]
   const ranked = useMemo(() => (agg ? [...agg.lanes].sort(sortDef.fn) : []), [agg, sortDef])
 
-  const bestWorstLoads = useMemo(() => (agg ? pickLoads(agg.loads, sortKey) : null), [agg, sortKey])
+  // Best/worst loads by both metrics simultaneously, independent of leaderboard toggle
+  const allLoadMetrics = useMemo(() => (agg ? pickAllLoadMetrics(agg.loads, EXCLUDED_STATUSES) : null), [agg])
 
   function togglePhase(phase) {
     setSelectedPhases(prev => {
@@ -514,24 +515,47 @@ export default function LaneFlowMap() {
 
         {/* Side panel */}
         <div className="space-y-4 min-w-0">
-          {/* Best / worst loads */}
-          {bestWorstLoads && (
-            <div className="grid grid-cols-2 gap-3">
-              {[['Best load', bestWorstLoads.best, 'text-emerald-600 dark:text-emerald-400'], ['Worst load', bestWorstLoads.worst, 'text-rose-600 dark:text-rose-400']].map(([lbl, load, cls]) => {
-                const isRevenueBasis = sortKey === 'revenue'
-                const headline = isRevenueBasis ? fmtMoney(load.revenue) : `${fmtRpm(load.rpm)}/mi`
-                const secondary = isRevenueBasis ? `${fmtRpm(load.rpm)}/mi · ${fmtNum(load.miles)} mi` : `${fmtMoney(load.revenue)} · ${fmtNum(load.miles)} mi`
-                return (
+          {/* Best / worst loads by both revenue and $/mi */}
+          {allLoadMetrics && (
+            <div className="space-y-3">
+              {/* By Revenue row */}
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  ['Best load · by revenue', allLoadMetrics.bestByRevenue, 'text-emerald-600 dark:text-emerald-400', true],
+                  ['Worst load · by revenue', allLoadMetrics.worstByRevenue, 'text-rose-600 dark:text-rose-400', true],
+                ].map(([lbl, load, cls, isRevenue]) => (
                   <div key={lbl} className={`${S.card} px-4 py-3 text-left`}>
                     <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">{lbl}</p>
-                    <p className={`text-lg font-bold font-mono leading-tight mt-0.5 ${cls}`}>{headline}</p>
+                    <p className={`text-lg font-bold font-mono leading-tight mt-0.5 ${cls}`}>{fmtMoney(load.revenue)}</p>
                     <p className="text-[11px] text-gray-500 dark:text-slate-400 truncate" title={`${load.origin} → ${load.destination}`}>{load.origin} → {load.destination}</p>
                     {load.trailer_type && <p className="mt-0.5"><TypeBadge type={load.trailer_type} color={typeColorFor(load.trailer_type)} /></p>}
                     <p className="text-[10px] text-gray-400 dark:text-slate-500">#{load.load_number}</p>
-                    <p className="text-[10px] text-gray-400 dark:text-slate-500">{secondary}</p>
+                    <p className="text-[10px] text-gray-400 dark:text-slate-500">{fmtRpm(load.rpm)}/mi · {fmtNum(load.miles)} mi</p>
                   </div>
-                )
-              })}
+                ))}
+              </div>
+              {/* By $/mi row */}
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  ['Best load · by $/mi', allLoadMetrics.bestByRpm, 'text-emerald-600 dark:text-emerald-400', false],
+                  ['Worst load · by $/mi', allLoadMetrics.worstByRpm, 'text-rose-600 dark:text-rose-400', false],
+                ].map(([lbl, load, cls, isRevenue]) => (
+                  <div key={lbl} className={`${S.card} px-4 py-3 text-left`}>
+                    <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">{lbl}</p>
+                    {load ? (
+                      <>
+                        <p className={`text-lg font-bold font-mono leading-tight mt-0.5 ${cls}`}>{fmtRpm(load.rpm)}/mi</p>
+                        <p className="text-[11px] text-gray-500 dark:text-slate-400 truncate" title={`${load.origin} → ${load.destination}`}>{load.origin} → {load.destination}</p>
+                        {load.trailer_type && <p className="mt-0.5"><TypeBadge type={load.trailer_type} color={typeColorFor(load.trailer_type)} /></p>}
+                        <p className="text-[10px] text-gray-400 dark:text-slate-500">#{load.load_number}</p>
+                        <p className="text-[10px] text-gray-400 dark:text-slate-500">{fmtMoney(load.revenue)} · {fmtNum(load.miles)} mi</p>
+                      </>
+                    ) : (
+                      <p className="text-[11px] text-gray-400 dark:text-slate-500">—</p>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
