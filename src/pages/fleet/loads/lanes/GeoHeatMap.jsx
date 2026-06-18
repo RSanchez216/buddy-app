@@ -49,6 +49,9 @@ const NO_DATA_COLORS = {
   dark: '#2c2c2a',
 }
 
+// Display name for regions (internal key may differ)
+const regionDisplayName = (region) => region === 'West' ? 'Northwest' : region
+
 function Pills({ value, onChange, options, title }) {
   return (
     <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700 text-xs shrink-0" title={title}>
@@ -335,10 +338,11 @@ export default function GeoHeatMap({ range, phases, pageTitle = 'Lanes by region
           Top {view === 'region' ? 'regions' : 'states'} by {metricLabel}:{' '}
           {top3.map((item, i) => {
             const val = colorBy === 'loads' ? item.legs : colorBy === 'gross' ? item.gross : colorBy === 'avg' ? item.avg : item.rpm
+            const displayName = view === 'region' ? regionDisplayName(item.unit) : item.unit
             return (
               <span key={i}>
                 {i > 0 && ' · '}
-                {item.unit} {formatFull(val, colorBy)}
+                {displayName} {formatFull(val, colorBy)}
               </span>
             )
           })}
@@ -596,7 +600,7 @@ function SVGMap({ view, data, colorScale, colorBy, isDark }) {
           strokeWidth={2.6}
           strokeLinejoin="round"
         >
-          {region}
+          {regionDisplayName(region)}
         </text>
         {metricValue != null && (
           <text

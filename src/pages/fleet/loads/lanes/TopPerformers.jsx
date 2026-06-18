@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState, useRef } from 'react'
-import { createPortal } from 'react-dom'
 import { supabase } from '../../../../lib/supabase'
 import { S } from '../../../../lib/styles'
 import { fmtMoney, fmtNum, fmtRpm } from '../spotlight/spotlightShared'
@@ -107,8 +106,6 @@ function DispatcherRow({ dispatcher, rank }) {
 function ExportDropdown({ data, isDriver, range, phases }) {
   const [isOpen, setIsOpen] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
-  const [position, setPosition] = useState({ top: 0, right: 0 })
-  const buttonRef = useRef(null)
   const menuRef = useRef(null)
 
   const handleExport = async (format) => {
@@ -128,7 +125,6 @@ function ExportDropdown({ data, isDriver, range, phases }) {
       if (format === 'excel') {
         await exportToExcel(data, isDriver, range, phases, timestamp)
       } else if (format === 'pdf') {
-        // For PDF, we'd pass the SVG map here; for now, PDF exports without the map
         await exportToPDF(data, isDriver, range, phases, timestamp, null)
       }
     } catch (err) {
@@ -141,25 +137,10 @@ function ExportDropdown({ data, isDriver, range, phases }) {
   }
 
   useEffect(() => {
-    if (!isOpen || !buttonRef.current) return
-
-    const rect = buttonRef.current.getBoundingClientRect()
-    setPosition({
-      top: rect.bottom + window.scrollY,
-      right: window.innerWidth - rect.right,
-    })
-  }, [isOpen])
-
-  useEffect(() => {
     if (!isOpen) return
 
     const handleClickOutside = (e) => {
-      if (
-        menuRef.current &&
-        !menuRef.current.contains(e.target) &&
-        buttonRef.current &&
-        !buttonRef.current.contains(e.target)
-      ) {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
         setIsOpen(false)
       }
     }
@@ -188,43 +169,36 @@ function ExportDropdown({ data, isDriver, range, phases }) {
   }
 
   return (
-    <>
+    <div className="relative">
       <button
-        ref={buttonRef}
         onClick={() => setIsOpen(!isOpen)}
         disabled={isExporting}
         className="px-3 py-1.5 text-xs text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 rounded border border-gray-200 dark:border-slate-700 disabled:opacity-50"
       >
         Export {isOpen ? '▲' : '▾'}
       </button>
-      {isOpen &&
-        createPortal(
-          <div
-            ref={menuRef}
-            className="fixed bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded shadow-lg z-50"
-            style={{
-              top: `${position.top}px`,
-              right: `${position.right}px`,
-            }}
+      {isOpen && (
+        <div
+          ref={menuRef}
+          className="absolute right-0 mt-1 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded shadow-lg z-50"
+        >
+          <button
+            onClick={() => handleExport('excel')}
+            disabled={isExporting}
+            className="w-full px-4 py-2 text-left text-xs text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-50 whitespace-nowrap"
           >
-            <button
-              onClick={() => handleExport('excel')}
-              disabled={isExporting}
-              className="w-full px-4 py-2 text-left text-xs text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-50 whitespace-nowrap"
-            >
-              Excel (.xlsx)
-            </button>
-            <button
-              onClick={() => handleExport('pdf')}
-              disabled={isExporting}
-              className="w-full px-4 py-2 text-left text-xs text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-50 border-t border-gray-100 dark:border-white/5 whitespace-nowrap"
-            >
-              PDF
-            </button>
-          </div>,
-          document.body
-        )}
-    </>
+            Excel (.xlsx)
+          </button>
+          <button
+            onClick={() => handleExport('pdf')}
+            disabled={isExporting}
+            className="w-full px-4 py-2 text-left text-xs text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-50 border-t border-gray-100 dark:border-white/5 whitespace-nowrap"
+          >
+            PDF
+          </button>
+        </div>
+      )}
+    </div>
   )
 }
 
