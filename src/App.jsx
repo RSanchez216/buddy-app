@@ -58,6 +58,7 @@ const LaneFlowMap = lazy(() => import('./pages/fleet/loads/lanes/LaneFlowMap'))
 const Boardroom = lazy(() => import('./pages/fleet/loads/boardroom/Boardroom'))
 // Lazy — the Settings hub consolidates 9 reference-data screens; keep it
 // out of the main bundle as a navigation hub.
+const CombinedLoads = lazy(() => import('./pages/fleet/combined-loads/CombinedLoads'))
 const SettingsHub = lazy(() => import('./pages/settings/SettingsHub'))
 // Lazy — Lifeline is a destination screen (chart engine + animations), not a
 // daily-driver list; keep the main bundle lean.
@@ -133,6 +134,13 @@ export default function App() {
                 <RequirePageAccess pageKey="fleet/profitability/lanes">
                   <Suspense fallback={<div className="p-8 text-sm text-gray-400 dark:text-slate-500">Loading lane map…</div>}>
                     <LaneFlowMap />
+                  </Suspense>
+                </RequirePageAccess>
+              } />
+              <Route path="fleet/combined-loads" element={
+                <RequirePageAccess pageKey="fleet/combined-loads">
+                  <Suspense fallback={<div className="p-8 text-sm text-gray-400 dark:text-slate-500">Loading combined loads…</div>}>
+                    <CombinedLoads />
                   </Suspense>
                 </RequirePageAccess>
               } />
