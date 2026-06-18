@@ -35,6 +35,7 @@ const Icons = {
   map:       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" /></svg>,
   boardroom: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 4h18v11H3V4zm6 15l3-4 3 4M8 12l2.5-3 2 2L16 7" /></svg>,
   lifeline:  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 12h4l2.5-6 4 12L16 12h5" /></svg>,
+  merge:     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>,
   gear:      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>,
 }
 
@@ -144,7 +145,7 @@ export default function Layout() {
     today: ['/rig', '/fleet/profitability/boardroom', '/fleet/profitability/lanes', '/cash-flow/lifeline'].filter(r => accessibleRoutes.has(r)).length,
     money: ['/cash-flow/payment-calendar', '/financial-controls/debt-schedule', '/financial-controls/driver-purchases'].filter(r => accessibleRoutes.has(r)).length,
     profitability: ['/fleet/profitability', '/fleet/profitability/spotlight', '/fleet/profitability/contribution'].filter(r => accessibleRoutes.has(r)).length,
-    fleet: ['/fleet/trucks', '/fleet/trailers', '/fleet/drivers', '/fleet/cost', '/fleet/loads/import', '/fleet/settlements/import'].filter(r => accessibleRoutes.has(r)).length,
+    fleet: ['/fleet/trucks', '/fleet/trailers', '/fleet/drivers', '/fleet/cost', '/fleet/loads/import', '/fleet/settlements/import', '/fleet/combined-loads'].filter(r => accessibleRoutes.has(r)).length,
     payables: ['/dashboard', '/vendors', '/invoices', '/transactions', '/reports'].filter(r => accessibleRoutes.has(r)).length,
   }
 
@@ -203,6 +204,7 @@ export default function Layout() {
             <NavItem to="/fleet/cost" label="Equipment Cost" icon={Icons.cost} onClick={close} visible={accessibleRoutes.has('/fleet/cost')} />
             <NavItem to="/fleet/loads/import" label="Loads Import" icon={Icons.truck} onClick={close} visible={accessibleRoutes.has('/fleet/loads/import')} />
             <NavItem to="/fleet/settlements/import" label="Settlement Import" icon={Icons.payment} onClick={close} visible={accessibleRoutes.has('/fleet/settlements/import')} />
+            <NavItem to="/fleet/combined-loads" label="Combined Loads" icon={Icons.merge} onClick={close} visible={accessibleRoutes.has('/fleet/combined-loads')} />
           </NavSection>
 
           {/* PAYABLES */}
