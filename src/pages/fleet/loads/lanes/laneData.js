@@ -1,24 +1,21 @@
-// Data layer for the Lane Flow Map. Read-only against v_load_leg_profit
-// (Canceled already excluded there). Lanes are directional origin →
-// destination aggregates; coordinates come from laneCityCoords.json, a
-// static lookup generated once by scripts/geocode-lane-cities.mjs — no
-// geocoding API is called at render time. Labels that never geocoded
-// (e.g. a bare "FL") keep their lane in the leaderboard but stay off the
-// map, and the coverage note says how many legs are drawable.
+// Data layer for the Lane Flow Map. Reads coordinates from v_lane_geo
+// which joins with the geo_places table (US cities with lat/lng). Lanes are
+// directional origin → destination aggregates; coordinates are DB-backed,
+// not from static lookup. Missing cities/coordinates stay in the leaderboard
+// but off the map, and coverage stats reflect actual geocoding success.
 
 import { supabase } from '../../../../lib/supabase'
-import coordsJson from './laneCityCoords.json'
-
-export const CITY_COORDS = coordsJson.cities
 
 // All legs in the window, paginated past Supabase's 1000-row cap so a
-// long custom range can't silently truncate.
+// long custom range can't silently truncate. Reads from v_lane_geo which
+// provides DB-backed coordinates (origin_lat, origin_lng, dest_lat, dest_lng)
+// from the geo_places table.
 export async function fetchLaneLegs({ from, to, basis = 'delivery' }) {
   const dateCol = basis === 'pickup' ? 'pickup_date' : 'delivery_date'
   const out = []
   for (let page = 0; ; page++) {
-    const { data, error } = await supabase.from('v_load_leg_profit')
-      .select('leg_id, load_id, load_number, status, is_projected, load_phase, pickup_date, delivery_date, origin, destination, leg_revenue, leg_total_miles, customer_name, dispatcher_id, dispatcher_name, driver_display, trailer_id, trailer_display')
+    const { data, error } = await supabase.from('v_lane_geo')
+      .select('leg_id, load_id, load_number, status, is_projected, load_phase, pickup_date, delivery_date, origin, destination, leg_revenue, leg_total_miles, customer_name, dispatcher_id, dispatcher_name, driver_display, trailer_id, trailer_display, origin_lat, origin_lng, dest_lat, dest_lng')
       .gte(dateCol, from).lte(dateCol, to)
       .order(dateCol, { ascending: true }).order('leg_id', { ascending: true })
       .range(page * 1000, page * 1000 + 999)
@@ -100,8 +97,10 @@ export function aggregateLanes(allLegs, phaseOrView, { byType = false } = {}) {
     const key = byType ? `${origin} → ${destination} · ${type}` : `${origin} → ${destination}`
     let lane = byLane.get(key)
     if (!lane) {
-      const oCoord = CITY_COORDS[origin] || null
-      const dCoord = CITY_COORDS[destination] || null
+      // Use DB-backed coordinates (origin_lat, origin_lng, dest_lat, dest_lng)
+      // from v_lane_geo / geo_places table. Null if city not found.
+      const oCoord = (leg.origin_lat != null && leg.origin_lng != null) ? [leg.origin_lat, leg.origin_lng] : null
+      const dCoord = (leg.dest_lat != null && leg.dest_lng != null) ? [leg.dest_lat, leg.dest_lng] : null
       lane = {
         key, origin, destination, oCoord, dCoord,
         geocoded: !!(oCoord && dCoord),

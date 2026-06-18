@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import LaneMapCanvas from '../lanes/LaneMapCanvas'
-import { makeRpmScale, makeWidthScale, CITY_COORDS } from '../lanes/laneData'
+import { makeRpmScale, makeWidthScale } from '../lanes/laneData'
 import { S } from '../../../../lib/styles'
 
 // Compact lane map for the Boardroom, embedded live. Reuses the existing
