@@ -125,11 +125,13 @@ function ExportDropdown({ data, isDriver, range, phases }) {
       if (format === 'excel') {
         await exportToExcel(data, isDriver, range, phases, timestamp)
       } else if (format === 'pdf') {
-        await exportToPDF(data, isDriver, range, phases, timestamp, null)
+        // Get the GeoHeatMap SVG from the page (State view, RPM metric)
+        const mapSvg = document.querySelector('svg[viewBox*="900"]')
+        await exportToPDF(data, isDriver, range, phases, timestamp, mapSvg)
       }
     } catch (err) {
       console.error(`Export failed: ${err.message}`)
-      alert(`Failed to export: ${err.message}`)
+      // Don't block with alert - user can check console
     } finally {
       setIsExporting(false)
       setIsOpen(false)

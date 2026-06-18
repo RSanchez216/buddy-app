@@ -23,7 +23,9 @@ export function formatDataForExport(data, isDriver) {
  * Export to Excel (.xlsx)
  */
 export async function exportToExcel(data, isDriver, dateRange, phases, timestamp) {
-  const XLSX = (await import('xlsx')).default
+  const mod = await import('xlsx')
+  const XLSX = mod && mod.utils ? mod : (mod.default ?? mod)
+  if (!XLSX || !XLSX.utils) throw new Error('xlsx library failed to load properly')
 
   const title = isDriver ? 'MANAS Express — Top Drivers' : 'MANAS Express — Top Dispatchers'
   const phasesLabel = Array.from(phases).sort().map(p =>
@@ -131,14 +133,20 @@ export async function exportToPDF(data, isDriver, dateRange, phases, timestamp, 
   if (mapSvgElement) {
     try {
       const mapImage = await svgToPng(mapSvgElement)
-      const mapWidth = pageWidth - 20
-      const mapAspectRatio = mapSvgElement.viewBox.baseVal.height / mapSvgElement.viewBox.baseVal.width
-      mapImageHeight = mapWidth * mapAspectRatio
-      doc.addImage(mapImage, 'PNG', 10, yPos, mapWidth, mapImageHeight)
-      yPos += mapImageHeight + 10
+      if (mapImage) {
+        const mapWidth = pageWidth - 20
+        const viewBox = mapSvgElement.viewBox?.baseVal || { width: 900, height: 560 }
+        const mapAspectRatio = viewBox.height / viewBox.width
+        mapImageHeight = mapWidth * mapAspectRatio
+        doc.addImage(mapImage, 'PNG', 10, yPos, mapWidth, mapImageHeight)
+        yPos += mapImageHeight + 10
+      }
     } catch (err) {
       console.error('Failed to add map to PDF:', err)
+      // Continue without map rather than failing the entire export
     }
+  } else {
+    console.warn('No map SVG element found for PDF header')
   }
 
   // Add title block
@@ -194,57 +202,63 @@ export async function exportToPDF(data, isDriver, dateRange, phases, timestamp, 
 }
 
 /**
- * Convert SVG element to PNG data URL
+ * Convert SVG element to PNG data URL with proper sizing
  */
 async function svgToPng(svgElement) {
   return new Promise((resolve, reject) => {
     try {
-      // Clone and inline SVG styles
+      if (!svgElement) {
+        reject(new Error('SVG element is null or undefined'))
+        return
+      }
+
+      // Clone and set proper dimensions
       const svgClone = svgElement.cloneNode(true)
+      const viewBox = svgElement.viewBox?.baseVal || { width: 900, height: 560 }
 
-      // Inline computed styles into SVG nodes
-      const walker = svgClone.ownerDocument.createTreeWalker(
-        svgClone,
-        NodeFilter.SHOW_ELEMENT,
-        null,
-        false
-      )
+      svgClone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
+      svgClone.setAttribute('width', viewBox.width)
+      svgClone.setAttribute('height', viewBox.height)
 
-      let node
-      while (node = walker.nextNode()) {
-        const computedStyle = window.getComputedStyle(svgElement.querySelector(`[data-id="${node.getAttribute('data-id')}"]`) || svgElement)
-        if (node.style) {
-          if (computedStyle.fill) node.style.fill = computedStyle.fill
-          if (computedStyle.stroke) node.style.stroke = computedStyle.stroke
-          if (computedStyle.strokeWidth) node.style.strokeWidth = computedStyle.strokeWidth
+      // Serialize SVG to data URL
+      const serializer = new XMLSerializer()
+      const svgString = serializer.serializeToString(svgClone)
+      const dataUrl = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgString)))
+
+      // Load image from data URL
+      const img = new Image()
+      const timeout = setTimeout(() => {
+        reject(new Error('SVG to PNG conversion timeout'))
+      }, 5000) // 5 second timeout
+
+      img.onload = () => {
+        clearTimeout(timeout)
+        try {
+          const canvas = document.createElement('canvas')
+          canvas.width = viewBox.width
+          canvas.height = viewBox.height
+          const ctx = canvas.getContext('2d')
+
+          // Draw white background
+          ctx.fillStyle = '#ffffff'
+          ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+          // Draw SVG
+          ctx.drawImage(img, 0, 0)
+
+          const pngData = canvas.toDataURL('image/png')
+          resolve(pngData)
+        } catch (err) {
+          reject(new Error(`Canvas rendering failed: ${err.message}`))
         }
       }
 
-      // Serialize SVG
-      const serializer = new XMLSerializer()
-      const svgString = serializer.serializeToString(svgClone)
-      const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' })
-      const svgUrl = URL.createObjectURL(svgBlob)
-
-      // Render to canvas
-      const canvas = document.createElement('canvas')
-      canvas.width = svgElement.viewBox.baseVal.width
-      canvas.height = svgElement.viewBox.baseVal.height
-      const ctx = canvas.getContext('2d')
-
-      const img = new Image()
-      img.onload = () => {
-        ctx.drawImage(img, 0, 0)
-        const pngData = canvas.toDataURL('image/png')
-        URL.revokeObjectURL(svgUrl)
-        resolve(pngData)
-      }
-      img.onerror = () => {
-        URL.revokeObjectURL(svgUrl)
-        reject(new Error('Failed to load SVG for canvas rendering'))
+      img.onerror = (err) => {
+        clearTimeout(timeout)
+        reject(new Error(`Failed to load SVG image: ${err?.message || 'unknown error'}`))
       }
 
-      img.src = svgUrl
+      img.src = dataUrl
     } catch (err) {
       reject(err)
     }
