@@ -1,7 +1,11 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
+import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend } from 'chart.js'
+import { Bar } from 'react-chartjs-2'
 import { supabase } from '../../../../lib/supabase'
 import { S } from '../../../../lib/styles'
 import { fmtMoney, fmtRpm, fmtNum } from '../spotlight/spotlightShared'
+
+ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend)
 
 // Trailer Type Trends — period-over-period metrics by equipment type for recruiting
 // Data source: lane_trailer_type_trends RPC (returns rows with period_start, trailer_type, gross, rpm, legs, etc.)
@@ -320,6 +324,165 @@ export default function TrailerTypeTrends() {
     )
   }
 
+  // Get theme for dark mode support
+  const isDark = typeof window !== 'undefined' && document.documentElement.classList.contains('dark')
+  const gridColor = isDark ? '#334155' : '#f3f4f6'
+  const tickColor = isDark ? '#94a3b8' : '#6b7280'
+  const tooltipBgColor = isDark ? '#1e293b' : '#ffffff'
+  const tooltipBorderColor = isDark ? '#64748b' : '#d1d5db'
+  const tooltipTextColor = isDark ? '#e2e8f0' : '#1f2937'
+
+  // Render Trend chart
+  const renderTrendChart = () => {
+    if (periods.length === 0) return null
+
+    const shown = 6
+    const showPeriods = periods.slice(-shown)
+    const chartData = {
+      labels: showPeriods.map(p => formatPeriodLabel(p, granularity)),
+      datasets: trilerTypes.map(type => {
+        const data = showPeriods.map(period => {
+          const row = dataMap.get(`${period}|${type}`)
+          return row && row.legs > 0 ? row[metricKey] : null
+        })
+        return {
+          label: type,
+          data,
+          backgroundColor: getTrailerColor(type),
+          borderRadius: 4,
+          skipNull: true,
+        }
+      }),
+    }
+
+    const yAxisLabel = metric === 'rpm' ? '$/mi' : 'Gross ($)'
+    const chartOptions = {
+      responsive: true,
+      maintainAspectRatio: true,
+      indexAxis: undefined,
+      scales: {
+        y: {
+          beginAtZero: true,
+          grid: { color: gridColor, drawBorder: false },
+          ticks: {
+            color: tickColor,
+            callback: (value) => {
+              if (metric === 'rpm') return `$${value.toFixed(2)}`
+              return `$${(value / 1000).toFixed(0)}k`
+            },
+          },
+          title: { display: true, text: yAxisLabel, color: tickColor },
+        },
+        x: {
+          grid: { display: false },
+          ticks: { color: tickColor },
+        },
+      },
+      plugins: {
+        legend: { display: true, labels: { color: tickColor } },
+        tooltip: {
+          backgroundColor: tooltipBgColor,
+          borderColor: tooltipBorderColor,
+          borderWidth: 1,
+          titleColor: tooltipTextColor,
+          bodyColor: tooltipTextColor,
+          padding: 8,
+          displayColors: true,
+          callbacks: {
+            label: (context) => {
+              const value = context.parsed.y
+              if (value === null) return 'No data'
+              const formatted = metric === 'rpm' ? `$${value.toFixed(2)}/mi` : fmtMoney(value)
+              return `${context.dataset.label}: ${formatted}`
+            },
+          },
+        },
+      },
+    }
+
+    return <Bar data={chartData} options={chartOptions} />
+  }
+
+  // Render Compare chart
+  const renderCompareChart = () => {
+    if (cmpA === null || cmpB === null) return null
+
+    const periodA = periods[cmpA]
+    const periodB = periods[cmpB]
+    const labelA = formatPeriodLabel(periodA, granularity)
+    const labelB = formatPeriodLabel(periodB, granularity)
+
+    const chartData = {
+      labels: trilerTypes,
+      datasets: [
+        {
+          label: labelA,
+          data: trilerTypes.map(type => {
+            const row = dataMap.get(`${periodA}|${type}`)
+            return row && row.legs > 0 ? row[metricKey] : null
+          }),
+          backgroundColor: 'rgba(249, 115, 22, 0.8)',
+          borderRadius: 4,
+        },
+        {
+          label: labelB,
+          data: trilerTypes.map(type => {
+            const row = dataMap.get(`${periodB}|${type}`)
+            return row && row.legs > 0 ? row[metricKey] : null
+          }),
+          backgroundColor: 'rgba(249, 115, 22, 0.4)',
+          borderRadius: 4,
+        },
+      ],
+    }
+
+    const yAxisLabel = metric === 'rpm' ? '$/mi' : 'Gross ($)'
+    const chartOptions = {
+      responsive: true,
+      maintainAspectRatio: true,
+      scales: {
+        y: {
+          beginAtZero: true,
+          grid: { color: gridColor, drawBorder: false },
+          ticks: {
+            color: tickColor,
+            callback: (value) => {
+              if (metric === 'rpm') return `$${value.toFixed(2)}`
+              return `$${(value / 1000).toFixed(0)}k`
+            },
+          },
+          title: { display: true, text: yAxisLabel, color: tickColor },
+        },
+        x: {
+          grid: { display: false },
+          ticks: { color: tickColor },
+        },
+      },
+      plugins: {
+        legend: { display: true, labels: { color: tickColor } },
+        tooltip: {
+          backgroundColor: tooltipBgColor,
+          borderColor: tooltipBorderColor,
+          borderWidth: 1,
+          titleColor: tooltipTextColor,
+          bodyColor: tooltipTextColor,
+          padding: 8,
+          displayColors: true,
+          callbacks: {
+            label: (context) => {
+              const value = context.parsed.y
+              if (value === null) return 'No data'
+              const formatted = metric === 'rpm' ? `$${value.toFixed(2)}/mi` : fmtMoney(value)
+              return `${context.dataset.label}: ${formatted}`
+            },
+          },
+        },
+      },
+    }
+
+    return <Bar data={chartData} options={chartOptions} />
+  }
+
   return (
     <div className={`${S.card} p-6 space-y-4`}>
       <div>
@@ -390,7 +553,7 @@ export default function TrailerTypeTrends() {
       {/* Insights */}
       {renderInsights()}
 
-      {/* Table */}
+      {/* Table + Chart */}
       {loading ? (
         <div className="p-4 text-center text-gray-500 dark:text-slate-400 text-sm">Loading…</div>
       ) : rawData.length === 0 ? (
@@ -400,6 +563,19 @@ export default function TrailerTypeTrends() {
         </div>
       ) : (
         <>
+          {/* Chart */}
+          {mode === 'trend' && renderTrendChart() && (
+            <div className="h-72 mb-6 bg-white dark:bg-slate-800 p-4 rounded-lg border border-gray-200 dark:border-slate-700">
+              {renderTrendChart()}
+            </div>
+          )}
+          {mode === 'compare' && renderCompareChart() && (
+            <div className="h-72 mb-6 bg-white dark:bg-slate-800 p-4 rounded-lg border border-gray-200 dark:border-slate-700">
+              {renderCompareChart()}
+            </div>
+          )}
+
+          {/* Table */}
           {mode === 'trend' ? renderTrendTable() : renderCompareTable()}
           <div className="pt-2">
             {renderAccumulatingNote()}
