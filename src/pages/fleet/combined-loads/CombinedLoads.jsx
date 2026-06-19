@@ -5,6 +5,36 @@ import { fmtMoney, fmtNum, fmtRpm } from '../loads/spotlight/spotlightShared'
 
 const PRESET_LABEL = { week: 'This week', month: 'This month' }
 
+// Format date range compactly (e.g., "Jun 12 → Jun 16")
+function formatDateRange(pickupDate, deliveryDate) {
+  const formatDate = (d) => {
+    if (!d) return null
+    const date = typeof d === 'string' ? new Date(d) : d
+    if (isNaN(date.getTime())) return null
+    return date
+  }
+
+  const pickup = formatDate(pickupDate)
+  const delivery = formatDate(deliveryDate)
+
+  if (!pickup && !delivery) return null
+  if (!pickup) return `— → ${delivery.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: pickup?.getFullYear() !== delivery?.getFullYear() ? 'numeric' : undefined })}`
+  if (!delivery) return `${pickup.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} → —`
+
+  const pickupYear = pickup.getFullYear()
+  const deliveryYear = delivery.getFullYear()
+  const sameYear = pickupYear === deliveryYear
+
+  const pickupStr = pickup.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  const deliveryStr = delivery.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: sameYear ? undefined : 'numeric'
+  })
+
+  return `${pickupStr} → ${deliveryStr}`
+}
+
 function CombinedLoads() {
   const [preset, setPreset] = useState('month')
   const [candidates, setCandidates] = useState(null)
@@ -176,10 +206,16 @@ function CandidatesSection({ candidates, onRefresh }) {
                     <td className="px-3 py-2 text-gray-600 dark:text-slate-400">
                       <div>{pair.load_a}</div>
                       <div className="text-[10px] text-gray-400 dark:text-slate-500">{pair.lane_a}</div>
+                      {formatDateRange(pair.pickup_a, pair.delivery_a) && (
+                        <div className="text-[10px] text-gray-400 dark:text-slate-500 mt-0.5">{formatDateRange(pair.pickup_a, pair.delivery_a)}</div>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-gray-600 dark:text-slate-400">
                       <div>{pair.load_b}</div>
                       <div className="text-[10px] text-gray-400 dark:text-slate-500">{pair.lane_b}</div>
+                      {formatDateRange(pair.pickup_b, pair.delivery_b) && (
+                        <div className="text-[10px] text-gray-400 dark:text-slate-500 mt-0.5">{formatDateRange(pair.pickup_b, pair.delivery_b)}</div>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-right text-gray-600 dark:text-slate-400">{pair.overlap_days}d</td>
                     <td className="px-3 py-2 text-center">{pair.same_trailer ? '✓' : '—'}</td>
