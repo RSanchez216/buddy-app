@@ -18,18 +18,28 @@ const TRAILER_COLORS = {
 // Get or generate color for a trailer type
 const getTrailerColor = (type) => TRAILER_COLORS[type] || '#6b7280'
 
-// Format period label from period_start date
-const formatPeriodLabel = (date, granularity) => {
-  if (!date) return '—'
-  const d = new Date(date)
+// Format period label from period_start date (no UTC conversion)
+const formatPeriodLabel = (dateStr, granularity) => {
+  if (!dateStr) return '—'
+  // Parse as YYYY-MM-DD without UTC conversion: build local date from parts
+  const [y, m, d] = dateStr.split('-').map(Number)
+  const local = new Date(y, m - 1, d) // month is 0-indexed
+
   if (granularity === 'week') {
-    const wk = Math.ceil((d.getDate() + new Date(d.getFullYear(), d.getMonth(), 1).getDay()) / 7)
-    return `Wk${wk}`
+    // ISO week number
+    const jan4 = new Date(y, 0, 4)
+    const weekOne = new Date(jan4.getFullYear(), jan4.getMonth(), jan4.getDate() - jan4.getDay() + 1)
+    const daysDiff = Math.floor((local - weekOne) / 86400000)
+    const week = Math.floor(daysDiff / 7) + 1
+    return `Wk${week}`
   } else if (granularity === 'month') {
-    return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' })
+    const month = local.toLocaleDateString('en-US', { month: 'short' })
+    const year = String(y).slice(2)
+    return `${month} '${year}`
   } else { // quarter
-    const q = Math.floor(d.getMonth() / 3) + 1
-    return `Q${q} '${String(d.getFullYear()).slice(2)}`
+    const quarter = Math.floor(local.getMonth() / 3) + 1
+    const year = String(y).slice(2)
+    return `Q${quarter} '${year}`
   }
 }
 
@@ -108,30 +118,49 @@ export default function TrailerTypeTrends() {
         <table className="w-full text-xs">
           <thead className={S.tableHead}>
             <tr>
-              <th className={`${S.th} text-left`}>Trailer type</th>
+              <th className={`${S.th} text-left text-gray-900 dark:text-slate-200`}>Trailer type</th>
               {periodCols.map((pc, i) => (
-                <th key={i} className={S.th}>
+                <th key={i} className={`${S.th} text-gray-900 dark:text-slate-200`}>
                   {formatPeriodLabel(pc.date, granularity)}
                 </th>
               ))}
-              <th className={S.th}>Δ vs prior</th>
-              <th className={S.th}>6-period avg</th>
+              <th className={`${S.th} text-gray-900 dark:text-slate-200`}>Δ vs prior</th>
+              <th className={`${S.th} text-gray-900 dark:text-slate-200`}>6-period avg</th>
             </tr>
           </thead>
           <tbody>
             {trilerTypes.map(type => {
               const vals = periodCols.map(pc => {
                 const row = dataMap.get(`${pc.date}|${type}`)
-                return row ? row[metricKey] : null
+                return row
               })
               const last = vals[vals.length - 1]
               const prev = vals[vals.length - 2]
-              const delta = prev != null && last != null ? last - prev : null
-              const deltaPct = prev != null && last != null && prev !== 0 ? ((last - prev) / prev * 100) : null
-              const avg6 = periods.slice(-6).reduce((sum, p) => {
-                const row = dataMap.get(`${p}|${type}`)
-                return sum + (row ? (row[metricKey] || 0) : 0)
-              }, 0) / 6
+              const lastVal = last ? last[metricKey] : null
+              const prevVal = prev ? prev[metricKey] : null
+
+              // Delta suppression: only show if both periods have legs >= 10
+              const lastLegs = last ? last.legs : 0
+              const prevLegs = prev ? prev.legs : 0
+              const delta = prevVal != null && lastVal != null ? lastVal - prevVal : null
+              const deltaPct = (prevVal != null && lastVal != null && prevVal !== 0 && lastLegs >= 10 && prevLegs >= 10)
+                ? ((lastVal - prevVal) / prevVal * 100) : null
+
+              // 6-period average: only over populated periods (legs > 0)
+              const last6Rows = periods.slice(-6).map(p => dataMap.get(`${p}|${type}`)).filter(r => r && r.legs > 0)
+              let avg6 = null
+              if (last6Rows.length > 0) {
+                if (metricKey === 'rpm') {
+                  // Loaded-mile weighted RPM: sum(linehaul) / sum(loaded_miles)
+                  const totalLinehaul = last6Rows.reduce((sum, r) => sum + (r.linehaul || 0), 0)
+                  const totalLoadedMiles = last6Rows.reduce((sum, r) => sum + (r.loaded_miles || 0), 0)
+                  avg6 = totalLoadedMiles > 0 ? totalLinehaul / totalLoadedMiles : null
+                } else {
+                  // Gross: simple average over populated periods
+                  const sum = last6Rows.reduce((total, r) => total + (r.gross || 0), 0)
+                  avg6 = sum / last6Rows.length
+                }
+              }
 
               return (
                 <tr key={type} className={S.tableRow}>
@@ -139,10 +168,10 @@ export default function TrailerTypeTrends() {
                     <span className="w-2.5 h-2.5 rounded" style={{ background: getTrailerColor(type) }} />
                     <span className="font-medium text-gray-900 dark:text-slate-200">{type}</span>
                   </td>
-                  {vals.map((val, i) => (
+                  {vals.map((row, i) => (
                     <td key={i} className={S.td}>
                       <span className="font-mono text-gray-900 dark:text-slate-200">
-                        {val != null ? fmt(val) : '—'}
+                        {row && row[metricKey] != null ? fmt(row[metricKey]) : '—'}
                       </span>
                     </td>
                   ))}
@@ -151,10 +180,14 @@ export default function TrailerTypeTrends() {
                       <span className={`font-mono text-sm ${deltaPct >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
                         {deltaPct >= 0 ? '+' : ''}{deltaPct.toFixed(1)}%
                       </span>
-                    ) : '—'}
+                    ) : (prevLegs < 10 || lastLegs < 10) && (prevVal != null || lastVal != null) ? (
+                      <span className="inline-block px-1.5 py-0.5 rounded text-[9px] bg-gray-100 dark:bg-slate-700/40 text-gray-500 dark:text-slate-400">low sample</span>
+                    ) : (
+                      '—'
+                    )}
                   </td>
                   <td className={S.td}>
-                    <span className="font-mono text-gray-900 dark:text-slate-200">{fmt(avg6)}</span>
+                    <span className="font-mono text-gray-900 dark:text-slate-200">{avg6 != null ? fmt(avg6) : '—'}</span>
                   </td>
                 </tr>
               )
@@ -179,11 +212,11 @@ export default function TrailerTypeTrends() {
         <table className="w-full text-xs">
           <thead className={S.tableHead}>
             <tr>
-              <th className={`${S.th} text-left`}>Trailer type</th>
-              <th className={S.th}>{labelA}</th>
-              <th className={S.th}>{labelB}</th>
-              <th className={S.th}>Δ</th>
-              <th className={S.th}>Δ %</th>
+              <th className={`${S.th} text-left text-gray-900 dark:text-slate-200`}>Trailer type</th>
+              <th className={`${S.th} text-gray-900 dark:text-slate-200`}>{labelA}</th>
+              <th className={`${S.th} text-gray-900 dark:text-slate-200`}>{labelB}</th>
+              <th className={`${S.th} text-gray-900 dark:text-slate-200`}>Δ</th>
+              <th className={`${S.th} text-gray-900 dark:text-slate-200`}>Δ %</th>
             </tr>
           </thead>
           <tbody>
@@ -192,8 +225,12 @@ export default function TrailerTypeTrends() {
               const rowB = dataMap.get(`${periodB}|${type}`)
               const valA = rowA ? rowA[metricKey] : null
               const valB = rowB ? rowB[metricKey] : null
+              const legsA = rowA ? rowA.legs : 0
+              const legsB = rowB ? rowB.legs : 0
+
               const delta = valA != null && valB != null ? valA - valB : null
-              const deltaPct = valA != null && valB != null && valB !== 0 ? ((valA - valB) / valB * 100) : null
+              const deltaPct = (valA != null && valB != null && valB !== 0 && legsA >= 10 && legsB >= 10)
+                ? ((valA - valB) / valB * 100) : null
 
               return (
                 <tr key={type} className={S.tableRow}>
@@ -203,12 +240,12 @@ export default function TrailerTypeTrends() {
                   </td>
                   <td className={S.td}>
                     <span className="font-mono text-gray-900 dark:text-slate-200">
-                      {valA != null ? fmt(valA) : 'No data'}
+                      {valA != null ? fmt(valA) : <span className="text-gray-400 dark:text-slate-500">—</span>}
                     </span>
                   </td>
                   <td className={S.td}>
-                    <span className="font-mono text-gray-500 dark:text-slate-400">
-                      {valB != null ? fmt(valB) : 'No data'}
+                    <span className="font-mono text-gray-900 dark:text-slate-200">
+                      {valB != null ? fmt(valB) : <span className="text-gray-400 dark:text-slate-500">—</span>}
                     </span>
                   </td>
                   <td className={S.td}>
@@ -223,7 +260,11 @@ export default function TrailerTypeTrends() {
                       <span className={`font-mono text-sm ${deltaPct >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
                         {deltaPct >= 0 ? '+' : ''}{deltaPct.toFixed(1)}%
                       </span>
-                    ) : '—'}
+                    ) : (legsA < 10 || legsB < 10) && (valA != null || valB != null) ? (
+                      <span className="inline-block px-1.5 py-0.5 rounded text-[9px] bg-gray-100 dark:bg-slate-700/40 text-gray-500 dark:text-slate-400">low sample</span>
+                    ) : (
+                      '—'
+                    )}
                   </td>
                 </tr>
               )
@@ -268,6 +309,15 @@ export default function TrailerTypeTrends() {
       )
     }
     return null
+  }
+
+  // Render accumulating note
+  const renderAccumulatingNote = () => {
+    return (
+      <p className="text-xs text-gray-500 dark:text-slate-400 text-center">
+        Trends fill in as weekly imports land — earlier periods may be empty for now
+      </p>
+    )
   }
 
   return (
@@ -321,14 +371,14 @@ export default function TrailerTypeTrends() {
         {mode === 'compare' && (
           <div className="flex items-center gap-2">
             <select value={cmpA ?? ''} onChange={e => setCmpA(+e.target.value)}
-              className={`${S.select} text-xs`}>
+              className={`${S.select} text-xs bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-200 border-gray-200 dark:border-slate-700`}>
               {periods.map((p, i) => (
                 <option key={i} value={i}>{formatPeriodLabel(p, granularity)}</option>
               ))}
             </select>
             <span className="text-xs font-medium text-gray-500 dark:text-slate-400">vs</span>
             <select value={cmpB ?? ''} onChange={e => setCmpB(+e.target.value)}
-              className={`${S.select} text-xs`}>
+              className={`${S.select} text-xs bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-200 border-gray-200 dark:border-slate-700`}>
               {periods.map((p, i) => (
                 <option key={i} value={i}>{formatPeriodLabel(p, granularity)}</option>
               ))}
@@ -346,10 +396,15 @@ export default function TrailerTypeTrends() {
       ) : rawData.length === 0 ? (
         <div className="p-6 text-center text-gray-500 dark:text-slate-400">
           <p className="text-sm mb-1">No data available yet</p>
-          <p className="text-xs">Trends fill in as weekly imports land — earlier periods may be empty for now</p>
+          {renderAccumulatingNote()}
         </div>
       ) : (
-        mode === 'trend' ? renderTrendTable() : renderCompareTable()
+        <>
+          {mode === 'trend' ? renderTrendTable() : renderCompareTable()}
+          <div className="pt-2">
+            {renderAccumulatingNote()}
+          </div>
+        </>
       )}
     </div>
   )
