@@ -192,7 +192,7 @@ export default function TrailerTypeTrends() {
                     ) : (prevLegs < 10 || lastLegs < 10) && (prevVal != null || lastVal != null) ? (
                       <span className="inline-block px-1.5 py-0.5 rounded text-[9px] bg-gray-100 dark:bg-slate-700/40 text-gray-500 dark:text-slate-400">low sample</span>
                     ) : (
-                      '—'
+                      <span className="text-gray-900 dark:text-slate-200">—</span>
                     )}
                   </td>
                   <td className={S.td}>
@@ -262,7 +262,7 @@ export default function TrailerTypeTrends() {
                       <span className="font-mono text-gray-900 dark:text-slate-200">
                         {delta >= 0 ? '+' : ''}{fmt(delta)}
                       </span>
-                    ) : '—'}
+                    ) : <span className="text-gray-900 dark:text-slate-200">—</span>}
                   </td>
                   <td className={S.td}>
                     {deltaPct != null ? (
@@ -272,7 +272,7 @@ export default function TrailerTypeTrends() {
                     ) : (legsA < 10 || legsB < 10) && (valA != null || valB != null) ? (
                       <span className="inline-block px-1.5 py-0.5 rounded text-[9px] bg-gray-100 dark:bg-slate-700/40 text-gray-500 dark:text-slate-400">low sample</span>
                     ) : (
-                      '—'
+                      <span className="text-gray-900 dark:text-slate-200">—</span>
                     )}
                   </td>
                 </tr>
