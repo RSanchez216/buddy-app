@@ -5,6 +5,7 @@ import LaneHeatCanvas from './LaneHeatCanvas'
 import LaneMapCanvas from './LaneMapCanvas'
 import GeoHeatMap from './GeoHeatMap'
 import TopPerformers from './TopPerformers'
+import TrailerTypeTrends from './TrailerTypeTrends'
 import { aggregateLanes, EXCLUDED_STATUSES, fetchLaneLegs, fetchTrailerTypes, makeRpmScale, makeTypeColorMap, makeWidthScale, pickAllLoadMetrics, resolveLegTypes, RPM_NULL_COLOR, UNKNOWN_TYPE } from './laneData'
 import { binHeatCells } from './mapShared'
 import { fmtMoney, fmtNum, fmtRpm, formatRange, shiftYmd, spanDays, thisMonth, thisWeek } from '../spotlight/spotlightShared'
@@ -676,6 +677,9 @@ export default function LaneFlowMap() {
         range={range}
         phases={selectedPhases}
       />
+
+      {/* ── Trailer type trends section ── */}
+      <TrailerTypeTrends />
 
       {/* ── Honesty footer ── */}
       <p className="text-[11px] text-gray-400 dark:text-slate-500 text-center max-w-3xl mx-auto">
