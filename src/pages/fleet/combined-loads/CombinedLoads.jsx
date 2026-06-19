@@ -5,6 +5,16 @@ import { fmtMoney, fmtNum, fmtRpm } from '../loads/spotlight/spotlightShared'
 
 const PRESET_LABEL = { week: 'This week', month: 'This month' }
 
+const DISMISS_REASONS = [
+  'Separate trips',
+  'One load cancelled',
+  'Coincidental overlap',
+  'Different truck/trailer',
+  'Data / import error',
+  'Team load',
+  'Other'
+]
+
 // Format date range compactly (e.g., "Jun 12 → Jun 16")
 function formatDateRange(pickupDate, deliveryDate) {
   const formatDate = (d) => {
@@ -38,6 +48,7 @@ function formatDateRange(pickupDate, deliveryDate) {
 function CombinedLoads() {
   const [preset, setPreset] = useState('month')
   const [candidates, setCandidates] = useState(null)
+  const [dismissed, setDismissed] = useState(null)
   const [groups, setGroups] = useState(null)
   const [unmappedCities, setUnmappedCities] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -80,8 +91,16 @@ function CombinedLoads() {
       const { data: unmappedData, error: unmappedErr } = await supabase.rpc('detect_unmapped_cities', { p_days: days })
       if (unmappedErr) throw unmappedErr
 
+      // Load dismissed pairs
+      const { data: dismissedData, error: dismissedErr } = await supabase
+        .from('load_combine_dismissals')
+        .select('*')
+        .order('dismissed_at', { ascending: false })
+      if (dismissedErr) throw dismissedErr
+
       if (!stale) {
         setCandidates(candData || [])
+        setDismissed(dismissedData || [])
         setGroups(groupsWithLoads)
         setUnmappedCities(unmappedData || [])
       }
@@ -144,6 +163,9 @@ function CombinedLoads() {
         <>
           <CandidatesSection candidates={candidates || []} onRefresh={loadData} />
 
+          {/* Section 2: Dismissed */}
+          <DismissedSection dismissed={dismissed || []} onRefresh={loadData} />
+
           {/* Section 3: Existing groups */}
           <ExistingGroupsSection groups={groups || []} onRefresh={loadData} />
 
@@ -157,6 +179,7 @@ function CombinedLoads() {
 
 function CandidatesSection({ candidates, onRefresh }) {
   const [showForm, setShowForm] = useState(false)
+  const [showDismiss, setShowDismiss] = useState(false)
   const [selectedPair, setSelectedPair] = useState(null)
 
   const activeCandidates = candidates.filter(c => !c.already_grouped)
@@ -166,9 +189,24 @@ function CandidatesSection({ candidates, onRefresh }) {
     setShowForm(true)
   }
 
+  const handleDismissClick = (pair) => {
+    setSelectedPair(pair)
+    setShowDismiss(true)
+  }
+
   const handleSave = async () => {
     setShowForm(false)
     setSelectedPair(null)
+    onRefresh()
+  }
+
+  const handleDismissClose = () => {
+    setShowDismiss(false)
+    setSelectedPair(null)
+  }
+
+  const handleDismissSave = async () => {
+    handleDismissClose()
     onRefresh()
   }
 
@@ -221,12 +259,18 @@ function CandidatesSection({ candidates, onRefresh }) {
                     <td className="px-3 py-2 text-center">{pair.same_trailer ? '✓' : '—'}</td>
                     <td className="px-3 py-2 text-right font-mono text-gray-900 dark:text-slate-200">${pair.combined_linehaul.toFixed(0)}</td>
                     <td className="px-3 py-2 text-right font-mono text-amber-600 dark:text-amber-400">{fmtRpm(pair.naive_rpm)}</td>
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-2 flex gap-2">
                       <button
                         onClick={() => handleCombine(pair)}
                         className="text-xs font-medium text-orange-600 dark:text-orange-400 hover:underline"
                       >
                         Combine
+                      </button>
+                      <button
+                        onClick={() => handleDismissClick(pair)}
+                        className="text-xs font-medium text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300"
+                      >
+                        Not combined
                       </button>
                     </td>
                   </tr>
@@ -239,6 +283,10 @@ function CandidatesSection({ candidates, onRefresh }) {
 
       {showForm && selectedPair && (
         <CreateGroupForm pair={selectedPair} onClose={() => setShowForm(false)} onSave={handleSave} />
+      )}
+
+      {showDismiss && selectedPair && (
+        <DismissModal pair={selectedPair} onClose={handleDismissClose} onSave={handleDismissSave} />
       )}
     </>
   )
@@ -411,6 +459,151 @@ function CreateGroupForm({ pair, onClose, onSave }) {
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+function DismissModal({ pair, onClose, onSave }) {
+  const [reason, setReason] = useState('')
+  const [note, setNote] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const { data: currentUser } = await supabase.auth.getUser()
+      if (!currentUser?.user?.id) throw new Error('Not authenticated')
+
+      const pairLabel = `${pair.driver_name} · ${pair.lane_a} + ${pair.lane_b}`
+
+      const { error } = await supabase
+        .from('load_combine_dismissals')
+        .insert([{
+          load_a_number: pair.load_a,
+          load_b_number: pair.load_b,
+          pair_label: pairLabel,
+          reason: reason || null,
+          note: note || null,
+          dismissed_by: currentUser.user.id,
+        }])
+
+      if (error) throw error
+      onSave()
+    } catch (err) {
+      console.error('Failed to dismiss pair:', err)
+      alert('Error: ' + err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className={`${S.card} w-full max-w-md`}>
+        <div className="px-6 py-4 border-b border-gray-100 dark:border-white/5 flex items-center justify-between">
+          <h3 className="text-lg font-bold text-gray-900 dark:text-white">Not a combined load</h3>
+          <button onClick={onClose} className="text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 text-xl leading-none">×</button>
+        </div>
+
+        <div className="p-6 space-y-4">
+          <div className="text-sm text-gray-600 dark:text-slate-400">
+            <div className="font-mono text-xs text-gray-500 dark:text-slate-500 mb-1">Pair: {pair.load_a} / {pair.load_b}</div>
+          </div>
+
+          {/* Reason */}
+          <div>
+            <label className="block text-sm font-semibold text-gray-900 dark:text-white mb-2">Reason (optional)</label>
+            <select
+              value={reason}
+              onChange={e => setReason(e.target.value)}
+              className={`${S.input} w-full text-sm`}
+            >
+              <option value="">— Select a reason —</option>
+              {DISMISS_REASONS.map(r => (
+                <option key={r} value={r}>{r}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Note */}
+          <div>
+            <label className="block text-sm font-semibold text-gray-900 dark:text-white mb-2">Note (optional)</label>
+            <textarea
+              value={note}
+              onChange={e => setNote(e.target.value)}
+              placeholder="Add context if helpful…"
+              className={`${S.input} w-full text-sm h-16 resize-none`}
+            />
+          </div>
+
+          {/* Actions */}
+          <div className="flex gap-2 pt-4">
+            <button onClick={onClose} className="flex-1 px-4 py-2 border border-gray-200 dark:border-slate-700 rounded font-medium text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5">
+              Cancel
+            </button>
+            <button onClick={handleSave} disabled={saving} className="flex-1 px-4 py-2 bg-orange-500 text-white rounded font-medium hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed">
+              {saving ? 'Saving…' : 'Dismiss'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function DismissedSection({ dismissed, onRefresh }) {
+  const handleRestore = async (dismissalId, loadA, loadB) => {
+    if (!confirm(`Restore ${loadA} / ${loadB}?`)) return
+
+    try {
+      const { error } = await supabase
+        .from('load_combine_dismissals')
+        .delete()
+        .eq('id', dismissalId)
+
+      if (error) throw error
+      onRefresh()
+    } catch (err) {
+      console.error('Failed to restore pair:', err)
+      alert('Error: ' + err.message)
+    }
+  }
+
+  return (
+    <div className={`${S.card}`}>
+      <div className="px-4 py-3 border-b border-gray-100 dark:border-white/5">
+        <h2 className="text-lg font-bold text-gray-900 dark:text-white">Dismissed ({dismissed.length})</h2>
+        <p className="text-sm text-gray-500 dark:text-slate-500 mt-1">Reviewed pairs you've excluded from combining</p>
+      </div>
+
+      {dismissed.length === 0 ? (
+        <div className="p-8 text-center text-sm text-gray-400 dark:text-slate-500">
+          No dismissed pairs yet.
+        </div>
+      ) : (
+        <div className="divide-y divide-gray-100 dark:divide-white/5">
+          {dismissed.map((d) => (
+            <div key={d.id} className="px-4 py-4">
+              <div className="flex items-start justify-between mb-2">
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-gray-900 dark:text-white">{d.pair_label || `${d.load_a_number} / ${d.load_b_number}`}</p>
+                  {d.reason && <p className="text-xs text-gray-600 dark:text-slate-400 mt-1">Reason: {d.reason}</p>}
+                  {d.note && <p className="text-xs text-gray-600 dark:text-slate-400 mt-1">Note: {d.note}</p>}
+                  <p className="text-[11px] text-gray-500 dark:text-slate-500 mt-2">
+                    Dismissed {new Date(d.dismissed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                  </p>
+                </div>
+                <button
+                  onClick={() => handleRestore(d.id, d.load_a_number, d.load_b_number)}
+                  className="text-xs text-orange-600 dark:text-orange-400 hover:underline whitespace-nowrap ml-4"
+                >
+                  Restore
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
