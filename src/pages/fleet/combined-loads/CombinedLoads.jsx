@@ -552,8 +552,15 @@ function DismissModal({ pair, onClose, onSave }) {
 }
 
 function DismissedSection({ dismissed, onRefresh }) {
-  const handleRestore = async (dismissalId, loadA, loadB) => {
-    if (!confirm(`Restore ${loadA} / ${loadB}?`)) return
+  const [confirmRestore, setConfirmRestore] = useState(null)
+
+  const handleRestoreClick = (dismissalId, loadA, loadB) => {
+    setConfirmRestore({ dismissalId, loadA, loadB })
+  }
+
+  const handleRestoreConfirm = async () => {
+    const { dismissalId } = confirmRestore
+    setConfirmRestore(null)
 
     try {
       const { error } = await supabase
@@ -567,6 +574,10 @@ function DismissedSection({ dismissed, onRefresh }) {
       console.error('Failed to restore pair:', err)
       alert('Error: ' + err.message)
     }
+  }
+
+  const handleRestoreCancel = () => {
+    setConfirmRestore(null)
   }
 
   return (
@@ -594,7 +605,7 @@ function DismissedSection({ dismissed, onRefresh }) {
                   </p>
                 </div>
                 <button
-                  onClick={() => handleRestore(d.id, d.load_a_number, d.load_b_number)}
+                  onClick={() => handleRestoreClick(d.id, d.load_a_number, d.load_b_number)}
                   className="px-2.5 py-1 text-xs font-semibold bg-orange-500 hover:bg-orange-600 text-white rounded-lg transition-colors whitespace-nowrap ml-4"
                 >
                   Restore
@@ -604,6 +615,35 @@ function DismissedSection({ dismissed, onRefresh }) {
           ))}
         </div>
       )}
+
+      {confirmRestore && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className={`${S.card} w-full max-w-sm`}>
+            <div className="px-6 py-4 border-b border-gray-100 dark:border-white/5">
+              <h3 className="text-lg font-bold text-gray-900 dark:text-white">Restore dismissed pair?</h3>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-gray-600 dark:text-slate-400">
+                Restore <span className="font-mono font-semibold">{confirmRestore.loadA} / {confirmRestore.loadB}</span> to the candidates list.
+              </p>
+              <div className="flex gap-2 pt-2">
+                <button
+                  onClick={handleRestoreCancel}
+                  className="flex-1 px-4 py-2 border border-gray-200 dark:border-slate-700 rounded-lg font-medium text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleRestoreConfirm}
+                  className="flex-1 px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg font-medium transition-colors"
+                >
+                  Restore
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -611,6 +651,7 @@ function DismissedSection({ dismissed, onRefresh }) {
 function ExistingGroupsSection({ groups, onRefresh }) {
   const [editingId, setEditingId] = useState(null)
   const [editingMiles, setEditingMiles] = useState('')
+  const [confirmDelete, setConfirmDelete] = useState(null)
 
   const handleEditSave = async (groupId) => {
     try {
@@ -629,8 +670,13 @@ function ExistingGroupsSection({ groups, onRefresh }) {
     }
   }
 
-  const handleDelete = async (groupId) => {
-    if (!confirm('Delete this combined load group?')) return
+  const handleDeleteClick = (groupId) => {
+    setConfirmDelete(groupId)
+  }
+
+  const handleDeleteConfirm = async () => {
+    const groupId = confirmDelete
+    setConfirmDelete(null)
 
     try {
       const { error } = await supabase
@@ -644,6 +690,10 @@ function ExistingGroupsSection({ groups, onRefresh }) {
       console.error('Failed to delete group:', err)
       alert('Error: ' + err.message)
     }
+  }
+
+  const handleDeleteCancel = () => {
+    setConfirmDelete(null)
   }
 
   return (
@@ -671,7 +721,7 @@ function ExistingGroupsSection({ groups, onRefresh }) {
                     <p className="font-semibold text-gray-900 dark:text-white">{group.label}</p>
                     <p className="text-xs text-gray-500 dark:text-slate-500">{group.loads?.length || 0} loads · {fmtRpm(correctedRpm)}/mi</p>
                   </div>
-                  <button onClick={() => handleDelete(group.id)} className="px-2.5 py-1 text-xs font-semibold bg-red-500 hover:bg-red-600 text-white rounded-lg transition-colors">Delete</button>
+                  <button onClick={() => handleDeleteClick(group.id)} className="px-2.5 py-1 text-xs font-semibold bg-red-500 hover:bg-red-600 text-white rounded-lg transition-colors">Delete</button>
                 </div>
                 {group.notes && <p className="text-xs text-gray-600 dark:text-slate-400 mb-2">{group.notes}</p>}
                 <div className="text-xs text-gray-600 dark:text-slate-400 space-y-1">
@@ -701,6 +751,35 @@ function ExistingGroupsSection({ groups, onRefresh }) {
               </div>
             )
           })}
+        </div>
+      )}
+
+      {confirmDelete && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className={`${S.card} w-full max-w-sm`}>
+            <div className="px-6 py-4 border-b border-gray-100 dark:border-white/5">
+              <h3 className="text-lg font-bold text-gray-900 dark:text-white">Delete combined load group?</h3>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-gray-600 dark:text-slate-400">
+                This will ungroup the loads. The loads themselves are not deleted.
+              </p>
+              <div className="flex gap-2 pt-2">
+                <button
+                  onClick={handleDeleteCancel}
+                  className="flex-1 px-4 py-2 border border-gray-200 dark:border-slate-700 rounded-lg font-medium text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeleteConfirm}
+                  className="flex-1 px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg font-medium transition-colors"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>
