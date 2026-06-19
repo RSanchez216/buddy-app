@@ -13,6 +13,7 @@ import desert from '../../../../assets/spotlight-desert.svg'
 function Hero({ entry, photoUrl, hs }) {
   const truckLabel = entry.trucks.map(t => t.unit_number).filter(Boolean).join(', ')
   const trailerLabel = entry.trailers.map(t => t.unit_number).filter(Boolean).join(', ')
+  const unitPlateDisplay = truckLabel.replace(/^#/, '') // Strip leading # from unit plate badge
   const h = nameHue(entry.name)
   const initialsGradient = `linear-gradient(135deg, hsl(${h} 62% 46%), hsl(${(h + 42) % 360} 68% 34%))`
 
@@ -189,7 +190,7 @@ function Hero({ entry, photoUrl, hs }) {
                   letterSpacing: '0.05em',
                 }}
               >
-                {truckLabel}
+                {unitPlateDisplay}
               </div>
             </div>
           )}
