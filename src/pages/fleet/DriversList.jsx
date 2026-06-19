@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { S } from '../../lib/styles'
-import { DriverTypePill, DriverStatusPill, DRIVER_STATUSES, fmtCompensation } from './fleetUtils'
+import { DriverTypePill, DriverStatusPill, DRIVER_STATUSES, fmtCompensation, monogram, nameHue } from './fleetUtils'
 import DriverFormModal from './DriverFormModal'
 import DriversUploadModal from './upload/DriversUploadModal'
 import CopyButton from '../../components/CopyButton'
@@ -26,21 +26,48 @@ export default function DriversList() {
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('')
-  // Default to Active so opening the page shows only active drivers; the
-  // All / Inactive / Terminated / etc. pills are one click away.
   const [statusFilter, setStatusFilter] = useState('active')
+  const [photoFilter, setPhotoFilter] = useState(null)
   const [sortField, setSortField] = useState('full_name')
   const [sortDir, setSortDir] = useState('asc')
   const [showModal, setShowModal] = useState(false)
   const [editItem, setEditItem] = useState(null)
   const [showUpload, setShowUpload] = useState(false)
+  const [photoUrls, setPhotoUrls] = useState({})
 
   useEffect(() => { load() }, [])
 
   async function load() {
     setLoading(true)
-    const { data } = await supabase.from('drivers').select('*').order('full_name')
+    const { data } = await supabase.from('drivers').select('*, photo_path').order('full_name')
     setRows(data || [])
+
+    // Load signed URLs for drivers with photos (batch)
+    if (data?.length) {
+      const withPhotos = data.filter(d => d.photo_path)
+      if (withPhotos.length > 0) {
+        try {
+          const { data: urls, error } = await supabase.storage
+            .from('driver-avatars')
+            .createSignedUrls(
+              withPhotos.map(d => d.photo_path),
+              3600
+            )
+          if (!error && urls) {
+            const urlMap = {}
+            urls.forEach((url, idx) => {
+              if (url?.signedUrl) {
+                urlMap[withPhotos[idx].id] = url.signedUrl
+              }
+            })
+            setPhotoUrls(urlMap)
+          }
+        } catch (err) {
+          console.error('Failed to load photo URLs:', err)
+        }
+      }
+    }
+
     setLoading(false)
   }
 
@@ -53,10 +80,15 @@ export default function DriversList() {
     return c
   }, [rows])
 
+  const missingPhotoCount = useMemo(() => {
+    const base = statusFilter === 'all' ? rows : rows.filter(r => r.current_status === statusFilter)
+    return base.filter(r => !r.photo_path).length
+  }, [rows, statusFilter])
+
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase()
     const base = statusFilter === 'all' ? rows : rows.filter(r => r.current_status === statusFilter)
-    const searched = q ? base.filter(r =>
+    let result = q ? base.filter(r =>
       (r.internal_id || '').toLowerCase().includes(q) ||
       (r.full_name || '').toLowerCase().includes(q) ||
       (r.phone || '').toLowerCase().includes(q) ||
@@ -65,15 +97,20 @@ export default function DriversList() {
       (r.trailer_assignment_raw || '').toLowerCase().includes(q) ||
       (r.carrier || '').toLowerCase().includes(q)
     ) : base
+
+    if (photoFilter === 'missing') {
+      result = result.filter(r => !r.photo_path)
+    }
+
     const fn = SORT_FIELDS[sortField] || SORT_FIELDS.full_name
     const dir = sortDir === 'desc' ? -1 : 1
-    return [...searched].sort((a, b) => {
+    return [...result].sort((a, b) => {
       const va = fn(a); const vb = fn(b)
       if (va < vb) return -1 * dir
       if (va > vb) return  1 * dir
       return 0
     })
-  }, [rows, filter, statusFilter, sortField, sortDir])
+  }, [rows, filter, statusFilter, photoFilter, sortField, sortDir])
 
   function toggleSort(field) {
     if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
@@ -120,7 +157,7 @@ export default function DriversList() {
           return (
             <button
               key={p.key}
-              onClick={() => setStatusFilter(p.key)}
+              onClick={() => { setStatusFilter(p.key); setPhotoFilter(null) }}
               className={`px-3 py-1.5 text-xs font-medium rounded-full border transition-colors ${
                 active
                   ? 'bg-orange-50 dark:bg-orange-500/10 border-orange-300 dark:border-orange-500/30 text-orange-700 dark:text-orange-400'
@@ -131,11 +168,23 @@ export default function DriversList() {
             </button>
           )
         })}
+        {missingPhotoCount > 0 && (
+          <button
+            onClick={() => setPhotoFilter(photoFilter === 'missing' ? null : 'missing')}
+            className={`px-3 py-1.5 text-xs font-medium rounded-full border transition-colors flex items-center gap-1 ${
+              photoFilter === 'missing'
+                ? 'bg-orange-50 dark:bg-orange-500/10 border-orange-300 dark:border-orange-500/30 text-orange-700 dark:text-orange-400'
+                : 'border-amber-200 dark:border-amber-500/30 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-500/10'
+            }`}
+          >
+            📷 Missing photos <span className="font-semibold ml-1">{missingPhotoCount}</span>
+          </button>
+        )}
       </div>
 
       <div className="flex items-center justify-between flex-wrap gap-3">
         <p className="text-xs text-gray-500 dark:text-slate-500">
-          Showing {filtered.length} of {rows.length} driver{rows.length === 1 ? '' : 's'}
+          Showing {filtered.length} of {rows.length} driver{rows.length === 1 ? '' : 's'}{photoFilter === 'missing' && ` · ${missingPhotoCount} missing photo${missingPhotoCount === 1 ? '' : 's'}`}
         </p>
         <input
           className={`${S.input} max-w-xs`}
@@ -176,11 +225,14 @@ export default function DriversList() {
                 <tr key={r.id} className={`group ${S.tableRow}`}>
                   <td className={`${S.td} font-mono text-xs text-gray-500 dark:text-slate-400`}>{r.internal_id || '—'}</td>
                   <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>
-                    <span className="inline-flex items-center gap-1.5">
-                      <Link to={`/fleet/drivers/${r.id}`} className="hover:text-orange-600 dark:hover:text-orange-400">
-                        {r.full_name || '—'}
-                      </Link>
-                      {r.full_name && <CopyButton value={r.full_name} label="Copy name" />}
+                    <span className="inline-flex items-center gap-2">
+                      <PhotoIndicator driver={r} photoUrl={photoUrls[r.id]} onUploadClick={() => openEdit(r)} />
+                      <span className="inline-flex items-center gap-1.5">
+                        <Link to={`/fleet/drivers/${r.id}`} className="hover:text-orange-600 dark:hover:text-orange-400">
+                          {r.full_name || '—'}
+                        </Link>
+                        {r.full_name && <CopyButton value={r.full_name} label="Copy name" />}
+                      </span>
                     </span>
                   </td>
                   <td className={S.td}><DriverTypePill type={r.driver_type} short /></td>
@@ -237,5 +289,54 @@ function SortableTh({ field, label, sortField, sortDir, onToggle, minW }) {
         {active && <span className="text-[10px]">{sortDir === 'asc' ? '▲' : '▼'}</span>}
       </button>
     </th>
+  )
+}
+
+function PhotoIndicator({ driver, photoUrl, onUploadClick }) {
+  const [imageError, setImageError] = useState(false)
+
+  if (driver.photo_path && photoUrl && !imageError) {
+    return (
+      <div className="relative inline-block shrink-0">
+        <img
+          src={photoUrl}
+          alt={driver.full_name}
+          onError={() => setImageError(true)}
+          className="w-8 h-8 rounded-full object-cover border border-gray-200 dark:border-slate-700"
+        />
+        <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-green-500 border-2 border-white dark:border-slate-900 flex items-center justify-center">
+          <svg className="w-2 h-2 text-white" fill="currentColor" viewBox="0 0 20 20">
+            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+          </svg>
+        </div>
+      </div>
+    )
+  }
+
+  // Fallback to initials
+  if (driver.photo_path && !photoUrl) {
+    const h = nameHue(driver.full_name || '')
+    const initialsGradient = `linear-gradient(135deg, hsl(${h} 62% 46%), hsl(${(h + 42) % 360} 68% 34%))`
+    return (
+      <div
+        className="w-8 h-8 rounded-full border border-gray-200 dark:border-slate-700 flex items-center justify-center text-[10px] font-bold text-white shrink-0"
+        style={{ background: initialsGradient }}
+      >
+        {monogram(driver.full_name || '')}
+      </div>
+    )
+  }
+
+  // No photo - show camera icon button
+  return (
+    <button
+      onClick={onUploadClick}
+      className="w-8 h-8 rounded-full border-2 border-dashed border-gray-300 dark:border-slate-600 flex items-center justify-center text-gray-400 dark:text-slate-500 hover:border-orange-500 hover:text-orange-500 dark:hover:border-orange-400 dark:hover:text-orange-400 transition-colors shrink-0"
+      title="Click to upload photo"
+    >
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+      </svg>
+    </button>
   )
 }

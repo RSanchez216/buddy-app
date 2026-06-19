@@ -204,3 +204,23 @@ export function fmtCompensation({ compensation_raw, compensation_type, compensat
     default:                   return String(compensation_value)
   }
 }
+
+// Generate initials from a full name for avatar display.
+export function monogram(name) {
+  if (!name) return '?'
+  const parts = name.trim().split(/\s+/)
+  if (parts.length === 0) return '?'
+  if (parts.length === 1) return parts[0].substring(0, 1).toUpperCase()
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+}
+
+// Generate a hue (0-360) from a name for consistent color assignment.
+export function nameHue(name) {
+  if (!name) return 0
+  let hash = 0
+  for (let i = 0; i < name.length; i++) {
+    hash = ((hash << 5) - hash) + name.charCodeAt(i)
+    hash = hash & hash
+  }
+  return Math.abs(hash) % 360
+}
