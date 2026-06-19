@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import jsPDF from 'jspdf'
+import { toPng } from 'html-to-image'
 import { supabase } from '../../../../lib/supabase'
 import { S } from '../../../../lib/styles'
 import { fmtMoney, fmtRpm, fmtNum } from '../spotlight/spotlightShared'
@@ -462,9 +463,6 @@ export default function TrailerTypeTrends() {
   // Export snapshot handler
   const handleExport = async () => {
     try {
-      // Dynamically import html2canvas to avoid loading it if not used
-      const html2canvas = (await import('html2canvas')).default
-
       // Create a temporary container with light theme for PDF
       const exportDiv = document.createElement('div')
       exportDiv.style.cssText = 'position: absolute; left: -9999px; top: -9999px; background: white; padding: 24px; width: 1200px; color: #1f2937;'
@@ -490,12 +488,17 @@ export default function TrailerTypeTrends() {
       // Give recharts time to fully paint
       await new Promise(resolve => setTimeout(resolve, 500))
 
-      // Capture to canvas
-      const canvas = await html2canvas(exportDiv, {
+      // Capture to PNG using html-to-image (handles inline SVG correctly)
+      const pngDataUrl = await toPng(exportDiv, {
         backgroundColor: '#ffffff',
-        scale: 2,
-        useCORS: true,
+        pixelRatio: 2,
+        cacheBust: true,
       })
+
+      // Measure the PNG dimensions to calculate height
+      const img = new Image()
+      img.src = pngDataUrl
+      await new Promise((resolve) => { img.onload = resolve })
 
       // Create PDF
       const pdf = new jsPDF({
@@ -504,12 +507,11 @@ export default function TrailerTypeTrends() {
         format: 'a4',
       })
 
-      const imgData = canvas.toDataURL('image/png')
-      const imgWidth = 190
-      const imgHeight = (canvas.height * imgWidth) / canvas.width
       const pageHeight = pdf.internal.pageSize.getHeight()
       const pageWidth = pdf.internal.pageSize.getWidth()
       const margin = 10
+      const imgWidth = 190
+      const imgHeight = (img.height * imgWidth) / img.width
 
       // Header
       pdf.setFontSize(10)
@@ -522,7 +524,7 @@ export default function TrailerTypeTrends() {
 
       // Content
       const contentY = margin + 20
-      pdf.addImage(imgData, 'PNG', margin, contentY, imgWidth, imgHeight)
+      pdf.addImage(pngDataUrl, 'PNG', margin, contentY, imgWidth, imgHeight)
 
       // Footer
       const footerY = pageHeight - 20
