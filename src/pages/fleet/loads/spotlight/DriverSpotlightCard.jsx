@@ -1,14 +1,113 @@
 import { memo, useMemo } from 'react'
 import { DriverStatusPill, DriverTypePill, trailerTypePillClasses } from '../../fleetUtils'
 import { fmtMoney, fmtMoney2, fmtNum, fmtRpm, fmtDateShort, getCompFormulaLabels, monogram, nameHue, HEALTH_STYLES, parseYmd } from './spotlightShared'
+import desert from '../../../../assets/spotlight-desert.svg'
 
 // One driver's full dossier — the big card at the front of the deck.
 // Everything on it is live BUDDY data except the "Unlocking next" section,
 // which is deliberately number-free: fuel / insurance / driver pay aren't
 // connected yet and we never invent margin.
 
-// Initials avatar with a deterministic per-driver gradient. Drivers have no
-// photo field yet; when a photo_url column lands it drops in here.
+// Dark identity hero with desert backdrop, driver watermark, and headshot
+function Hero({ entry, photoUrl, hs }) {
+  const truckLabel = entry.trucks.map(t => t.unit_number).filter(Boolean).join(', ')
+  const trailerLabel = entry.trailers.map(t => t.unit_number).filter(Boolean).join(', ')
+  const h = nameHue(entry.name)
+  const initialsGradient = `linear-gradient(135deg, hsl(${h} 62% 46%), hsl(${(h + 42) % 360} 68% 34%))`
+
+  return (
+    <div className="relative h-48 overflow-hidden rounded-t-3xl">
+      {/* Dark gradient base */}
+      <div
+        className="absolute inset-0"
+        style={{ background: 'linear-gradient(100deg,#0b1220 0%,#131c2e 40%,#9a3412 80%,#ea580c 100%)' }}
+      />
+
+      {/* Desert overlay */}
+      <div
+        className="absolute inset-0"
+        style={{
+          backgroundImage: `url(${desert})`,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          mixBlendMode: 'screen',
+          opacity: 0.72,
+          maskImage: 'linear-gradient(90deg, #000 0%, rgba(0,0,0,.85) 30%, transparent 62%)',
+        }}
+      />
+
+      {/* Diagonal hairline stripes */}
+      <div className="absolute inset-0 opacity-20" style={{ backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,255,255,.1) 2px, rgba(255,255,255,.1) 4px)' }} />
+
+      {/* Content overlay */}
+      <div className="absolute inset-0 flex items-end justify-between px-6 pb-4">
+        {/* Left: DRIVER watermark */}
+        <div style={{ color: 'rgba(255,255,255,.15)' }}>
+          <p className="text-[9px] font-semibold uppercase tracking-widest">Driver</p>
+          <p className="text-3xl font-bold font-mono">{entry.internalId || '—'}</p>
+        </div>
+
+        {/* Right: Headshot with fade */}
+        <div className="relative flex flex-col items-end gap-2">
+          {photoUrl ? (
+            <div className="relative w-32 h-40 rounded-2xl overflow-hidden">
+              <img src={photoUrl} alt={entry.name} className="w-full h-full object-cover" />
+              <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/40" />
+            </div>
+          ) : (
+            <div
+              className="w-32 h-40 rounded-2xl flex items-center justify-center text-4xl font-bold text-white"
+              style={{ background: initialsGradient }}
+            >
+              {monogram(entry.name)}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Identity block (bottom, spans width) */}
+      <div className="absolute bottom-0 left-0 right-0 px-6 pb-4 pt-6 bg-gradient-to-t from-black/40 to-transparent">
+        <div className="flex items-baseline justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <h2 className="text-2xl font-bold text-white uppercase tracking-tight" style={{ fontFamily: 'Anton, sans-serif', lineHeight: 1 }}>
+              {entry.name}
+            </h2>
+            <div className="mt-2 flex items-center gap-2 flex-wrap">
+              <span className="px-2 py-1 rounded border border-orange-500/50 bg-orange-500/10 text-[10px] font-mono font-bold text-orange-300 uppercase">
+                {truckLabel || 'no unit'}
+              </span>
+              {entry.status && <DriverStatusPill status={entry.status} />}
+              {entry.driverType && <DriverTypePill type={entry.driverType} short />}
+            </div>
+            <p className="text-[10px] text-gray-300 mt-1 truncate">
+              Driver #{entry.internalId} · Unit {truckLabel || '—'} · {trailerLabel || 'no trailer'} {entry.carrier ? `· ${entry.carrier}` : ''}
+            </p>
+          </div>
+
+          {/* Watch pill (top-right, overlays hero) */}
+          <div className="absolute top-4 right-6 shrink-0">
+            <span
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold ${hs.pill}`}
+              title="Revenue & utilization signal — full margin pending the cost layer (fuel, insurance, driver pay)."
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${hs.dot}`} /> {entry.health.label}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Diagonal slash divider to light body */}
+      <div
+        className="absolute -bottom-px left-0 right-0 h-12 bg-white"
+        style={{
+          clipPath: 'polygon(0 0, 100% 0, 100% 100%, 0 0)',
+        }}
+      />
+    </div>
+  )
+}
+
+// Initials avatar with a deterministic per-driver gradient.
 function Avatar({ name, photoUrl, level }) {
   const ringClass = { strong: 'ring-emerald-500/40', watch: 'ring-amber-500/40', weak: 'ring-rose-500/50', idle: 'ring-slate-500/30' }[level] || 'ring-slate-500/30'
   if (photoUrl) {
@@ -205,50 +304,15 @@ function DriverSpotlightCard({ entry, lanes, trend, rangeDays, effDays, periodLa
     <div
       className={`h-[640px] flex flex-col overflow-hidden rounded-3xl border bg-gradient-to-b from-white to-gray-50 dark:from-[#12132e] dark:to-[#0a0a18] border-gray-200 dark:border-white/10 shadow-xl dark:shadow-[0_40px_90px_-20px_rgba(0,0,0,0.85)] ${focused ? `ring-1 ${hs.ring}` : ''}`}
     >
-      {/* ── Header ── */}
-      <div className="px-6 pt-5 pb-4 border-b border-gray-100 dark:border-white/[0.06]">
-        <div className="flex items-start gap-4">
-          <Avatar name={entry.name} photoUrl={photoUrl} level={entry.health.level} />
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h2 className="text-xl font-bold text-gray-900 dark:text-white truncate">{entry.name}</h2>
-              {entry.internalId && <span className="font-mono text-[11px] px-1.5 py-0.5 rounded-md bg-gray-100 dark:bg-slate-700/40 text-gray-600 dark:text-slate-400">#{entry.internalId}</span>}
-              {!entry.driverId && (
-                <span className="text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400" title="Raw name from TMS — not yet linked to a driver record. Resolve it in Loads Import review.">
-                  unmatched
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-              {entry.status && <DriverStatusPill status={entry.status} />}
-              {entry.driverType && <DriverTypePill type={entry.driverType} short />}
-            </div>
-            <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-1.5 truncate">
-              {truckLabel
-                ? <span><span className="text-gray-400 dark:text-slate-500 mr-1">Truck</span><span className="font-mono">{truckLabel}</span></span>
-                : <span className="text-gray-400 dark:text-slate-500">no truck on file</span>}
-              <span className="mx-1.5 text-gray-300 dark:text-slate-600">·</span>
-              {trailerLabel
-                ? <span><span className="text-gray-400 dark:text-slate-500 mr-1">Trailer</span><span className="font-mono">{trailerLabel}</span></span>
-                : <span className="text-gray-400 dark:text-slate-500">no trailer</span>}
-              {entry.trailerType && (
-                <span className={`ml-1.5 inline-block px-1.5 py-px rounded-full text-[9px] font-semibold align-middle ${trailerTypePillClasses(entry.trailerType)}`}>{entry.trailerType}</span>
-              )}
-              {entry.carrier && <span className="ml-1.5 text-gray-400 dark:text-slate-500">· {entry.carrier}</span>}
-            </p>
-          </div>
-          <div className="text-right shrink-0">
-            <span
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold ${hs.pill}`}
-              title="Revenue & utilization signal — full margin pending the cost layer (fuel, insurance, driver pay)."
-            >
-              <span className={`w-1.5 h-1.5 rounded-full ${hs.dot}`} /> {entry.health.label}
-            </span>
-            <p className="text-[9px] text-gray-400 dark:text-slate-500 mt-1 max-w-[130px] leading-tight">revenue & utilization signal — full margin pending cost layer</p>
-            <p className="text-[10px] font-mono text-gray-400 dark:text-slate-500 mt-1">{rank} / {total} · {sortLabel}</p>
-          </div>
+      {/* ── Dark identity hero ── */}
+      <Hero entry={entry} photoUrl={photoUrl} hs={hs} />
+
+      {/* ── Rank/sort label under hero ── */}
+      {(rank || total) && (
+        <div className="px-6 py-2 text-right border-b border-gray-100 dark:border-white/[0.06]">
+          <p className="text-[10px] font-mono text-gray-500 dark:text-slate-400">{rank} / {total} · {sortLabel}</p>
         </div>
-      </div>
+      )}
 
       {/* ── Date range emphasis ── */}
       <div className="px-6 pt-4 pb-2">
