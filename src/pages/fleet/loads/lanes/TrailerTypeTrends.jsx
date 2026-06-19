@@ -1,11 +1,8 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend } from 'chart.js'
-import { Bar } from 'react-chartjs-2'
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import { supabase } from '../../../../lib/supabase'
 import { S } from '../../../../lib/styles'
 import { fmtMoney, fmtRpm, fmtNum } from '../spotlight/spotlightShared'
-
-ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend)
 
 // Trailer Type Trends — period-over-period metrics by equipment type for recruiting
 // Data source: lane_trailer_type_trends RPC (returns rows with period_start, trailer_type, gross, rpm, legs, etc.)
@@ -99,12 +96,20 @@ export default function TrailerTypeTrends() {
     return { periods: sortedPeriods, trilerTypes: sortedTypes, dataMap: map }
   }, [rawData])
 
-  // Default compare periods
+  // Default compare periods (ensure A and B are distinct)
   useEffect(() => {
     if (cmpA === null && periods.length > 0) {
       const lastIdx = periods.length - 1
-      setCmpA(lastIdx)
-      setCmpB(Math.max(0, lastIdx - 6))
+      const secondLastIdx = Math.max(0, lastIdx - 6)
+      // Only set defaults if they're different
+      if (lastIdx !== secondLastIdx) {
+        setCmpA(lastIdx)
+        setCmpB(secondLastIdx)
+      } else if (periods.length > 1) {
+        // Fall back to comparing last two periods
+        setCmpA(lastIdx)
+        setCmpB(lastIdx - 1)
+      }
     }
   }, [periods, cmpA])
 
@@ -326,84 +331,81 @@ export default function TrailerTypeTrends() {
 
   // Get theme for dark mode support
   const isDark = typeof window !== 'undefined' && document.documentElement.classList.contains('dark')
-  const gridColor = isDark ? '#334155' : '#f3f4f6'
+  const gridColor = isDark ? '#334155' : '#e5e7eb'
   const tickColor = isDark ? '#94a3b8' : '#6b7280'
   const tooltipBgColor = isDark ? '#1e293b' : '#ffffff'
   const tooltipBorderColor = isDark ? '#64748b' : '#d1d5db'
-  const tooltipTextColor = isDark ? '#e2e8f0' : '#1f2937'
 
-  // Render Trend chart
+  // Custom tooltip for both Trend and Compare
+  const CustomTooltip = ({ active, payload, label }) => {
+    if (!active || !payload) return null
+    return (
+      <div className={`p-2 rounded border ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-gray-200 text-gray-900'} text-xs`}>
+        <p className="font-semibold">{label}</p>
+        {payload.map((entry, idx) => (
+          <p key={idx} style={{ color: entry.color }}>
+            {entry.name}: {metric === 'rpm' ? `$${Number(entry.value).toFixed(2)}/mi` : fmtMoney(entry.value)}
+          </p>
+        ))}
+      </div>
+    )
+  }
+
+  // Render Trend chart with recharts
   const renderTrendChart = () => {
     if (periods.length === 0) return null
 
     const shown = 6
     const showPeriods = periods.slice(-shown)
-    const chartData = {
-      labels: showPeriods.map(p => formatPeriodLabel(p, granularity)),
-      datasets: trilerTypes.map(type => {
-        const data = showPeriods.map(period => {
-          const row = dataMap.get(`${period}|${type}`)
-          return row && row.legs > 0 ? row[metricKey] : null
-        })
-        return {
-          label: type,
-          data,
-          backgroundColor: getTrailerColor(type),
-          borderRadius: 4,
-          skipNull: true,
-        }
-      }),
-    }
 
-    const yAxisLabel = metric === 'rpm' ? '$/mi' : 'Gross ($)'
-    const chartOptions = {
-      responsive: true,
-      maintainAspectRatio: true,
-      indexAxis: undefined,
-      scales: {
-        y: {
-          beginAtZero: true,
-          grid: { color: gridColor, drawBorder: false },
-          ticks: {
-            color: tickColor,
-            callback: (value) => {
-              if (metric === 'rpm') return `$${value.toFixed(2)}`
-              return `$${(value / 1000).toFixed(0)}k`
-            },
-          },
-          title: { display: true, text: yAxisLabel, color: tickColor },
-        },
-        x: {
-          grid: { display: false },
-          ticks: { color: tickColor },
-        },
-      },
-      plugins: {
-        legend: { display: true, labels: { color: tickColor } },
-        tooltip: {
-          backgroundColor: tooltipBgColor,
-          borderColor: tooltipBorderColor,
-          borderWidth: 1,
-          titleColor: tooltipTextColor,
-          bodyColor: tooltipTextColor,
-          padding: 8,
-          displayColors: true,
-          callbacks: {
-            label: (context) => {
-              const value = context.parsed.y
-              if (value === null) return 'No data'
-              const formatted = metric === 'rpm' ? `$${value.toFixed(2)}/mi` : fmtMoney(value)
-              return `${context.dataset.label}: ${formatted}`
-            },
-          },
-        },
-      },
-    }
+    // Build data: array of { period: "Jun '26", "Dry Van": 3.27, "Reefer": 2.18, ... }
+    const chartData = showPeriods.map(period => {
+      const row = { period: formatPeriodLabel(period, granularity) }
+      trilerTypes.forEach(type => {
+        const dataRow = dataMap.get(`${period}|${type}`)
+        row[type] = dataRow && dataRow.legs > 0 ? dataRow[metricKey] : null
+      })
+      return row
+    })
 
-    return <Bar data={chartData} options={chartOptions} />
+    return (
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={chartData}>
+          <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
+          <XAxis
+            dataKey="period"
+            tick={{ fill: tickColor, fontSize: 12 }}
+            stroke={tickColor}
+            axisLine={{ stroke: gridColor }}
+          />
+          <YAxis
+            tick={{ fill: tickColor, fontSize: 12 }}
+            stroke={tickColor}
+            axisLine={{ stroke: gridColor }}
+            tickFormatter={(val) => metric === 'rpm' ? `$${val.toFixed(2)}` : `$${(val / 1000).toFixed(0)}k`}
+          />
+          <Tooltip content={<CustomTooltip />} />
+          <Legend
+            wrapperStyle={{ paddingTop: '16px' }}
+            iconType="square"
+            textColor={tickColor}
+            fontSize={12}
+          />
+          {trilerTypes.map(type => (
+            <Bar
+              key={type}
+              dataKey={type}
+              fill={getTrailerColor(type)}
+              radius={[4, 4, 0, 0]}
+              isAnimationActive={false}
+            />
+          ))}
+        </BarChart>
+      </ResponsiveContainer>
+    )
   }
 
-  // Render Compare chart
+  // Render Compare chart with recharts
   const renderCompareChart = () => {
     if (cmpA === null || cmpB === null) return null
 
@@ -412,76 +414,49 @@ export default function TrailerTypeTrends() {
     const labelA = formatPeriodLabel(periodA, granularity)
     const labelB = formatPeriodLabel(periodB, granularity)
 
-    const chartData = {
-      labels: trilerTypes,
-      datasets: [
-        {
-          label: labelA,
-          data: trilerTypes.map(type => {
-            const row = dataMap.get(`${periodA}|${type}`)
-            return row && row.legs > 0 ? row[metricKey] : null
-          }),
-          backgroundColor: 'rgba(249, 115, 22, 0.8)',
-          borderRadius: 4,
-        },
-        {
-          label: labelB,
-          data: trilerTypes.map(type => {
-            const row = dataMap.get(`${periodB}|${type}`)
-            return row && row.legs > 0 ? row[metricKey] : null
-          }),
-          backgroundColor: 'rgba(249, 115, 22, 0.4)',
-          borderRadius: 4,
-        },
-      ],
-    }
+    // Build data: array of { type: "Dry Van", [labelA]: 3.27, [labelB]: 2.18 }
+    const chartData = trilerTypes.map(type => {
+      const rowA = dataMap.get(`${periodA}|${type}`)
+      const rowB = dataMap.get(`${periodB}|${type}`)
+      return {
+        type,
+        [labelA]: rowA && rowA.legs > 0 ? rowA[metricKey] : null,
+        [labelB]: rowB && rowB.legs > 0 ? rowB[metricKey] : null,
+      }
+    })
 
-    const yAxisLabel = metric === 'rpm' ? '$/mi' : 'Gross ($)'
-    const chartOptions = {
-      responsive: true,
-      maintainAspectRatio: true,
-      scales: {
-        y: {
-          beginAtZero: true,
-          grid: { color: gridColor, drawBorder: false },
-          ticks: {
-            color: tickColor,
-            callback: (value) => {
-              if (metric === 'rpm') return `$${value.toFixed(2)}`
-              return `$${(value / 1000).toFixed(0)}k`
-            },
-          },
-          title: { display: true, text: yAxisLabel, color: tickColor },
-        },
-        x: {
-          grid: { display: false },
-          ticks: { color: tickColor },
-        },
-      },
-      plugins: {
-        legend: { display: true, labels: { color: tickColor } },
-        tooltip: {
-          backgroundColor: tooltipBgColor,
-          borderColor: tooltipBorderColor,
-          borderWidth: 1,
-          titleColor: tooltipTextColor,
-          bodyColor: tooltipTextColor,
-          padding: 8,
-          displayColors: true,
-          callbacks: {
-            label: (context) => {
-              const value = context.parsed.y
-              if (value === null) return 'No data'
-              const formatted = metric === 'rpm' ? `$${value.toFixed(2)}/mi` : fmtMoney(value)
-              return `${context.dataset.label}: ${formatted}`
-            },
-          },
-        },
-      },
-    }
-
-    return <Bar data={chartData} options={chartOptions} />
+    return (
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={chartData}>
+          <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
+          <XAxis
+            dataKey="type"
+            tick={{ fill: tickColor, fontSize: 12 }}
+            stroke={tickColor}
+            axisLine={{ stroke: gridColor }}
+          />
+          <YAxis
+            tick={{ fill: tickColor, fontSize: 12 }}
+            stroke={tickColor}
+            axisLine={{ stroke: gridColor }}
+            tickFormatter={(val) => metric === 'rpm' ? `$${val.toFixed(2)}` : `$${(val / 1000).toFixed(0)}k`}
+          />
+          <Tooltip content={<CustomTooltip />} />
+          <Legend
+            wrapperStyle={{ paddingTop: '16px' }}
+            iconType="square"
+            textColor={tickColor}
+            fontSize={12}
+          />
+          <Bar dataKey={labelA} fill="#f97316" radius={[4, 4, 0, 0]} isAnimationActive={false} />
+          <Bar dataKey={labelB} fill="#fed7aa" radius={[4, 4, 0, 0]} isAnimationActive={false} />
+        </BarChart>
+      </ResponsiveContainer>
+    )
   }
+
+  // Check if Compare mode is valid (needs at least 2 distinct periods)
+  const canCompare = periods.length >= 2 && cmpA !== null && cmpB !== null && cmpA !== cmpB
 
   return (
     <div className={`${S.card} p-6 space-y-4`}>
@@ -533,19 +508,28 @@ export default function TrailerTypeTrends() {
 
         {mode === 'compare' && (
           <div className="flex items-center gap-2">
-            <select value={cmpA ?? ''} onChange={e => setCmpA(+e.target.value)}
-              className={`${S.select} text-xs bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-200 border-gray-200 dark:border-slate-700`}>
-              {periods.map((p, i) => (
-                <option key={i} value={i}>{formatPeriodLabel(p, granularity)}</option>
-              ))}
-            </select>
-            <span className="text-xs font-medium text-gray-500 dark:text-slate-400">vs</span>
-            <select value={cmpB ?? ''} onChange={e => setCmpB(+e.target.value)}
-              className={`${S.select} text-xs bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-200 border-gray-200 dark:border-slate-700`}>
-              {periods.map((p, i) => (
-                <option key={i} value={i}>{formatPeriodLabel(p, granularity)}</option>
-              ))}
-            </select>
+            {periods.length < 2 ? (
+              <div className="text-xs text-amber-600 dark:text-amber-400">Need at least two periods to compare — trends fill in as imports land</div>
+            ) : (
+              <>
+                <select value={cmpA ?? ''} onChange={e => setCmpA(+e.target.value)}
+                  className={`${S.select} text-xs bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-200 border-gray-200 dark:border-slate-700`}>
+                  {periods.map((p, i) => (
+                    <option key={i} value={i}>{formatPeriodLabel(p, granularity)}</option>
+                  ))}
+                </select>
+                <span className="text-xs font-medium text-gray-500 dark:text-slate-400">vs</span>
+                <select value={cmpB ?? ''} onChange={e => setCmpB(+e.target.value)}
+                  className={`${S.select} text-xs bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-200 border-gray-200 dark:border-slate-700`}>
+                  {periods.map((p, i) => (
+                    <option key={i} value={i}>{formatPeriodLabel(p, granularity)}</option>
+                  ))}
+                </select>
+                {cmpA === cmpB && cmpA !== null && (
+                  <div className="text-xs text-amber-600 dark:text-amber-400 ml-2">Select different periods</div>
+                )}
+              </>
+            )}
           </div>
         )}
       </div>
@@ -564,12 +548,12 @@ export default function TrailerTypeTrends() {
       ) : (
         <>
           {/* Chart */}
-          {mode === 'trend' && renderTrendChart() && (
+          {mode === 'trend' && (
             <div className="h-72 mb-6 bg-white dark:bg-slate-800 p-4 rounded-lg border border-gray-200 dark:border-slate-700">
               {renderTrendChart()}
             </div>
           )}
-          {mode === 'compare' && renderCompareChart() && (
+          {mode === 'compare' && canCompare && (
             <div className="h-72 mb-6 bg-white dark:bg-slate-800 p-4 rounded-lg border border-gray-200 dark:border-slate-700">
               {renderCompareChart()}
             </div>
