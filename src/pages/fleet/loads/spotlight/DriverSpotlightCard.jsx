@@ -9,6 +9,7 @@ import desert from '../../../../assets/spotlight-desert.svg'
 // connected yet and we never invent margin.
 
 // Dark identity hero with desert backdrop, driver watermark, and headshot
+// Uses absolute positioning with z-index layers to match approved mock exactly
 function Hero({ entry, photoUrl, hs }) {
   const truckLabel = entry.trucks.map(t => t.unit_number).filter(Boolean).join(', ')
   const trailerLabel = entry.trailers.map(t => t.unit_number).filter(Boolean).join(', ')
@@ -16,19 +17,20 @@ function Hero({ entry, photoUrl, hs }) {
   const initialsGradient = `linear-gradient(135deg, hsl(${h} 62% 46%), hsl(${(h + 42) % 360} 68% 34%))`
 
   return (
-    <div className="relative h-56 overflow-hidden rounded-t-3xl">
+    <div className="relative overflow-hidden rounded-t-3xl" style={{ height: '226px' }}>
       {/* Dark gradient base */}
       <div
         className="absolute inset-0"
         style={{ background: 'linear-gradient(100deg,#0b1220 0%,#131c2e 40%,#9a3412 80%,#ea580c 100%)' }}
       />
 
-      {/* Desert overlay — SVG rendered as background image with screen blend */}
+      {/* Desert overlay — z-index 0-1 (screen blend, left→center mask) */}
       <img
         src={desert}
         alt=""
         className="absolute inset-0 w-full h-full object-cover"
         style={{
+          zIndex: 1,
           mixBlendMode: 'screen',
           opacity: 0.72,
           maskImage: 'linear-gradient(90deg, #000 0%, rgba(0,0,0,.85) 30%, transparent 62%)',
@@ -36,36 +38,169 @@ function Hero({ entry, photoUrl, hs }) {
         }}
       />
 
-      {/* Diagonal hairline stripes */}
-      <div className="absolute inset-0 opacity-20" style={{ backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,255,255,.1) 2px, rgba(255,255,255,.1) 4px)' }} />
+      {/* Diagonal hairline stripes — z-index 1 */}
+      <div
+        className="absolute inset-0 opacity-20"
+        style={{
+          zIndex: 1,
+          backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,255,255,.1) 2px, rgba(255,255,255,.1) 4px)',
+        }}
+      />
 
-      {/* Content: DRIVER watermark on left */}
-      <div className="absolute inset-0 flex items-end px-6 pb-6 z-5">
-        <div style={{ color: 'rgba(255,255,255,.35)' }}>
-          <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40">Driver</p>
-          <p className="text-7xl font-black font-mono leading-none text-white/35">{entry.internalId || '—'}</p>
-        </div>
+      {/* WATERMARK — z-index 2, absolutely pinned to top-left */}
+      <div
+        className="absolute text-white"
+        style={{
+          left: '22px',
+          top: '24px',
+          zIndex: 2,
+        }}
+      >
+        <p style={{ fontSize: '10.5px', letterSpacing: '0.22em', color: 'rgba(255,255,255,.55)', fontWeight: 700, marginLeft: '4px', margin: 0 }}>
+          DRIVER
+        </p>
+        <p
+          style={{
+            fontFamily: 'Anton, sans-serif',
+            fontSize: '108px',
+            lineHeight: 0.78,
+            color: 'rgba(255,255,255,.15)',
+            letterSpacing: '-0.02em',
+            margin: 0,
+          }}
+        >
+          {entry.internalId || '—'}
+        </p>
       </div>
 
-      {/* Headshot bleeding into the right side */}
-      <div className="absolute -right-8 bottom-0 h-48 w-48">
+      {/* PHOTO — z-index 2, right side, full height with bottom fade */}
+      <div
+        className="absolute"
+        style={{
+          right: '22px',
+          bottom: 0,
+          height: '100%',
+          zIndex: 2,
+          width: 'auto',
+          maxWidth: '160px',
+        }}
+      >
         {photoUrl ? (
-          <div className="relative w-full h-full">
-            <img src={photoUrl} alt={entry.name} className="w-full h-full object-cover" />
-            <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/40" />
-          </div>
+          <img
+            src={photoUrl}
+            alt={entry.name}
+            style={{
+              height: '100%',
+              width: 'auto',
+              objectFit: 'cover',
+              maskImage: 'linear-gradient(180deg, #000 80%, transparent)',
+              WebkitMaskImage: 'linear-gradient(180deg, #000 80%, transparent)',
+            }}
+          />
         ) : (
           <div
-            className="w-full h-full flex items-center justify-center text-6xl font-bold text-white"
-            style={{ background: initialsGradient }}
+            style={{
+              height: '100%',
+              width: '120px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '56px',
+              fontWeight: 'bold',
+              color: 'white',
+              background: initialsGradient,
+            }}
           >
             {monogram(entry.name)}
           </div>
         )}
       </div>
 
-      {/* Watch pill (top-right, fixed position) */}
-      <div className="absolute top-4 right-6 z-10 shrink-0">
+      {/* DIAGONAL SLASH DIVIDER — z-index 3, flush at bottom */}
+      <div
+        className="absolute bg-white"
+        style={{
+          left: 0,
+          right: 0,
+          bottom: '-1px',
+          height: '40px',
+          zIndex: 3,
+          clipPath: 'polygon(0 100%, 100% 100%, 100% 36%, 0 100%)',
+        }}
+      />
+
+      {/* IDENTITY BLOCK — z-index 3, bottom-left */}
+      <div
+        className="absolute text-white"
+        style={{
+          left: '22px',
+          bottom: '14px',
+          right: '200px',
+          zIndex: 3,
+        }}
+      >
+        {/* Name + UNIT plate row */}
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '11px', marginBottom: '9px' }}>
+          <h2
+            style={{
+              fontFamily: 'Anton, sans-serif',
+              fontSize: '34px',
+              textTransform: 'uppercase',
+              lineHeight: 0.9,
+              margin: 0,
+            }}
+          >
+            {entry.name}
+          </h2>
+          {truckLabel && (
+            <span
+              style={{
+                padding: '6px 10px',
+                border: '2px solid rgb(251, 146, 60)',
+                background: 'rgba(251, 146, 60, 0.2)',
+                fontSize: '11px',
+                fontFamily: 'monospace',
+                fontWeight: 'bold',
+                color: 'rgb(254, 215, 170)',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                borderRadius: '4px',
+              }}
+            >
+              {truckLabel}
+            </span>
+          )}
+        </div>
+
+        {/* Pills + meta line */}
+        <div
+          style={{
+            display: 'flex',
+            gap: '7px',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            fontSize: '11.5px',
+            color: 'rgb(203, 213, 225)',
+          }}
+        >
+          {entry.status && <DriverStatusPill status={entry.status} />}
+          {entry.driverType && <DriverTypePill type={entry.driverType} short />}
+          <span>
+            Driver #{entry.internalId || '—'} · Unit {truckLabel || '—'} · {trailerLabel || 'no trailer'}
+            {entry.carrier && ` · ${entry.carrier}`}
+          </span>
+        </div>
+      </div>
+
+      {/* WATCH PILL — z-index 4, top-right */}
+      <div
+        className="absolute"
+        style={{
+          right: '18px',
+          top: '16px',
+          zIndex: 4,
+        }}
+      >
         <span
           className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold ${hs.pill}`}
           title="Revenue & utilization signal — full margin pending the cost layer (fuel, insurance, driver pay)."
@@ -73,35 +208,6 @@ function Hero({ entry, photoUrl, hs }) {
           <span className={`w-1.5 h-1.5 rounded-full ${hs.dot}`} /> {entry.health.label}
         </span>
       </div>
-
-      {/* Identity block (bottom-left, overlays hero) */}
-      <div className="absolute bottom-0 left-0 right-0 px-6 pb-4 pt-8 bg-gradient-to-t from-black/60 to-transparent">
-        <div className="flex items-start justify-between">
-          <div className="min-w-0 flex-1">
-            <h2 className="text-3xl font-black text-white uppercase tracking-tight" style={{ fontFamily: 'Anton, sans-serif', lineHeight: 1 }}>
-              {entry.name}
-            </h2>
-            <div className="mt-2.5 flex items-center gap-2 flex-wrap">
-              <span className="px-2.5 py-1.5 rounded border-2 border-orange-400 bg-orange-500/20 text-[11px] font-mono font-bold text-orange-200 uppercase tracking-widest">
-                {truckLabel || 'no unit'}
-              </span>
-              {entry.status && <DriverStatusPill status={entry.status} />}
-              {entry.driverType && <DriverTypePill type={entry.driverType} short />}
-            </div>
-            <p className="text-[9px] text-gray-300/80 mt-2 truncate">
-              Driver #{entry.internalId} · Unit {truckLabel || '—'} · {trailerLabel || 'no trailer'} {entry.carrier ? `· ${entry.carrier}` : ''}
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Diagonal slash divider to light body */}
-      <div
-        className="absolute -bottom-px left-0 right-0 h-12 bg-white"
-        style={{
-          clipPath: 'polygon(0 0, 100% 0, 100% 100%, 0 0)',
-        }}
-      />
     </div>
   )
 }
