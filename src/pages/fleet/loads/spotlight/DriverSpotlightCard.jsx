@@ -16,82 +16,81 @@ function Hero({ entry, photoUrl, hs }) {
   const initialsGradient = `linear-gradient(135deg, hsl(${h} 62% 46%), hsl(${(h + 42) % 360} 68% 34%))`
 
   return (
-    <div className="relative h-48 overflow-hidden rounded-t-3xl">
+    <div className="relative h-56 overflow-hidden rounded-t-3xl">
       {/* Dark gradient base */}
       <div
         className="absolute inset-0"
         style={{ background: 'linear-gradient(100deg,#0b1220 0%,#131c2e 40%,#9a3412 80%,#ea580c 100%)' }}
       />
 
-      {/* Desert overlay */}
-      <div
-        className="absolute inset-0"
+      {/* Desert overlay — SVG rendered as background image with screen blend */}
+      <img
+        src={desert}
+        alt=""
+        className="absolute inset-0 w-full h-full object-cover"
         style={{
-          backgroundImage: `url(${desert})`,
-          backgroundSize: 'cover',
-          backgroundPosition: 'center',
           mixBlendMode: 'screen',
           opacity: 0.72,
           maskImage: 'linear-gradient(90deg, #000 0%, rgba(0,0,0,.85) 30%, transparent 62%)',
+          WebkitMaskImage: 'linear-gradient(90deg, #000 0%, rgba(0,0,0,.85) 30%, transparent 62%)',
         }}
       />
 
       {/* Diagonal hairline stripes */}
       <div className="absolute inset-0 opacity-20" style={{ backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,255,255,.1) 2px, rgba(255,255,255,.1) 4px)' }} />
 
-      {/* Content overlay */}
-      <div className="absolute inset-0 flex items-end justify-between px-6 pb-4">
-        {/* Left: DRIVER watermark */}
+      {/* Content: DRIVER watermark on left */}
+      <div className="absolute inset-0 flex items-end px-6 pb-6">
         <div style={{ color: 'rgba(255,255,255,.15)' }}>
-          <p className="text-[9px] font-semibold uppercase tracking-widest">Driver</p>
-          <p className="text-3xl font-bold font-mono">{entry.internalId || '—'}</p>
-        </div>
-
-        {/* Right: Headshot with fade */}
-        <div className="relative flex flex-col items-end gap-2">
-          {photoUrl ? (
-            <div className="relative w-32 h-40 rounded-2xl overflow-hidden">
-              <img src={photoUrl} alt={entry.name} className="w-full h-full object-cover" />
-              <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/40" />
-            </div>
-          ) : (
-            <div
-              className="w-32 h-40 rounded-2xl flex items-center justify-center text-4xl font-bold text-white"
-              style={{ background: initialsGradient }}
-            >
-              {monogram(entry.name)}
-            </div>
-          )}
+          <p className="text-[11px] font-semibold uppercase tracking-widest">Driver</p>
+          <p className="text-6xl font-bold font-mono leading-none">{entry.internalId || '—'}</p>
         </div>
       </div>
 
-      {/* Identity block (bottom, spans width) */}
-      <div className="absolute bottom-0 left-0 right-0 px-6 pb-4 pt-6 bg-gradient-to-t from-black/40 to-transparent">
-        <div className="flex items-baseline justify-between gap-3">
+      {/* Headshot bleeding into the right side */}
+      <div className="absolute -right-8 bottom-0 h-48 w-48">
+        {photoUrl ? (
+          <div className="relative w-full h-full">
+            <img src={photoUrl} alt={entry.name} className="w-full h-full object-cover" />
+            <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/40" />
+          </div>
+        ) : (
+          <div
+            className="w-full h-full flex items-center justify-center text-6xl font-bold text-white"
+            style={{ background: initialsGradient }}
+          >
+            {monogram(entry.name)}
+          </div>
+        )}
+      </div>
+
+      {/* Watch pill (top-right, fixed position) */}
+      <div className="absolute top-4 right-6 z-10 shrink-0">
+        <span
+          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold ${hs.pill}`}
+          title="Revenue & utilization signal — full margin pending the cost layer (fuel, insurance, driver pay)."
+        >
+          <span className={`w-1.5 h-1.5 rounded-full ${hs.dot}`} /> {entry.health.label}
+        </span>
+      </div>
+
+      {/* Identity block (bottom-left, overlays hero) */}
+      <div className="absolute bottom-0 left-0 right-0 px-6 pb-4 pt-8 bg-gradient-to-t from-black/60 to-transparent">
+        <div className="flex items-start justify-between">
           <div className="min-w-0 flex-1">
-            <h2 className="text-2xl font-bold text-white uppercase tracking-tight" style={{ fontFamily: 'Anton, sans-serif', lineHeight: 1 }}>
+            <h2 className="text-3xl font-black text-white uppercase tracking-tight" style={{ fontFamily: 'Anton, sans-serif', lineHeight: 1 }}>
               {entry.name}
             </h2>
-            <div className="mt-2 flex items-center gap-2 flex-wrap">
-              <span className="px-2 py-1 rounded border border-orange-500/50 bg-orange-500/10 text-[10px] font-mono font-bold text-orange-300 uppercase">
+            <div className="mt-2.5 flex items-center gap-2 flex-wrap">
+              <span className="px-2.5 py-1.5 rounded border-2 border-orange-400 bg-orange-500/20 text-[11px] font-mono font-bold text-orange-200 uppercase tracking-widest">
                 {truckLabel || 'no unit'}
               </span>
               {entry.status && <DriverStatusPill status={entry.status} />}
               {entry.driverType && <DriverTypePill type={entry.driverType} short />}
             </div>
-            <p className="text-[10px] text-gray-300 mt-1 truncate">
+            <p className="text-[9px] text-gray-300/80 mt-2 truncate">
               Driver #{entry.internalId} · Unit {truckLabel || '—'} · {trailerLabel || 'no trailer'} {entry.carrier ? `· ${entry.carrier}` : ''}
             </p>
-          </div>
-
-          {/* Watch pill (top-right, overlays hero) */}
-          <div className="absolute top-4 right-6 shrink-0">
-            <span
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold ${hs.pill}`}
-              title="Revenue & utilization signal — full margin pending the cost layer (fuel, insurance, driver pay)."
-            >
-              <span className={`w-1.5 h-1.5 rounded-full ${hs.dot}`} /> {entry.health.label}
-            </span>
           </div>
         </div>
       </div>

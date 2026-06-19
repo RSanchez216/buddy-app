@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import Cropper from 'react-easy-crop'
 import { supabase } from '../../lib/supabase'
 import { S } from '../../lib/styles'
@@ -17,7 +17,7 @@ export default function PhotoUploadField({ driverId, currentPhotoPath, onPhotoUp
   const [currentPhotoUrl, setCurrentPhotoUrl] = useState(null)
 
   // Load current photo if it exists
-  React.useEffect(() => {
+  useEffect(() => {
     if (currentPhotoPath) {
       const { data } = supabase.storage.from('driver-avatars').getPublicUrl(currentPhotoPath)
       setCurrentPhotoUrl(data?.publicUrl)
