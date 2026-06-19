@@ -64,10 +64,8 @@ export default function DriverProfileHeader({ driver }) {
 
   return (
     <div
-      className="rounded-xl border overflow-hidden shadow-sm"
+      className="rounded-xl border overflow-hidden shadow-sm bg-gradient-to-r from-[#fff3e9] via-[#fff7f0] to-white dark:from-[#0d0d1f] dark:via-[#0d0d1f] dark:to-[#0d0d1f] border-gray-200 dark:border-white/5"
       style={{
-        background: 'linear-gradient(100deg,#fff3e9 0%,#fff7f0 32%,#ffffff 62%)',
-        borderColor: '#e7ebf1',
         position: 'relative',
       }}
     >
@@ -148,11 +146,12 @@ export default function DriverProfileHeader({ driver }) {
         {/* Identity block */}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap' }}>
-            <h2 style={{ fontSize: '24px', fontWeight: '700', letterSpacing: '-0.01em', margin: 0 }}>
+            <h2 className="text-slate-900 dark:text-slate-100" style={{ fontSize: '24px', fontWeight: '700', letterSpacing: '-0.01em', margin: 0 }}>
               {driver?.full_name}
             </h2>
             {driver?.internal_id && (
               <span
+                className="dark:bg-slate-800 dark:text-slate-300"
                 style={{
                   fontFamily: 'monospace',
                   fontSize: '13px',
@@ -162,7 +161,7 @@ export default function DriverProfileHeader({ driver }) {
                   borderRadius: '6px',
                 }}
               >
-                #{driver.internal_id}
+                {driver.internal_id}
               </span>
             )}
           </div>
@@ -172,7 +171,7 @@ export default function DriverProfileHeader({ driver }) {
             {driver?.driver_type && <DriverTypePill type={driver.driver_type} />}
           </div>
 
-          <p style={{ fontSize: '13px', color: '#64748b', margin: 0 }}>
+          <p className="text-slate-500 dark:text-slate-400" style={{ fontSize: '13px', margin: 0 }}>
             Driver #{driver?.internal_id || '—'} · Unit {truckLabel} · {trailerLabel}
             {driver?.carrier && ` · ${driver.carrier}`}
           </p>
@@ -180,6 +179,7 @@ export default function DriverProfileHeader({ driver }) {
 
         {/* Quick stats */}
         <div
+          className="dark:border-slate-700/40"
           style={{
             display: 'flex',
             flexShrink: 0,
@@ -204,21 +204,22 @@ export default function DriverProfileHeader({ driver }) {
 function StatCell({ label, value, highlight }) {
   return (
     <div
+      className="dark:border-slate-700/40"
       style={{
         padding: '0 18px',
         borderRight: '1px solid #eef1f5',
       }}
     >
-      <div style={{ fontSize: '9.5px', letterSpacing: '0.06em', textTransform: 'uppercase', color: '#94a3b8', fontWeight: 700, margin: 0 }}>
+      <div className="text-slate-500 dark:text-slate-400" style={{ fontSize: '9.5px', letterSpacing: '0.06em', textTransform: 'uppercase', fontWeight: 700, margin: 0 }}>
         {label}
       </div>
       <div
+        className={highlight ? 'text-orange-600 dark:text-orange-500' : 'text-slate-900 dark:text-slate-100'}
         style={{
           fontFamily: 'monospace',
           fontSize: '19px',
           fontWeight: 600,
           marginTop: '5px',
-          color: highlight ? '#ea580c' : '#0f172a',
         }}
       >
         {value}

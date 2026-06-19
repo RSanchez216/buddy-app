@@ -118,7 +118,7 @@ function Hero({ entry, photoUrl, hs }) {
 
       {/* DIAGONAL SLASH DIVIDER — z-index 3, flush at bottom */}
       <div
-        className="absolute bg-white"
+        className="absolute bg-white dark:bg-[#12132e]"
         style={{
           left: 0,
           right: 0,
@@ -186,6 +186,7 @@ function Hero({ entry, photoUrl, hs }) {
                   fontWeight: '700',
                   color: '#0f172a',
                   lineHeight: 1.05,
+                  letterSpacing: '0.05em',
                 }}
               >
                 {truckLabel}
