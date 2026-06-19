@@ -61,6 +61,10 @@ export default function Spotlight({ dimension = 'driver' }) {
     return () => { stale = true }
   }, [deckKey, range.from, range.to, basis, config, toast])
 
+  const loading = deckState.key !== deckKey
+  const deck = loading ? null : deckState.data
+  const trend = trendState.key === deckKey ? trendState.data : null
+
   // ── Batch signed URLs for driver photos ──
   useEffect(() => {
     if (!deck) return
@@ -84,10 +88,6 @@ export default function Spotlight({ dimension = 'driver' }) {
         setSignedUrls(urls)
       })
   }, [deck])
-
-  const loading = deckState.key !== deckKey
-  const deck = loading ? null : deckState.data
-  const trend = trendState.key === deckKey ? trendState.data : null
 
   const sortDef = SORTS.find(s => s.key === sortKey) || SORTS[0]
   const sorted = useMemo(() => (deck ? [...deck.entries].sort(sortDef.fn) : []), [deck, sortDef])
