@@ -15,6 +15,19 @@ const DISMISS_REASONS = [
   'Other'
 ]
 
+// Extract lane from pu_info/del_info JSON
+function extractLanes(puInfo, delInfo) {
+  try {
+    const pu = typeof puInfo === 'string' ? JSON.parse(puInfo) : puInfo
+    const del = typeof delInfo === 'string' ? JSON.parse(delInfo) : delInfo
+    const origin = pu?.city || ''
+    const destination = del?.city || ''
+    return origin && destination ? `${origin} → ${destination}` : 'Unknown lane'
+  } catch {
+    return 'Unknown lane'
+  }
+}
+
 // Format date range compactly (e.g., "Jun 12 → Jun 16")
 function formatDateRange(pickupDate, deliveryDate) {
   const formatDate = (d) => {
@@ -70,33 +83,62 @@ function CombinedLoads() {
       const { data: candData, error: candErr } = await supabase.rpc('detect_combined_load_candidates', { p_days: days })
       if (candErr) throw candErr
 
-      // Load existing groups with member loads
-      const { data: groupsData, error: groupsErr } = await supabase
-        .from('load_combine_groups')
-        .select('*')
-        .order('created_at', { ascending: false })
-      if (groupsErr) throw groupsErr
-
-      // For each group, fetch member loads
-      const groupsWithLoads = await Promise.all((groupsData || []).map(async (group) => {
-        const { data: loads, error: loadErr } = await supabase
-          .from('loads')
-          .select('id, load_number, leg_id, origin, destination')
-          .eq('combine_group_id', group.id)
-        if (loadErr) throw loadErr
-        return { ...group, loads: loads || [] }
-      }))
-
-      // Load unmapped cities
-      const { data: unmappedData, error: unmappedErr } = await supabase.rpc('detect_unmapped_cities', { p_days: days })
-      if (unmappedErr) throw unmappedErr
-
       // Load dismissed pairs
       const { data: dismissedData, error: dismissedErr } = await supabase
         .from('load_combine_dismissals')
         .select('*')
         .order('dismissed_at', { ascending: false })
       if (dismissedErr) throw dismissedErr
+
+      // Load unmapped cities
+      const { data: unmappedData, error: unmappedErr } = await supabase.rpc('detect_unmapped_cities', { p_days: days })
+      if (unmappedErr) throw unmappedErr
+
+      // Load existing groups with member loads (graceful degradation on error)
+      let groupsWithLoads = []
+      try {
+        const { data: groupsData, error: groupsErr } = await supabase
+          .from('load_combine_groups')
+          .select('*')
+          .order('created_at', { ascending: false })
+        if (groupsErr) throw groupsErr
+
+        // For each group, fetch member loads and calculate corrected metrics
+        groupsWithLoads = await Promise.all((groupsData || []).map(async (group) => {
+          const { data: loads, error: loadErr } = await supabase
+            .from('loads')
+            .select('id, load_number, pu_info, del_info, pickup_date, delivery_date, linehaul, combine_group_id')
+            .eq('combine_group_id', group.id)
+          if (loadErr) throw loadErr
+
+          // Fetch profit data for the group's loads to calculate corrected RPM
+          const { data: profitData, error: profitErr } = await supabase
+            .from('v_load_leg_profit')
+            .select('leg_revenue, leg_total_miles, load_number')
+            .in('load_number', (loads || []).map(l => l.load_number))
+          if (profitErr) throw profitErr
+
+          // Calculate group metrics from profit view
+          const totalRevenue = (profitData || []).reduce((sum, p) => sum + Number(p.leg_revenue || 0), 0)
+          const totalMiles = (profitData || []).reduce((sum, p) => sum + Number(p.leg_total_miles || 0), 0)
+          const correctedRpm = totalMiles > 0 ? totalRevenue / totalMiles : null
+
+          return {
+            ...group,
+            loads: (loads || []).map(l => ({
+              ...l,
+              lanes: extractLanes(l.pu_info, l.del_info)
+            })),
+            totalRevenue,
+            totalMiles,
+            correctedRpm
+          }
+        }))
+      } catch (groupErr) {
+        console.error('Failed to load groups:', groupErr)
+        // Keep the rest of the page functional; just skip groups
+        groupsWithLoads = []
+      }
 
       if (!stale) {
         setCandidates(candData || [])
@@ -710,43 +752,51 @@ function ExistingGroupsSection({ groups, onRefresh }) {
       ) : (
         <div className="divide-y divide-gray-100 dark:divide-white/5">
           {groups.map(group => {
-            const combinedRevenue = (group.loads || []).reduce((sum, l) => sum + (Number(l.revenue) || 0), 0)
-            const combinedMiles = group.true_combined_miles || (group.loads || []).reduce((sum, l) => sum + (Number(l.miles) || 0), 0)
-            const correctedRpm = combinedMiles > 0 ? combinedRevenue / combinedMiles : null
+            const displayMiles = group.true_combined_miles || group.totalMiles
+            const displayRpm = group.correctedRpm
 
             return (
               <div key={group.id} className="px-4 py-4">
                 <div className="flex items-start justify-between mb-2">
                   <div>
                     <p className="font-semibold text-gray-900 dark:text-white">{group.label}</p>
-                    <p className="text-xs text-gray-500 dark:text-slate-500">{group.loads?.length || 0} loads · {fmtRpm(correctedRpm)}/mi</p>
+                    <p className="text-xs text-gray-500 dark:text-slate-500">{group.loads?.length || 0} loads · {fmtRpm(displayRpm)}/mi</p>
                   </div>
-                  <button onClick={() => handleDeleteClick(group.id)} className="px-2.5 py-1 text-xs font-semibold bg-red-500 hover:bg-red-600 text-white rounded-lg transition-colors">Delete</button>
+                  <button onClick={() => handleDeleteClick(group.id)} className="px-2.5 py-1 text-xs font-semibold bg-red-500 hover:bg-red-600 text-white rounded-lg transition-colors">Ungroup</button>
                 </div>
                 {group.notes && <p className="text-xs text-gray-600 dark:text-slate-400 mb-2">{group.notes}</p>}
                 <div className="text-xs text-gray-600 dark:text-slate-400 space-y-1">
-                  <div>Loads: {(group.loads || []).map(l => l.load_number).join(', ')}</div>
-                  <div>
-                    True miles:{' '}
-                    {editingId === group.id ? (
-                      <div className="inline-flex gap-1">
-                        <input
-                          type="number"
-                          value={editingMiles}
-                          onChange={e => setEditingMiles(e.target.value)}
-                          className={`${S.input} w-20 text-xs px-2 py-1`}
-                        />
-                        <button onClick={() => handleEditSave(group.id)} className="text-xs text-orange-600 dark:text-orange-400 hover:underline">Save</button>
-                        <button onClick={() => setEditingId(null)} className="text-xs text-gray-400 hover:text-gray-600">Cancel</button>
-                      </div>
-                    ) : (
+                  {(group.loads || []).map((l, i) => (
+                    <div key={i} className="flex items-center justify-between">
                       <span>
-                        {group.true_combined_miles ? fmtNum(group.true_combined_miles) : 'Not set'}{' '}
-                        <button onClick={() => { setEditingId(group.id); setEditingMiles(group.true_combined_miles || ''); }} className="text-orange-600 dark:text-orange-400 hover:underline">[edit]</button>
+                        {l.load_number} · {l.lanes}
+                        {formatDateRange(l.pickup_date, l.delivery_date) && <span className="text-gray-500 ml-2">{formatDateRange(l.pickup_date, l.delivery_date)}</span>}
                       </span>
-                    )}
+                    </div>
+                  ))}
+                  <div className="border-t border-gray-200 dark:border-white/10 pt-1 mt-1">
+                    <div>
+                      True miles:{' '}
+                      {editingId === group.id ? (
+                        <div className="inline-flex gap-1">
+                          <input
+                            type="number"
+                            value={editingMiles}
+                            onChange={e => setEditingMiles(e.target.value)}
+                            className={`${S.input} w-20 text-xs px-2 py-1`}
+                          />
+                          <button onClick={() => handleEditSave(group.id)} className="text-xs text-orange-600 dark:text-orange-400 hover:underline">Save</button>
+                          <button onClick={() => setEditingId(null)} className="text-xs text-gray-400 hover:text-gray-600">Cancel</button>
+                        </div>
+                      ) : (
+                        <span>
+                          {displayMiles ? fmtNum(displayMiles) : 'Not set'}{' '}
+                          <button onClick={() => { setEditingId(group.id); setEditingMiles(group.true_combined_miles || ''); }} className="text-orange-600 dark:text-orange-400 hover:underline">[edit]</button>
+                        </span>
+                      )}
+                    </div>
+                    <div>Revenue: {fmtMoney(group.totalRevenue)}</div>
                   </div>
-                  <div>Revenue: {fmtMoney(combinedRevenue)}</div>
                 </div>
               </div>
             )
