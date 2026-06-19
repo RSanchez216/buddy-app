@@ -5,6 +5,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import { S } from '../../lib/styles'
 import { DriverTypePill, DriverStatusPill, DRIVER_STATUS_LABELS, fmtDate, fmtCompensation } from './fleetUtils'
 import DriverFormModal from './DriverFormModal'
+import DriverProfileHeader from './DriverProfileHeader'
 
 export default function DriverDetail() {
   const { canEdit } = useAuth()
@@ -69,16 +70,8 @@ export default function DriverDetail() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between flex-wrap gap-3">
-        <div>
-          <Link to="/fleet/drivers" className="text-xs text-orange-600 hover:underline">← Drivers</Link>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white mt-1">{row.full_name}</h1>
-          <div className="flex items-center gap-2 mt-2 flex-wrap">
-            {row.internal_id && <span className="font-mono text-xs px-2 py-0.5 rounded-md bg-gray-100 dark:bg-slate-700/40 text-gray-600 dark:text-slate-400">#{row.internal_id}</span>}
-            <DriverTypePill type={row.driver_type} />
-            <DriverStatusPill status={row.current_status} />
-          </div>
-        </div>
+      <div className="flex items-start justify-between">
+        <Link to="/fleet/drivers" className="text-xs text-orange-600 hover:underline">← Drivers</Link>
         {canEdit && (
           <button onClick={() => setShowEdit(true)} className={S.btnPrimary}>
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
@@ -86,6 +79,7 @@ export default function DriverDetail() {
           </button>
         )}
       </div>
+      <DriverProfileHeader driver={row} />
 
       <Section title="Driver Info">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2 text-sm">

@@ -40,10 +40,10 @@ function Hero({ entry, photoUrl, hs }) {
       <div className="absolute inset-0 opacity-20" style={{ backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,255,255,.1) 2px, rgba(255,255,255,.1) 4px)' }} />
 
       {/* Content: DRIVER watermark on left */}
-      <div className="absolute inset-0 flex items-end px-6 pb-6">
-        <div style={{ color: 'rgba(255,255,255,.15)' }}>
-          <p className="text-[11px] font-semibold uppercase tracking-widest">Driver</p>
-          <p className="text-6xl font-bold font-mono leading-none">{entry.internalId || '—'}</p>
+      <div className="absolute inset-0 flex items-end px-6 pb-6 z-5">
+        <div style={{ color: 'rgba(255,255,255,.35)' }}>
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40">Driver</p>
+          <p className="text-7xl font-black font-mono leading-none text-white/35">{entry.internalId || '—'}</p>
         </div>
       </div>
 

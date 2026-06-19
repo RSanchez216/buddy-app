@@ -16,11 +16,17 @@ export default function PhotoUploadField({ driverId, currentPhotoPath, onPhotoUp
   const [uploading, setUploading] = useState(false)
   const [currentPhotoUrl, setCurrentPhotoUrl] = useState(null)
 
-  // Load current photo if it exists
+  // Load current photo if it exists (driver-avatars is private, so use signed URL)
   useEffect(() => {
     if (currentPhotoPath) {
-      const { data } = supabase.storage.from('driver-avatars').getPublicUrl(currentPhotoPath)
-      setCurrentPhotoUrl(data?.publicUrl)
+      supabase.storage
+        .from('driver-avatars')
+        .createSignedUrl(currentPhotoPath, 3600)
+        .then(({ data, error }) => {
+          if (!error && data?.signedUrl) {
+            setCurrentPhotoUrl(data.signedUrl)
+          }
+        })
     }
   }, [currentPhotoPath])
 
