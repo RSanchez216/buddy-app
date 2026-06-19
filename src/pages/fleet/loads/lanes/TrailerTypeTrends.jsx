@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
+import jsPDF from 'jspdf'
 import { supabase } from '../../../../lib/supabase'
 import { S } from '../../../../lib/styles'
 import { fmtMoney, fmtRpm, fmtNum } from '../spotlight/spotlightShared'
@@ -458,11 +459,103 @@ export default function TrailerTypeTrends() {
   // Check if Compare mode is valid (needs at least 2 distinct periods)
   const canCompare = periods.length >= 2 && cmpA !== null && cmpB !== null && cmpA !== cmpB
 
+  // Export snapshot handler
+  const handleExport = async () => {
+    try {
+      // Dynamically import html2canvas to avoid loading it if not used
+      const html2canvas = (await import('html2canvas')).default
+
+      // Create a temporary container with light theme for PDF
+      const exportDiv = document.createElement('div')
+      exportDiv.style.cssText = 'position: absolute; left: -9999px; top: -9999px; background: white; padding: 24px; width: 1200px; color: #1f2937;'
+
+      // Clone the current panel content
+      const panelClone = document.querySelector('[class*="space-y-4"]')?.parentElement?.cloneNode(true)
+      if (!panelClone) throw new Error('Could not capture panel')
+
+      // Remove the export button from clone
+      const clonedExportBtn = panelClone.querySelector('[data-export-button]')
+      if (clonedExportBtn) clonedExportBtn.remove()
+
+      // Temporarily move all text to light colors
+      panelClone.classList.remove('dark')
+      panelClone.querySelectorAll('[class*="dark:"]').forEach(el => {
+        const classes = el.className
+        el.className = classes.replace(/dark:[^\s]*/g, '')
+      })
+
+      exportDiv.appendChild(panelClone)
+      document.body.appendChild(exportDiv)
+
+      // Give recharts time to fully paint
+      await new Promise(resolve => setTimeout(resolve, 500))
+
+      // Capture to canvas
+      const canvas = await html2canvas(exportDiv, {
+        backgroundColor: '#ffffff',
+        scale: 2,
+        useCORS: true,
+      })
+
+      // Create PDF
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4',
+      })
+
+      const imgData = canvas.toDataURL('image/png')
+      const imgWidth = 190
+      const imgHeight = (canvas.height * imgWidth) / canvas.width
+      const pageHeight = pdf.internal.pageSize.getHeight()
+      const pageWidth = pdf.internal.pageSize.getWidth()
+      const margin = 10
+
+      // Header
+      pdf.setFontSize(10)
+      pdf.text('MANAS Express · Trailer Type Trends', margin, margin + 5)
+      pdf.setFontSize(9)
+      const metricLabel = metric === 'rpm' ? '$/mi' : 'Gross'
+      const granularityLabel = granularity === 'week' ? 'Weekly' : granularity === 'month' ? 'Monthly' : 'Quarterly'
+      const today = new Date().toISOString().split('T')[0]
+      pdf.text(`${metricLabel} · ${granularityLabel} · ${today}`, margin, margin + 12)
+
+      // Content
+      const contentY = margin + 20
+      pdf.addImage(imgData, 'PNG', margin, contentY, imgWidth, imgHeight)
+
+      // Footer
+      const footerY = pageHeight - 20
+      pdf.setFontSize(8)
+      pdf.text('Loaded-mile linehaul RPM (revenue per mile weighted by loaded miles).', margin, footerY)
+      pdf.text('Fuel, insurance, and driver pay not included — RPM is a revenue signal, not net margin.', margin, footerY + 5)
+
+      // Download
+      const filename = `trailer-type-trends_${metric}_${granularity}_${today}.pdf`
+      pdf.save(filename)
+
+      document.body.removeChild(exportDiv)
+    } catch (err) {
+      console.error('Export failed:', err)
+      // Silent failure - don't break the UI
+    }
+  }
+
   return (
     <div className={`${S.card} p-6 space-y-4`}>
-      <div>
-        <h2 className="text-lg font-bold text-gray-900 dark:text-white">Trailer Type Trends</h2>
-        <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">Period-over-period gross and RPM by equipment type</p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h2 className="text-lg font-bold text-gray-900 dark:text-white">Trailer Type Trends</h2>
+          <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">Period-over-period gross and RPM by equipment type</p>
+        </div>
+        <button
+          data-export-button
+          onClick={handleExport}
+          className="px-3 py-2 text-xs font-semibold bg-orange-500 hover:bg-orange-600 text-white rounded-lg transition-colors whitespace-nowrap"
+          title="Export current view as PDF"
+        >
+          ↓ Export snapshot
+        </button>
       </div>
 
       {/* Controls */}
@@ -532,6 +625,10 @@ export default function TrailerTypeTrends() {
             )}
           </div>
         )}
+
+        <div className="ml-auto flex items-center gap-2 px-3 py-1.5 rounded-full border border-gray-300 dark:border-slate-600 text-xs text-gray-600 dark:text-slate-300 bg-gray-50 dark:bg-slate-700/30" title="Loaded-mile linehaul RPM: revenue per mile weighted by loaded miles">
+          📊 Loaded-mile linehaul RPM
+        </div>
       </div>
 
       {/* Insights */}
