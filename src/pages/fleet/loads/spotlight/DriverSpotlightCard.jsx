@@ -140,7 +140,7 @@ function Hero({ entry, photoUrl, hs }) {
         }}
       >
         {/* Name + UNIT plate row */}
-        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '11px', marginBottom: '9px' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '14px', marginBottom: '9px' }}>
           <h2
             style={{
               fontFamily: 'Anton, sans-serif',
@@ -153,22 +153,44 @@ function Hero({ entry, photoUrl, hs }) {
             {entry.name}
           </h2>
           {truckLabel && (
-            <span
+            <div
               style={{
-                padding: '6px 10px',
-                border: '2px solid rgb(251, 146, 60)',
-                background: 'rgba(251, 146, 60, 0.2)',
-                fontSize: '11px',
-                fontFamily: 'monospace',
-                fontWeight: 'bold',
-                color: 'rgb(254, 215, 170)',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
-                borderRadius: '4px',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '2px 10px 3px',
+                border: '2px solid #cbd5e1',
+                background: '#f1f5f9',
+                borderRadius: '7px',
+                minWidth: '60px',
               }}
             >
-              {truckLabel}
-            </span>
+              <div
+                style={{
+                  fontFamily: '"JetBrains Mono", monospace',
+                  fontSize: '8px',
+                  letterSpacing: '0.2em',
+                  color: '#64748b',
+                  fontWeight: '700',
+                  lineHeight: 1,
+                  marginBottom: '2px',
+                }}
+              >
+                UNIT
+              </div>
+              <div
+                style={{
+                  fontFamily: '"JetBrains Mono", monospace',
+                  fontSize: '16px',
+                  fontWeight: '700',
+                  color: '#0f172a',
+                  lineHeight: 1.05,
+                }}
+              >
+                {truckLabel}
+              </div>
+            </div>
           )}
         </div>
 
@@ -407,7 +429,7 @@ function DriverSpotlightCard({ entry, lanes, trend, rangeDays, effDays, periodLa
 
   return (
     <div
-      className={`h-[640px] flex flex-col overflow-hidden rounded-3xl border bg-gradient-to-b from-white to-gray-50 dark:from-[#12132e] dark:to-[#0a0a18] border-gray-200 dark:border-white/10 shadow-xl dark:shadow-[0_40px_90px_-20px_rgba(0,0,0,0.85)] ${focused ? `ring-1 ${hs.ring}` : ''}`}
+      className={`flex flex-col rounded-3xl border bg-gradient-to-b from-white to-gray-50 dark:from-[#12132e] dark:to-[#0a0a18] border-gray-200 dark:border-white/10 shadow-xl dark:shadow-[0_40px_90px_-20px_rgba(0,0,0,0.85)] ${focused ? `ring-1 ${hs.ring}` : `h-[640px] overflow-hidden`}`}
     >
       {/* ── Dark identity hero ── */}
       <Hero entry={entry} photoUrl={photoUrl} hs={hs} />
@@ -489,13 +511,13 @@ function DriverSpotlightCard({ entry, lanes, trend, rangeDays, effDays, periodLa
       </div>
 
       {/* ── Body: lanes | contribution + roadmap ── */}
-      <div className="flex-1 min-h-0 px-6 py-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div className={`${focused ? '' : 'flex-1 min-h-0'} px-6 py-4 grid grid-cols-1 sm:grid-cols-2 gap-4`}>
         {/* Lanes (real — v_load_leg_profit) */}
-        <div className="flex flex-col min-h-0">
+        <div className="flex flex-col">
           <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500 mb-1.5">
             Lanes this period {lanes ? <span className="font-mono">({lanes.length})</span> : null}
           </p>
-          <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5 pr-1">
+          <div className="space-y-1.5 pr-1">
             {!lanes ? (
               <>
                 <div className="h-11 rounded-lg bg-gray-50 dark:bg-white/[0.03] animate-pulse" />
@@ -513,7 +535,7 @@ function DriverSpotlightCard({ entry, lanes, trend, rangeDays, effDays, periodLa
         </div>
 
         {/* Trend + contribution + roadmap */}
-        <div className="flex flex-col min-h-0 gap-3 overflow-y-auto pr-1">
+        <div className={`flex flex-col gap-3 ${focused ? '' : 'min-h-0 overflow-y-auto'} pr-1`}>
           <TrendSparkline entry={entry} trend={trend} activeWeekFrom={activeWeekFrom} onWeekSelect={onWeekSelect} />
 
           {/* Contribution — real but PARTIAL: equipment & purchase only */}
