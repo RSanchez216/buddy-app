@@ -259,16 +259,16 @@ function CandidatesSection({ candidates, onRefresh }) {
                     <td className="px-3 py-2 text-center">{pair.same_trailer ? '✓' : '—'}</td>
                     <td className="px-3 py-2 text-right font-mono text-gray-900 dark:text-slate-200">${pair.combined_linehaul.toFixed(0)}</td>
                     <td className="px-3 py-2 text-right font-mono text-amber-600 dark:text-amber-400">{fmtRpm(pair.naive_rpm)}</td>
-                    <td className="px-3 py-2 flex gap-2">
+                    <td className="px-3 py-2 flex gap-1.5">
                       <button
                         onClick={() => handleCombine(pair)}
-                        className="text-xs font-medium text-orange-600 dark:text-orange-400 hover:underline"
+                        className="px-2.5 py-1 text-xs font-semibold bg-orange-500 hover:bg-orange-600 text-white rounded-lg transition-colors"
                       >
                         Combine
                       </button>
                       <button
                         onClick={() => handleDismissClick(pair)}
-                        className="text-xs font-medium text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300"
+                        className="px-2.5 py-1 text-xs font-medium border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-slate-300 rounded-lg hover:bg-gray-50 dark:hover:bg-white/5 transition-colors"
                       >
                         Not combined
                       </button>
@@ -595,7 +595,7 @@ function DismissedSection({ dismissed, onRefresh }) {
                 </div>
                 <button
                   onClick={() => handleRestore(d.id, d.load_a_number, d.load_b_number)}
-                  className="text-xs text-orange-600 dark:text-orange-400 hover:underline whitespace-nowrap ml-4"
+                  className="px-2.5 py-1 text-xs font-semibold bg-orange-500 hover:bg-orange-600 text-white rounded-lg transition-colors whitespace-nowrap ml-4"
                 >
                   Restore
                 </button>
@@ -671,7 +671,7 @@ function ExistingGroupsSection({ groups, onRefresh }) {
                     <p className="font-semibold text-gray-900 dark:text-white">{group.label}</p>
                     <p className="text-xs text-gray-500 dark:text-slate-500">{group.loads?.length || 0} loads · {fmtRpm(correctedRpm)}/mi</p>
                   </div>
-                  <button onClick={() => handleDelete(group.id)} className="text-xs text-red-600 dark:text-red-400 hover:underline">Delete</button>
+                  <button onClick={() => handleDelete(group.id)} className="px-2.5 py-1 text-xs font-semibold bg-red-500 hover:bg-red-600 text-white rounded-lg transition-colors">Delete</button>
                 </div>
                 {group.notes && <p className="text-xs text-gray-600 dark:text-slate-400 mb-2">{group.notes}</p>}
                 <div className="text-xs text-gray-600 dark:text-slate-400 space-y-1">
