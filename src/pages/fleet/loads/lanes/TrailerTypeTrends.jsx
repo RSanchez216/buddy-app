@@ -478,8 +478,12 @@ export default function TrailerTypeTrends() {
       // Temporarily move all text to light colors
       panelClone.classList.remove('dark')
       panelClone.querySelectorAll('[class*="dark:"]').forEach(el => {
+        // Skip SVG elements (className is SVGAnimatedString, not a string)
+        if (el.tagName === 'svg') return
         const classes = el.className
-        el.className = classes.replace(/dark:[^\s]*/g, '')
+        if (typeof classes === 'string') {
+          el.className = classes.replace(/dark:[^\s]*/g, '')
+        }
       })
 
       exportDiv.appendChild(panelClone)
