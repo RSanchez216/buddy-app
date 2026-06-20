@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
@@ -47,6 +47,7 @@ const formatPeriodLabel = (dateStr, granularity) => {
 }
 
 export default function TrailerTypeTrends() {
+  const panelRef = useRef(null)
   const [granularity, setGranularity] = useState('month')
   const [metric, setMetric] = useState('rpm')
   const [mode, setMode] = useState('trend')
@@ -460,14 +461,14 @@ export default function TrailerTypeTrends() {
   // Check if Compare mode is valid (needs at least 2 distinct periods)
   const canCompare = periods.length >= 2 && cmpA !== null && cmpB !== null && cmpA !== cmpB
 
-  // Convert SVG to PNG by serializing to data URL and drawing to canvas
-  // Export snapshot handler — verified working with exact approach from user
+  // Export snapshot handler — scoped to panel only
   const handleExport = async () => {
     try {
-      // 1) main chart svg = the largest recharts surface in the panel
-      const panelEl = document.querySelector('[class*="space-y-4"]')?.parentElement
-      if (!panelEl) throw new Error('Panel not found')
-      const svgEl = Array.from(panelEl.querySelectorAll('svg.recharts-surface, svg'))
+      // 1) Use panel ref (NOT document-level queries — those capture the US map + lane list)
+      const root = panelRef.current
+      if (!root) throw new Error('Panel not found')
+      // Chart = largest recharts-surface WITHIN the panel (bar chart; compare sparklines are tiny)
+      const svgEl = Array.from(root.querySelectorAll('svg.recharts-surface'))
         .sort((a, b) => b.getBoundingClientRect().width - a.getBoundingClientRect().width)[0]
       if (!svgEl) throw new Error('Chart SVG not found')
 
@@ -505,8 +506,8 @@ export default function TrailerTypeTrends() {
         img.src = svgUrl
       })
 
-      // 4) table straight from the rendered DOM (already reflects the selected mode/granularity/metric)
-      const table = panelEl.querySelector('table')
+      // 4) Table = the only table WITHIN the panel (trailer-type table, not lane rankings)
+      const table = root.querySelector('table')
       if (!table) throw new Error('Table not found')
       const norm = s => (s || '').replace(/\s+/g, ' ').trim()
       // Sanitize headers/cells: replace Δ with "Change", strip non-Latin glyphs
@@ -515,8 +516,8 @@ export default function TrailerTypeTrends() {
       const rows = Array.from(table.querySelectorAll('tbody tr'))
         .map(tr => Array.from(tr.querySelectorAll('td')).map(td => sanitize(td.textContent)))
 
-      // 5) Extract legend colors from recharts legend wrapper
-      const legendItems = Array.from(panelEl.querySelectorAll('.recharts-legend-item'))
+      // 5) Extract legend colors from recharts legend wrapper (WITHIN the panel)
+      const legendItems = Array.from(root.querySelectorAll('.recharts-legend-item'))
       const legend = legendItems.map(el => {
         const label = norm(el.textContent)
         const swatch = el.querySelector('.recharts-legend-item-text')
@@ -578,7 +579,7 @@ export default function TrailerTypeTrends() {
   }
 
   return (
-    <div className={`${S.card} p-6 space-y-4`}>
+    <div ref={panelRef} className={`${S.card} p-6 space-y-4`}>
       <div className="flex items-start justify-between">
         <div>
           <h2 className="text-lg font-bold text-gray-900 dark:text-white">Trailer Type Trends</h2>
