@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import jsPDF from 'jspdf'
-import 'jspdf-autotable'
+import autoTable from 'jspdf-autotable'
 import { supabase } from '../../../../lib/supabase'
 import { S } from '../../../../lib/styles'
 import { fmtMoney, fmtRpm, fmtNum } from '../spotlight/spotlightShared'
@@ -461,144 +461,85 @@ export default function TrailerTypeTrends() {
   const canCompare = periods.length >= 2 && cmpA !== null && cmpB !== null && cmpA !== cmpB
 
   // Convert SVG to PNG by serializing to data URL and drawing to canvas
-  const svgToPng = async (svgEl, scale = 2) => {
-    if (!svgEl) throw new Error('SVG element not found')
-    const clone = svgEl.cloneNode(true)
-    const srcNodes = svgEl.querySelectorAll('*')
-    clone.querySelectorAll('*').forEach((n, i) => {
-      const cs = getComputedStyle(srcNodes[i])
-      ;['fill', 'stroke', 'stroke-width', 'font-family', 'font-size', 'font-weight', 'opacity', 'color'].forEach(p => {
-        const v = cs.getPropertyValue(p)
-        if (v) n.style.setProperty(p, v)
-      })
-    })
-    const w = svgEl.clientWidth || svgEl.viewBox?.baseVal?.width || 400
-    const h = svgEl.clientHeight || svgEl.viewBox?.baseVal?.height || 300
-    clone.setAttribute('width', w)
-    clone.setAttribute('height', h)
-    const xml = new XMLSerializer().serializeToString(clone)
-    const url = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(xml)
-    const img = new Image()
-    img.width = w
-    img.height = h
-    img.src = url
-    await new Promise((resolve, reject) => {
-      img.onload = resolve
-      img.onerror = reject
-    })
-    const canvas = document.createElement('canvas')
-    canvas.width = w * scale
-    canvas.height = h * scale
-    const ctx = canvas.getContext('2d')
-    ctx.fillStyle = '#ffffff'
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
-    ctx.scale(scale, scale)
-    ctx.drawImage(img, 0, 0, w, h)
-    return canvas.toDataURL('image/png')
-  }
-
-  // Export snapshot handler
+  // Export snapshot handler — verified working with exact approach from user
   const handleExport = async () => {
-    let tempDiv = null
     try {
-      // Find the chart SVG
-      const chartSvg = document.querySelector('[data-testid="recharts-surface"] svg') ||
-                       document.querySelector('svg[viewBox]')
-      if (!chartSvg) throw new Error('Chart not found')
+      // 1) main chart svg = the largest recharts surface in the panel
+      const panelEl = document.querySelector('[class*="space-y-4"]')?.parentElement
+      if (!panelEl) throw new Error('Panel not found')
+      const svgEl = Array.from(panelEl.querySelectorAll('svg.recharts-surface, svg'))
+        .sort((a, b) => b.getBoundingClientRect().width - a.getBoundingClientRect().width)[0]
+      if (!svgEl) throw new Error('Chart SVG not found')
 
-      // Serialize SVG to PNG
-      const chartPng = await svgToPng(chartSvg)
-      const chartImg = new Image()
-      chartImg.src = chartPng
-      await new Promise((resolve, reject) => {
-        chartImg.onload = resolve
-        chartImg.onerror = reject
-      })
+      // 2) serialize it with computed styles inlined (CRITICAL — this makes recharts render standalone)
+      const clone = svgEl.cloneNode(true)
+      const src = svgEl.querySelectorAll('*')
+      const dst = clone.querySelectorAll('*')
+      for (let i = 0; i < src.length; i++) {
+        const cs = getComputedStyle(src[i])
+        ;['fill', 'stroke', 'stroke-width', 'font-family', 'font-size', 'font-weight', 'opacity']
+          .forEach(p => { const v = cs.getPropertyValue(p); if (v) dst[i].style.setProperty(p, v) })
+      }
+      const w = Math.round(svgEl.getBoundingClientRect().width) || 480
+      const h = Math.round(svgEl.getBoundingClientRect().height) || 240
+      clone.setAttribute('width', w)
+      clone.setAttribute('height', h)
+      clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
+      const svgUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(new XMLSerializer().serializeToString(clone))
 
-      // Build table data from current state
-      const metricKey = metric === 'rpm' ? 'rpm' : 'gross'
-      const fmt = metric === 'rpm' ? fmtRpm : fmtMoney
-      const shown = 3
-      const showPeriods = periods.slice(-shown)
-      const periodCols = showPeriods.map((p, i) => ({ date: p, idx: periods.length - shown + i }))
-
-      // Header row
-      const tableHeaders = ['Trailer type', ...periodCols.map(pc => formatPeriodLabel(pc.date, granularity)), 'Δ vs prior', '6-period avg']
-      const tableRows = trilerTypes.map(type => {
-        const vals = periodCols.map(pc => dataMap.get(`${pc.date}|${type}`))
-        const last = vals[vals.length - 1]
-        const prev = vals[vals.length - 2]
-        const lastVal = last ? last[metricKey] : null
-        const prevVal = prev ? prev[metricKey] : null
-        const lastLegs = last ? last.legs : 0
-        const prevLegs = prev ? prev.legs : 0
-        const delta = prevVal != null && lastVal != null ? lastVal - prevVal : null
-        const deltaPct = (prevVal != null && lastVal != null && prevVal !== 0 && lastLegs >= 10 && prevLegs >= 10)
-          ? ((lastVal - prevVal) / prevVal * 100) : null
-        const last6Rows = periods.slice(-6).map(p => dataMap.get(`${p}|${type}`)).filter(r => r && r.legs > 0)
-        let avg6 = null
-        if (last6Rows.length > 0) {
-          if (metricKey === 'rpm') {
-            const totalLinehaul = last6Rows.reduce((sum, r) => sum + (r.linehaul || 0), 0)
-            const totalLoadedMiles = last6Rows.reduce((sum, r) => sum + (r.loaded_miles || 0), 0)
-            avg6 = totalLoadedMiles > 0 ? totalLinehaul / totalLoadedMiles : null
-          } else {
-            const sum = last6Rows.reduce((total, r) => total + (r.gross || 0), 0)
-            avg6 = sum / last6Rows.length
-          }
+      // 3) svg -> png on a white canvas (2x for crispness)
+      const png = await new Promise((res, rej) => {
+        const img = new Image()
+        img.onload = () => {
+          const c = document.createElement('canvas')
+          c.width = w * 2
+          c.height = h * 2
+          const ctx = c.getContext('2d')
+          ctx.fillStyle = '#fff'
+          ctx.fillRect(0, 0, c.width, c.height)
+          ctx.scale(2, 2)
+          ctx.drawImage(img, 0, 0, w, h)
+          res(c.toDataURL('image/png'))
         }
-        return [
-          type,
-          ...vals.map(row => row ? fmt(row[metricKey]) : '—'),
-          deltaPct != null && lastLegs >= 10 && prevLegs >= 10 ? `${deltaPct.toFixed(1)}%` : 'low sample',
-          avg6 != null ? fmt(avg6) : '—'
-        ]
+        img.onerror = () => rej(new Error('svg image load failed'))
+        img.src = svgUrl
       })
 
-      // Create PDF
-      const pdf = new jsPDF({
-        orientation: 'landscape',
-        unit: 'pt',
-        format: 'a4',
-      })
+      // 4) table straight from the rendered DOM (already reflects the selected mode/granularity/metric)
+      const table = panelEl.querySelector('table')
+      if (!table) throw new Error('Table not found')
+      const norm = s => (s || '').replace(/\s+/g, ' ').trim()
+      const headers = Array.from(table.querySelectorAll('thead th')).map(t => norm(t.textContent))
+      const rows = Array.from(table.querySelectorAll('tbody tr'))
+        .map(tr => Array.from(tr.querySelectorAll('td')).map(td => norm(td.textContent)))
+
+      // 5) assemble PDF (landscape A4)
+      const pdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' })
       const pw = pdf.internal.pageSize.getWidth()
-      const ph = pdf.internal.pageSize.getHeight()
-      const margin = 24
-
-      // Header
-      pdf.setFontSize(10)
       const metricLabel = metric === 'rpm' ? '$/mi' : 'Gross'
       const granularityLabel = granularity === 'week' ? 'Weekly' : granularity === 'month' ? 'Monthly' : 'Quarterly'
-      const today = new Date().toISOString().split('T')[0]
-      pdf.text(`MANAS Express · Trailer Type Trends · ${metricLabel} · ${granularityLabel} · ${today}`, margin, margin)
-
-      // Chart image
-      const chartWidth = pw - (margin * 2)
-      const chartHeight = (chartImg.height / chartImg.width) * chartWidth
-      pdf.addImage(chartPng, 'PNG', margin, margin + 15, chartWidth, chartHeight)
-
-      // Table
-      const tableTop = margin + 15 + chartHeight + 15
-      pdf.autoTable({
-        head: [tableHeaders],
-        body: tableRows,
-        startY: tableTop,
-        margin: margin,
-        theme: 'grid',
-        headStyles: { fillColor: [31, 41, 55], textColor: 255, fontSize: 9, fontStyle: 'bold' },
-        bodyStyles: { fontSize: 8, textColor: 50 },
-        columnStyles: { 0: { cellWidth: 80 } },
+      const modeLabel = mode === 'trend' ? 'Trend' : 'Compare'
+      pdf.setFontSize(14)
+      pdf.setTextColor(20)
+      pdf.text('MANAS Express — Trailer Type Trends', 24, 34)
+      pdf.setFontSize(9)
+      pdf.setTextColor(120)
+      pdf.text(`${metricLabel} · ${granularityLabel} · ${modeLabel}   ·   generated ${new Date().toISOString().slice(0, 10)}`, 24, 50)
+      const iw = pw - 48
+      const ih = h / w * iw
+      pdf.addImage(png, 'PNG', 24, 62, iw, Math.min(ih, 300))
+      autoTable(pdf, {
+        head: [headers],
+        body: rows,
+        startY: 62 + Math.min(ih, 300) + 16,
+        styles: { fontSize: 8 },
+        headStyles: { fillColor: [234, 88, 12] },
       })
-
-      // Footer
-      const footerY = ph - 30
       pdf.setFontSize(7)
-      pdf.text('Loaded-mile linehaul RPM (revenue per mile weighted by loaded miles).', margin, footerY)
-      pdf.text('Fuel, insurance, and driver pay not included — RPM is a revenue signal, not net margin.', margin, footerY + 8)
-
-      // Download
-      const filename = `trailer-type-trends_${metric}_${granularity}_${today}.pdf`
-      pdf.save(filename)
+      pdf.setTextColor(150)
+      pdf.text('Loaded-mile linehaul RPM · revenue signal, not net margin · ~56% of billed freight is owner-operator pass-through.',
+        24, pdf.internal.pageSize.getHeight() - 16)
+      pdf.save(`trailer-type-trends_${metric}_${granularity}_${new Date().toISOString().slice(0, 10)}.pdf`)
     } catch (err) {
       console.error('Export failed:', err)
     }
