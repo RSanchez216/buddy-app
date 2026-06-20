@@ -461,118 +461,60 @@ export default function TrailerTypeTrends() {
   // Check if Compare mode is valid (needs at least 2 distinct periods)
   const canCompare = periods.length >= 2 && cmpA !== null && cmpB !== null && cmpA !== cmpB
 
-  // Export snapshot handler — scoped to panel only
+  // Export snapshot handler — verified working, exact function from live test
   const handleExport = async () => {
+    const root = panelRef.current
+    if (!root) return
+    const metricLabel = metric === 'rpm' ? '$/mi' : 'Gross'
+    const granularityLabel = granularity === 'week' ? 'Weekly' : granularity === 'month' ? 'Monthly' : 'Quarterly'
+    const modeLabel = mode === 'trend' ? 'Trend' : 'Compare'
     try {
-      // 1) Use panel ref (NOT document-level queries — those capture the US map + lane list)
-      const root = panelRef.current
-      if (!root) throw new Error('Panel not found')
-      // Chart = largest recharts-surface WITHIN the panel (bar chart; compare sparklines are tiny)
+      const norm = s => (s || '').replace(/\s+/g, ' ').trim()
+      const toRGB = c => {
+        if (!c) return [136, 136, 136]
+        if (c[0] === '#') { const h = c.slice(1); const n = h.length === 3 ? h.split('').map(x => x + x).join('') : h
+          return [0, 2, 4].map(i => parseInt(n.substr(i, 2), 16)) }
+        const m = c.match(/\d+(\.\d+)?/g); return m ? m.slice(0, 3).map(Number) : [136, 136, 136]
+      }
       const svgEl = Array.from(root.querySelectorAll('svg.recharts-surface'))
         .sort((a, b) => b.getBoundingClientRect().width - a.getBoundingClientRect().width)[0]
-      if (!svgEl) throw new Error('Chart SVG not found')
-
-      // 2) serialize it with computed styles inlined (CRITICAL — this makes recharts render standalone)
       const clone = svgEl.cloneNode(true)
-      const src = svgEl.querySelectorAll('*')
-      const dst = clone.querySelectorAll('*')
-      for (let i = 0; i < src.length; i++) {
-        const cs = getComputedStyle(src[i])
+      const src = svgEl.querySelectorAll('*'), dst = clone.querySelectorAll('*')
+      for (let i = 0; i < src.length; i++) { const cs = getComputedStyle(src[i])
         ;['fill', 'stroke', 'stroke-width', 'font-family', 'font-size', 'font-weight', 'opacity']
-          .forEach(p => { const v = cs.getPropertyValue(p); if (v) dst[i].style.setProperty(p, v) })
-      }
-      const w = Math.round(svgEl.getBoundingClientRect().width) || 480
-      const h = Math.round(svgEl.getBoundingClientRect().height) || 240
-      clone.setAttribute('width', w)
-      clone.setAttribute('height', h)
-      clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
+          .forEach(p => { const v = cs.getPropertyValue(p); if (v) dst[i].style.setProperty(p, v) }) }
+      const w = Math.round(svgEl.getBoundingClientRect().width)
+      const h = Math.round(svgEl.getBoundingClientRect().height)
+      clone.setAttribute('width', w); clone.setAttribute('height', h); clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
       const svgUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(new XMLSerializer().serializeToString(clone))
-
-      // 3) svg -> png on a white canvas (2x for crispness)
-      const png = await new Promise((res, rej) => {
-        const img = new Image()
-        img.onload = () => {
-          const c = document.createElement('canvas')
-          c.width = w * 2
-          c.height = h * 2
-          const ctx = c.getContext('2d')
-          ctx.fillStyle = '#fff'
-          ctx.fillRect(0, 0, c.width, c.height)
-          ctx.scale(2, 2)
-          ctx.drawImage(img, 0, 0, w, h)
-          res(c.toDataURL('image/png'))
-        }
-        img.onerror = () => rej(new Error('svg image load failed'))
-        img.src = svgUrl
+      const png = await new Promise((res, rej) => { const im = new Image()
+        im.onload = () => { const c = document.createElement('canvas'); c.width = w * 2; c.height = h * 2; const x = c.getContext('2d')
+          x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height); x.scale(2, 2); x.drawImage(im, 0, 0, w, h); res(c.toDataURL('image/png')) }
+        im.onerror = () => rej(new Error('svg load fail')); im.src = svgUrl })
+      const legend = Array.from(root.querySelectorAll('.recharts-legend-item')).map(li => {
+        const sw = li.querySelector('svg path, svg rect, svg line, .recharts-legend-icon')
+        return { label: norm(li.textContent), rgb: toRGB(sw ? (getComputedStyle(sw).fill || sw.getAttribute('fill')) : null) }
       })
-
-      // 4) Table = the only table WITHIN the panel (trailer-type table, not lane rankings)
+      const san = s => norm(s).replace(/Δ/g, 'Change').replace(/[^\x00-\x7F]/g, m => m === '—' ? '-' : m)
       const table = root.querySelector('table')
-      if (!table) throw new Error('Table not found')
-      const norm = s => (s || '').replace(/\s+/g, ' ').trim()
-      // Sanitize headers/cells: replace Δ with "Change", strip non-Latin glyphs
-      const sanitize = s => norm(s).replace(/Δ/g, 'Change').replace(/[↓↑←→⚠️]/g, '')
-      const headers = Array.from(table.querySelectorAll('thead th')).map(t => sanitize(t.textContent))
+      const headers = Array.from(table.querySelectorAll('thead th')).map(t => san(t.textContent))
       const rows = Array.from(table.querySelectorAll('tbody tr'))
-        .map(tr => Array.from(tr.querySelectorAll('td')).map(td => sanitize(td.textContent)))
-
-      // 5) Extract legend colors from recharts legend wrapper (WITHIN the panel)
-      const legendItems = Array.from(root.querySelectorAll('.recharts-legend-item'))
-      const legend = legendItems.map(el => {
-        const label = norm(el.textContent)
-        const swatch = el.querySelector('.recharts-legend-item-text')
-        const fill = window.getComputedStyle(el.querySelector('svg'))?.fill || '#666'
-        return { label, fill }
-      })
-
-      // 6) assemble PDF (landscape A4)
+        .map(tr => Array.from(tr.querySelectorAll('td')).map(td => san(td.textContent)))
       const pdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' })
       const pw = pdf.internal.pageSize.getWidth()
-      const metricLabel = metric === 'rpm' ? '$/mi' : 'Gross'
-      const granularityLabel = granularity === 'week' ? 'Weekly' : granularity === 'month' ? 'Monthly' : 'Quarterly'
-      const modeLabel = mode === 'trend' ? 'Trend' : 'Compare'
-      pdf.setFontSize(14)
-      pdf.setTextColor(20)
-      pdf.text('Trailer Type Activity Trends', 24, 34)
-      pdf.setFontSize(9)
-      pdf.setTextColor(120)
-      pdf.text(`${modeLabel} · ${granularityLabel} · ${metricLabel} · generated ${new Date().toISOString().slice(0, 10)}`, 24, 50)
-      const iw = pw - 48
-      const ih = h / w * iw
-      const chartBottom = 62 + Math.min(ih, 300)
-      pdf.addImage(png, 'PNG', 24, 62, iw, Math.min(ih, 300))
-
-      // Draw legend under chart
-      let legendX = 24
-      const legendY = chartBottom + 8
-      pdf.setFontSize(7)
-      pdf.setTextColor(40)
-      legend.forEach(item => {
-        const hexColor = item.fill.match(/^#/) ? item.fill : '#666'
-        const [r, g, b] = [hexColor.slice(1, 3), hexColor.slice(3, 5), hexColor.slice(5, 7)]
-          .map(x => parseInt(x, 16))
-        pdf.setFillColor(r, g, b)
-        pdf.rect(legendX, legendY, 8, 8, 'F')
-        pdf.text(item.label, legendX + 12, legendY + 6)
-        legendX += 120
-        if (legendX > pw - 100) {
-          legendX = 24
-        }
-      })
-
-      const tableStartY = chartBottom + 25
-      autoTable(pdf, {
-        head: [headers],
-        body: rows,
-        startY: tableStartY,
-        styles: { fontSize: 8 },
-        headStyles: { fillColor: [234, 88, 12] },
-      })
-      pdf.setFontSize(7)
-      pdf.setTextColor(150)
+      pdf.setFontSize(15); pdf.setTextColor(20); pdf.text('Trailer Type Activity Trends', 24, 34)
+      pdf.setFontSize(9); pdf.setTextColor(120)
+      pdf.text(`${modeLabel} · ${granularityLabel} · ${metricLabel}   ·   generated ${new Date().toISOString().slice(0, 10)}`, 24, 50)
+      const iw = pw - 48, ih = Math.min(h / w * iw, 300)
+      pdf.addImage(png, 'PNG', 24, 60, iw, ih)
+      let lx = 24, ly = 60 + ih + 16; pdf.setFontSize(9)
+      legend.forEach(l => { pdf.setFillColor(l.rgb[0], l.rgb[1], l.rgb[2]); pdf.rect(lx, ly - 7, 9, 9, 'F')
+        pdf.setTextColor(40); pdf.text(l.label, lx + 13, ly); lx += pdf.getTextWidth(l.label) + 34 })
+      autoTable(pdf, { head: [headers], body: rows, startY: ly + 12, styles: { fontSize: 8 }, headStyles: { fillColor: [234, 88, 12] } })
+      pdf.setFontSize(7); pdf.setTextColor(150)
       pdf.text('Loaded-mile linehaul RPM · revenue signal, not net margin · ~56% of billed freight is owner-operator pass-through.',
         24, pdf.internal.pageSize.getHeight() - 16)
-      pdf.save(`trailer-type-trends_${metric}_${granularity}_${new Date().toISOString().slice(0, 10)}.pdf`)
+      pdf.save(`trailer-type-activity-trends_${metric}_${granularity}_${new Date().toISOString().slice(0, 10)}.pdf`)
     } catch (err) {
       console.error('Export failed:', err)
     }
