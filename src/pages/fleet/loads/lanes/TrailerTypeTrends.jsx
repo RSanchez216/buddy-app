@@ -509,11 +509,22 @@ export default function TrailerTypeTrends() {
       const table = panelEl.querySelector('table')
       if (!table) throw new Error('Table not found')
       const norm = s => (s || '').replace(/\s+/g, ' ').trim()
-      const headers = Array.from(table.querySelectorAll('thead th')).map(t => norm(t.textContent))
+      // Sanitize headers/cells: replace Δ with "Change", strip non-Latin glyphs
+      const sanitize = s => norm(s).replace(/Δ/g, 'Change').replace(/[↓↑←→⚠️]/g, '')
+      const headers = Array.from(table.querySelectorAll('thead th')).map(t => sanitize(t.textContent))
       const rows = Array.from(table.querySelectorAll('tbody tr'))
-        .map(tr => Array.from(tr.querySelectorAll('td')).map(td => norm(td.textContent)))
+        .map(tr => Array.from(tr.querySelectorAll('td')).map(td => sanitize(td.textContent)))
 
-      // 5) assemble PDF (landscape A4)
+      // 5) Extract legend colors from recharts legend wrapper
+      const legendItems = Array.from(panelEl.querySelectorAll('.recharts-legend-item'))
+      const legend = legendItems.map(el => {
+        const label = norm(el.textContent)
+        const swatch = el.querySelector('.recharts-legend-item-text')
+        const fill = window.getComputedStyle(el.querySelector('svg'))?.fill || '#666'
+        return { label, fill }
+      })
+
+      // 6) assemble PDF (landscape A4)
       const pdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' })
       const pw = pdf.internal.pageSize.getWidth()
       const metricLabel = metric === 'rpm' ? '$/mi' : 'Gross'
@@ -521,17 +532,38 @@ export default function TrailerTypeTrends() {
       const modeLabel = mode === 'trend' ? 'Trend' : 'Compare'
       pdf.setFontSize(14)
       pdf.setTextColor(20)
-      pdf.text('MANAS Express — Trailer Type Trends', 24, 34)
+      pdf.text('Trailer Type Activity Trends', 24, 34)
       pdf.setFontSize(9)
       pdf.setTextColor(120)
-      pdf.text(`${metricLabel} · ${granularityLabel} · ${modeLabel}   ·   generated ${new Date().toISOString().slice(0, 10)}`, 24, 50)
+      pdf.text(`${modeLabel} · ${granularityLabel} · ${metricLabel} · generated ${new Date().toISOString().slice(0, 10)}`, 24, 50)
       const iw = pw - 48
       const ih = h / w * iw
+      const chartBottom = 62 + Math.min(ih, 300)
       pdf.addImage(png, 'PNG', 24, 62, iw, Math.min(ih, 300))
+
+      // Draw legend under chart
+      let legendX = 24
+      const legendY = chartBottom + 8
+      pdf.setFontSize(7)
+      pdf.setTextColor(40)
+      legend.forEach(item => {
+        const hexColor = item.fill.match(/^#/) ? item.fill : '#666'
+        const [r, g, b] = [hexColor.slice(1, 3), hexColor.slice(3, 5), hexColor.slice(5, 7)]
+          .map(x => parseInt(x, 16))
+        pdf.setFillColor(r, g, b)
+        pdf.rect(legendX, legendY, 8, 8, 'F')
+        pdf.text(item.label, legendX + 12, legendY + 6)
+        legendX += 120
+        if (legendX > pw - 100) {
+          legendX = 24
+        }
+      })
+
+      const tableStartY = chartBottom + 25
       autoTable(pdf, {
         head: [headers],
         body: rows,
-        startY: 62 + Math.min(ih, 300) + 16,
+        startY: tableStartY,
         styles: { fontSize: 8 },
         headStyles: { fillColor: [234, 88, 12] },
       })
