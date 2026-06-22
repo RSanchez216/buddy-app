@@ -891,6 +891,7 @@ function UnmappedCitiesSection({ cities }) {
                 <th className={`${S.th} !px-4`}>City</th>
                 <th className={`${S.th} !px-3`}>Role</th>
                 <th className={`${S.th} !px-3 text-right`}>Occurrences</th>
+                <th className={`${S.th} !px-3`}>Loads</th>
               </tr>
             </thead>
             <tbody>
@@ -899,6 +900,9 @@ function UnmappedCitiesSection({ cities }) {
                   <td className="px-4 py-2 text-gray-900 dark:text-slate-200">{city.place}</td>
                   <td className="px-3 py-2 text-gray-600 dark:text-slate-400">{city.role}</td>
                   <td className="px-3 py-2 text-right text-gray-600 dark:text-slate-400">{city.occurrences}</td>
+                  <td className="px-3 py-2 text-gray-600 dark:text-slate-400 font-mono">
+                    {(city.load_numbers || []).join(', ') || '—'}
+                  </td>
                 </tr>
               ))}
             </tbody>
