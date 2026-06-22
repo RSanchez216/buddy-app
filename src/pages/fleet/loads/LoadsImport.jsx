@@ -4,6 +4,7 @@ import { useAuth } from '../../../contexts/AuthContext'
 import { useToast } from '../../../contexts/ToastContext'
 import { S } from '../../../lib/styles'
 import ComboBox from '../../../components/ComboBox'
+import CopyButton from '../../../components/CopyButton'
 import { parseLoadsWorkbook } from './loadsParse'
 import { buildPlan } from './loadsPlan'
 import { stageBatch, loadPendingBatch, applyBatch, discardBatch, loadRecentBatches, linkKey } from './loadsApply'
@@ -110,8 +111,36 @@ export default function LoadsImport() {
   const [routineExpanded, setRoutineExpanded] = useState(false)
   // Fleet pick-lists for linking unmatched entities.
   const [fleet, setFleet] = useState({ drivers: [], trucks: [], trailers: [] })
+  // Map of driver ID to internal_id for display in needs-review table
+  const [internalById, setInternalById] = useState(new Map())
 
   useEffect(() => { init() }, [])
+
+  // Fetch driver internal IDs for needs-review loads
+  useEffect(() => {
+    async function fetchDriverInternalIds() {
+      const ids = [...new Set(needsReviewLoads
+        .flatMap(p => p.legs || [])
+        .map(l => l.resolved?.driver?.id)
+        .filter(Boolean))]
+
+      if (!ids.length) {
+        setInternalById(new Map())
+        return
+      }
+
+      const { data, error } = await supabase
+        .from('drivers')
+        .select('id, internal_id')
+        .in('id', ids)
+
+      if (!error && data) {
+        setInternalById(new Map(data.map(d => [d.id, d.internal_id])))
+      }
+    }
+
+    fetchDriverInternalIds()
+  }, [needsReviewLoads])
 
   async function init() {
     setLoading(true)
@@ -427,7 +456,21 @@ export default function LoadsImport() {
                       <tr key={p.load_number} className={S.tableRow}>
                         <td className={`${S.td} font-mono`}>{p.load_number}</td>
                         <td className={S.td}>{p.resolved.customer?.name || '—'}</td>
-                        <td className={S.td}>{p.legs.map(l => l.parsed.driver_raw).filter(Boolean).join(', ') || '—'}</td>
+                        <td className={S.td}>
+                          {p.legs.map((l, i) => {
+                            const name = l.resolved?.driver?.raw || l.parsed.driver_raw
+                            const driverId = l.resolved?.driver?.id
+                            const internalId = driverId ? internalById.get(driverId) : null
+                            return (
+                              <div key={i} className="flex items-center gap-1 mb-1 last:mb-0">
+                                <span>{name || '—'}</span>
+                                {name && <CopyButton value={name} label="Copy driver name" />}
+                                {internalId && <span className="text-xs text-gray-500 dark:text-slate-400">· {internalId}</span>}
+                              </div>
+                            )
+                          })}
+                          {!p.legs.length && '—'}
+                        </td>
                         <td className={S.td}>
                           {(p.header.review_reasons || []).map(rsn => (
                             <span key={rsn} className="inline-block mr-1 text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/20">{rsn}</span>
