@@ -5,6 +5,7 @@ import { ThemeProvider } from './contexts/ThemeContext'
 import { ToastProvider } from './contexts/ToastContext'
 import ProtectedRoute from './components/ProtectedRoute'
 import RequirePageAccess from './components/RequirePageAccess'
+import ErrorBoundary from './components/ErrorBoundary'
 import Layout from './components/Layout'
 import Login from './pages/Login'
 import NoAccess from './pages/NoAccess'
@@ -117,7 +118,7 @@ export default function App() {
               <Route path="fleet/drivers" element={<RequirePageAccess pageKey="fleet/drivers"><DriversList /></RequirePageAccess>} />
               <Route path="fleet/drivers/:id" element={<RequirePageAccess pageKey="fleet/drivers"><DriverDetail /></RequirePageAccess>} />
               <Route path="fleet/cost" element={<RequirePageAccess pageKey="fleet/cost"><FleetCost /></RequirePageAccess>} />
-              <Route path="fleet/loads/import" element={<RequirePageAccess pageKey="fleet/loads/import"><LoadsImport /></RequirePageAccess>} />
+              <Route path="fleet/loads/import" element={<RequirePageAccess pageKey="fleet/loads/import"><ErrorBoundary label="Loads Import"><LoadsImport /></ErrorBoundary></RequirePageAccess>} />
               <Route path="fleet/settlements/import" element={<RequirePageAccess pageKey="fleet/settlements/import"><SettlementsImport /></RequirePageAccess>} />
               <Route path="fleet/fuel-prices" element={<RequirePageAccess pageKey="fleet/fuel-prices"><FuelPrices /></RequirePageAccess>} />
               <Route path="fleet/profitability" element={<RequirePageAccess pageKey="fleet/profitability"><Profitability /></RequirePageAccess>} />

@@ -116,32 +116,6 @@ export default function LoadsImport() {
 
   useEffect(() => { init() }, [])
 
-  // Fetch driver internal IDs for needs-review loads
-  useEffect(() => {
-    async function fetchDriverInternalIds() {
-      const ids = [...new Set(needsReviewLoads
-        .flatMap(p => p.legs || [])
-        .map(l => l.resolved?.driver?.id)
-        .filter(Boolean))]
-
-      if (!ids.length) {
-        setInternalById(new Map())
-        return
-      }
-
-      const { data, error } = await supabase
-        .from('drivers')
-        .select('id, internal_id')
-        .in('id', ids)
-
-      if (!error && data) {
-        setInternalById(new Map(data.map(d => [d.id, d.internal_id])))
-      }
-    }
-
-    fetchDriverInternalIds()
-  }, [needsReviewLoads])
-
   async function init() {
     setLoading(true)
     const [{ batch: b, plan: p, counts: c }, dRes, tkRes, trRes, rec] = await Promise.all([
@@ -232,6 +206,37 @@ export default function LoadsImport() {
   const newLoads = useMemo(() => plan.filter(p => p.classification === 'new'), [plan])
   // Advisory "needs review" loads (e.g. missing trailer, customer not exempt).
   const needsReviewLoads = useMemo(() => plan.filter(p => p.header?.needs_review), [plan])
+
+  // Fetch driver internal IDs for the needs-review table — one query per
+  // batch load, keyed off the matched driver UUIDs on those rows. Declared
+  // after needsReviewLoads so its dependency reference isn't a TDZ access.
+  useEffect(() => {
+    let cancelled = false
+    async function fetchDriverInternalIds() {
+      const ids = [...new Set(needsReviewLoads
+        .flatMap(p => p.legs || [])
+        .map(l => l.resolved?.driver?.id)
+        .filter(Boolean))]
+
+      if (!ids.length) {
+        setInternalById(new Map())
+        return
+      }
+
+      const { data, error } = await supabase
+        .from('drivers')
+        .select('id, internal_id')
+        .in('id', ids)
+
+      if (!cancelled && !error && data) {
+        setInternalById(new Map(data.map(d => [d.id, d.internal_id])))
+      }
+    }
+
+    fetchDriverInternalIds()
+    return () => { cancelled = true }
+  }, [needsReviewLoads])
+
   const unchangedCount = useMemo(() => plan.filter(p => p.classification === 'unchanged').length, [plan])
   // Canceled/TONU split: genuine flips (status changed on an existing load)
   // vs. brand-new loads that simply arrive Canceled/TONU. Banner copy keys
