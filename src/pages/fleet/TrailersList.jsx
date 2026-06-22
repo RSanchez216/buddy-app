@@ -6,6 +6,7 @@ import { S } from '../../lib/styles'
 import { StagePill, OWNERSHIP_STAGES, trailerTypePillClasses, inspectionTone, fmtDate, OperationalStatusPill } from './fleetUtils'
 import Select from '../../components/Select'
 import CopyButton from '../../components/CopyButton'
+import AssignmentImportLog from '../../components/AssignmentImportLog'
 import TruckTrailerFormModal from './TruckTrailerFormModal'
 import FleetUploadModal from './upload/FleetUploadModal'
 import EquipmentAssignmentsUploadModal from './upload/EquipmentAssignmentsUploadModal'
@@ -138,6 +139,8 @@ export default function TrailersList() {
           </div>
         )}
       </div>
+
+      <AssignmentImportLog />
 
       <div className="flex items-center flex-wrap gap-2">
         {STAGE_PILLS.map(p => {

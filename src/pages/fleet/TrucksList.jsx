@@ -6,6 +6,7 @@ import { S } from '../../lib/styles'
 import { StagePill, OWNERSHIP_STAGES, OperationalStatusPill } from './fleetUtils'
 import Select from '../../components/Select'
 import CopyButton from '../../components/CopyButton'
+import AssignmentImportLog from '../../components/AssignmentImportLog'
 import TruckTrailerFormModal from './TruckTrailerFormModal'
 import FleetUploadModal from './upload/FleetUploadModal'
 import EquipmentAssignmentsUploadModal from './upload/EquipmentAssignmentsUploadModal'
@@ -149,6 +150,8 @@ export default function TrucksList() {
           </div>
         )}
       </div>
+
+      <AssignmentImportLog />
 
       {/* Stage filter pills */}
       <div className="flex items-center flex-wrap gap-2">
