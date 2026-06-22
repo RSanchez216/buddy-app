@@ -148,7 +148,7 @@ export default function LoadsImport() {
       // Reference + existing-load data for resolve/diff.
       const loadNumbers = [...new Set(rows.map(r => r.load_number))]
       const [drv, trk, trl, car, cus, dis, exLoads] = await Promise.all([
-        supabase.from('drivers').select('id, full_name'),
+        supabase.from('drivers').select('id, full_name, internal_id'),
         supabase.from('trucks').select('id, unit_number'),
         supabase.from('trailers').select('id, unit_number'),
         supabase.from('carriers').select('id, name'),
@@ -160,7 +160,7 @@ export default function LoadsImport() {
       let existingLegs = []
       if (existingLoads.length) {
         const { data: legs } = await supabase.from('load_legs')
-          .select('id, load_id, driver_raw, truck_raw, trailer_raw, total_miles')
+          .select('id, load_id, leg_seq, driver_raw, truck_raw, trailer_raw, total_miles')
           .in('load_id', existingLoads.map(l => l.id))
         existingLegs = legs || []
       }

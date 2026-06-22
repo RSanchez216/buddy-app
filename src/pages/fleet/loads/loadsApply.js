@@ -239,22 +239,43 @@ export async function applyBatch({ batchId, decisions, linkOverrides, onProgress
   }
 
   // ── Phase 4: legs ── re-derive current legs so a retry updates rather than
-  // duplicates. driver/truck/trailer ids here are AUTO matches only; the
-  // user-confirmed overrides are applied in Phase 5.
+  // duplicates. Legs are matched to the file by POSITION (load_id + leg_seq),
+  // NOT by driver name: a re-dispatch changes the driver, and a name key
+  // would miss the existing leg and insert a duplicate, leaving the stale
+  // leg (old driver/trailer) behind — the cross-contamination bug. Position
+  // makes the update deterministic and refreshes driver/trailer in place.
+  // driver/truck/trailer ids here are AUTO matches only; user-confirmed
+  // overrides are applied in Phase 5.
   const loadIds = [...new Set(loadIdByNumber.values())]
-  const legIdByKey = new Map()  // `${load_id}|${normName(driver_raw)}` -> leg_id
+  // Existing legs grouped per load, sorted deterministically by (leg_seq, id).
+  // We pair file legs to existing legs by ARRAY POSITION over this sorted
+  // list — robust even if a prior buggy run left two legs sharing a leg_seq
+  // (the extra one falls past the file's leg count and is deleted below).
+  const existingLegsByLoadId = new Map()    // load_id -> [{ id, leg_seq }] sorted
   for (const c of chunked(loadIds, 200)) {
-    const { data, error } = await supabase.from('load_legs').select('id, load_id, driver_raw').in('load_id', c)
+    const { data, error } = await supabase.from('load_legs').select('id, load_id, leg_seq').in('load_id', c)
     if (error) return { error, done, total }
-    for (const lg of (data || [])) legIdByKey.set(`${lg.load_id}|${normName(lg.driver_raw)}`, lg.id)
+    for (const lg of (data || [])) {
+      if (!existingLegsByLoadId.has(lg.load_id)) existingLegsByLoadId.set(lg.load_id, [])
+      existingLegsByLoadId.get(lg.load_id).push({ id: lg.id, leg_seq: lg.leg_seq })
+    }
   }
-  const legInserts = [], legUpdates = []
+  for (const arr of existingLegsByLoadId.values()) {
+    arr.sort((a, b) => (a.leg_seq ?? 0) - (b.leg_seq ?? 0) || String(a.id).localeCompare(String(b.id)))
+  }
+  // legIdByPos: `${load_id}|${position}` -> leg_id (position is 1-based, the
+  // normalized leg_seq we write). Phase 5 addresses legs through this map.
+  const legIdByPos = new Map()
+  const legInserts = [], legUpdates = [], legDeletes = []
   for (const p of appliedPlan) {
     const loadId = loadIdByNumber.get(p.load_number)
     if (!loadId) continue
-    for (const leg of p.legs) {
+    const existing = existingLegsByLoadId.get(loadId) || []
+    p.legs.forEach((leg, idx) => {
       const lp = leg.parsed
+      const seq = idx + 1
       const fields = {
+        leg_seq: seq,
         driver_raw: lp.driver_raw, truck_raw: lp.truck_raw ?? null, trailer_raw: lp.trailer_raw ?? null,
         driver_id: leg.resolved?.driver?.id ?? null,
         truck_id: leg.resolved?.truck?.id ?? null,
@@ -262,15 +283,19 @@ export async function applyBatch({ batchId, decisions, linkOverrides, onProgress
         empty_miles: lp.empty_miles ?? null, loaded_miles: lp.loaded_miles ?? null, total_miles: lp.total_miles ?? null,
         last_imported_at: now(),
       }
-      const existId = legIdByKey.get(`${loadId}|${normName(lp.driver_raw)}`)
-      if (existId) legUpdates.push({ id: existId, fields })
-      else legInserts.push({ load_id: loadId, leg_seq: leg.leg_seq, ...fields })
-    }
+      const match = existing[idx]
+      if (match) { legUpdates.push({ id: match.id, fields }); legIdByPos.set(`${loadId}|${seq}`, match.id) }
+      else legInserts.push({ load_id: loadId, ...fields })
+    })
+    // Delete surplus existing legs beyond the file's leg count — leftover
+    // stale legs (incl. duplicates from the old name-keyed double-insert bug)
+    // so a full re-import converges each load to exactly the file's legs.
+    for (let i = p.legs.length; i < existing.length; i++) legDeletes.push(existing[i].id)
   }
   for (const c of chunked(legInserts)) {
-    const { data, error } = await supabase.from('load_legs').insert(c).select('id, load_id, driver_raw')
+    const { data, error } = await supabase.from('load_legs').insert(c).select('id, load_id, leg_seq')
     if (error) return { error, done, total }
-    for (const lg of (data || [])) legIdByKey.set(`${lg.load_id}|${normName(lg.driver_raw)}`, lg.id)
+    for (const lg of (data || [])) legIdByPos.set(`${lg.load_id}|${lg.leg_seq}`, lg.id)
     done += c.length; report('Linking legs')
   }
   // Updates carry distinct payloads → applied individually (low volume: a
@@ -280,22 +305,28 @@ export async function applyBatch({ batchId, decisions, linkOverrides, onProgress
     if (error) return { error, done, total }
     done += 1; report('Linking legs')
   }
+  for (const c of chunked(legDeletes)) {
+    const { error } = await supabase.from('load_legs').delete().in('id', c)
+    if (error) return { error, done, total }
+    report('Linking legs')
+  }
 
   // ── Phase 5: entity links ── set driver/truck/trailer_id on the legs whose
   // entity the user linked on the review screen. Grouped per link → one
-  // update covering all its legs.
+  // update covering all its legs. Legs are addressed by position (leg_seq),
+  // consistent with Phase 4.
   for (const [key, overrideId] of (linkOverrides || new Map())) {
     const type = key.slice(0, key.indexOf(':'))
     const legIds = []
     for (const p of appliedPlan) {
       const loadId = loadIdByNumber.get(p.load_number)
       if (!loadId) continue
-      for (const leg of p.legs) {
+      p.legs.forEach((leg, idx) => {
         const r = leg.resolved?.[type]
-        if (!r || r.match_status !== 'unmatched' || linkKey(type, r.raw) !== key) continue
-        const id = legIdByKey.get(`${loadId}|${normName(leg.parsed.driver_raw)}`)
+        if (!r || r.match_status !== 'unmatched' || linkKey(type, r.raw) !== key) return
+        const id = legIdByPos.get(`${loadId}|${idx + 1}`)
         if (id) legIds.push(id)
-      }
+      })
     }
     if (legIds.length) {
       const { error } = await supabase.from('load_legs').update({ [`${type}_id`]: overrideId }).in('id', legIds)
@@ -306,6 +337,7 @@ export async function applyBatch({ batchId, decisions, linkOverrides, onProgress
 
   const appliedLoads = appliedPlan.length
   const appliedLegs = legInserts.length + legUpdates.length
+  const removedLegs = legDeletes.length
   // Merge the apply outcome into the existing counts jsonb (no migration) so
   // Recent imports can show what actually landed; failed = 0 on a clean run
   // (the apply aborts + retries on error rather than partially failing).
@@ -314,7 +346,7 @@ export async function applyBatch({ batchId, decisions, linkOverrides, onProgress
       status: 'applied', applied_at: now(),
       counts: {
         ...baseCounts,
-        applied_loads: appliedLoads, applied_legs: appliedLegs,
+        applied_loads: appliedLoads, applied_legs: appliedLegs, removed_legs: removedLegs,
         applied_customers: custNames.length, applied_dispatchers: dispNames.length,
         links_applied: linkCount, failed: 0,
       },

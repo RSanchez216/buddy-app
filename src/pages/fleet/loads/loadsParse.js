@@ -32,10 +32,27 @@ export function normalizeName(s) {
     .replace(/\s+/g, ' ')
 }
 // normUnit: strip a leading '#' and all non-alphanumerics, uppercase. For
-// truck/trailer unit numbers ("#SN66 9631" → "SN669631").
+// truck/trailer unit numbers ("#SN66 9631" → "SN669631"). The file gives a
+// bare unit ("532104") and the table stores it with a '#' ("#532104"); this
+// normalizes both sides to the same key.
 export function normUnit(s) {
   if (s == null) return ''
   return String(s).replace(/[^a-zA-Z0-9]/g, '').toUpperCase()
+}
+
+// The TMS "Driver" cell is "{code} - {Full Name}" (e.g. "2080 - Gaga
+// Tediashvili"), where {code} === drivers.internal_id — a guaranteed-unique
+// key present in BOTH the file and the drivers table. Split it so the
+// importer can match on the code (exact, never first-name/fuzzy). The full
+// original string is preserved separately as driver_raw for audit.
+//   "2080 - Gaga Tediashvili" → { code: "2080", name: "Gaga Tediashvili" }
+//   "Gaga Tediashvili"        → { code: null,   name: "Gaga Tediashvili" }
+export function parseDriverCell(raw) {
+  if (raw == null) return { code: null, name: null }
+  const s = String(raw).trim()
+  const m = s.match(/^(\d+)\s*-\s*(.+)$/)
+  if (m) return { code: m[1], name: m[2].trim() }
+  return { code: null, name: s || null }
 }
 
 function cleanStr(v) {
@@ -133,6 +150,9 @@ export function parseLoadsWorkbook(arrayBuffer) {
 
     const puInfo = cleanStr(r[cols.puInfo])
     const delInfo = cleanStr(r[cols.delInfo])
+    // Split the "{code} - {name}" driver cell; driver_raw keeps the full
+    // original string for audit, driver_code/driver_name feed matching.
+    const { code: driverCode, name: driverName } = parseDriverCell(driverRaw)
     rows.push({
       row_index: i,
       raw: r,
@@ -158,6 +178,8 @@ export function parseLoadsWorkbook(arrayBuffer) {
       invoice_notes:     cleanStr(r[cols.invoiceNotes]),
       // ── leg-scope ──
       driver_raw:  driverRaw,
+      driver_code: driverCode,
+      driver_name: driverName,
       truck_raw:   cleanStr(r[cols.truck]),
       trailer_raw: cleanStr(r[cols.trailer]),
       empty_miles:  toNum(r[cols.emptyMiles]),

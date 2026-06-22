@@ -1,4 +1,4 @@
-import { normName, normUnit, normalizeName } from './loadsParse'
+import { normName, normUnit, normalizeName, parseDriverCell } from './loadsParse'
 
 // Loads ingest — Phase 2 plan layer. Takes parsed leg-rows + reference
 // data + existing loads/legs and produces a review plan: one entry per
@@ -69,6 +69,17 @@ export function buildPlan({ rows, refs, existing }) {
     if (!ex) driverByNorm.set(k, { id: d.id, ambiguous: false })
     else if (ex.id !== d.id) ex.ambiguous = true
   }
+  // Primary driver key: the unique internal_id code that prefixes the TMS
+  // "Driver" cell ("2080 - …"). Exact, guaranteed-unique — preferred over
+  // name matching, which is fragile when two drivers share a first name.
+  const driverByCode = new Map() // internal_id(string) -> { id, ambiguous }
+  for (const d of refs.drivers) {
+    const code = d.internal_id == null ? '' : String(d.internal_id).trim()
+    if (!code) continue
+    const ex = driverByCode.get(code)
+    if (!ex) driverByCode.set(code, { id: d.id, ambiguous: false })
+    else if (ex.id !== d.id) ex.ambiguous = true
+  }
   const truckByUnit = new Map()
   for (const t of refs.trucks) truckByUnit.set(normUnit(t.unit_number), t.id)
   const trailerByUnit = new Map()
@@ -104,14 +115,26 @@ export function buildPlan({ rows, refs, existing }) {
 
   // ── driver/truck/trailer leg resolver ──
   function resolveDriver(raw) {
-    // Exact-match-after-cleanup on the normalized key (symmetric: the index
-    // is built the same way). Ambiguous keys fall through to unmatched so
-    // we never guess between two same-normalizing drivers.
-    const key = normalizeName(raw)
+    const { code, name } = parseDriverCell(raw)
+    // 1) Code present → match on internal_id, exact and unique. The code is
+    //    authoritative: if it has no (unambiguous) match we report unmatched
+    //    rather than falling back to the name, which could link the wrong
+    //    person. The fuzzy suggestion is advisory only (never auto-applied)
+    //    so the reviewer can link it by hand.
+    if (code) {
+      const hit = driverByCode.get(code)
+      if (hit && !hit.ambiguous) return { raw, code, id: hit.id, match_status: 'matched', suggestion: null }
+      const sug = bestFuzzy(name || raw, refs.drivers, d => d.full_name, d => d.id, d => d.full_name)
+      return { raw, code, id: null, match_status: 'unmatched', suggestion: sug }
+    }
+    // 2) No code → fall back to an exact, normalized full-name match only
+    //    (symmetric normalize; ambiguous keys stay unmatched). Never
+    //    first-name-only or fuzzy for the actual link.
+    const key = normalizeName(name || raw)
     const hit = key ? driverByNorm.get(key) : null
-    if (hit && !hit.ambiguous) return { raw, id: hit.id, match_status: 'matched', suggestion: null }
-    const sug = bestFuzzy(raw, refs.drivers, d => d.full_name, d => d.id, d => d.full_name)
-    return { raw, id: null, match_status: 'unmatched', suggestion: sug }
+    if (hit && !hit.ambiguous) return { raw, code: null, id: hit.id, match_status: 'matched', suggestion: null }
+    const sug = bestFuzzy(name || raw, refs.drivers, d => d.full_name, d => d.id, d => d.full_name)
+    return { raw, code: null, id: null, match_status: 'unmatched', suggestion: sug }
   }
   function resolveUnit(raw, index, candidates, nameKey) {
     if (raw == null) return { raw: null, id: null, match_status: 'blank', suggestion: null }
@@ -180,28 +203,25 @@ export function buildPlan({ rows, refs, existing }) {
     const is_status_flag = isCancelTonu && statusChanged
 
     // ── legs ──
+    // Match file legs to existing legs by POSITION (leg_seq order), not by
+    // driver name. A load can be re-dispatched (driver changes between
+    // imports), so a name key would miss the match and the apply step would
+    // insert a duplicate leg instead of updating in place — stranding the
+    // old leg with its stale driver/trailer. Position is stable for the
+    // one-row-per-leg TMS export and keeps apply's update deterministic.
     const existingLegs = existingLoad ? (existingLegsByLoad.get(existingLoad.id) || []) : []
-    const usedExisting = new Set()
-    const soloPair = existingLoad && group.length === 1 && existingLegs.length === 1
+    const existingBySeq = [...existingLegs].sort((a, b) => (a.leg_seq ?? 0) - (b.leg_seq ?? 0))
 
     const legs = group.map((r, idx) => {
       const driver = resolveDriver(r.driver_raw)
       const truck = resolveUnit(r.truck_raw, truckByUnit, refs.trucks, 'unit_number')
       const trailer = resolveUnit(r.trailer_raw, trailerByUnit, refs.trailers, 'unit_number')
-      if (driver.match_status === 'unmatched') unmatchedKeys.add(`driver:${normName(r.driver_raw)}`)
+      if (driver.match_status === 'unmatched') unmatchedKeys.add(`driver:${driver.code ? 'code:' + driver.code : normName(r.driver_raw)}`)
       if (truck.match_status === 'unmatched') unmatchedKeys.add(`truck:${normUnit(r.truck_raw)}`)
       if (trailer.match_status === 'unmatched') unmatchedKeys.add(`trailer:${normUnit(r.trailer_raw)}`)
 
-      // Find the matching existing leg.
-      let existingLeg = null
-      if (soloPair) {
-        existingLeg = existingLegs[0]
-      } else if (existingLoad) {
-        existingLeg = existingLegs.find(
-          (el, i) => !usedExisting.has(i) && normName(el.driver_raw) === normName(r.driver_raw)
-        ) || null
-        if (existingLeg) usedExisting.add(existingLegs.indexOf(existingLeg))
-      }
+      // Positional match: the idx-th file leg pairs with the idx-th existing leg.
+      const existingLeg = existingLoad ? (existingBySeq[idx] || null) : null
 
       const legDiffs = []
       let legClass
@@ -210,10 +230,9 @@ export function buildPlan({ rows, refs, existing }) {
       } else if (!existingLeg) {
         legClass = 'new_leg'
       } else {
-        // Compare watched leg fields. For the solo-pair case driver is
-        // compared too (a solo-load driver reassignment = update); for the
-        // multi-leg case driver is the match key, so it can't differ.
-        if (soloPair && normName(existingLeg.driver_raw) !== normName(r.driver_raw)) {
+        // Compare watched leg fields against the positionally-matched leg.
+        // Driver is now compared in every case (a re-dispatch = update).
+        if (normName(existingLeg.driver_raw) !== normName(r.driver_raw)) {
           legDiffs.push({ scope: 'leg', field: 'driver', old: existingLeg.driver_raw ?? null, new: r.driver_raw ?? null })
         }
         if (normUnit(existingLeg.truck_raw) !== normUnit(r.truck_raw)) {
