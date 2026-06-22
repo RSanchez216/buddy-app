@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { supabase } from '../../../lib/supabase'
 import { S } from '../../../lib/styles'
 import { fmtMoney, fmtNum, fmtRpm } from '../loads/spotlight/spotlightShared'
@@ -56,6 +56,35 @@ function formatDateRange(pickupDate, deliveryDate) {
   })
 
   return `${pickupStr} → ${deliveryStr}`
+}
+
+// Default number of rows a capped list shows before "Show all (N)".
+const LIST_CAP = 5
+
+// In-memory truncation for client-loaded lists: show the first LIST_CAP
+// items, expandable to the full list. Order is preserved (caller passes the
+// list already sorted newest-first).
+function useCappedList(items) {
+  const [expanded, setExpanded] = useState(false)
+  const total = items.length
+  const visible = expanded ? items : items.slice(0, LIST_CAP)
+  return { visible, expanded, toggle: () => setExpanded(e => !e), total, hasMore: total > LIST_CAP }
+}
+
+// "Show all (N)" / "Show fewer" control. Renders nothing when the list fits
+// within the cap.
+function ShowMoreToggle({ expanded, total, hasMore, onToggle }) {
+  if (!hasMore) return null
+  return (
+    <div className="px-4 py-3 border-t border-gray-100 dark:border-white/5">
+      <button
+        onClick={onToggle}
+        className="text-xs font-semibold text-orange-600 dark:text-orange-400 hover:underline"
+      >
+        {expanded ? 'Show fewer' : `Show all (${total})`}
+      </button>
+    </div>
+  )
 }
 
 function CombinedLoads() {
@@ -225,6 +254,7 @@ function CandidatesSection({ candidates, onRefresh }) {
   const [selectedPair, setSelectedPair] = useState(null)
 
   const activeCandidates = candidates.filter(c => !c.already_grouped)
+  const { visible: visibleCandidates, expanded, toggle, total, hasMore } = useCappedList(activeCandidates)
 
   const handleCombine = (pair) => {
     setSelectedPair(pair)
@@ -280,7 +310,7 @@ function CandidatesSection({ candidates, onRefresh }) {
                 </tr>
               </thead>
               <tbody>
-                {activeCandidates.map((pair, idx) => (
+                {visibleCandidates.map((pair, idx) => (
                   <tr key={idx} className={S.tableRow}>
                     <td className="px-4 py-2 font-medium text-gray-900 dark:text-slate-200">{pair.driver_name}</td>
                     <td className="px-3 py-2 text-gray-600 dark:text-slate-400">
@@ -319,6 +349,7 @@ function CandidatesSection({ candidates, onRefresh }) {
                 ))}
               </tbody>
             </table>
+            <ShowMoreToggle expanded={expanded} total={total} hasMore={hasMore} onToggle={toggle} />
           </div>
         )}
       </div>
@@ -595,6 +626,7 @@ function DismissModal({ pair, onClose, onSave }) {
 
 function DismissedSection({ dismissed, onRefresh }) {
   const [confirmRestore, setConfirmRestore] = useState(null)
+  const { visible: visibleDismissed, expanded, toggle, total, hasMore } = useCappedList(dismissed)
 
   const handleRestoreClick = (dismissalId, loadA, loadB) => {
     setConfirmRestore({ dismissalId, loadA, loadB })
@@ -635,7 +667,7 @@ function DismissedSection({ dismissed, onRefresh }) {
         </div>
       ) : (
         <div className="divide-y divide-gray-100 dark:divide-white/5">
-          {dismissed.map((d) => (
+          {visibleDismissed.map((d) => (
             <div key={d.id} className="px-4 py-4">
               <div className="flex items-start justify-between mb-2">
                 <div className="flex-1">
@@ -655,6 +687,7 @@ function DismissedSection({ dismissed, onRefresh }) {
               </div>
             </div>
           ))}
+          <ShowMoreToggle expanded={expanded} total={total} hasMore={hasMore} onToggle={toggle} />
         </div>
       )}
 
@@ -694,6 +727,7 @@ function ExistingGroupsSection({ groups, onRefresh }) {
   const [editingId, setEditingId] = useState(null)
   const [editingMiles, setEditingMiles] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(null)
+  const { visible: visibleGroups, expanded, toggle, total, hasMore } = useCappedList(groups)
 
   const handleEditSave = async (groupId) => {
     try {
@@ -751,7 +785,7 @@ function ExistingGroupsSection({ groups, onRefresh }) {
         </div>
       ) : (
         <div className="divide-y divide-gray-100 dark:divide-white/5">
-          {groups.map(group => {
+          {visibleGroups.map(group => {
             const displayMiles = group.true_combined_miles || group.totalMiles
             const displayRpm = group.correctedRpm
 
@@ -801,6 +835,7 @@ function ExistingGroupsSection({ groups, onRefresh }) {
               </div>
             )
           })}
+          <ShowMoreToggle expanded={expanded} total={total} hasMore={hasMore} onToggle={toggle} />
         </div>
       )}
 
