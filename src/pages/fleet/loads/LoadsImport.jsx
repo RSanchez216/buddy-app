@@ -468,9 +468,9 @@ export default function LoadsImport() {
                             const internalId = driverId ? internalById.get(driverId) : null
                             return (
                               <div key={i} className="flex items-center gap-1 mb-1 last:mb-0">
+                                {internalId && <span className="text-xs text-gray-500 dark:text-slate-400">{internalId} ·</span>}
                                 <span>{name || '—'}</span>
                                 {name && <CopyButton value={name} label="Copy driver name" />}
-                                {internalId && <span className="text-xs text-gray-500 dark:text-slate-400">· {internalId}</span>}
                               </div>
                             )
                           })}
