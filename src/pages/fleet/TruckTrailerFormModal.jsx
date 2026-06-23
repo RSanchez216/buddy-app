@@ -51,10 +51,14 @@ export default function TruckTrailerFormModal({ kind, open, editItem, onClose, o
   const [ownerSuggestions, setOwnerSuggestions] = useState([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  // Effective date for a manual driver change (defaults to today, Chicago).
+  // Lets a manager backdate a reassignment when the TMS import was late.
+  const [effectiveDate, setEffectiveDate] = useState('')
 
   useEffect(() => {
     if (!open) return
     setError('')
+    setEffectiveDate(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago' }).format(new Date()))
     if (editItem) {
       const e = editItem
       setForm({
@@ -87,11 +91,13 @@ export default function TruckTrailerFormModal({ kind, open, editItem, onClose, o
       setForm(isTrailer ? emptyTrailer : emptyTruck)
     }
 
-    // Drivers + carriers + equipment-owner auto-suggest list. Drivers has
-    // no active flag, so we just sort alphabetically. Carriers comes from
-    // the reference table in Settings -> Carriers (active rows only).
+    // Drivers + carriers + equipment-owner auto-suggest list. Drivers are
+    // restricted to current_status='active' (reassign targets); the unit's
+    // existing driver is pinned into the picker below even if inactive so the
+    // pre-selected value never disappears. Carriers comes from the reference
+    // table in Settings -> Carriers (active rows only).
     Promise.all([
-      supabase.from('drivers').select('id, full_name, internal_id').order('full_name'),
+      supabase.from('drivers').select('id, full_name, internal_id').eq('current_status', 'active').order('full_name'),
       supabase.from('carriers').select('id, name, is_active').eq('is_active', true).order('name'),
       supabase.from(table).select('equipment_owner_raw').not('equipment_owner_raw', 'is', null),
       // Active Vendor Master vendors — merged into the Equipment Owner
@@ -200,12 +206,16 @@ export default function TruckTrailerFormModal({ kind, open, editItem, onClose, o
     // driver already equals the open-row driver. We always call it on
     // insert too, in case the user picked a driver on a brand-new unit.
     if (nextDriverId !== prevDriverId || !editItem) {
-      const { error: rpcErr } = await supabase.rpc('set_unit_current_driver', {
+      const rpcParams = {
         p_equipment_type: kind,
         p_unit_id: unitId,
         p_new_driver_id: nextDriverId,
         p_source: 'manual',
-      })
+      }
+      // Pass the effective date so a reassignment can be backdated; omit when
+      // blank so the RPC keeps its default (today, America/Chicago).
+      if (effectiveDate) rpcParams.p_effective = effectiveDate
+      const { error: rpcErr } = await supabase.rpc('set_unit_current_driver', rpcParams)
       if (rpcErr) {
         // Soft-fail: the unit itself saved, but the assignment didn't
         // write. Surface a toast so Rebeca can re-trigger; don't roll
@@ -325,32 +335,60 @@ export default function TruckTrailerFormModal({ kind, open, editItem, onClose, o
         <div className="grid grid-cols-2 gap-4">
           <Field label="Driver">
             <ComboBox
-              options={drivers.map(d => ({
-                id: d.id,
-                // Inline "Name · #ID" with muted ID. Falls back to just the
-                // name when internal_id is missing so a row with no TMS id
-                // doesn't show a stray "#" / blank trailer.
-                name: d.internal_id
-                  ? (
-                    <span>
-                      {d.full_name}
-                      <span className="text-gray-400 dark:text-slate-500"> · #{d.internal_id}</span>
-                    </span>
-                  )
-                  : d.full_name,
-                // Plain-string target for the type-to-filter — name AND id
-                // both substring-match so typing "1650" or "mimou" both
-                // surface Abderrahim Mimouni.
-                searchText: d.internal_id
-                  ? `${d.full_name} #${d.internal_id} ${d.internal_id}`
-                  : d.full_name,
-              }))}
+              options={[
+                ...drivers.map(d => ({
+                  id: d.id,
+                  // Inline "ID · Name" with the ID muted and leading. Falls
+                  // back to just the name when internal_id is missing so a row
+                  // with no TMS id doesn't show a stray "·".
+                  name: d.internal_id
+                    ? (
+                      <span>
+                        <span className="text-gray-400 dark:text-slate-500">{d.internal_id} · </span>
+                        {d.full_name}
+                      </span>
+                    )
+                    : d.full_name,
+                  // Plain-string target for the type-to-filter — name AND id
+                  // both substring-match so typing "1650" or "mimou" both
+                  // surface Abderrahim Mimouni.
+                  searchText: d.internal_id
+                    ? `${d.internal_id} ${d.full_name} #${d.internal_id}`
+                    : d.full_name,
+                })),
+                // The picker lists ACTIVE drivers; if the unit's current
+                // driver is inactive they'd vanish, losing the pre-selected
+                // value. Pin them at the top with an "(inactive)" tag so the
+                // assignment shows correctly and the user can keep it.
+                ...(form.driver_id && !drivers.some(d => d.id === form.driver_id)
+                  ? [{
+                      id: form.driver_id,
+                      name: (
+                        <span>
+                          {editItem?.driver?.full_name || 'Current driver'}
+                          <span className="text-gray-400 dark:text-slate-500"> (inactive)</span>
+                        </span>
+                      ),
+                      searchText: editItem?.driver?.full_name || '',
+                    }]
+                  : []),
+              ]}
               value={form.driver_id}
               onChange={id => setForm(f => ({ ...f, driver_id: id }))}
               placeholder="— Unassigned —"
               searchPlaceholder="Search drivers by name or ID…"
               noResultsLabel="No driver matches"
             />
+            <input
+              type="date"
+              className={`${S.input} mt-2 text-xs`}
+              value={effectiveDate}
+              onChange={e => setEffectiveDate(e.target.value)}
+              title="Effective date of this driver assignment — defaults to today; backdate a late reassignment if needed."
+            />
+            <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-1 leading-tight">
+              Effective date — only applies when you change the driver.
+            </p>
           </Field>
           <Field label="Ownership Stage">
             <ComboBox
