@@ -78,6 +78,7 @@ function IdleWarningBubble() {
         if (stale || error) return
         const t = { trucks: 0, trailers: 0, drivers: 0, equipCost: 0 }
         for (const r of rows || []) {
+          if (r.resolved) continue // active-only — resolved cases now persist in idle_subjects
           if (r.subject_type === 'truck') { t.trucks++; t.equipCost += Number(r.monthly_cost) || 0 }
           else if (r.subject_type === 'trailer') { t.trailers++; t.equipCost += Number(r.monthly_cost) || 0 }
           else if (r.subject_type === 'driver') t.drivers++
