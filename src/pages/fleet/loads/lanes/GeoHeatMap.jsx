@@ -85,6 +85,11 @@ function formatCompact(value, metric) {
   }
   // gross or avg (in dollars)
   const abs = Math.abs(value)
+  // Roll over into millions once the rounded thousands value would reach
+  // 1000, so $999,600 reads "$1.0M" and we never print "$1000k".
+  if (Math.abs(Math.round(value / 1000)) >= 1000) {
+    return `$${(value / 1e6).toFixed(1)}M`
+  }
   if (abs < 10000) {
     return `$${(value / 1000).toFixed(1)}k`
   }
