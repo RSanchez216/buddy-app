@@ -35,6 +35,11 @@ const SEV_DOT = {
 
 const CAP = 10
 
+// Compact, clearly-pressable secondary button for the per-row Resolve/Reopen.
+const ROW_BTN = 'inline-flex items-center px-2 py-1 text-[11px] font-medium rounded-md border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 active:bg-gray-100 dark:active:bg-white/10 transition-colors'
+
+const COST_TIP = "Monthly carrying cost — the lease or loan payment for this unit, which keeps being charged while it sits idle. It's the monthly run-rate, not prorated to the idle days shown. Driver-owned equipment is $0. For a driver, it's the combined carrying cost of the company truck and trailer they're holding."
+
 // Column defs drive the sortable headers + comparator. `get` returns the sort
 // value; `type` picks the comparator (text / numeric / severity). Hoisted to
 // module scope so the reference is stable across renders (memoization-safe).
@@ -42,13 +47,13 @@ const UNIT_COLUMNS = [
   { key: 'label', label: 'Unit', type: 'text', get: r => r.label || '' },
   { key: 'days', label: 'Idle', type: 'num', align: 'right', get: r => r.days_idle },
   { key: 'extra', label: 'Assigned driver', type: 'text', get: r => r.extra || '' },
-  { key: 'cost', label: '$/mo', type: 'num', align: 'right', get: r => Number(r.monthly_cost) },
+  { key: 'cost', label: '$/mo', type: 'num', align: 'right', tip: COST_TIP, get: r => Number(r.monthly_cost) },
   { key: 'reason', label: 'Reason', type: 'severity', get: r => SEV_RANK[severity(r)] },
 ]
 const DRIVER_COLUMNS = [
   { key: 'label', label: 'Driver', type: 'text', get: r => r.label || '' },
   { key: 'days', label: 'Idle', type: 'num', align: 'right', get: r => r.days_idle },
-  { key: 'cost', label: 'Holding (cost)', type: 'num', align: 'right', get: r => Number(r.monthly_cost) },
+  { key: 'cost', label: 'Holding (cost)', type: 'num', align: 'right', tip: COST_TIP, get: r => Number(r.monthly_cost) },
   { key: 'reason', label: 'Reason', type: 'severity', get: r => SEV_RANK[severity(r)] },
 ]
 
@@ -57,9 +62,15 @@ function fmtDays(d) {
   return `${d}d`
 }
 
+function fmtDate(d) {
+  if (!d) return '—'
+  try { return new Date(d).toLocaleDateString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', year: 'numeric' }) } catch { return '—' }
+}
+
 export default function IdleReview() {
   const [rows, setRows] = useState(null)
   const [error, setError] = useState(null)
+  const [view, setView] = useState('active') // 'active' | 'resolved'
 
   async function load() {
     setError(null)
@@ -76,11 +87,17 @@ export default function IdleReview() {
 
   useEffect(() => { load() }, [])
 
-  const groups = useMemo(() => {
+  const activeRows = useMemo(() => (rows || []).filter(r => !r.resolved), [rows])
+  const resolvedRows = useMemo(() => (rows || []).filter(r => r.resolved), [rows])
+
+  const groupOf = (list) => {
     const g = { truck: [], trailer: [], driver: [] }
-    for (const r of rows || []) (g[r.subject_type] || (g[r.subject_type] = [])).push(r)
+    for (const r of list) (g[r.subject_type] || (g[r.subject_type] = [])).push(r)
     return g
-  }, [rows])
+  }
+  // Cards + bubble count ACTIVE only, so resolving a case lowers them.
+  const activeGroups = useMemo(() => groupOf(activeRows), [activeRows])
+  const viewGroups = useMemo(() => groupOf(view === 'resolved' ? resolvedRows : activeRows), [view, activeRows, resolvedRows])
 
   const sumCost = (list) => list.reduce((s, r) => s + (Number(r.monthly_cost) || 0), 0)
 
@@ -104,8 +121,18 @@ export default function IdleReview() {
       console.error('resolve_idle failed:', e)
     }
   }
+  async function reopen(row) {
+    try {
+      const { error: err } = await supabase.rpc('reopen_idle', { p_subject_type: row.subject_type, p_subject_id: row.subject_id })
+      if (err) throw err
+      await load()
+    } catch (e) {
+      console.error('reopen_idle failed:', e)
+    }
+  }
 
   const loading = rows === null
+  const resolvedView = view === 'resolved'
 
   return (
     <div className="space-y-4">
@@ -120,17 +147,24 @@ export default function IdleReview() {
         </p>
       </div>
 
-      {/* Summary cards */}
+      {/* Summary cards — active only */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <SummaryCard
           label="Idle trucks"
-          count={groups.truck.length}
-          sub={`${fmtMoney(sumCost(groups.truck))}/mo carrying`}
+          count={activeGroups.truck.length}
+          sub={`${fmtMoney(sumCost(activeGroups.truck))}/mo carrying`}
           loading={loading}
           tip="A subject is idle when it's been 3+ days since its last load activity (latest pickup or delivery, booked loads included). The $/mo is the monthly carrying run-rate of currently-idle equipment — not accrued loss. Equipment idle is judged by its assigned driver's activity (truck-on-load data is incomplete), so routing through the driver is the reliable signal."
         />
-        <SummaryCard label="Idle trailers" count={groups.trailer.length} sub={`${fmtMoney(sumCost(groups.trailer))}/mo carrying`} loading={loading} />
-        <SummaryCard label="Idle drivers" count={groups.driver.length} sub="not moving freight" loading={loading} />
+        <SummaryCard label="Idle trailers" count={activeGroups.trailer.length} sub={`${fmtMoney(sumCost(activeGroups.trailer))}/mo carrying`} loading={loading} />
+        <SummaryCard label="Idle drivers" count={activeGroups.driver.length} sub="not moving freight" loading={loading} />
+      </div>
+
+      {/* Active / Resolved toggle */}
+      <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-slate-700 text-xs w-fit">
+        {[['active', `Active (${activeRows.length})`], ['resolved', `Resolved (${resolvedRows.length})`]].map(([k, lbl]) => (
+          <button key={k} onClick={() => setView(k)} className={`px-3 py-1.5 whitespace-nowrap ${view === k ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5'}`}>{lbl}</button>
+        ))}
       </div>
 
       {error && <div className={S.errorBox}>Couldn't load idle data: {error}</div>}
@@ -139,9 +173,9 @@ export default function IdleReview() {
         <div className={`${S.card} p-12 text-center text-sm text-gray-500 dark:text-slate-500 animate-pulse`}>Finding idle subjects…</div>
       ) : (
         <>
-          <IdleSection title="Trucks" kind="unit" rows={groups.truck} reasons={UNIT_REASONS} onSetReason={setReason} onResolve={resolve} />
-          <IdleSection title="Trailers" kind="unit" rows={groups.trailer} reasons={UNIT_REASONS} onSetReason={setReason} onResolve={resolve} />
-          <IdleSection title="Drivers" kind="driver" rows={groups.driver} reasons={DRIVER_REASONS} onSetReason={setReason} onResolve={resolve} />
+          <IdleSection title="Trucks" kind="unit" rows={viewGroups.truck} reasons={UNIT_REASONS} resolvedView={resolvedView} onSetReason={setReason} onResolve={resolve} onReopen={reopen} />
+          <IdleSection title="Trailers" kind="unit" rows={viewGroups.trailer} reasons={UNIT_REASONS} resolvedView={resolvedView} onSetReason={setReason} onResolve={resolve} onReopen={reopen} />
+          <IdleSection title="Drivers" kind="driver" rows={viewGroups.driver} reasons={DRIVER_REASONS} resolvedView={resolvedView} onSetReason={setReason} onResolve={resolve} onReopen={reopen} />
         </>
       )}
     </div>
@@ -166,7 +200,7 @@ function SummaryCard({ label, count, sub, loading, tip }) {
   )
 }
 
-function IdleSection({ title, kind, rows, reasons, onSetReason, onResolve }) {
+function IdleSection({ title, kind, rows, reasons, resolvedView, onSetReason, onResolve, onReopen }) {
   const columns = kind === 'unit' ? UNIT_COLUMNS : DRIVER_COLUMNS
 
   const [sort, setSort] = useState({ key: 'days', dir: 'desc' })
@@ -199,7 +233,9 @@ function IdleSection({ title, kind, rows, reasons, onSetReason, onResolve }) {
         <h2 className="text-sm font-bold text-gray-900 dark:text-white">{title} <span className="font-normal text-gray-500 dark:text-slate-500">({rows.length})</span></h2>
       </div>
       {rows.length === 0 ? (
-        <div className="p-8 text-center text-sm text-gray-400 dark:text-slate-500">None idle — everything in this group is moving.</div>
+        <div className="p-8 text-center text-sm text-gray-400 dark:text-slate-500">
+          {resolvedView ? 'No resolved cases in this group.' : 'None idle — everything in this group is moving.'}
+        </div>
       ) : (
         <>
           <div className="overflow-x-auto">
@@ -214,6 +250,13 @@ function IdleSection({ title, kind, rows, reasons, onSetReason, onResolve }) {
                       title={c.key === 'reason' ? 'Sort by severity (red → amber → low)' : 'Sort'}
                     >
                       {c.label}{arrow(c.key)}
+                      {c.tip && (
+                        <span
+                          onClick={e => e.stopPropagation()}
+                          className="ml-1 inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border border-gray-300 dark:border-slate-600 text-[9px] text-gray-500 dark:text-slate-400 cursor-help align-middle"
+                          title={c.tip}
+                        >?</span>
+                      )}
                     </th>
                   ))}
                   <th className={`${S.th} text-right`} />
@@ -221,7 +264,7 @@ function IdleSection({ title, kind, rows, reasons, onSetReason, onResolve }) {
               </thead>
               <tbody>
                 {visible.map(r => (
-                  <IdleRow key={`${r.subject_type}:${r.subject_id}`} row={r} kind={kind} reasons={reasons} onSetReason={onSetReason} onResolve={onResolve} />
+                  <IdleRow key={`${r.subject_type}:${r.subject_id}`} row={r} kind={kind} reasons={reasons} resolvedView={resolvedView} onSetReason={onSetReason} onResolve={onResolve} onReopen={onReopen} />
                 ))}
               </tbody>
             </table>
@@ -239,14 +282,20 @@ function IdleSection({ title, kind, rows, reasons, onSetReason, onResolve }) {
   )
 }
 
-function IdleRow({ row, kind, reasons, onSetReason, onResolve }) {
+function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onReopen }) {
   const [note, setNote] = useState(row.reason_note || '')
-  const [confirming, setConfirming] = useState(false)
   const sev = severity(row)
 
   const daysCls = (row.days_idle ?? 0) >= 14 ? 'text-red-600 dark:text-red-400 font-semibold' : 'text-gray-700 dark:text-slate-300'
 
-  const reasonCell = (
+  // Active rows: editable reason dropdown + note. Resolved rows: read-only.
+  const reasonCell = resolvedView ? (
+    <div className="flex items-center gap-1.5 text-xs">
+      <span className={`w-2 h-2 rounded-full shrink-0 ${SEV_DOT[sev]}`} />
+      <span className="text-gray-700 dark:text-slate-300">{row.reason || '— no reason —'}</span>
+      {row.reason_note && <span className="text-gray-400 dark:text-slate-500">· {row.reason_note}</span>}
+    </div>
+  ) : (
     <div className="flex items-center gap-1.5">
       <span className={`w-2 h-2 rounded-full shrink-0 ${SEV_DOT[sev]}`} title={sev === 'red' ? 'Needs attention' : sev === 'amber' ? 'Watch' : 'Expected idle'} />
       <select
@@ -271,14 +320,13 @@ function IdleRow({ row, kind, reasons, onSetReason, onResolve }) {
 
   const actionsCell = (
     <td className={`${S.td} text-right whitespace-nowrap`}>
-      {confirming ? (
-        <span className="inline-flex items-center gap-1.5">
-          <span className="text-[11px] text-gray-500 dark:text-slate-400">Resolve?</span>
-          <button onClick={() => { setConfirming(false); onResolve(row) }} className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 hover:underline">Yes</button>
-          <button onClick={() => setConfirming(false)} className="text-[11px] text-gray-500 hover:underline">No</button>
+      {resolvedView ? (
+        <span className="inline-flex items-center gap-2">
+          <span className="text-[11px] text-gray-500 dark:text-slate-500">Resolved {fmtDate(row.resolved_on)}</span>
+          <button onClick={() => onReopen(row)} className={ROW_BTN} title="Retract this resolve — returns the case to Active for review">Reopen</button>
         </span>
       ) : (
-        <button onClick={() => setConfirming(true)} className="text-[11px] font-medium text-gray-500 dark:text-slate-400 hover:text-orange-600 dark:hover:text-orange-400 hover:underline" title="Close this idle spell (sold, terminated, or back to work)">Resolve</button>
+        <button onClick={() => onResolve(row)} className={ROW_BTN} title="Close this idle spell (sold, terminated, or back to work). Reversible from the Resolved tab.">Resolve</button>
       )}
     </td>
   )
