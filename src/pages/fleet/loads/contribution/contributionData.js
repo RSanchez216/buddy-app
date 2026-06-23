@@ -10,7 +10,39 @@
 import { supabase } from '../../../../lib/supabase'
 import { elapsedDays, spanDays } from '../spotlight/spotlightShared'
 
-const DAYS_PER_MONTH = 30.4375 // 365.25 / 12 — prorates monthly carrying cost
+export const DAYS_PER_MONTH = 30.4375 // 365.25 / 12 — prorates monthly carrying cost
+
+// Single source of truth for prorating a unit's monthly carrying cost to the
+// window — used by both the Equipment Contrib build below and the Company Net
+// mode, so the same truck reads the same number on both.
+export function prorateMonthly(monthly, days) {
+  return (Number(monthly) || 0) * days / DAYS_PER_MONTH
+}
+
+// Prorate a unit's carrying cost from whichever basis the cost row carries.
+// Monthly is preferred (matches Equipment Contrib exactly); weekly / per-mile
+// are fallbacks for units priced that way. All-null → 0 (caller flags it as a
+// missing cost when the unit isn't driver-owned).
+export function prorateUnitCost({ monthly, weekly, permile }, { days, miles }) {
+  if (monthly != null) return prorateMonthly(monthly, days)
+  if (weekly != null) return (Number(weekly) || 0) * days / 7
+  if (permile != null) return (Number(permile) || 0) * (Number(miles) || 0)
+  return 0
+}
+
+// Estimated driver pay from the comp rate — same branches as the Est. Driver
+// Pay mode (verified against v_load_leg_pay_estimate / live settlements).
+// Returns { pay, missing }; missing=true means the rate is unknown and pay is
+// treated as 0 (so Company Net is overstated and the row is flagged).
+export function estimateDriverPay({ comp_type, comp_value, revenue, miles }) {
+  const v = Number(comp_value)
+  const rev = Number(revenue) || 0
+  const mi = Number(miles) || 0
+  if (comp_type === 'rate_pct' && Number.isFinite(v)) return { pay: rev * v / 100, missing: false }
+  if (comp_type === 'rate_per_mile' && Number.isFinite(v)) return { pay: mi * v, missing: false }
+  if (comp_type === 'service_charge_pct' && Number.isFinite(v)) return { pay: rev * (1 - v / 100), missing: false }
+  return { pay: 0, missing: true }
+}
 
 // "#M100" / "M-100" / "m100" all collapse to "M100" so driver_purchases.
 // truck_number (entered free-form) can match trucks.unit_number.
@@ -102,7 +134,7 @@ function buildDriverRows({ rollupRows, drivers, trucks, trailers, costByUnit, pu
       status: master && master.current_status !== 'active' ? master.current_status : null,
       ownershipStage,
       ...rollupMetrics(row),
-      equipCost: knownMonthly * days / DAYS_PER_MONTH,
+      equipCost: prorateMonthly(knownMonthly, days),
       equipMonthly: knownMonthly,
       unknownUnits,
       units,
@@ -172,7 +204,7 @@ function buildTruckRows({ rollupRows, drivers, trucks, eqCost, costByUnit, purch
       status: flags[0] || null,
       ownershipStage: cost?.ownership_stage || 'unknown',
       ...rollupMetrics(row),
-      equipCost: (monthly || 0) * days / DAYS_PER_MONTH,
+      equipCost: prorateMonthly(monthly, days),
       equipMonthly: monthly || 0,
       unknownUnits: monthly == null && cost?.cost_source !== 'driver_owned' ? 1 : 0,
       units: master ? [{ etype: 'truck', unitNumber: master.unit_number, monthly, source: cost?.cost_source || 'unknown' }] : [],

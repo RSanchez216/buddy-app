@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useToast } from '../../../../contexts/ToastContext'
 import { S } from '../../../../lib/styles'
 import { supabase } from '../../../../lib/supabase'
-import { fetchContribution } from './contributionData'
+import ErrorBoundary from '../../../../components/ErrorBoundary'
+import { fetchContribution, prorateUnitCost, estimateDriverPay } from './contributionData'
 import { fmtMoney, fmtNum, formatRange, shiftYmd, spanDays, thisMonth, thisWeek } from '../spotlight/spotlightShared'
 
 // Profit Contribution — the fleet ranked by what each unit actually leaves
@@ -46,6 +48,18 @@ const DRIVER_PAY_COLUMNS = [
     tip: 'Estimated driver pay from the comp rate (per-mile × miles, % of revenue, or service-charge remainder) — an estimate, not actual settlement.' },
   { key: 'est_company_contribution',  label: 'Est. company earn', num: d => Number(d.est_company_contribution),
     tip: 'Linehaul revenue − estimated driver pay. Excludes equipment cost and fuel.' },
+]
+
+// Company Net mode columns (by driver). num() reads the computed row.
+const COMPANY_NET_COLUMNS = [
+  { key: 'revenue',    label: 'Revenue',     num: r => r.revenue,
+    tip: 'Realized linehaul revenue from this driver’s loads in the period (all their loads — can exceed the by-truck Equipment Contrib figure if they ran more than one truck).' },
+  { key: 'equipment',  label: 'Equipment',   num: r => r.equipment,
+    tip: 'Truck + trailer carrying cost, monthly prorated to the period (monthly × period days ÷ 30.44) — same basis as Equipment Contrib. $0 for driver-owned units.' },
+  { key: 'driverPay',  label: 'Driver pay',  num: r => r.driverPay,
+    tip: 'Estimated driver pay from the comp rate (per-mile × miles, % of revenue, or service-charge remainder) — same estimate as Est. Driver Pay. Not actual settlement.' },
+  { key: 'companyNet', label: 'Company Net', num: r => r.companyNet,
+    tip: 'Revenue − equipment − driver pay = what the company keeps. Fuel, insurance & repairs not included yet — not final net profit.' },
 ]
 
 // ── Mini waterfall: revenue → −equipment → −purchase → contribution ──────
@@ -313,7 +327,7 @@ export default function Contribution() {
       <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-center flex-wrap gap-2">
           <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-slate-700 text-xs shrink-0">
-            {[['equipment', 'Equipment Contrib'], ['driver-pay', 'Est. Driver Pay']].map(([k, lbl]) => (
+            {[['equipment', 'Equipment Contrib'], ['driver-pay', 'Est. Driver Pay'], ['company-net', 'Company Net']].map(([k, lbl]) => (
               <button key={k} onClick={() => setViewMode(k)} className={`px-3 py-1.5 whitespace-nowrap shrink-0 ${viewMode === k ? 'bg-blue-500 text-white font-semibold' : 'text-gray-700 dark:text-slate-400'}`}>{lbl}</button>
             ))}
           </div>
@@ -364,7 +378,8 @@ export default function Contribution() {
         </div>
       </div>
 
-      {/* ── Fleet totals strip ── */}
+      {/* ── Fleet totals strip (equipment + driver-pay modes) ── */}
+      {viewMode !== 'company-net' && (<>
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         {[
           { label: 'Realized revenue', value: fmtMoney(totals.revenue), tone: '' },
@@ -391,6 +406,14 @@ export default function Contribution() {
           <strong>On this equipment view, owner-operator contribution is gross of the driver's share,</strong> so it reads high. Use the <strong>Est. Driver Pay toggle</strong> or <strong>Profitability → Est. vs Act.</strong> for the driver-pay-adjusted read.
         </div>
       </p>
+      </>)}
+
+      {/* ── Company Net (combined contribution) ── */}
+      {viewMode === 'company-net' && (
+        <ErrorBoundary label="the Company Net view">
+          <CompanyNetView key={`${range.from}|${range.to}|${basis}`} from={range.from} to={range.to} basis={basis} query={query} />
+        </ErrorBoundary>
+      )}
 
       {/* ── Equipment Contribution Table ── */}
       {viewMode === 'equipment' && (
@@ -615,5 +638,283 @@ function FragmentRow({ row, rank, negative, expanded, onToggle, days, dimension 
         </tr>
       )}
     </>
+  )
+}
+
+// ── Company Net mode: Revenue − Equipment (truck+trailer) − Driver Pay ──────
+// Self-contained: fetches driver_contribution_inputs, computes equipment
+// (reusing the shared proration) + driver pay (shared comp branches), sorts,
+// totals, and lazy-loads per-driver loads on accordion expand.
+const NET_FLAG_TONE = {
+  info:  'bg-teal-50 dark:bg-teal-500/10 text-teal-700 dark:text-teal-400',
+  amber: 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400',
+  red:   'bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400',
+}
+
+function payBasisText(d) {
+  const v = Number(d.comp_value)
+  if (d.comp_type === 'rate_per_mile') return `rate_per_mile $${v.toFixed(2)} × ${fmtNum(d.miles)} mi`
+  if (d.comp_type === 'rate_pct') return `${v}% of revenue`
+  if (d.comp_type === 'service_charge_pct') return `${v}% service charge → driver keeps ${100 - v}%`
+  return 'comp rate missing'
+}
+
+function CompanyNetView({ from, to, basis, query }) {
+  const [state, setState] = useState({ key: null, data: null })
+  const [sort, setSort] = useState({ key: 'companyNet', dir: 'desc' })
+  const [expandId, setExpandId] = useState(null)
+  const [loadsByDriver, setLoadsByDriver] = useState({}) // driver_id → { loading, rows }
+
+  // Period/basis changes remount this component (key in the parent), so state
+  // starts fresh and this effect just fetches — no synchronous reset needed,
+  // and the per-driver loads cache below can't go stale across periods.
+  const key = `${from}|${to}|${basis}`
+  useEffect(() => {
+    let stale = false
+    supabase.rpc('driver_contribution_inputs', { p_from: from, p_to: to, p_basis: basis })
+      .then(({ data, error }) => { if (!stale) setState({ key, data: error ? [] : (data || []) }) })
+      .catch(() => { if (!stale) setState({ key, data: [] }) })
+    return () => { stale = true }
+  }, [key, from, to, basis])
+
+  const loading = state.key !== key
+  const days = spanDays(from, to)
+
+  const rows = useMemo(() => {
+    if (!state.data) return []
+    const q = query.trim().toLowerCase()
+    return state.data.map(d => {
+      const truckOwned = d.truck_stage === 'driver_owned'
+      const trailerOwned = d.trailer_stage === 'driver_owned'
+      const truckCost = truckOwned ? 0 : prorateUnitCost({ monthly: d.truck_monthly, weekly: d.truck_weekly, permile: d.truck_permile }, { days, miles: d.miles })
+      const trailerCost = trailerOwned ? 0 : prorateUnitCost({ monthly: d.trailer_monthly, weekly: d.trailer_weekly, permile: d.trailer_permile }, { days, miles: d.miles })
+      const equipment = truckCost + trailerCost
+      const revenue = Number(d.revenue) || 0
+      const { pay, missing } = estimateDriverPay({ comp_type: d.comp_type, comp_value: d.comp_value, revenue, miles: d.miles })
+      const companyNet = revenue - equipment - pay
+      const netPct = revenue > 0 ? companyNet / revenue : null
+
+      const truckCostMissing = d.has_truck && !truckOwned && d.truck_monthly == null && d.truck_weekly == null && d.truck_permile == null
+      const trailerCostMissing = d.has_trailer && !trailerOwned && d.trailer_monthly == null && d.trailer_weekly == null && d.trailer_permile == null
+      const flags = []
+      if (truckOwned) flags.push({ label: 'driver-owned truck — $0', tone: 'info' })
+      if (trailerOwned) flags.push({ label: 'driver-owned trailer — $0', tone: 'info' })
+      if (truckCostMissing) flags.push({ label: 'truck cost missing', tone: 'red' })
+      if (trailerCostMissing) flags.push({ label: 'trailer used, cost missing', tone: 'red' })
+      if (!d.has_truck) flags.push({ label: 'no truck — equipment not counted', tone: 'red' })
+      if (!d.has_trailer) flags.push({ label: 'no trailer assigned', tone: 'amber' })
+      if (missing) flags.push({ label: 'driver pay missing', tone: 'red' })
+
+      return { ...d, revenue, truckCost, trailerCost, equipment, driverPay: pay, payMissing: missing, companyNet, netPct, flags }
+    }).filter(r => !q || (r.driver_name || '').toLowerCase().includes(q))
+  }, [state.data, query, days])
+
+  const sorted = useMemo(() => {
+    const dir = sort.dir === 'asc' ? 1 : -1
+    if (sort.key === 'name') return [...rows].sort((a, b) => (a.driver_name || '').localeCompare(b.driver_name || '') * dir)
+    const col = COMPANY_NET_COLUMNS.find(c => c.key === sort.key) || COMPANY_NET_COLUMNS[3]
+    return [...rows].sort((a, b) => {
+      const av = col.num(a), bv = col.num(b)
+      const na = Number.isFinite(av) ? av : -Infinity
+      const nb = Number.isFinite(bv) ? bv : -Infinity
+      if (na === nb) return 0
+      return (na - nb) * dir
+    })
+  }, [rows, sort])
+
+  const totals = useMemo(() => {
+    const t = { revenue: 0, equipment: 0, driverPay: 0, companyNet: 0 }
+    for (const r of rows) { t.revenue += r.revenue; t.equipment += r.equipment; t.driverPay += r.driverPay; t.companyNet += r.companyNet }
+    t.netPct = t.revenue > 0 ? t.companyNet / t.revenue : null
+    return t
+  }, [rows])
+
+  function toggleSort(k) { setSort(s => (s.key === k ? { key: k, dir: s.dir === 'desc' ? 'asc' : 'desc' } : { key: k, dir: 'desc' })) }
+
+  async function toggleExpand(driverId) {
+    if (expandId === driverId) { setExpandId(null); return }
+    setExpandId(driverId)
+    if (!loadsByDriver[driverId]) {
+      setLoadsByDriver(m => ({ ...m, [driverId]: { loading: true, rows: [] } }))
+      try {
+        const { data, error } = await supabase.rpc('driver_period_loads', { p_driver_id: driverId, p_from: from, p_to: to, p_basis: basis })
+        setLoadsByDriver(m => ({ ...m, [driverId]: { loading: false, rows: error ? [] : (data || []) } }))
+      } catch {
+        setLoadsByDriver(m => ({ ...m, [driverId]: { loading: false, rows: [] } }))
+      }
+    }
+  }
+
+  const arrow = (k) => (sort.key === k ? (sort.dir === 'desc' ? ' ↓' : ' ↑') : '')
+
+  return (
+    <div className="space-y-3">
+      {/* Summary strip */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {[
+          { label: 'Revenue', value: fmtMoney(totals.revenue), tone: '' },
+          { label: '− Equipment', value: fmtSignedMoney(-totals.equipment), tone: 'text-amber-600 dark:text-amber-400' },
+          { label: '− Driver pay', value: fmtSignedMoney(-totals.driverPay), tone: 'text-blue-600 dark:text-blue-400' },
+          { label: '= Company Net', value: `${fmtSignedMoney(totals.companyNet)} · ${fmtPct(totals.netPct)}`, tone: totals.companyNet >= 0 ? 'text-teal-600 dark:text-teal-400' : 'text-rose-600 dark:text-rose-400', big: true },
+        ].map(c => (
+          <div key={c.label} className={`${S.card} px-4 py-3 ${c.big ? 'ring-1 ring-teal-500/30' : ''}`}>
+            <div className="text-[10px] font-semibold uppercase tracking-widest text-gray-600 dark:text-slate-500">{c.label}</div>
+            <div className={`mt-0.5 font-mono font-bold ${c.big ? 'text-xl' : 'text-lg'} ${c.tone || 'text-gray-900 dark:text-white'}`}>{loading ? '…' : c.value}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className={`${S.card} overflow-hidden`}>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className={S.tableHead}>
+              <tr>
+                <th className={`${S.th} w-10`} title="Rank in the current sort order">#</th>
+                <th className={`${S.th} cursor-pointer select-none hover:text-gray-700 dark:hover:text-slate-300`} onClick={() => toggleSort('name')} title="Sort alphabetically">Driver{arrow('name')}</th>
+                {COMPANY_NET_COLUMNS.map(c => (
+                  <th key={c.key} className={`${S.th} text-right cursor-pointer select-none hover:text-gray-700 dark:hover:text-slate-300`} onClick={() => toggleSort(c.key)} title={c.tip}>
+                    {c.label}{arrow(c.key)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr><td colSpan={6} className="px-4 py-12 text-center text-sm text-gray-600 dark:text-slate-500 animate-pulse">Crunching company net…</td></tr>
+              ) : sorted.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-12 text-center text-sm text-gray-600 dark:text-slate-500">No revenue-bearing drivers in this window.</td></tr>
+              ) : sorted.map((r, i) => {
+                const expanded = expandId === r.driver_id
+                const net = r.companyNet
+                return (
+                  <CompanyNetRow
+                    key={r.driver_id}
+                    row={r} rank={i + 1} expanded={expanded} net={net}
+                    onToggle={() => toggleExpand(r.driver_id)}
+                    loadsState={loadsByDriver[r.driver_id]}
+                    days={days}
+                  />
+                )
+              })}
+            </tbody>
+            {!loading && sorted.length > 0 && (
+              <tfoot>
+                <tr className="border-t-2 border-gray-300 dark:border-white/15 bg-gray-50 dark:bg-white/[0.02] font-semibold">
+                  <td className={S.td} />
+                  <td className={`${S.td} text-gray-700 dark:text-slate-200`}><span className="uppercase tracking-wide">Total</span> · {sorted.length} drivers</td>
+                  <td className={`${S.td} text-right font-mono`}>{fmtMoney(totals.revenue)}</td>
+                  <td className={`${S.td} text-right font-mono text-amber-600 dark:text-amber-400`}>{fmtSignedMoney(-totals.equipment)}</td>
+                  <td className={`${S.td} text-right font-mono text-blue-600 dark:text-blue-400`}>{fmtSignedMoney(-totals.driverPay)}</td>
+                  <td className={`${S.td} text-right font-mono ${totals.companyNet >= 0 ? 'text-teal-600 dark:text-teal-400' : 'text-rose-600 dark:text-rose-400'}`}>{fmtSignedMoney(totals.companyNet)} <span className="text-gray-500 dark:text-slate-400">· {fmtPct(totals.netPct)}</span></td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+      </div>
+
+      <p className="text-[11px] text-teal-700 dark:text-teal-400 px-4 py-2 rounded-lg bg-teal-50 dark:bg-teal-500/10">
+        <strong>Company Net</strong> = revenue − equipment (truck + trailer, prorated) − estimated driver pay. Fuel, insurance & repairs aren&apos;t in BUDDY yet, so this is the closest read to net — not final net profit. Driver pay is estimated from the comp rate.
+      </p>
+    </div>
+  )
+}
+
+function CompanyNetRow({ row, rank, expanded, net, onToggle, loadsState, days }) {
+  return (
+    <>
+      <tr onClick={onToggle} className={`${S.tableRow} cursor-pointer`}>
+        <td className={`${S.td} font-mono text-xs text-gray-600 dark:text-slate-500`}>{rank}</td>
+        <td className={S.td}>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-medium text-gray-900 dark:text-slate-100">{row.driver_name || '—'}</span>
+            {row.driver_type && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-slate-700/40 text-gray-600 dark:text-slate-400 whitespace-nowrap">{row.driver_type}</span>}
+            {row.flags.map((f, i) => (
+              <span key={i} className={`text-[10px] px-1.5 py-0.5 rounded-full whitespace-nowrap ${NET_FLAG_TONE[f.tone]}`}>{f.label}</span>
+            ))}
+          </div>
+        </td>
+        <td className={`${S.td} text-right font-mono text-gray-700 dark:text-slate-200`}>{fmtMoney(row.revenue)}</td>
+        <td className={`${S.td} text-right font-mono text-amber-600 dark:text-amber-400`}>{row.equipment > 0 ? fmtSignedMoney(-row.equipment) : '$0'}</td>
+        <td className={`${S.td} text-right font-mono text-blue-600 dark:text-blue-400`}>{row.payMissing ? '—' : fmtSignedMoney(-row.driverPay)}</td>
+        <td className={`${S.td} text-right font-mono font-semibold ${net >= 0 ? 'text-teal-600 dark:text-teal-400' : 'text-rose-600 dark:text-rose-400'}`}>
+          {fmtSignedMoney(net)} <span className="text-gray-500 dark:text-slate-400 font-normal">· {fmtPct(row.netPct)}</span>
+        </td>
+      </tr>
+      {expanded && (
+        <tr className="border-b border-gray-200 dark:border-white/5 bg-gray-50/60 dark:bg-white/[0.015]">
+          <td colSpan={6} className="p-0">
+            <CompanyNetDetail row={row} loadsState={loadsState} days={days} />
+          </td>
+        </tr>
+      )}
+    </>
+  )
+}
+
+function CompanyNetDetail({ row, loadsState, days }) {
+  const all = loadsState?.rows || []
+  const top = all.slice(0, 5)
+  const moreCount = Math.max(0, all.length - top.length)
+  const loadsSum = all.reduce((s, l) => s + (Number(l.revenue) || 0), 0)
+  return (
+    <div className="px-4 py-4 grid md:grid-cols-2 gap-x-8 gap-y-4 text-xs text-gray-700 dark:text-slate-400">
+      {/* Loads driving revenue */}
+      <div>
+        <div className="font-semibold text-gray-600 dark:text-slate-300 mb-1">Loads driving revenue</div>
+        {loadsState?.loading ? (
+          <div className="animate-pulse text-gray-500 dark:text-slate-500">Loading loads…</div>
+        ) : all.length === 0 ? (
+          <div className="text-gray-500 dark:text-slate-500">No loads found.</div>
+        ) : (
+          <div className="space-y-0.5 font-mono">
+            {top.map((l, i) => (
+              <div key={i} className="flex items-center gap-3">
+                <span className="w-28">{l.load_number}</span>
+                <span className="w-20 text-gray-500 dark:text-slate-500">{l.load_date || '—'}</span>
+                <span className="w-20 text-right">{fmtMoney(l.revenue)}</span>
+                <span className="w-16 text-right text-gray-500 dark:text-slate-500">{fmtNum(l.miles)} mi</span>
+              </div>
+            ))}
+            {moreCount > 0 && <div className="text-gray-500 dark:text-slate-500">…{moreCount} more load{moreCount > 1 ? 's' : ''}</div>}
+            <div className="flex items-center gap-3 pt-1 mt-1 border-t border-gray-200 dark:border-white/10 font-semibold text-gray-700 dark:text-slate-200">
+              <span className="w-28">Total</span>
+              <span className="w-20" />
+              <span className="w-20 text-right">{fmtMoney(loadsSum)}</span>
+              <span className="w-16" />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Cost breakdown */}
+      <div className="space-y-2">
+        <div>
+          <div className="font-semibold text-gray-600 dark:text-slate-300 mb-1">Cost breakdown ({days}-day window)</div>
+          <div className="space-y-0.5 font-mono">
+            <div className="flex items-center gap-2">
+              <span className="w-16 font-sans text-gray-600 dark:text-slate-500">Truck</span>
+              <span className="w-24">{row.truck_unit || '—'}</span>
+              <span className="font-sans text-gray-500 dark:text-slate-500">{row.truck_stage || '—'}</span>
+              <span className="ml-auto text-right">{row.truck_stage === 'driver_owned' ? '$0 · driver-owned' : fmtSignedMoney(-row.truckCost)}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-16 font-sans text-gray-600 dark:text-slate-500">Trailer</span>
+              <span className="w-24">{row.trailer_unit || '—'}</span>
+              <span className="font-sans text-gray-500 dark:text-slate-500">{row.trailer_stage || (row.has_trailer ? '—' : 'none')}</span>
+              <span className="ml-auto text-right">{row.trailer_stage === 'driver_owned' ? '$0 · driver-owned' : fmtSignedMoney(-row.trailerCost)}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-16 font-sans text-gray-600 dark:text-slate-500">Driver pay</span>
+              <span className="font-sans text-gray-500 dark:text-slate-500">{payBasisText(row)}</span>
+              <span className="ml-auto text-right">{row.payMissing ? '—' : fmtSignedMoney(-row.driverPay)}</span>
+            </div>
+          </div>
+        </div>
+        <Link to="/fleet/profitability/spotlight" className="inline-block text-[11px] font-medium text-orange-600 dark:text-orange-400 hover:underline">
+          View in Driver Spotlight →
+        </Link>
+      </div>
+    </div>
   )
 }
