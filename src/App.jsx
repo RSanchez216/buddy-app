@@ -48,6 +48,7 @@ import FuelPrices from './pages/fleet/fuel-prices/FuelPrices'
 import Profitability from './pages/fleet/loads/Profitability'
 import Spotlight from './pages/fleet/loads/spotlight/Spotlight'
 import Contribution from './pages/fleet/loads/contribution/Contribution'
+import IdleReview from './pages/fleet/loads/idle/IdleReview'
 import SetPassword from './pages/auth/SetPassword'
 import SmartLanding from './pages/SmartLanding'
 
@@ -131,6 +132,7 @@ export default function App() {
               } />
               <Route path="fleet/profitability/spotlight" element={<RequirePageAccess pageKey="fleet/profitability/spotlight"><Spotlight dimension="driver" /></RequirePageAccess>} />
               <Route path="fleet/profitability/contribution" element={<RequirePageAccess pageKey="fleet/profitability/contribution"><Contribution /></RequirePageAccess>} />
+              <Route path="fleet/profitability/idle" element={<RequirePageAccess pageKey="idle_review"><ErrorBoundary label="Idle review"><IdleReview /></ErrorBoundary></RequirePageAccess>} />
               <Route path="fleet/profitability/lanes" element={
                 <RequirePageAccess pageKey="fleet/profitability/lanes">
                   <Suspense fallback={<div className="p-8 text-sm text-gray-400 dark:text-slate-500">Loading lane map…</div>}>

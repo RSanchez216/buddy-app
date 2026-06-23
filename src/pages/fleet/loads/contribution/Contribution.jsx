@@ -63,6 +63,46 @@ const COMPANY_NET_COLUMNS = [
 ]
 
 // ── Mini waterfall: revenue → −equipment → −purchase → contribution ──────
+// Top-of-page warning: who's idle right now and the truck+trailer carrying
+// run-rate they're burning with no revenue. Dismissible for the session;
+// recurs on the next visit (fresh mount). Trucks+trailers cost only — adding
+// drivers' cost would double-count the same equipment.
+function IdleWarningBubble() {
+  const [data, setData] = useState(null)
+  const [dismissed, setDismissed] = useState(false)
+
+  useEffect(() => {
+    let stale = false
+    supabase.rpc('idle_subjects', { p_threshold: 3 })
+      .then(({ data: rows, error }) => {
+        if (stale || error) return
+        const t = { trucks: 0, trailers: 0, drivers: 0, equipCost: 0 }
+        for (const r of rows || []) {
+          if (r.subject_type === 'truck') { t.trucks++; t.equipCost += Number(r.monthly_cost) || 0 }
+          else if (r.subject_type === 'trailer') { t.trailers++; t.equipCost += Number(r.monthly_cost) || 0 }
+          else if (r.subject_type === 'driver') t.drivers++
+        }
+        setData(t)
+      })
+      .catch(() => {})
+    return () => { stale = true }
+  }, [])
+
+  if (dismissed || !data || (data.trucks + data.trailers + data.drivers) === 0) return null
+
+  return (
+    <div className="flex items-center justify-between gap-3 flex-wrap rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 px-4 py-2.5 text-sm text-amber-800 dark:text-amber-300">
+      <span>
+        ⚠ Idle right now: <span className="font-semibold">{data.trucks}</span> trucks · <span className="font-semibold">{data.trailers}</span> trailers · <span className="font-semibold">{data.drivers}</span> drivers — <span className="font-semibold">{fmtMoney(data.equipCost)}/mo</span> carrying cost, no revenue.
+      </span>
+      <span className="flex items-center gap-3 shrink-0">
+        <Link to="/fleet/profitability/idle" className="font-semibold underline hover:no-underline whitespace-nowrap">Go to idle review →</Link>
+        <button onClick={() => setDismissed(true)} className="text-amber-600 dark:text-amber-400 hover:opacity-70" aria-label="Dismiss">✕</button>
+      </span>
+    </div>
+  )
+}
+
 // Plain positioned divs on a shared scale; the dashed line is $0.
 function Waterfall({ row }) {
   const lo = Math.min(0, row.contribution)
@@ -307,6 +347,7 @@ export default function Contribution() {
 
   return (
     <div className="space-y-4">
+      <IdleWarningBubble />
       {/* ── Header ── */}
       <div>
         <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-orange-600 dark:text-orange-400 mb-1">
