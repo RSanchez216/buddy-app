@@ -154,6 +154,21 @@ export default function Spotlight({ dimension = 'driver' }) {
     }
   }, [sorted])
 
+  // Changing the sort must jump the carousel back to position 1 of the NEW
+  // order (otherwise it stays on the current driver at their new rank, which
+  // reads as "the sort did nothing"). Compute the new order inline from
+  // deck.entries so we focus the new first driver in the same change — runs
+  // only on a dropdown change, so it never fights manual swipe/keyboard nav.
+  const changeSort = useCallback((key) => {
+    setSortKey(key)
+    const def = SORTS.find(s => s.key === key) || SORTS[0]
+    const newSorted = deck ? [...deck.entries].sort(def.fn) : []
+    if (newSorted.length) {
+      setFocusedDriverId(newSorted[0].driverId)
+      setFocusedEntry(newSorted[0])
+    }
+  }, [deck])
+
   // ── Lazy lane hydration: focused card + both neighbors ──
   useEffect(() => {
     if (!focusedEntry) return
@@ -265,7 +280,7 @@ export default function Spotlight({ dimension = 'driver' }) {
       {/* ── Controls: sort · jump · period ── */}
       <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-center flex-wrap gap-2">
-          <select value={sortKey} onChange={e => setSortKey(e.target.value)} className={`${S.select} text-xs`} title="Deck order">
+          <select value={sortKey} onChange={e => changeSort(e.target.value)} className={`${S.select} text-xs`} title="Deck order">
             {SORTS.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
           </select>
           {/* Jump straight to a driver */}
