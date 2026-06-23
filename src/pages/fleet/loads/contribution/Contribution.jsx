@@ -17,14 +17,35 @@ const fmtSignedMoney = (n) => (n < 0 ? `−${fmtMoney(-n)}` : fmtMoney(n || 0)) 
 const fmtCpm = (n) => (n == null ? '—' : `${n < 0 ? '−' : ''}$${Math.abs(n).toFixed(2)}`)
 const fmtPct = (n) => (n == null ? '—' : `${Math.round(n * 100)}%`)
 
-// Sortable columns. `get` returns the sort value; nulls always sink.
+// Sortable metric columns. `get` returns the numeric sort value; null/— is
+// treated as the lowest value (see sort comparator). `tip` is the header
+// tooltip — wording verified against contributionData.js / the rollup RPC.
 const COLUMNS = [
-  { key: 'revenue',      label: 'Revenue',        get: r => r.revenue },
-  { key: 'equipCost',    label: 'Equipment',      get: r => r.equipCost },
-  { key: 'purchase',     label: 'Purchase',       get: r => r.purchase },
-  { key: 'contribution', label: 'Contribution',   get: r => r.contribution },
-  { key: 'cpm',          label: 'Contrib / mi',   get: r => r.cpm },
-  { key: 'util',         label: 'Util',           get: r => r.util },
+  { key: 'revenue',      label: 'Revenue',      get: r => r.revenue,
+    tip: 'Realized linehaul revenue from delivered loads in this period. Canceled excluded; booked/upcoming not counted.' },
+  { key: 'equipCost',    label: 'Equipment',    get: r => r.equipCost,
+    tip: 'Equipment carrying cost (lease/loan): monthly cost prorated to the period — monthly × period days ÷ 30.44. $0 for driver-owned; units with unknown cost are excluded and flagged ⚠.' },
+  { key: 'purchase',     label: 'Purchase',     get: r => r.purchase,
+    tip: 'Driver-purchase payments due in this period (truck being bought by the driver). Subtracted from contribution.' },
+  { key: 'contribution', label: 'Contribution', get: r => r.contribution,
+    tip: 'Revenue − equipment carrying cost − purchase. Partial margin — driver pay & fuel are NOT included. Not net profit.' },
+  { key: 'cpm',          label: 'Contrib / mi', get: r => r.cpm,
+    tip: 'Contribution ÷ total miles this period.' },
+  { key: 'util',         label: 'Util',         get: r => r.util,
+    tip: 'Active days ÷ elapsed days in the period (future days aren’t counted as idle), capped at 100%.' },
+]
+
+// Driver-pay mode columns. tip wording verified against
+// driver_pay_estimate_rollup / v_load_leg_pay_estimate.
+const DRIVER_PAY_COLUMNS = [
+  { key: 'loads',                     label: 'Loads',            num: d => Number(d.loads),
+    tip: 'Load legs attributed to this driver in this period (by the selected pickup/delivery basis).' },
+  { key: 'linehaul_revenue',          label: 'Linehaul revenue', num: d => Number(d.linehaul_revenue),
+    tip: 'Driver’s linehaul (leg) revenue for loads dated in this period. Includes all in-window legs (not delivered-only), so it can differ from the Equipment view’s Revenue.' },
+  { key: 'est_driver_pay',            label: 'Est. driver pay',  num: d => Number(d.est_driver_pay),
+    tip: 'Estimated driver pay from the comp rate (per-mile × miles, % of revenue, or service-charge remainder) — an estimate, not actual settlement.' },
+  { key: 'est_company_contribution',  label: 'Est. company earn', num: d => Number(d.est_company_contribution),
+    tip: 'Linehaul revenue − estimated driver pay. Excludes equipment cost and fuel.' },
 ]
 
 // ── Mini waterfall: revenue → −equipment → −purchase → contribution ──────
@@ -185,14 +206,20 @@ export default function Contribution() {
   }, [data, query, negativeFilter, ownershipFilter])
 
   const sorted = useMemo(() => {
-    const col = COLUMNS.find(c => c.key === sort.key) || COLUMNS[3]
     const dir = sort.dir === 'asc' ? 1 : -1
+    // Text column sorts alphabetically.
+    if (sort.key === 'name') {
+      return [...filtered].sort((a, b) => (a.name || '').localeCompare(b.name || '') * dir)
+    }
+    // Numeric columns sort by value; null/— is treated as the lowest value
+    // (so it sinks under desc and leads under asc).
+    const col = COLUMNS.find(c => c.key === sort.key) || COLUMNS[3]
     return [...filtered].sort((a, b) => {
       const av = col.get(a), bv = col.get(b)
       if (av == null && bv == null) return 0
-      if (av == null) return 1
-      if (bv == null) return -1
-      return (av - bv) * dir
+      const na = av == null ? -Infinity : av
+      const nb = bv == null ? -Infinity : bv
+      return (na - nb) * dir
     })
   }, [filtered, sort])
 
@@ -224,6 +251,29 @@ export default function Contribution() {
     return t
   }, [driverPayData])
 
+  // Driver-pay rows sorted by the active column. Text column (driver name)
+  // sorts alphabetically; numeric columns by value with null/— treated as the
+  // lowest. Pinned totals live in the table footer, outside this list.
+  const driverPaySorted = useMemo(() => {
+    if (!driverPayData) return []
+    const dir = driverPaySort.dir === 'asc' ? 1 : -1
+    if (driverPaySort.key === 'driver_name') {
+      return [...driverPayData].sort((a, b) => (a.driver_name || '').localeCompare(b.driver_name || '') * dir)
+    }
+    const col = DRIVER_PAY_COLUMNS.find(c => c.key === driverPaySort.key) || DRIVER_PAY_COLUMNS[3]
+    return [...driverPayData].sort((a, b) => {
+      const av = col.num(a), bv = col.num(b)
+      const na = Number.isFinite(av) ? av : -Infinity
+      const nb = Number.isFinite(bv) ? bv : -Infinity
+      if (na === nb) return 0
+      return (na - nb) * dir
+    })
+  }, [driverPayData, driverPaySort])
+
+  function toggleDriverPaySort(key) {
+    setDriverPaySort(s => (s.key === key ? { key, dir: s.dir === 'desc' ? 'asc' : 'desc' } : { key, dir: 'desc' }))
+  }
+
   function setPresetRange(p) {
     setPreset(p)
     if (p === 'week') setRange(thisWeek())
@@ -250,9 +300,11 @@ export default function Contribution() {
         </div>
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Profit Contribution</h1>
         <p className="text-sm text-gray-700 dark:text-slate-500 mt-0.5">
-          What each {nounSingular} leaves behind after its equipment carrying cost — money-losers flagged.
-          <span className="ml-1.5 text-[11px] px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 align-middle whitespace-nowrap" title="Driver pay, fuel, and insurance aren't in BUDDY yet, so this is contribution after equipment & purchase only — not net profit.">
-            Partial — driver pay &amp; fuel pending. Not net profit.
+          {viewMode === 'driver-pay'
+            ? 'Estimated driver pay vs. what the company keeps on each driver’s linehaul revenue.'
+            : `What each ${nounSingular} leaves behind after its equipment carrying cost — money-losers flagged.`}
+          <span className="ml-1.5 text-[11px] px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 align-middle whitespace-nowrap" title="Driver pay, fuel, and insurance aren't all in BUDDY yet, so this is a partial margin — not net profit.">
+            {viewMode === 'driver-pay' ? 'Estimate — fuel & equipment not included. Not net profit.' : 'Partial — driver pay & fuel pending. Not net profit.'}
           </span>
         </p>
       </div>
@@ -347,10 +399,16 @@ export default function Contribution() {
             <table className="w-full text-sm">
               <thead className={S.tableHead}>
                 <tr>
-                  <th className={`${S.th} w-10`}>#</th>
-                  <th className={S.th}>{dimension === 'truck' ? 'Truck · driver' : 'Driver · trucks'}</th>
+                  <th className={`${S.th} w-10`} title="Rank in the current sort order">#</th>
+                  <th
+                    className={`${S.th} cursor-pointer select-none hover:text-gray-700 dark:hover:text-slate-300`}
+                    onClick={() => toggleSort('name')}
+                    title="Sort alphabetically"
+                  >
+                    {dimension === 'truck' ? 'Truck · driver' : 'Driver · trucks'}{sort.key === 'name' ? (sort.dir === 'desc' ? ' ↓' : ' ↑') : ''}
+                  </th>
                   {COLUMNS.map(c => (
-                    <th key={c.key} className={`${S.th} text-right cursor-pointer select-none hover:text-gray-700 dark:hover:text-slate-300`} onClick={() => toggleSort(c.key)}>
+                    <th key={c.key} className={`${S.th} text-right cursor-pointer select-none hover:text-gray-700 dark:hover:text-slate-300`} onClick={() => toggleSort(c.key)} title={c.tip}>
                       {c.label}{sort.key === c.key ? (sort.dir === 'desc' ? ' ↓' : ' ↑') : ''}
                     </th>
                   ))}
@@ -376,9 +434,9 @@ export default function Contribution() {
               </tbody>
               {!loading && sorted.length > 0 && (
                 <tfoot>
-                  <tr className="border-t border-gray-300 dark:border-white/10 bg-gray-50 dark:bg-white/[0.02] font-semibold">
+                  <tr className="border-t-2 border-gray-300 dark:border-white/15 bg-gray-50 dark:bg-white/[0.02] font-semibold">
                     <td className={S.td} />
-                    <td className={`${S.td} text-gray-700 dark:text-slate-200`}>Fleet total · {sorted.length} {nounSingular}s</td>
+                    <td className={`${S.td} text-gray-700 dark:text-slate-200`}><span className="uppercase tracking-wide">Total</span> · {sorted.length} {nounSingular}s</td>
                     <td className={`${S.td} text-right font-mono`}>{fmtMoney(totals.revenue)}</td>
                     <td className={`${S.td} text-right font-mono text-amber-600 dark:text-amber-400`}>{fmtSignedMoney(-totals.equipCost)}</td>
                     <td className={`${S.td} text-right font-mono text-fuchsia-600 dark:text-fuchsia-400`}>{fmtSignedMoney(-totals.purchase)}</td>
@@ -420,15 +478,16 @@ export default function Contribution() {
               <table className="w-full text-sm">
                 <thead className={S.tableHead}>
                   <tr>
-                    <th className={`${S.th} w-10`}>#</th>
-                    <th className={S.th}>Driver · type</th>
-                    {[
-                      { key: 'loads', label: 'Loads' },
-                      { key: 'linehaul_revenue', label: 'Linehaul revenue' },
-                      { key: 'est_driver_pay', label: 'Est. driver pay' },
-                      { key: 'est_company_contribution', label: 'Est. company earn' },
-                    ].map(c => (
-                      <th key={c.key} className={`${S.th} text-right cursor-pointer select-none hover:text-gray-700 dark:hover:text-slate-300`} onClick={() => setDriverPaySort(s => (s.key === c.key ? { key: c.key, dir: s.dir === 'desc' ? 'asc' : 'desc' } : { key: c.key, dir: 'desc' }))}>
+                    <th className={`${S.th} w-10`} title="Rank in the current sort order">#</th>
+                    <th
+                      className={`${S.th} cursor-pointer select-none hover:text-gray-700 dark:hover:text-slate-300`}
+                      onClick={() => toggleDriverPaySort('driver_name')}
+                      title="Sort alphabetically"
+                    >
+                      Driver · type{driverPaySort.key === 'driver_name' ? (driverPaySort.dir === 'desc' ? ' ↓' : ' ↑') : ''}
+                    </th>
+                    {DRIVER_PAY_COLUMNS.map(c => (
+                      <th key={c.key} className={`${S.th} text-right cursor-pointer select-none hover:text-gray-700 dark:hover:text-slate-300`} onClick={() => toggleDriverPaySort(c.key)} title={c.tip}>
                         {c.label}{driverPaySort.key === c.key ? (driverPaySort.dir === 'desc' ? ' ↓' : ' ↑') : ''}
                       </th>
                     ))}
@@ -439,11 +498,7 @@ export default function Contribution() {
                     <tr><td colSpan={6} className="px-4 py-12 text-center text-sm text-gray-600 dark:text-slate-500 animate-pulse">Loading driver pay estimates…</td></tr>
                   ) : driverPayData.length === 0 ? (
                     <tr><td colSpan={6} className="px-4 py-12 text-center text-sm text-gray-600 dark:text-slate-500">No drivers with loads in this window.</td></tr>
-                  ) : [...driverPayData].sort((a, b) => {
-                    const av = driverPaySort.key === 'loads' ? Number(a.loads) : driverPaySort.key === 'linehaul_revenue' ? Number(a.linehaul_revenue) : driverPaySort.key === 'est_driver_pay' ? Number(a.est_driver_pay) : Number(a.est_company_contribution)
-                    const bv = driverPaySort.key === 'loads' ? Number(b.loads) : driverPaySort.key === 'linehaul_revenue' ? Number(b.linehaul_revenue) : driverPaySort.key === 'est_driver_pay' ? Number(b.est_driver_pay) : Number(b.est_company_contribution)
-                    return (av - bv) * (driverPaySort.dir === 'desc' ? -1 : 1)
-                  }).map((d, i) => (
+                  ) : driverPaySorted.map((d, i) => (
                     <tr key={d.driver_id} className="border-b border-gray-100 dark:border-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.02]">
                       <td className={`${S.td} font-mono text-gray-400 dark:text-slate-500 text-xs`}>{i + 1}</td>
                       <td className={`${S.td} font-medium`}>
@@ -461,6 +516,18 @@ export default function Contribution() {
                     </tr>
                   ))}
                 </tbody>
+                {driverPayData && driverPaySorted.length > 0 && driverPayTotals && (
+                  <tfoot>
+                    <tr className="border-t-2 border-gray-300 dark:border-white/15 bg-gray-50 dark:bg-white/[0.02] font-semibold">
+                      <td className={S.td} />
+                      <td className={`${S.td} text-gray-700 dark:text-slate-200`}><span className="uppercase tracking-wide">Total</span> · {driverPaySorted.length} drivers</td>
+                      <td className={`${S.td} text-right font-mono`}>{fmtNum(driverPayTotals.loads)}</td>
+                      <td className={`${S.td} text-right font-mono`}>{fmtMoney(driverPayTotals.linehaul)}</td>
+                      <td className={`${S.td} text-right font-mono text-blue-600 dark:text-blue-400`}>{fmtMoney(driverPayTotals.estDriverPay)}</td>
+                      <td className={`${S.td} text-right font-mono text-emerald-600 dark:text-emerald-400`}>{fmtMoney(driverPayTotals.estCompanyContribution)}</td>
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </div>
           </div>
