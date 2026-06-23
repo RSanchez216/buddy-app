@@ -300,7 +300,7 @@ export default function LaneFlowMap() {
       {agg && agg.totals.legs > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           <Kpi label="Lanes" value={fmtNum(distinctLanes)} sub={offMapLanes ? `${offMapLanes} off-map` : 'all on map'} />
-          <Kpi label="Loads" value={fmtNum(agg.totals.legs)} sub={[...selectedPhases].sort().join(' + ')} />
+          <Kpi label="Loads" value={fmtNum(agg.totals.loads)} sub={[...selectedPhases].sort().join(' + ')} />
           <Kpi label="Revenue" value={fmtMoney(agg.totals.revenue)} sub={`${fmtNum(agg.totals.miles)} mi`} />
           <Kpi label="$/mile" value={agg.totals.rpm == null ? '—' : `${fmtRpm(agg.totals.rpm)}/mi`} sub="all lanes" />
           <Kpi label="Map coverage" value={agg.coverage == null ? '—' : `${Math.round(agg.coverage * 100)}%`} sub="of loads geocoded" />
@@ -524,7 +524,7 @@ export default function LaneFlowMap() {
                 {[
                   ['Best load · by revenue', allLoadMetrics.bestByRevenue, 'text-emerald-600 dark:text-emerald-400', true],
                   ['Worst load · by revenue', allLoadMetrics.worstByRevenue, 'text-rose-600 dark:text-rose-400', true],
-                ].map(([lbl, load, cls, isRevenue]) => (
+                ].map(([lbl, load, cls]) => (
                   <div key={lbl} className={`${S.card} px-4 py-3 text-left`}>
                     <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">{lbl}</p>
                     <p className={`text-lg font-bold font-mono leading-tight mt-0.5 ${cls}`}>{fmtMoney(load.revenue)}</p>
@@ -540,7 +540,7 @@ export default function LaneFlowMap() {
                 {[
                   ['Best load · by $/mi', allLoadMetrics.bestByRpm, 'text-emerald-600 dark:text-emerald-400', false],
                   ['Worst load · by $/mi', allLoadMetrics.worstByRpm, 'text-rose-600 dark:text-rose-400', false],
-                ].map(([lbl, load, cls, isRevenue]) => (
+                ].map(([lbl, load, cls]) => (
                   <div key={lbl} className={`${S.card} px-4 py-3 text-left`}>
                     <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">{lbl}</p>
                     {load ? (

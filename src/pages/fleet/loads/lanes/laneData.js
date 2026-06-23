@@ -234,6 +234,9 @@ export function aggregateLanes(allLegs, phaseOrView, { byType = false } = {}) {
     cities: [...byCity.values()],
     totals: {
       legs: legs.length,
+      // Distinct loads (a multi-leg load is one load) — for the LOADS KPI.
+      // Revenue/miles/$/mi remain summed across legs.
+      loads: byLoad.size,
       lanes: lanes.length,
       revenue: totRevenue,
       miles: totMiles,
@@ -349,6 +352,11 @@ export function pickLoads(loads, metric = 'rpm') {
 
 // Best/worst individual loads by both revenue and rpm metrics simultaneously.
 // Excludes loads with statuses in the exclusion list (e.g., TONU).
+// Minimum mileage for a load to qualify for the $/mi best/worst cards. Below
+// this, $/mi is noise — a sub-mile yard move can read $240/mi and isn't a lane
+// verdict. Applies ONLY to the two $/mi cards; the revenue cards are unfiltered.
+export const MIN_MILES_FOR_RPM_CARD = 50
+
 // Returns { bestByRevenue, worstByRevenue, bestByRpm, worstByRpm } or null if no loads.
 export function pickAllLoadMetrics(loads, excludedStatuses = []) {
   if (!loads || !loads.length) return null
@@ -357,13 +365,14 @@ export function pickAllLoadMetrics(loads, excludedStatuses = []) {
   const candidates = loads.filter(l => !excludedStatuses.includes(l.status))
   if (!candidates.length) return null
 
-  // By revenue (no 0-mile restriction)
+  // By revenue (no mileage restriction)
   const byRevenue = [...candidates].sort((a, b) => (a.revenue ?? 0) - (b.revenue ?? 0))
   const bestByRevenue = byRevenue[byRevenue.length - 1]
   const worstByRevenue = byRevenue[0]
 
-  // By rpm (exclude 0-mile loads to avoid divide-by-zero)
-  const validForRpm = candidates.filter(l => l.miles > 0 && l.rpm != null)
+  // By rpm — require a minimum mileage so sub-mile outliers can't headline
+  // (and to avoid divide-by-zero on 0-mile loads).
+  const validForRpm = candidates.filter(l => l.miles >= MIN_MILES_FOR_RPM_CARD && l.rpm != null)
   let bestByRpm = null, worstByRpm = null
   if (validForRpm.length > 0) {
     const byRpm = [...validForRpm].sort((a, b) => (a.rpm ?? 0) - (b.rpm ?? 0))
