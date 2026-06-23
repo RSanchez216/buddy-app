@@ -39,6 +39,8 @@ export default function TrailersList() {
   const [editItem, setEditItem] = useState(null)
   const [showUpload, setShowUpload] = useState(false)
   const [showAssignmentsUpload, setShowAssignmentsUpload] = useState(false)
+  // Bumped after an assignment upload applies so the import-log strip reloads.
+  const [assignmentLogKey, setAssignmentLogKey] = useState(0)
 
   useEffect(() => { load() }, [])
 
@@ -140,7 +142,7 @@ export default function TrailersList() {
         )}
       </div>
 
-      <AssignmentImportLog />
+      <AssignmentImportLog refreshKey={assignmentLogKey} />
 
       <div className="flex items-center flex-wrap gap-2">
         {STAGE_PILLS.map(p => {
@@ -288,7 +290,7 @@ export default function TrailersList() {
         equipmentType="trailer"
         open={showAssignmentsUpload}
         onClose={() => setShowAssignmentsUpload(false)}
-        onCommitted={() => load()}
+        onCommitted={() => { load(); setAssignmentLogKey(k => k + 1) }}
       />
     </div>
   )

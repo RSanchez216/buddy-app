@@ -1,142 +1,159 @@
 // Upload modal for the TMS Equipment Assignments export. Shared between
-// trucks and trailers — the caller passes equipmentType so the modal only
-// hydrates the relevant lookup table and shows the right label.
+// trucks and trailers — the caller passes equipmentType so the modal shows
+// the right label and the preview/apply route through the correct unit type.
 //
-// Stages mirror the other Fleet uploads (pick → preview → done) but the
-// preview is read-only: there's no per-row classification override, just a
-// summary of what'll be inserted / closed / unchanged. The commit upserts
-// on the natural key (equipment_type, tms_equipment_id, tms_driver_id,
-// start_date) and then calls resolve_current_equipment_drivers() to
-// propagate the open assignments to trucks/trailers.driver_id.
+// Review-before-apply flow (mirrors Loads Import): parse → preview (read-only)
+// → approve per item → apply only the approved changes. NOTHING is written
+// during preview. The two backing RPCs are already deployed:
+//   - preview_assignment_import(p_rows)   → categorized diff, writes nothing
+//   - apply_assignment_import(p_decisions) → writes approved items (source
+//     'tms_upload' via set_unit_current_driver), returns { applied }
+//
+// TMS is the default truth (new/reassignment default to apply), but a current
+// driver set by a *manual* fix is protected (conflict_manual defaults to keep
+// system; the user must explicitly choose "Take TMS").
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../../../lib/supabase'
-import { useAuth } from '../../../contexts/AuthContext'
 import { S } from '../../../lib/styles'
 import Modal from '../../../components/Modal'
-import { parseEquipmentAssignmentsWorkbook } from './equipmentAssignmentsParser'
-import {
-  buildUnitIndex,
-  buildDriverByInternalIdIndex,
-  buildExistingAssignmentsIndex,
-  annotateAllRows,
-  summarizeCounts,
-} from './equipmentAssignmentsMatcher'
-import { commitEquipmentAssignmentRows } from './equipmentAssignmentsCommit'
+import ErrorBoundary from '../../../components/ErrorBoundary'
+import { parseEquipmentAssignmentsWorkbook, normalizeUnitNumber } from './equipmentAssignmentsParser'
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024
 
-const ACTION_FILTERS = [
-  { key: 'all',                  label: 'All' },
-  { key: 'new',                  label: '🆕 New' },
-  { key: 'closed',               label: '🔒 Closed' },
-  { key: 'updated',              label: '✏️ Updated' },
-  { key: 'unchanged',            label: '· Unchanged' },
-  { key: 'unmatched_equipment',  label: '⚠️ Unmatched unit' },
-  { key: 'unmatched_driver',     label: '⚠️ Unmatched driver' },
-]
-
-function fmtDateOrOpen(iso) {
-  if (!iso) return <span className="italic text-emerald-600 dark:text-emerald-400">Open</span>
-  return iso
+// Parsed file rows → normalized preview input. The TMS export carries
+// historical (closed) rows too; the *current* assignment is the OPEN row (no
+// end date), and the preview RPC compares against the open assignment — so we
+// send only open rows, deduped to the latest start per unit (defensive: a
+// clean export has one open row per unit).
+function buildPreviewRows(parsed) {
+  const byUnit = new Map() // `${type}|${normUnit}` -> parsed row
+  for (const r of parsed) {
+    if (r.end_date) continue // closed/historical — not the current assignment
+    const key = `${r.equipment_type}|${normalizeUnitNumber(r.equipment_name_raw) || ''}`
+    const prev = byUnit.get(key)
+    if (!prev || (r.start_date || '') >= (prev.start_date || '')) byUnit.set(key, r)
+  }
+  return [...byUnit.values()].map(r => ({
+    equipment_type: r.equipment_type,
+    unit: r.equipment_name_raw,
+    driver_code: r.tms_driver_id || null,   // TMS "Driver ID" = drivers.internal_id
+    driver_name: r.driver_name_raw || null, // fallback match
+    start_date: r.start_date || null,
+  }))
 }
 
+const ACTIONABLE = new Set(['new', 'reassignment', 'conflict_manual'])
+
 export default function EquipmentAssignmentsUploadModal({ open, equipmentType, onClose, onCommitted }) {
-  const { user } = useAuth()
   const fileInputRef = useRef(null)
   const isTrailer = equipmentType === 'trailer'
   const unitNoun = isTrailer ? 'trailer' : 'truck'
 
-  const [stage, setStage] = useState('pick')
+  const [stage, setStage] = useState('pick') // pick | review | done
   const [fileName, setFileName] = useState('')
   const [parsing, setParsing] = useState(false)
   const [parseErrors, setParseErrors] = useState([])
-  const [rows, setRows] = useState([])
-  const [filter, setFilter] = useState('all')
-  const [committing, setCommitting] = useState(false)
-  const [commitResult, setCommitResult] = useState(null)
+  const [previewError, setPreviewError] = useState('')
+  const [preview, setPreview] = useState([])           // rows from preview RPC
+  const [approved, setApproved] = useState(() => new Set()) // approved row_index set
+  const [applying, setApplying] = useState(false)
+  const [applyResult, setApplyResult] = useState(null) // { applied }
 
   useEffect(() => {
     if (!open) {
-      setStage('pick'); setFileName(''); setParseErrors([]); setRows([])
-      setFilter('all'); setCommitResult(null); setCommitting(false); setParsing(false)
+      setStage('pick'); setFileName(''); setParsing(false)
+      setParseErrors([]); setPreviewError(''); setPreview([])
+      setApproved(new Set()); setApplying(false); setApplyResult(null)
     }
   }, [open])
 
   async function handleFile(file) {
     if (!file) return
     if (file.size > MAX_FILE_BYTES) {
-      setParseErrors([`File is larger than 5 MB (${(file.size / 1024 / 1024).toFixed(1)} MB).`])
-      return
+      setParseErrors([`File is larger than 5 MB (${(file.size / 1024 / 1024).toFixed(1)} MB).`]); return
     }
     if (!/\.xlsx?$/i.test(file.name)) {
-      setParseErrors([`File must be .xlsx or .xls — got "${file.name}".`])
-      return
+      setParseErrors([`File must be .xlsx or .xls — got "${file.name}".`]); return
     }
     setFileName(file.name)
-    setParsing(true); setParseErrors([])
+    setParsing(true); setParseErrors([]); setPreviewError('')
     try {
       const buf = await file.arrayBuffer()
       const { rows: parsed, errors } = parseEquipmentAssignmentsWorkbook(buf, equipmentType)
-
-      // Hydrate lookup sets. Existing assignments narrowed to the equipment
-      // type so we don't pull the whole table; the natural key has type
-      // baked in already but a smaller fetch is cheaper.
-      const [{ data: units }, { data: drivers }, { data: existing }] = await Promise.all([
-        supabase.from(isTrailer ? 'trailers' : 'trucks').select('id, unit_number'),
-        supabase.from('drivers').select('id, internal_id'),
-        supabase.from('equipment_assignments')
-          .select('id, equipment_type, truck_id, trailer_id, tms_equipment_id, tms_driver_id, driver_id, start_date, end_date')
-          .eq('equipment_type', equipmentType),
-      ])
-      const annotated = annotateAllRows(parsed, {
-        unitsByKey: buildUnitIndex(units),
-        driversByInternalId: buildDriverByInternalIdIndex(drivers),
-        existingByNatKey: buildExistingAssignmentsIndex(existing),
-      })
-      setRows(annotated)
       setParseErrors(errors)
-      setStage('preview')
+
+      const pRows = buildPreviewRows(parsed)
+      // Read-only preview — writes nothing.
+      const { data, error } = await supabase.rpc('preview_assignment_import', { p_rows: pRows })
+      if (error) throw error
+      const rows = data || []
+      setPreview(rows)
+      // Default approvals: TMS wins for new + reassignment; manual conflicts
+      // start OFF (keep the system value) until explicitly chosen.
+      setApproved(new Set(rows.filter(r => r.category === 'new' || r.category === 'reassignment').map(r => r.row_index)))
+      setStage('review')
     } catch (e) {
-      console.error('[EquipmentAssignmentsUploadModal] parse failed', e)
-      setParseErrors([`Parse failed: ${e.message || e}`])
+      console.error('[EquipmentAssignmentsUploadModal] preview failed', e)
+      setPreviewError(e.message || String(e))
     } finally {
       setParsing(false)
     }
   }
 
-  function onPickFiles(e) {
-    const f = e.target.files?.[0]
-    if (f) handleFile(f)
-    e.target.value = ''
-  }
-  function onDrop(e) {
-    e.preventDefault()
-    const f = e.dataTransfer.files?.[0]
-    if (f) handleFile(f)
-  }
+  function onPickFiles(e) { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = '' }
+  function onDrop(e) { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) handleFile(f) }
   function onDragOver(e) { e.preventDefault() }
 
-  const counts = useMemo(() => summarizeCounts(rows), [rows])
+  const groups = useMemo(() => {
+    const g = { new: [], reassignment: [], conflict_manual: [], unresolved: [], no_change: 0 }
+    for (const r of preview) {
+      if (r.category === 'no_change') g.no_change++
+      else if (g[r.category]) g[r.category].push(r)
+      else if (r.category === 'unresolved') g.unresolved.push(r)
+    }
+    return g
+  }, [preview])
 
-  const filteredRows = useMemo(() => {
-    if (filter === 'all') return rows
-    if (filter === 'unmatched_equipment') return rows.filter(r => !r.truck_id && !r.trailer_id)
-    if (filter === 'unmatched_driver')    return rows.filter(r => !r.driver_id && r.tms_driver_id)
-    return rows.filter(r => r.action === filter)
-  }, [rows, filter])
+  function toggle(rowIndex) {
+    setApproved(prev => {
+      const next = new Set(prev)
+      next.has(rowIndex) ? next.delete(rowIndex) : next.add(rowIndex)
+      return next
+    })
+  }
 
-  async function doCommit() {
-    setCommitting(true)
-    const result = await commitEquipmentAssignmentRows({ rows, userId: user?.id || null })
-    setCommitResult(result)
-    setCommitting(false)
-    setStage('done')
-    onCommitted?.()
+  // Decisions = approved actionable rows that actually resolved to a unit +
+  // driver (unresolved never reach here). driver_id is the TMS-matched uuid.
+  const decisions = useMemo(() => preview
+    .filter(r => ACTIONABLE.has(r.category) && approved.has(r.row_index) && r.unit_id && r.tms_driver_id)
+    .map(r => ({
+      action: 'apply',
+      equipment_type: r.equipment_type,
+      unit_id: r.unit_id,
+      driver_id: r.tms_driver_id,
+      effective: r.start_date,
+    })), [preview, approved])
+
+  async function doApply() {
+    setApplying(true)
+    try {
+      const { data, error } = await supabase.rpc('apply_assignment_import', { p_decisions: decisions })
+      if (error) throw error
+      setApplyResult(data || { applied: 0 })
+      setStage('done')
+      onCommitted?.()
+    } catch (e) {
+      console.error('[EquipmentAssignmentsUploadModal] apply failed', e)
+      setPreviewError(e.message || String(e))
+    } finally {
+      setApplying(false)
+    }
   }
 
   const title = stage === 'done'
-    ? '✅ Upload Complete'
+    ? '✅ Assignments Applied'
     : `Upload ${isTrailer ? 'Trailer' : 'Truck'} Assignments Excel`
 
   return (
@@ -151,6 +168,9 @@ export default function EquipmentAssignmentsUploadModal({ open, equipmentType, o
             </ul>
           </div>
         )}
+        {previewError && stage !== 'done' && (
+          <div className={S.errorBox}>{previewError}</div>
+        )}
 
         {stage === 'pick' && (
           <div
@@ -159,160 +179,45 @@ export default function EquipmentAssignmentsUploadModal({ open, equipmentType, o
             className="border-2 border-dashed border-gray-300 dark:border-slate-700 rounded-2xl p-12 text-center cursor-pointer hover:border-orange-400 dark:hover:border-orange-500/40 transition-colors"
             onClick={() => fileInputRef.current?.click()}
           >
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".xlsx,.xls"
-              onChange={onPickFiles}
-              className="hidden"
-            />
+            <input ref={fileInputRef} type="file" accept=".xlsx,.xls" onChange={onPickFiles} className="hidden" />
             <div className="text-4xl mb-2">📂</div>
             <p className="text-sm font-medium text-gray-700 dark:text-slate-300">
-              {parsing ? 'Parsing…' : 'Drop .xlsx file here or click to browse'}
+              {parsing ? 'Reading & previewing…' : 'Drop .xlsx file here or click to browse'}
             </p>
             <p className="text-[11px] text-gray-500 dark:text-slate-500 mt-2">
-              Expected columns: Equipment ID, Equipment Name, Driver Full Name, Driver ID, Start Date, End Date, Created By
+              Nothing is written until you review the changes and approve. Expected columns:
+              Equipment ID, Equipment Name, Driver Full Name, Driver ID, Start Date, End Date, Created By
             </p>
           </div>
         )}
 
-        {stage === 'preview' && (
-          <>
-            <div className={`${S.card} p-4 space-y-3`}>
-              <p className="text-sm font-semibold text-gray-700 dark:text-slate-300">
-                {fileName} <span className="font-normal text-gray-500 dark:text-slate-500">· {counts.total} rows parsed · {unitNoun}</span>
-              </p>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
-                <SummaryGroup title="Outcome">
-                  <SummaryRow icon="🆕" label="New"        value={counts.new} />
-                  <SummaryRow icon="🔒" label="Closed"     value={counts.closed} />
-                  <SummaryRow icon="✏️" label="Updated"    value={counts.updated} />
-                  <SummaryRow icon="·"  label="Unchanged"  value={counts.unchanged} />
-                </SummaryGroup>
-                <SummaryGroup title="Matching">
-                  <SummaryRow icon="⚠️" label={`Unmatched ${unitNoun}`} value={counts.unmatched_equipment} />
-                  <SummaryRow icon="⚠️" label="Unmatched driver"        value={counts.unmatched_driver} />
-                </SummaryGroup>
-                <SummaryGroup title="Validation">
-                  <SummaryRow icon={parseErrors.length === 0 ? '✓' : '⚠️'} label="Parse warnings" value={parseErrors.length} />
-                </SummaryGroup>
-              </div>
-            </div>
-
-            <div className="flex items-center flex-wrap gap-2">
-              {ACTION_FILTERS.map(f => {
-                const count =
-                  f.key === 'all'                  ? counts.total
-                  : f.key === 'unmatched_equipment' ? counts.unmatched_equipment
-                  : f.key === 'unmatched_driver'    ? counts.unmatched_driver
-                  : (counts[f.key] || 0)
-                const active = filter === f.key
-                return (
-                  <button
-                    key={f.key}
-                    onClick={() => setFilter(f.key)}
-                    className={`px-3 py-1.5 text-xs font-medium rounded-full border transition-colors ${
-                      active
-                        ? 'bg-orange-50 dark:bg-orange-500/10 border-orange-300 dark:border-orange-500/30 text-orange-700 dark:text-orange-400'
-                        : 'border-gray-200 dark:border-slate-700/50 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5'
-                    }`}
-                  >
-                    {f.label} <span className="ml-1 opacity-70">{count}</span>
-                  </button>
-                )
-              })}
-            </div>
-
-            <div className={`${S.card} overflow-hidden`}>
-              <div className="overflow-x-auto max-h-[420px]">
-                <table className="w-full text-sm">
-                  <thead className={`${S.tableHead} sticky top-0 z-10`}>
-                    <tr>
-                      <th className={S.th}>Unit (raw)</th>
-                      <th className={S.th}>Match</th>
-                      <th className={S.th}>Driver (raw)</th>
-                      <th className={S.th}>Driver match</th>
-                      <th className={S.th}>Start</th>
-                      <th className={S.th}>End</th>
-                      <th className={S.th}>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredRows.length === 0 ? (
-                      <tr><td colSpan={7} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">No rows match this filter.</td></tr>
-                    ) : filteredRows.map((row, i) => (
-                      <tr key={`${row._rowNum}-${i}`} className={S.tableRow}>
-                        <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>{row.equipment_name_raw}</td>
-                        <td className={`${S.td} text-xs`}>
-                          {row.matched_unit
-                            ? <span className="text-emerald-700 dark:text-emerald-400" title={row.matched_unit.unit_number}>✓ {row.matched_unit.unit_number}</span>
-                            : <span className="text-amber-700 dark:text-amber-400">?</span>}
-                        </td>
-                        <td className={`${S.td} text-gray-600 dark:text-slate-400 text-xs`}>{row.driver_name_raw || '—'}</td>
-                        <td className={`${S.td} text-xs`}>
-                          {row.matched_driver
-                            ? <span className="text-emerald-700 dark:text-emerald-400">✓ #{row.matched_driver.internal_id}</span>
-                            : row.tms_driver_id
-                              ? <span className="text-amber-700 dark:text-amber-400">? #{row.tms_driver_id}</span>
-                              : <span className="text-gray-400">—</span>}
-                        </td>
-                        <td className={`${S.td} text-xs whitespace-nowrap`}>{row.start_date}</td>
-                        <td className={`${S.td} text-xs whitespace-nowrap`}>{fmtDateOrOpen(row.end_date)}</td>
-                        <td className={S.td}><ActionPill action={row.action} /></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div className={S.modalFooter}>
-              <button onClick={onClose} className={S.btnCancel} disabled={committing}>Cancel</button>
-              <button onClick={doCommit} disabled={committing || rows.length === 0} className={S.btnSave}>
-                {committing
-                  ? 'Committing…'
-                  : `Commit ${rows.length} row${rows.length === 1 ? '' : 's'} (${counts.new} new · ${counts.closed} closed)`}
-              </button>
-            </div>
-          </>
+        {stage === 'review' && (
+          <ErrorBoundary label="the assignment review">
+            <ReviewScreen
+              fileName={fileName}
+              unitNoun={unitNoun}
+              groups={groups}
+              approved={approved}
+              onToggle={toggle}
+              decisionCount={decisions.length}
+              applying={applying}
+              onApply={doApply}
+              onCancel={onClose}
+            />
+          </ErrorBoundary>
         )}
 
-        {stage === 'done' && commitResult && (
+        {stage === 'done' && (
           <>
             <div className={`${S.card} p-4 space-y-2`}>
               <p className="text-sm font-medium text-gray-700 dark:text-slate-300">{fileName}</p>
               <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
-                <span className="text-gray-500 dark:text-slate-400">Upserted</span>
-                <span className="font-mono text-emerald-700 dark:text-emerald-400">{commitResult.upserted}</span>
-                <span className="text-gray-500 dark:text-slate-400">New</span>
-                <span className="font-mono text-emerald-700 dark:text-emerald-400">{commitResult.new}</span>
-                <span className="text-gray-500 dark:text-slate-400">Closed</span>
-                <span className="font-mono text-cyan-700 dark:text-cyan-400">{commitResult.closed}</span>
-                <span className="text-gray-500 dark:text-slate-400">Updated</span>
-                <span className="font-mono text-cyan-700 dark:text-cyan-400">{commitResult.updated}</span>
-                <span className="text-gray-500 dark:text-slate-400">Unchanged</span>
-                <span className="font-mono text-gray-700 dark:text-slate-300">{commitResult.unchanged}</span>
-                <span className="text-gray-500 dark:text-slate-400" title="Previous-driver open assignments auto-closed when this upload introduced a new driver on the same unit">
-                  Auto-closed (superseded)
-                </span>
-                <span className="font-mono text-cyan-700 dark:text-cyan-400">{commitResult.auto_closed ?? 0}</span>
-                <span className="text-gray-500 dark:text-slate-400">Resolver</span>
-                <span className={`font-mono ${commitResult.resolver_ok ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}`}>
-                  {commitResult.resolver_ok ? 'ran ✓' : 'skipped'}
-                </span>
-                {commitResult.errors.length > 0 && (
-                  <>
-                    <span className="text-gray-500 dark:text-slate-400">Errors</span>
-                    <span className="font-mono text-red-700 dark:text-red-400">{commitResult.errors.length}</span>
-                  </>
-                )}
+                <span className="text-gray-500 dark:text-slate-400">Changes applied</span>
+                <span className="font-mono text-emerald-700 dark:text-emerald-400">{applyResult?.applied ?? 0}</span>
               </div>
-              {commitResult.errors.length > 0 && (
-                <ul className="mt-2 list-disc ml-5 text-xs text-red-700 dark:text-red-400">
-                  {commitResult.errors.slice(0, 6).map((e, i) => <li key={i}>{e}</li>)}
-                  {commitResult.errors.length > 6 && <li>… and {commitResult.errors.length - 6} more</li>}
-                </ul>
-              )}
+              <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1">
+                Written with source <span className="font-mono">tms_upload</span> — visible in the assignment import log.
+              </p>
             </div>
             <div className={S.modalFooter}>
               <button onClick={onClose} className={S.btnSave}>Done</button>
@@ -324,31 +229,126 @@ export default function EquipmentAssignmentsUploadModal({ open, equipmentType, o
   )
 }
 
-function ActionPill({ action }) {
-  const map = {
-    new:       { label: 'New',       cls: 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' },
-    closed:    { label: 'Closed',    cls: 'bg-cyan-50 dark:bg-cyan-500/10 text-cyan-700 dark:text-cyan-400' },
-    updated:   { label: 'Updated',   cls: 'bg-amber-50 dark:bg-amber-500/10 text-amber-800 dark:text-amber-300' },
-    unchanged: { label: 'Unchanged', cls: 'bg-gray-100 dark:bg-white/[0.03] text-gray-600 dark:text-slate-400' },
-  }
-  const meta = map[action] || map.unchanged
-  return <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-medium ${meta.cls}`}>{meta.label}</span>
+function ReviewScreen({ fileName, unitNoun, groups, approved, onToggle, decisionCount, applying, onApply, onCancel }) {
+  const actionableTotal = groups.new.length + groups.reassignment.length + groups.conflict_manual.length
+  return (
+    <>
+      <div className={`${S.card} p-4 space-y-3`}>
+        <p className="text-sm font-semibold text-gray-700 dark:text-slate-300">
+          {fileName} <span className="font-normal text-gray-500 dark:text-slate-500">· {unitNoun} assignments · nothing written until you Apply</span>
+        </p>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs">
+          <Stat label="New" value={groups.new.length} />
+          <Stat label="Reassignment" value={groups.reassignment.length} />
+          <Stat label="Manual conflict" value={groups.conflict_manual.length} tone="amber" />
+          <Stat label="Unchanged" value={groups.no_change} muted />
+          <Stat label="Unresolved" value={groups.unresolved.length} tone={groups.unresolved.length ? 'amber' : undefined} muted={!groups.unresolved.length} />
+        </div>
+      </div>
+
+      {actionableTotal === 0 && groups.unresolved.length === 0 && (
+        <div className={`${S.card} p-6 text-center text-sm text-gray-500 dark:text-slate-400`}>
+          Nothing to review — all {groups.no_change} current assignment{groups.no_change === 1 ? '' : 's'} already match TMS.
+        </div>
+      )}
+
+      {groups.new.length > 0 && (
+        <Section title={`New assignments (${groups.new.length})`} subtitle="Unit had no driver — TMS assigns one. Default: apply.">
+          {groups.new.map(r => (
+            <ItemRow key={r.row_index} on={approved.has(r.row_index)} onToggle={() => onToggle(r.row_index)}
+              unit={r.unit} label={<>→ <strong>{r.tms_driver_name}</strong>{r.tms_driver_code ? <span className="text-gray-400 dark:text-slate-500"> · #{r.tms_driver_code}</span> : null}</>} />
+          ))}
+        </Section>
+      )}
+
+      {groups.reassignment.length > 0 && (
+        <Section title={`Reassignments (${groups.reassignment.length})`} subtitle="Current came from a prior import; TMS differs. Default: apply (TMS wins).">
+          {groups.reassignment.map(r => (
+            <ItemRow key={r.row_index} on={approved.has(r.row_index)} onToggle={() => onToggle(r.row_index)}
+              unit={r.unit} label={<>was <span className="text-gray-500 dark:text-slate-400">{r.current_driver_name || '—'}</span> → TMS <strong>{r.tms_driver_name}</strong></>} />
+          ))}
+        </Section>
+      )}
+
+      {groups.conflict_manual.length > 0 && (
+        <Section
+          title={`Conflicts with a manual fix (${groups.conflict_manual.length})`}
+          subtitle="Current driver was set manually. Default: keep the system value — tick “Take TMS” to override."
+          tone="amber"
+        >
+          {groups.conflict_manual.map(r => (
+            <ItemRow key={r.row_index} on={approved.has(r.row_index)} onToggle={() => onToggle(r.row_index)}
+              tone="amber" toggleLabel="Take TMS"
+              unit={r.unit}
+              label={<>System <span className="text-[10px] uppercase tracking-wide px-1 py-0.5 rounded bg-gray-200/70 dark:bg-white/10 text-gray-600 dark:text-slate-300">manual</span>: <span className="text-gray-700 dark:text-slate-300">{r.current_driver_name || '—'}</span> · TMS: <strong>{r.tms_driver_name}</strong></>} />
+          ))}
+        </Section>
+      )}
+
+      {groups.unresolved.length > 0 && (
+        <Section title={`Unresolved (${groups.unresolved.length})`} subtitle="Couldn’t match the unit or driver — advisory only, can’t be applied." tone="muted">
+          {groups.unresolved.map(r => (
+            <div key={r.row_index} className="flex items-start justify-between gap-3 px-3 py-2 text-xs border-b border-gray-50 dark:border-white/[0.03] last:border-0">
+              <span className="font-medium text-gray-700 dark:text-slate-300">{r.unit || '(blank)'}</span>
+              <span className="text-amber-700 dark:text-amber-400 text-right">{r.note || 'Unresolved'}</span>
+            </div>
+          ))}
+        </Section>
+      )}
+
+      <div className={S.modalFooter}>
+        <span className="text-[11px] text-gray-500 dark:text-slate-400 mr-auto self-center">
+          {decisionCount} change{decisionCount === 1 ? '' : 's'} selected
+        </span>
+        <button onClick={onCancel} className={S.btnCancel} disabled={applying}>Cancel</button>
+        <button onClick={onApply} disabled={applying || decisionCount === 0} className={S.btnSave}>
+          {applying ? 'Applying…' : `Apply ${decisionCount} change${decisionCount === 1 ? '' : 's'}`}
+        </button>
+      </div>
+    </>
+  )
 }
 
-function SummaryGroup({ title, children }) {
+function ItemRow({ on, onToggle, unit, label, tone, toggleLabel }) {
   return (
-    <div>
-      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500 mb-1">{title}</p>
-      <div className="space-y-0.5">{children}</div>
+    <label className={`flex items-center gap-3 px-3 py-2 text-sm cursor-pointer border-b border-gray-50 dark:border-white/[0.03] last:border-0 ${
+      tone === 'amber' && on ? 'bg-amber-50/60 dark:bg-amber-500/[0.06]' : ''
+    }`}>
+      <input type="checkbox" checked={on} onChange={onToggle} className="rounded shrink-0" />
+      <span className="font-medium text-gray-900 dark:text-slate-200 w-24 shrink-0">{unit}</span>
+      <span className="text-gray-600 dark:text-slate-400 flex-1 min-w-0">{label}</span>
+      {toggleLabel && (
+        <span className={`text-[10px] font-semibold uppercase tracking-wide shrink-0 ${on ? 'text-amber-700 dark:text-amber-400' : 'text-gray-400 dark:text-slate-500'}`}>
+          {toggleLabel}
+        </span>
+      )}
+    </label>
+  )
+}
+
+function Section({ title, subtitle, tone, children }) {
+  const ring = tone === 'amber'
+    ? 'border-amber-200 dark:border-amber-500/30'
+    : 'border-gray-200 dark:border-white/10'
+  return (
+    <div className={`rounded-2xl border ${ring} overflow-hidden`}>
+      <div className={`px-4 py-2.5 ${tone === 'amber' ? 'bg-amber-50/60 dark:bg-amber-500/[0.06]' : 'bg-gray-50 dark:bg-white/[0.02]'}`}>
+        <p className="text-sm font-semibold text-gray-900 dark:text-white">{title}</p>
+        {subtitle && <p className="text-[11px] text-gray-500 dark:text-slate-500 mt-0.5">{subtitle}</p>}
+      </div>
+      <div className="max-h-[280px] overflow-y-auto">{children}</div>
     </div>
   )
 }
 
-function SummaryRow({ icon, label, value }) {
+function Stat({ label, value, tone, muted }) {
+  const valCls = tone === 'amber'
+    ? 'text-amber-700 dark:text-amber-400'
+    : muted ? 'text-gray-500 dark:text-slate-400' : 'text-gray-900 dark:text-slate-200'
   return (
-    <div className="flex items-baseline justify-between gap-2">
-      <span className="text-gray-600 dark:text-slate-400">{icon} {label}</span>
-      <span className="font-mono font-semibold text-gray-900 dark:text-slate-200">{value}</span>
+    <div className={`${S.card} p-3`}>
+      <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">{label}</p>
+      <p className={`text-xl font-mono font-medium ${valCls}`}>{value}</p>
     </div>
   )
 }

@@ -30,15 +30,17 @@ function dateLabel(iso) {
   return fmt(sameYear ? { month: 'short', day: 'numeric' } : { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-export default function AssignmentImportLog() {
+export default function AssignmentImportLog({ refreshKey = 0 }) {
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [expanded, setExpanded] = useState(false)
 
+  // Reloads on mount and whenever refreshKey changes (bumped by the parent
+  // after an assignment upload applies, so the strip reflects the new run).
   useEffect(() => {
     load()
-  }, [])
+  }, [refreshKey])
 
   async function load() {
     setLoading(true)
