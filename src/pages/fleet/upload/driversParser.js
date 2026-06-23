@@ -89,6 +89,22 @@ function parseYesNo(v) {
   return s === 'yes' || s === 'true' || s === 'y'
 }
 
+// Normalized header signature for validating a multi-file batch: the first
+// sheet's column names lowercased, trimmed, and sorted, joined with "|". Two
+// exports with the same columns (any order/case) match; a differing column
+// set does not. Returns null if no header row can be read.
+export function driversHeaderSignature(arrayBuffer) {
+  try {
+    const wb = XLSX.read(arrayBuffer, { type: 'array' })
+    const sheet = wb.Sheets[wb.SheetNames[0]]
+    const raw = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false })
+    if (raw.length === 0) return null
+    return Object.keys(raw[0]).map(k => k.trim().toLowerCase()).sort().join('|')
+  } catch {
+    return null
+  }
+}
+
 // ArrayBuffer → { rows, errors }
 export function parseDriversWorkbook(arrayBuffer) {
   const wb = XLSX.read(arrayBuffer, { type: 'array' })

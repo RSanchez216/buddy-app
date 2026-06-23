@@ -5,7 +5,7 @@ import { S } from '../../../lib/styles'
 import Modal from '../../../components/Modal'
 import Select from '../../../components/Select'
 import { DRIVER_TYPES, DriverTypePill } from '../fleetUtils'
-import { parseDriversWorkbook } from './driversParser'
+import { parseDriversWorkbook, driversHeaderSignature } from './driversParser'
 import { commitDriverRows } from './driversCommit'
 import { matchExistingDriver } from './driversMatcher'
 
@@ -48,7 +48,7 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
   const fileInputRef = useRef(null)
 
   const [stage, setStage] = useState('pick')
-  const [fileName, setFileName] = useState('')
+  const [fileNames, setFileNames] = useState([]) // one or more selected files
   const [parsing, setParsing] = useState(false)
   const [parseErrors, setParseErrors] = useState([])
   const [rows, setRows] = useState([])
@@ -69,7 +69,7 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
 
   useEffect(() => {
     if (!open) {
-      setStage('pick'); setFileName(''); setParseErrors([]); setRows([])
+      setStage('pick'); setFileNames([]); setParseErrors([]); setRows([])
       setPossiblyTerminated([]); setTermActions({}); setCommitResult(null)
       setFilter('all'); setSearch(''); setSelected(new Set()); setBulkType('')
       setBulkAction(''); setBulkReason(''); setPendingBulkConfirm(false); setBulkToast('')
@@ -77,18 +77,61 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
     }
   }, [open])
 
-  async function handleFile(file) {
-    if (!file) return
-    if (file.size > MAX_FILE_BYTES) {
-      setParseErrors([`File is larger than 5 MB (${(file.size / 1024 / 1024).toFixed(1)} MB).`]); return
+  async function handleFiles(files) {
+    if (!files || files.length === 0) return
+    const fileArray = Array.from(files)
+
+    // Validate size + extension for every selected file up front.
+    const fileErrors = []
+    for (const f of fileArray) {
+      if (f.size > MAX_FILE_BYTES) {
+        fileErrors.push(`${f.name}: larger than 5 MB (${(f.size / 1024 / 1024).toFixed(1)} MB).`)
+      }
+      if (!/\.xlsx?$/i.test(f.name)) {
+        fileErrors.push(`${f.name}: must be .xlsx or .xls.`)
+      }
     }
-    if (!/\.xlsx?$/i.test(file.name)) {
-      setParseErrors([`File must be .xlsx or .xls — got "${file.name}".`]); return
-    }
-    setFileName(file.name); setParsing(true); setParseErrors([])
+    if (fileErrors.length > 0) { setParseErrors(fileErrors); return }
+
+    setFileNames(fileArray.map(f => f.name)); setParsing(true); setParseErrors([])
     try {
-      const buf = await file.arrayBuffer()
-      const { rows: parsed, errors } = parseDriversWorkbook(buf)
+      // Buffer each file and require identical headers across the batch
+      // (normalized for case/whitespace/order). A mismatch names the
+      // offending file and aborts — never a partial import.
+      const buffers = []
+      let firstSig = null
+      const headerMismatches = []
+      for (const f of fileArray) {
+        const buf = await f.arrayBuffer()
+        const sig = driversHeaderSignature(buf)
+        if (!sig) {
+          headerMismatches.push(`${f.name}: couldn't read a header row.`)
+          continue
+        }
+        if (firstSig === null) {
+          firstSig = sig
+        } else if (sig !== firstSig) {
+          headerMismatches.push(`${f.name}: header columns don't match "${fileArray[0].name}" — not imported.`)
+          continue
+        }
+        buffers.push({ name: f.name, buf })
+      }
+      if (headerMismatches.length > 0) {
+        setParseErrors(headerMismatches); setFileNames([]); setParsing(false); return
+      }
+
+      // Parse each file and concatenate the data rows into one dataset.
+      // _rowNum is per-file in the parser, so re-key it uniquely across the
+      // merged set (it's the row's selection/React key).
+      const parsed = []
+      const errors = []
+      const multi = fileArray.length > 1
+      for (const { name, buf } of buffers) {
+        const { rows: fileRows, errors: fileErrs } = parseDriversWorkbook(buf)
+        parsed.push(...fileRows.map(r => ({ ...r, _sourceFile: name })))
+        errors.push(...(multi ? fileErrs.map(e => `${name}: ${e}`) : fileErrs))
+      }
+      parsed.forEach((r, i) => { r._rowNum = i + 2 })
 
       // Load the FULL drivers roster once so the matcher can run all four
       // tiers (id, name-backfill, possible-duplicate, ambiguous). We need
@@ -137,8 +180,8 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
     }
   }
 
-  function onPick(e) { handleFile(e.target.files?.[0]) }
-  function onDrop(e) { e.preventDefault(); handleFile(e.dataTransfer.files?.[0]) }
+  function onPick(e) { handleFiles(e.target.files) }
+  function onDrop(e) { e.preventDefault(); handleFiles(e.dataTransfer.files) }
 
   const counts = useMemo(() => {
     const c = {
@@ -308,10 +351,13 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
             className="border-2 border-dashed border-gray-300 dark:border-slate-700 rounded-2xl p-12 text-center cursor-pointer hover:border-orange-400 dark:hover:border-orange-500/40 transition-colors"
             onClick={() => fileInputRef.current?.click()}
           >
-            <input ref={fileInputRef} type="file" accept=".xlsx,.xls" onChange={onPick} className="hidden" />
+            <input ref={fileInputRef} type="file" accept=".xlsx,.xls" onChange={onPick} multiple className="hidden" />
             <div className="text-4xl mb-2">📂</div>
             <p className="text-sm font-medium text-gray-700 dark:text-slate-300">
-              {parsing ? 'Parsing…' : 'Drop .xlsx file here or click to browse'}
+              {parsing ? 'Parsing…' : 'Drop .xlsx file(s) here or click to browse'}
+            </p>
+            <p className="text-[11px] text-gray-500 dark:text-slate-500 mt-1">
+              Select multiple files with matching columns to import them together.
             </p>
             <p className="text-[11px] text-gray-500 dark:text-slate-500 mt-2">
               Expected columns: Driver ID, Status, Full name, Truck, Carrier, Trailer, Driver type, Phone number, Email, Missing OP, Referred by, Created at, Temporary License, Compensation
@@ -323,7 +369,7 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
           <>
             <div className={`${S.card} p-4 space-y-3`}>
               <p className="text-sm font-semibold text-gray-700 dark:text-slate-300">
-                {fileName} <span className="font-normal text-gray-500 dark:text-slate-500">· {counts.total} rows parsed</span>
+                {fileNames.length === 1 ? fileNames[0] : `${fileNames.length} files`} <span className="font-normal text-gray-500 dark:text-slate-500">· {counts.total} rows parsed</span>
               </p>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
                 <SummaryGroup title="Classification">
@@ -686,7 +732,7 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
         {stage === 'done' && commitResult && (
           <>
             <div className={`${S.card} p-4 space-y-2`}>
-              <p className="text-sm font-medium text-gray-700 dark:text-slate-300">{fileName}</p>
+              <p className="text-sm font-medium text-gray-700 dark:text-slate-300">{fileNames.length === 1 ? fileNames[0] : `${fileNames.length} files`}</p>
               <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
                 <span className="text-gray-500 dark:text-slate-400">New drivers added</span>
                 <span className="font-mono text-emerald-700 dark:text-emerald-400">{commitResult.inserted}</span>
