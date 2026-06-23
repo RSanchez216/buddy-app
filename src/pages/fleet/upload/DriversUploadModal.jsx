@@ -50,6 +50,9 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
   const [stage, setStage] = useState('pick')
   const [fileNames, setFileNames] = useState([]) // one or more selected files
   const [parsing, setParsing] = useState(false)
+  // Set when the (header-validated) batch has no Compensation column — holds
+  // the buffered files so "Upload anyway" can proceed without re-reading.
+  const [compWarning, setCompWarning] = useState(null)
   const [parseErrors, setParseErrors] = useState([])
   const [rows, setRows] = useState([])
   const [possiblyTerminated, setPossiblyTerminated] = useState([])
@@ -69,7 +72,7 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
 
   useEffect(() => {
     if (!open) {
-      setStage('pick'); setFileNames([]); setParseErrors([]); setRows([])
+      setStage('pick'); setFileNames([]); setParseErrors([]); setRows([]); setCompWarning(null)
       setPossiblyTerminated([]); setTermActions({}); setCommitResult(null)
       setFilter('all'); setSearch(''); setSelected(new Set()); setBulkType('')
       setBulkAction(''); setBulkReason(''); setPendingBulkConfirm(false); setBulkToast('')
@@ -93,7 +96,7 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
     }
     if (fileErrors.length > 0) { setParseErrors(fileErrors); return }
 
-    setFileNames(fileArray.map(f => f.name)); setParsing(true); setParseErrors([])
+    setFileNames(fileArray.map(f => f.name)); setParsing(true); setParseErrors([]); setCompWarning(null)
     try {
       // Buffer each file and require identical headers across the batch
       // (normalized for case/whitespace/order). A mismatch names the
@@ -120,12 +123,37 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
         setParseErrors(headerMismatches); setFileNames([]); setParsing(false); return
       }
 
+      const multi = fileArray.length > 1
+      // Compensation guard: comp drives downstream analysis, so importing a
+      // file with no Compensation column is almost always a mistake. Warn
+      // (non-blocking) and let the user proceed or cancel. Headers are
+      // identical across the batch, so firstSig is the whole batch's columns.
+      const hasCompensation = (firstSig || '').split('|').includes('compensation')
+      if (!hasCompensation) {
+        setParsing(false)
+        setCompWarning({ buffers, multi })
+        return
+      }
+
+      await proceedImport(buffers, multi)
+    } catch (e) {
+      setParseErrors([`Failed to parse workbook: ${e.message || e}`])
+    } finally {
+      setParsing(false)
+    }
+  }
+
+  // Parse the buffered (header-validated) files, merge their rows, and build
+  // the preview. Split out from handleFiles so "Upload anyway" on the
+  // missing-Compensation warning can run it directly with the same buffers.
+  async function proceedImport(buffers, multi) {
+    setParsing(true); setParseErrors([])
+    try {
       // Parse each file and concatenate the data rows into one dataset.
       // _rowNum is per-file in the parser, so re-key it uniquely across the
       // merged set (it's the row's selection/React key).
       const parsed = []
       const errors = []
-      const multi = fileArray.length > 1
       for (const { name, buf } of buffers) {
         const { rows: fileRows, errors: fileErrs } = parseDriversWorkbook(buf)
         parsed.push(...fileRows.map(r => ({ ...r, _sourceFile: name })))
@@ -180,6 +208,17 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
     }
   }
 
+  function confirmUploadAnyway() {
+    if (!compWarning) return
+    const { buffers, multi } = compWarning
+    setCompWarning(null)
+    proceedImport(buffers, multi)
+  }
+  function cancelCompWarning() {
+    setCompWarning(null)
+    setFileNames([])
+  }
+
   function onPick(e) { handleFiles(e.target.files) }
   function onDrop(e) { e.preventDefault(); handleFiles(e.dataTransfer.files) }
 
@@ -190,12 +229,14 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
       by_type: { 'Owner Operator': 0, 'Leased Owner-Op': 0, 'Contract Driver': 0, 'Company Driver': 0, unrecognized: 0 },
       by_method: { id_match: 0, name_backfill: 0, new: 0, possible_duplicate: 0, name_ambiguous: 0 },
       unresolved: 0,
+      noComp: 0,
     }
     for (const r of rows) {
       if (r.driver_type) c.by_type[r.driver_type] = (c.by_type[r.driver_type] || 0) + 1
       else if (r.driver_type_raw) c.by_type.unrecognized++
       if (r.driver_type_raw && !r.driver_type) c.errors++
       if (r.compensation_raw && !r.compensation_type) c.errors++
+      if (!r.compensation_raw) c.noComp++
       const m = r.match?.method
       if (m && c.by_method[m] !== undefined) c.by_method[m]++
       if ((m === 'possible_duplicate' || m === 'name_ambiguous') && !r.resolution) c.unresolved++
@@ -344,7 +385,27 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
           </div>
         )}
 
-        {stage === 'pick' && (
+        {stage === 'pick' && compWarning && (
+          <div className="rounded-2xl border border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-500/10 p-6 space-y-3">
+            <div className="flex items-start gap-3">
+              <div className="text-2xl leading-none">⚠️</div>
+              <div className="space-y-1">
+                <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">No Compensation column found</p>
+                <p className="text-xs text-amber-800 dark:text-amber-300/90">
+                  {compWarning.multi ? 'These files have' : 'This file has'} no <span className="font-semibold">Compensation</span> column.
+                  Compensation is used across the system's analysis — importing without it means these drivers won't have a comp rate.
+                  Upload anyway?
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button onClick={cancelCompWarning} className={S.btnCancel}>Cancel</button>
+              <button onClick={confirmUploadAnyway} className={S.btnSave}>Upload anyway</button>
+            </div>
+          </div>
+        )}
+
+        {stage === 'pick' && !compWarning && (
           <div
             onDrop={onDrop}
             onDragOver={e => e.preventDefault()}
@@ -397,6 +458,12 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
                 </SummaryGroup>
               </div>
             </div>
+
+            {counts.noComp > 0 && (
+              <div className="px-3 py-2 rounded-xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 text-xs text-amber-800 dark:text-amber-300">
+                ⚠️ {counts.noComp} driver{counts.noComp === 1 ? '' : 's'} {counts.noComp === 1 ? 'has' : 'have'} no compensation value — they'll import without a comp rate.
+              </div>
+            )}
 
             <div className="flex items-center flex-wrap gap-2">
               {TYPE_FILTERS.map(f => {
