@@ -30,6 +30,58 @@ export async function fetchLaneLegs({ from, to, basis = 'delivery' }) {
   return out
 }
 
+// Region/state revenue rollup for the "Lanes by region & state" geo map.
+// Built client-side off v_lane_geo (grouped by origin/dest region or state)
+// rather than the lane_geo_rollup RPC: that RPC filters to legs with
+// leg_total_miles > 0, which silently drops a no-mileage leg's revenue from
+// its region tile (a single zero-mile Midwest leg made Midwest under-report
+// vs. the true origin revenue). Region membership comes straight from
+// v_lane_geo.origin_region / dest_region (derived from state_region), so the
+// tiles can't diverge from the DB. Gross and load counts include every leg
+// that has a region/state; $/mi still uses only legs with positive miles so
+// the rate isn't distorted by the zero-mile legs. Date window mirrors the
+// RPC: coalesce(delivery_date, pickup_date) within [from, to]. Returns rows
+// shaped like the RPC's output ({ unit, legs, gross, avg_rev_per_load, rpm }).
+export async function fetchLaneGeoRollup({ from, to, basis = 'origin', grain = 'region', phases = ['in_transit', 'delivered'] }) {
+  const unitCol = grain === 'state'
+    ? (basis === 'destination' ? 'dest_state' : 'origin_state')
+    : (basis === 'destination' ? 'dest_region' : 'origin_region')
+
+  const rows = []
+  for (let page = 0; ; page++) {
+    const { data, error } = await supabase.from('v_lane_geo')
+      .select(`${unitCol}, leg_id, leg_revenue, leg_total_miles`)
+      .in('load_phase', phases)
+      // coalesce(delivery_date, pickup_date) BETWEEN from AND to
+      .or(`and(delivery_date.gte.${from},delivery_date.lte.${to}),and(delivery_date.is.null,pickup_date.gte.${from},pickup_date.lte.${to})`)
+      .order('leg_id', { ascending: true })
+      .range(page * 1000, page * 1000 + 999)
+    if (error) throw error
+    rows.push(...(data || []))
+    if (!data || data.length < 1000) break
+  }
+
+  const acc = new Map()
+  for (const r of rows) {
+    const unit = r[unitCol]
+    if (unit == null) continue // genuinely no state/region → excluded (as the RPC did)
+    let a = acc.get(unit)
+    if (!a) { a = { unit, legs: 0, gross: 0, milesRev: 0, miles: 0 }; acc.set(unit, a) }
+    const rev = Number(r.leg_revenue) || 0
+    const mi = Number(r.leg_total_miles) || 0
+    a.legs += 1
+    a.gross += rev
+    if (mi > 0) { a.miles += mi; a.milesRev += rev }
+  }
+  return [...acc.values()].map(a => ({
+    unit: a.unit,
+    legs: a.legs,
+    gross: Math.round(a.gross),
+    avg_rev_per_load: a.legs ? Math.round(a.gross / a.legs) : null,
+    rpm: a.miles > 0 ? Math.round((a.milesRev / a.miles) * 100) / 100 : null,
+  }))
+}
+
 // ── Trailer types ───────────────────────────────────────────────────────
 // Loads imports carry only a trailer number — the type lives on the trailer
 // profile, and legs can gain a trailer days later via the weekly assignment

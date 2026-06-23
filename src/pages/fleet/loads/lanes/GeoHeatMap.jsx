@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useState, useCallback } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { feature } from 'topojson-client'
 import { geoAlbersUsa, geoPath } from 'd3-geo'
 import { interpolateRgbBasis } from 'd3-interpolate'
-import { supabase } from '../../../../lib/supabase'
 import { S } from '../../../../lib/styles'
-import { fmtMoney, fmtNum, fmtRpm } from '../spotlight/spotlightShared'
+import { fmtMoney } from '../spotlight/spotlightShared'
+import { fetchLaneGeoRollup } from './laneData'
 
-// State-to-region mapping (source of truth mirrors DB)
+// State-to-region mapping (mirrors the DB's state_region — all 51 codes,
+// 50 states + DC). Used only to draw the choropleth shapes/labels; the tile
+// VALUES come from v_lane_geo's region columns via fetchLaneGeoRollup.
 const REGIONS = {
   West: ['WA', 'OR', 'NV', 'ID', 'MT', 'WY', 'UT', 'CO', 'AK', 'HI'],
   Southwest: ['CA', 'AZ', 'NM', 'TX', 'OK'],
@@ -101,7 +103,7 @@ function formatFull(value, metric) {
   return fmtMoney(value)
 }
 
-export default function GeoHeatMap({ range, phases, pageTitle = 'Lanes by region & state' }) {
+export default function GeoHeatMap({ range, phases }) {
   const [view, setView] = useState('region') // region | state
   const [colorBy, setColorBy] = useState('gross') // loads | gross | avg | rpm
   const [basis, setBasis] = useState('origin') // origin | destination
@@ -123,16 +125,13 @@ export default function GeoHeatMap({ range, phases, pageTitle = 'Lanes by region
 
     async function fetchData() {
       try {
-        const phasesArray = Array.from(phases)
-        const { data: rows, error: err } = await supabase.rpc('lane_geo_rollup', {
-          page_start: range.from,
-          page_end: range.to,
-          basis: basis,
+        const rows = await fetchLaneGeoRollup({
+          from: range.from,
+          to: range.to,
+          basis,
           grain: view,
-          phases: phasesArray,
+          phases: Array.from(phases),
         })
-
-        if (err) throw err
 
         if (!stale) {
           // Build lookup: unit (state/region) → metrics
@@ -186,7 +185,7 @@ export default function GeoHeatMap({ range, phases, pageTitle = 'Lanes by region
       const interpolator = interpolateRgbBasis(ramp)
       return {
         domain: [0, 1],
-        color: (value) => isDark ? NO_DATA_COLORS.dark : NO_DATA_COLORS.light,
+        color: () => isDark ? NO_DATA_COLORS.dark : NO_DATA_COLORS.light,
         colorAt: (t) => interpolator(Math.max(0, Math.min(1, t))),
       }
     }
