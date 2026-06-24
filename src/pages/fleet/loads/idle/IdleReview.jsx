@@ -62,9 +62,15 @@ function fmtDays(d) {
   return `${d}d`
 }
 
-function fmtDate(d) {
-  if (!d) return '—'
-  try { return new Date(d).toLocaleDateString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', year: 'numeric' }) } catch { return '—' }
+// Formats a date-only 'YYYY-MM-DD' string from idle_subjects (resolved_on,
+// reason_since, last_activity) without a UTC shift. new Date('2026-06-23')
+// parses as UTC midnight and renders a day early in Central; building from the
+// Y-M-D parts constructs in local time, so the calendar day is preserved.
+function fmtDateOnly(s) {
+  if (!s) return '—'
+  const [y, m, d] = String(s).split('-').map(Number)
+  if (!y || !m || !d) return '—'
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 export default function IdleReview() {
@@ -322,7 +328,7 @@ function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onR
     <td className={`${S.td} text-right whitespace-nowrap`}>
       {resolvedView ? (
         <span className="inline-flex items-center gap-2">
-          <span className="text-[11px] text-gray-500 dark:text-slate-500">Resolved {fmtDate(row.resolved_on)}</span>
+          <span className="text-[11px] text-gray-500 dark:text-slate-500">Resolved {fmtDateOnly(row.resolved_on)}</span>
           <button onClick={() => onReopen(row)} className={ROW_BTN} title="Retract this resolve — returns the case to Active for review">Reopen</button>
         </span>
       ) : (
