@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useToast } from '../../../../contexts/ToastContext'
+import { supabase } from '../../../../lib/supabase'
 import { S } from '../../../../lib/styles'
 import LaneHeatCanvas from './LaneHeatCanvas'
 import LaneMapCanvas from './LaneMapCanvas'
@@ -85,6 +86,71 @@ function Kpi({ label, value, sub }) {
       <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">{label}</p>
       <p className="text-lg font-bold text-gray-900 dark:text-white font-mono leading-tight mt-0.5">{value}</p>
       {sub && <p className="text-[11px] text-gray-400 dark:text-slate-500">{sub}</p>}
+    </div>
+  )
+}
+
+// ── Worst-load card advisory notes ──────────────────────────────────────────
+// Strictly additive — never hide or change the displayed value/lane.
+
+// Realistic revenue floor: a sub-$500 same-city load is almost certainly a TONU.
+const TONU_FLOOR = 500
+const sameCity = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase()
+
+// "Worst load · by revenue" → amber Possible-TONU note. Shown only when the
+// displayed load is both below the floor AND same-city pickup & drop (the TONU
+// signature); a legit sub-$500 different-city run is correctly excluded.
+function WorstRevenueNote({ load }) {
+  if (!load || !(Number(load.revenue) < TONU_FLOOR && sameCity(load.origin, load.destination))) return null
+  return (
+    <div className="mt-2 rounded-md border px-2.5 py-2 flex gap-2 items-start bg-amber-50 border-amber-200 dark:bg-amber-950/40 dark:border-amber-900/60">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-[15px] h-[15px] shrink-0 mt-px text-amber-700 dark:text-amber-400">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01" />
+      </svg>
+      <div>
+        <p className="text-xs font-medium text-amber-900 dark:text-amber-300">Possible TONU</p>
+        <p className="text-[11px] leading-snug text-amber-800 dark:text-amber-400">Below the $500 realistic floor · same-city pickup &amp; drop</p>
+      </div>
+    </div>
+  )
+}
+
+// "Worst load · by $/mi" → blue combined-load note. One RPC scoped to the
+// single worst load_number, memoized on it (re-fires only when it changes).
+// Fail-safe: any error / empty / 'none' renders nothing.
+function WorstRpmCombineNote({ loadNumber }) {
+  const [info, setInfo] = useState(null)
+  // Rendered with key={loadNumber} so the component remounts when the worst
+  // load changes — state resets without a synchronous in-effect reset.
+  useEffect(() => {
+    if (!loadNumber) return
+    let stale = false
+    supabase.rpc('worst_load_combine_flag', { p_load_number: loadNumber })
+      .then(({ data, error }) => {
+        if (stale) return
+        const row = !error && Array.isArray(data) && data.length ? data[0] : null
+        setInfo(row && (row.combine_state === 'candidate' || row.combine_state === 'tagged') ? row : null)
+      })
+      .catch(() => { if (!stale) setInfo(null) })
+    return () => { stale = true }
+  }, [loadNumber])
+
+  if (!info) return null
+  const tagged = info.combine_state === 'tagged'
+  const partners = String(info.partner_load || '').split(', ').filter(Boolean).map(n => `#${n}`).join(', ')
+  const rpm = info.combined_rpm == null ? null : `$${Number(info.combined_rpm).toFixed(2)}/mi`
+  return (
+    <div className="mt-2 rounded-md border px-2.5 py-2 flex gap-2 items-start bg-blue-50 border-blue-200 dark:bg-blue-950/40 dark:border-blue-900/60">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-[15px] h-[15px] shrink-0 mt-px text-blue-700 dark:text-blue-400">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M7 3v6a5 5 0 0 0 5 5h5m0 0-3-3m3 3-3 3" />
+      </svg>
+      <div>
+        <p className="text-xs font-medium text-blue-900 dark:text-blue-300">{tagged ? 'Part of a combined load' : 'Possible combined load'}</p>
+        <p className="text-[11px] leading-snug text-blue-800 dark:text-blue-400">
+          {tagged ? 'Grouped' : 'Candidate'} w/ {partners || '—'}{rpm ? ` · combined ≈ ${rpm}` : ''}
+        </p>
+      </div>
     </div>
   )
 }
@@ -532,6 +598,7 @@ export default function LaneFlowMap() {
                     {load.trailer_type && <p className="mt-0.5"><TypeBadge type={load.trailer_type} color={typeColorFor(load.trailer_type)} /></p>}
                     <p className="text-[10px] text-gray-400 dark:text-slate-500">#{load.load_number}</p>
                     <p className="text-[10px] text-gray-400 dark:text-slate-500">{fmtRpm(load.rpm)}/mi · {fmtNum(load.miles)} mi</p>
+                    {lbl.startsWith('Worst') && <WorstRevenueNote load={load} />}
                   </div>
                 ))}
               </div>
@@ -550,6 +617,7 @@ export default function LaneFlowMap() {
                         {load.trailer_type && <p className="mt-0.5"><TypeBadge type={load.trailer_type} color={typeColorFor(load.trailer_type)} /></p>}
                         <p className="text-[10px] text-gray-400 dark:text-slate-500">#{load.load_number}</p>
                         <p className="text-[10px] text-gray-400 dark:text-slate-500">{fmtMoney(load.revenue)} · {fmtNum(load.miles)} mi</p>
+                        {lbl.startsWith('Worst') && <WorstRpmCombineNote key={load.load_number} loadNumber={load.load_number} />}
                       </>
                     ) : (
                       <p className="text-[11px] text-gray-400 dark:text-slate-500">—</p>
