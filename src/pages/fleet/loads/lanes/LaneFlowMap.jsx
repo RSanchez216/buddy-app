@@ -103,15 +103,17 @@ const sameCity = (a, b) => String(a || '').trim().toLowerCase() === String(b || 
 function WorstRevenueNote({ load }) {
   if (!load || !(Number(load.revenue) < TONU_FLOOR && sameCity(load.origin, load.destination))) return null
   return (
-    <div className="mt-2 rounded-md border px-2.5 py-2 flex gap-2 items-start bg-amber-50 border-amber-200 dark:bg-amber-950/40 dark:border-amber-900/60">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-[15px] h-[15px] shrink-0 mt-px text-amber-700 dark:text-amber-400">
-        <path strokeLinecap="round" strokeLinejoin="round" d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-        <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01" />
-      </svg>
-      <div>
-        <p className="text-xs font-medium text-amber-900 dark:text-amber-300">Possible TONU</p>
-        <p className="text-[11px] leading-snug text-amber-800 dark:text-amber-400">Below the $500 realistic floor · same-city pickup &amp; drop</p>
-      </div>
+    <div className="mt-2">
+      <span
+        title="Below the $500 realistic floor · same-city pickup & drop"
+        className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium whitespace-nowrap bg-amber-50 border-amber-200 text-amber-900 dark:bg-amber-950/40 dark:border-amber-900/60 dark:text-amber-300"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3 h-3 shrink-0">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01" />
+        </svg>
+        Possible TONU
+      </span>
     </div>
   )
 }
@@ -140,17 +142,18 @@ function WorstRpmCombineNote({ loadNumber }) {
   const tagged = info.combine_state === 'tagged'
   const partners = String(info.partner_load || '').split(', ').filter(Boolean).map(n => `#${n}`).join(', ')
   const rpm = info.combined_rpm == null ? null : `$${Number(info.combined_rpm).toFixed(2)}/mi`
+  const tooltip = `${tagged ? 'Grouped' : 'Candidate'} w/ ${partners || '—'}${rpm ? ` · combined ≈ ${rpm}` : ''}`
   return (
-    <div className="mt-2 rounded-md border px-2.5 py-2 flex gap-2 items-start bg-blue-50 border-blue-200 dark:bg-blue-950/40 dark:border-blue-900/60">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-[15px] h-[15px] shrink-0 mt-px text-blue-700 dark:text-blue-400">
-        <path strokeLinecap="round" strokeLinejoin="round" d="M7 3v6a5 5 0 0 0 5 5h5m0 0-3-3m3 3-3 3" />
-      </svg>
-      <div>
-        <p className="text-xs font-medium text-blue-900 dark:text-blue-300">{tagged ? 'Part of a combined load' : 'Possible combined load'}</p>
-        <p className="text-[11px] leading-snug text-blue-800 dark:text-blue-400">
-          {tagged ? 'Grouped' : 'Candidate'} w/ {partners || '—'}{rpm ? ` · combined ≈ ${rpm}` : ''}
-        </p>
-      </div>
+    <div className="mt-2">
+      <span
+        title={tooltip}
+        className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium whitespace-nowrap bg-blue-50 border-blue-200 text-blue-900 dark:bg-blue-950/40 dark:border-blue-900/60 dark:text-blue-300"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3 h-3 shrink-0">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M7 3v6a5 5 0 0 0 5 5h5m0 0-3-3m3 3-3 3" />
+        </svg>
+        {tagged ? 'Combined load' : 'Possible combine'}
+      </span>
     </div>
   )
 }
