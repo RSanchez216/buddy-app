@@ -20,6 +20,18 @@ function fmtVal(v) {
   if (typeof v === 'number') return v.toLocaleString('en-US')
   return String(v)
 }
+
+// ── Import-time TONU heuristic ──────────────────────────────────────────────
+// Same-city pickup & drop under the realistic floor flags a possible TONU.
+const TONU_FLOOR = 500
+// City+state = the portion before ", US" in a PU/DEL info string. Label keeps
+// the original case for display; key lowercases it for comparison.
+function tonuCityLabel(info) {
+  return String(info || '').split(/,\s*US\b/i)[0].trim()
+}
+function tonuCityKey(info) {
+  return tonuCityLabel(info).toLowerCase()
+}
 function fieldLabel(f) {
   return ({
     linehaul: 'Linehaul', status: 'Status', pickup_date: 'Pickup date', delivery_date: 'Delivery date',
@@ -113,8 +125,23 @@ export default function LoadsImport() {
   const [fleet, setFleet] = useState({ drivers: [], trucks: [], trailers: [] })
   // Map of driver ID to internal_id for display in needs-review table
   const [internalById, setInternalById] = useState(new Map())
+  // Import-time TONU review: load_numbers already classified (is_tonu NOT NULL —
+  // their prior decision stands) + the reviewer's per-candidate decisions.
+  const [tonuClassified, setTonuClassified] = useState(() => new Set())
+  const [tonuDecisions, setTonuDecisions] = useState(() => new Map()) // load_number -> 'tonu' | 'real'
 
   useEffect(() => { init() }, [])
+
+  // Which of this batch's loads are already TONU-classified — so we never
+  // re-prompt a prior decision. Re-runs when the staged plan changes.
+  useEffect(() => {
+    const nums = plan.map(p => p.load_number)
+    if (!nums.length) return
+    let stale = false
+    supabase.from('loads').select('load_number, is_tonu').in('load_number', nums).not('is_tonu', 'is', null)
+      .then(({ data, error }) => { if (!stale && !error) setTonuClassified(new Set((data || []).map(r => r.load_number))) })
+    return () => { stale = true }
+  }, [plan])
 
   async function init() {
     setLoading(true)
@@ -129,6 +156,7 @@ export default function LoadsImport() {
     setBatch(b); setPlan(p || []); setCounts(c || {})
     setRecent(rec)
     setDecisions(new Map()); setLinks(new Map())
+    setTonuDecisions(new Map()); setTonuClassified(new Set())
     setLoading(false)
   }
 
@@ -291,6 +319,24 @@ export default function LoadsImport() {
     setLinks(prev => { const n = new Map(prev); if (id) n.set(key, id); else n.delete(key); return n })
   }
 
+  // Loads in this batch matching the same-city < $TONU_FLOOR heuristic. Already-
+  // classified loads are split out so their prior decision stays untouched.
+  const tonuMatches = useMemo(() => plan.filter(p => {
+    const lh = Number(p.header?.linehaul)
+    if (!Number.isFinite(lh) || lh >= TONU_FLOOR) return false
+    const pk = tonuCityKey(p.header?.pu_info), dk = tonuCityKey(p.header?.del_info)
+    return !!pk && pk === dk
+  }), [plan])
+  const tonuCandidates = useMemo(() => tonuMatches.filter(p => !tonuClassified.has(p.load_number)), [tonuMatches, tonuClassified])
+  const tonuAlreadyCount = useMemo(() => tonuMatches.filter(p => tonuClassified.has(p.load_number)).length, [tonuMatches, tonuClassified])
+
+  function setTonuDecision(loadNumber, d) {
+    setTonuDecisions(prev => { const n = new Map(prev); if (d) n.set(loadNumber, d); else n.delete(loadNumber); return n })
+  }
+  function bulkTonu(d) {
+    setTonuDecisions(prev => { const n = new Map(prev); for (const p of tonuCandidates) n.set(p.load_number, d); return n })
+  }
+
   async function onApply() {
     if (!batch || busy) return
     setBusy(true)
@@ -316,6 +362,19 @@ export default function LoadsImport() {
         return
       }
       toast.success(`Applied — ${appliedLoads} load${appliedLoads === 1 ? '' : 's'}, ${appliedLegs} leg${appliedLegs === 1 ? '' : 's'}`)
+
+      // Classify reviewed TONU candidates via the RPC — the ONLY writer of the
+      // TONU columns. Runs AFTER the upsert so each load exists. Few per import,
+      // so a simple loop is fine; an RPC failure is logged, never blocks apply.
+      let tonuApplied = 0
+      for (const [ln, d] of tonuDecisions) {
+        if (d !== 'tonu' && d !== 'real') continue
+        const { error: tErr } = await supabase.rpc('set_load_tonu', { p_load_number: ln, p_is_tonu: d === 'tonu' })
+        if (tErr) console.error('[LoadsImport] set_load_tonu failed for', ln, tErr)
+        else tonuApplied++
+      }
+      if (tonuApplied > 0) toast.success(`Classified ${tonuApplied} TONU review${tonuApplied === 1 ? '' : 's'}`)
+
       // Durable summary so a user who navigated away still sees the outcome.
       setApplySummary({ filename: fname, loads: appliedLoads, legs: appliedLegs, customers: appliedCustomers, dispatchers: appliedDispatchers, cancelTonu })
       setProgress(null)
@@ -412,6 +471,50 @@ export default function LoadsImport() {
               </div>
             )
           })()}
+
+          {/* Possible TONUs — import-time review (manager only). Classified via
+              set_load_tonu after the upsert; untouched candidates stay NULL. */}
+          {canEdit && tonuCandidates.length > 0 && (
+            <Section
+              title={`Possible TONUs detected (${tonuCandidates.length})`}
+              subtitle={`Same-city pickup & drop under $${TONU_FLOOR}. Confirm TONU (excluded from rate metrics) or mark Real — untouched candidates stay unclassified.${tonuAlreadyCount > 0 ? ` ${tonuAlreadyCount} already classified, unchanged.` : ''}`}
+              action={
+                <span className="flex items-center gap-2">
+                  <button onClick={() => bulkTonu('tonu')} className={`${S.btnSecondary} text-xs`}>Confirm all</button>
+                  <button onClick={() => bulkTonu('real')} className={`${S.btnSecondary} text-xs`}>Reject all</button>
+                </span>
+              }
+            >
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className={S.tableHead}><tr>
+                    <th className={S.th}>Load #</th><th className={S.th}>Lane</th>
+                    <th className={`${S.th} text-right`}>Linehaul</th>
+                    <th className={`${S.th} text-right`}>Decision</th>
+                  </tr></thead>
+                  <tbody>
+                    {tonuCandidates.map(p => {
+                      const d = tonuDecisions.get(p.load_number) || ''
+                      const lh = p.header?.linehaul
+                      return (
+                        <tr key={p.load_number} className={`${S.tableRow} ${d === 'tonu' ? 'bg-amber-50/40 dark:bg-amber-500/[0.04]' : ''}`}>
+                          <td className={`${S.td} font-mono`}>{p.load_number}</td>
+                          <td className={S.td}>{tonuCityLabel(p.header?.pu_info) || '—'} → {tonuCityLabel(p.header?.del_info) || '—'}</td>
+                          <td className={`${S.td} text-right font-mono`}>{lh == null ? '—' : `$${Number(lh).toLocaleString('en-US', { minimumFractionDigits: 2 })}`}</td>
+                          <td className={`${S.td} text-right`}>
+                            <span className="inline-flex rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700">
+                              <button onClick={() => setTonuDecision(p.load_number, 'tonu')} className={`px-2.5 py-1 ${d === 'tonu' ? 'bg-amber-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400'}`}>TONU</button>
+                              <button onClick={() => setTonuDecision(p.load_number, 'real')} className={`px-2.5 py-1 ${d === 'real' ? 'bg-emerald-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400'}`}>Real</button>
+                            </span>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </Section>
+          )}
 
           {/* Unmatched entities */}
           {unmatched.length > 0 && (

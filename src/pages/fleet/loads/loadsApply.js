@@ -202,6 +202,10 @@ export async function applyBatch({ batchId, decisions, linkOverrides, onProgress
     const customer_id = p.resolved.customer?.id || (p.resolved.customer?.name ? custByName.get(normName(p.resolved.customer.name)) : null) || null
     const dispatcher_id = p.resolved.dispatcher?.id || (p.resolved.dispatcher?.name ? dispByName.get(normName(p.resolved.dispatcher.name)) : null) || null
     const carrier_id = p.resolved.carrier?.id || null   // carriers never auto-created
+    // BUDDY-owned columns are intentionally OMITTED from this payload so a
+    // re-import never overwrites them on the ON CONFLICT update: the TONU
+    // classification (is_tonu, tonu_reviewed_by, tonu_reviewed_at — written
+    // only by the set_load_tonu RPC) and combine_group_id. Do NOT add them here.
     const common = {
       load_number: p.load_number,
       customer_load_number: h.customer_load_number ?? null,
