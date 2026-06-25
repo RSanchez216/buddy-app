@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useToast } from '../../../../contexts/ToastContext'
+import { useAuth } from '../../../../contexts/AuthContext'
 import { supabase } from '../../../../lib/supabase'
 import { S } from '../../../../lib/styles'
 import LaneHeatCanvas from './LaneHeatCanvas'
@@ -97,23 +98,78 @@ function Kpi({ label, value, sub }) {
 const TONU_FLOOR = 500
 const sameCity = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase()
 
-// "Worst load · by revenue" → amber Possible-TONU note. Shown only when the
-// displayed load is both below the floor AND same-city pickup & drop (the TONU
-// signature); a legit sub-$500 different-city run is correctly excluded.
-function WorstRevenueNote({ load }) {
-  if (!load || !(Number(load.revenue) < TONU_FLOOR && sameCity(load.origin, load.destination))) return null
+const TONU_TRIANGLE = (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3 h-3 shrink-0">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01" />
+  </svg>
+)
+const TONU_PILL_CLS = 'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium whitespace-nowrap bg-amber-50 border-amber-200 text-amber-900 dark:bg-amber-950/40 dark:border-amber-900/60 dark:text-amber-300'
+
+// Amber "Possible TONU" pill on the worst-by-revenue card. Shown only when the
+// displayed load is UNREVIEWED (is_tonu == null) and matches the heuristic
+// (sub-$500 same-city). For managers it's a one-tap action → Confirm/Not popover
+// → set_load_tonu → refetch so the card re-ranks. Non-managers see the static
+// pill. The displayed value is never hidden or altered.
+function WorstRevenueNote({ load, canEdit, onReviewed }) {
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  if (!load || load.is_tonu != null || !(Number(load.revenue) < TONU_FLOOR && sameCity(load.origin, load.destination))) return null
+
+  async function review(isTonu) {
+    setBusy(true)
+    try {
+      const { error } = await supabase.rpc('set_load_tonu', { p_load_number: load.load_number, p_is_tonu: isTonu })
+      if (!error) { setOpen(false); onReviewed?.() }
+    } catch { /* fail-safe: leave the pill as-is */ } finally { setBusy(false) }
+  }
+
+  if (!canEdit) {
+    return (
+      <div className="mt-2">
+        <span title="Below the $500 realistic floor · same-city pickup & drop" className={TONU_PILL_CLS}>{TONU_TRIANGLE} Possible TONU</span>
+      </div>
+    )
+  }
   return (
-    <div className="mt-2">
-      <span
-        title="Below the $500 realistic floor · same-city pickup & drop"
-        className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium whitespace-nowrap bg-amber-50 border-amber-200 text-amber-900 dark:bg-amber-950/40 dark:border-amber-900/60 dark:text-amber-300"
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3 h-3 shrink-0">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-          <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01" />
-        </svg>
-        Possible TONU
-      </span>
+    <div className="mt-2 relative">
+      <button type="button" onClick={() => setOpen(o => !o)} title="Below the $500 realistic floor · same-city pickup & drop — tap to review" className={`${TONU_PILL_CLS} cursor-pointer hover:bg-amber-100 dark:hover:bg-amber-900/50`}>
+        {TONU_TRIANGLE} Possible TONU
+      </button>
+      {open && (
+        <div className="absolute z-20 mt-1 left-0 rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-[#12132e] shadow-lg p-1.5 flex flex-col gap-1 min-w-[140px]">
+          <button disabled={busy} onClick={() => review(true)} className="text-left text-xs px-2 py-1 rounded-md font-medium text-amber-800 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-500/10 disabled:opacity-50">Confirm TONU</button>
+          <button disabled={busy} onClick={() => review(false)} className="text-left text-xs px-2 py-1 rounded-md font-medium text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-50">Not a TONU</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// "+N TONU excluded" muted footnote on the best/worst cards (N = confirmed
+// TONUs in the current scope). Tap → popover listing them. Renders nothing at 0.
+function ExcludedTonuFootnote({ tonuLoads }) {
+  const [open, setOpen] = useState(false)
+  const n = tonuLoads?.length || 0
+  if (n === 0) return null
+  return (
+    <div className="mt-1 relative">
+      <button type="button" onClick={() => setOpen(o => !o)} className="text-[10px] text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 underline decoration-dotted">
+        +{n} TONU excluded
+      </button>
+      {open && (
+        <div className="absolute z-20 mt-1 left-0 rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-[#12132e] shadow-lg p-2 min-w-[160px] max-h-48 overflow-y-auto">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500 mb-1">Confirmed TONUs ({n})</p>
+          <ul className="space-y-0.5">
+            {tonuLoads.map(l => (
+              <li key={l.load_id} className="text-[11px] text-gray-600 dark:text-slate-300 flex justify-between gap-2">
+                <span className="font-mono">#{l.load_number}</span>
+                <span className="text-gray-400 dark:text-slate-500">{fmtMoney(l.revenue)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   )
 }
@@ -160,6 +216,10 @@ function WorstRpmCombineNote({ loadNumber }) {
 
 export default function LaneFlowMap() {
   const toast = useToast()
+  const { canEdit } = useAuth() // admin/manager — gates TONU review actions
+  // Bumped after a TONU confirm/undo so the lane data refetches and re-ranks.
+  const [reloadKey, setReloadKey] = useState(0)
+  const reloadLanes = useCallback(() => setReloadKey(k => k + 1), [])
   const [preset, setPreset] = useState('week')
   const [range, setRange] = useState(thisWeek)
   const [basis, setBasis] = useState('delivery')
@@ -212,7 +272,7 @@ export default function LaneFlowMap() {
         }
       })
     return () => { stale = true }
-  }, [dataKey, range.from, range.to, basis, toast])
+  }, [dataKey, range.from, range.to, basis, toast, reloadKey])
   const loading = legState.key !== dataKey
 
   const typedLegs = useMemo(
@@ -286,6 +346,8 @@ export default function LaneFlowMap() {
 
   // Best/worst loads by both metrics simultaneously, independent of leaderboard toggle
   const allLoadMetrics = useMemo(() => (agg ? pickAllLoadMetrics(agg.loads, EXCLUDED_STATUSES) : null), [agg])
+  // Confirmed-TONU loads in scope — drives the "+N TONU excluded" footnote.
+  const tonuExcluded = useMemo(() => (agg ? agg.loads.filter(l => l.is_tonu === true) : []), [agg])
 
   function togglePhase(phase) {
     setSelectedPhases(prev => {
@@ -601,7 +663,8 @@ export default function LaneFlowMap() {
                     {load.trailer_type && <p className="mt-0.5"><TypeBadge type={load.trailer_type} color={typeColorFor(load.trailer_type)} /></p>}
                     <p className="text-[10px] text-gray-400 dark:text-slate-500">#{load.load_number}</p>
                     <p className="text-[10px] text-gray-400 dark:text-slate-500">{fmtRpm(load.rpm)}/mi · {fmtNum(load.miles)} mi</p>
-                    {lbl.startsWith('Worst') && <WorstRevenueNote load={load} />}
+                    {lbl.startsWith('Worst') && <WorstRevenueNote load={load} canEdit={canEdit} onReviewed={reloadLanes} />}
+                    <ExcludedTonuFootnote tonuLoads={tonuExcluded} />
                   </div>
                 ))}
               </div>
@@ -621,6 +684,7 @@ export default function LaneFlowMap() {
                         <p className="text-[10px] text-gray-400 dark:text-slate-500">#{load.load_number}</p>
                         <p className="text-[10px] text-gray-400 dark:text-slate-500">{fmtMoney(load.revenue)} · {fmtNum(load.miles)} mi</p>
                         {lbl.startsWith('Worst') && <WorstRpmCombineNote key={load.load_number} loadNumber={load.load_number} />}
+                        <ExcludedTonuFootnote tonuLoads={tonuExcluded} />
                       </>
                     ) : (
                       <p className="text-[11px] text-gray-400 dark:text-slate-500">—</p>
@@ -684,8 +748,8 @@ export default function LaneFlowMap() {
                         </td>
                         <td className="px-2 py-2 text-right font-mono text-gray-600 dark:text-slate-400">{lane.loads}</td>
                         <td className="px-2 py-2 text-right font-mono text-gray-900 dark:text-slate-200">{fmtMoney(lane.revenue)}</td>
-                        <td className="px-2 py-2 text-right font-mono font-semibold" style={{ color: rpmScale ? rpmScale.color(lane.rpm) : RPM_NULL_COLOR }}>{fmtRpm(lane.rpm)}</td>
-                        <td className="px-3 py-2 text-right font-mono text-gray-600 dark:text-slate-400">{fmtNum(lane.avgMiles)}</td>
+                        <td className="px-2 py-2 text-right font-mono font-semibold" style={{ color: rpmScale ? rpmScale.color(lane.rpm) : RPM_NULL_COLOR }}>{lane.rpm == null ? '—' : fmtRpm(lane.rpm)}</td>
+                        <td className="px-3 py-2 text-right font-mono text-gray-600 dark:text-slate-400">{lane.avgMiles == null ? '—' : fmtNum(lane.avgMiles)}</td>
                       </tr>
                       )
                     })}
@@ -693,6 +757,11 @@ export default function LaneFlowMap() {
                 </table>
               )}
             </div>
+            {ranked.length > 0 && (
+              <div className="px-4 py-2 border-t border-gray-100 dark:border-white/5 text-[10px] text-gray-400 dark:text-slate-500">
+                $/mi &amp; avg mi exclude TONU · revenue &amp; loads include it
+              </div>
+            )}
           </div>
           )}
 

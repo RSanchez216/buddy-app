@@ -68,10 +68,10 @@ function DriverRow({ driver, rank }) {
         {driver.legs} load{driver.legs === 1 ? '' : 's'}
       </td>
       <td className="px-3 py-3 text-right text-xs text-gray-600 dark:text-slate-400">
-        {fmtNum(driver.miles)} mi
+        {driver.miles == null ? '—' : `${fmtNum(driver.miles)} mi`}
       </td>
       <td className="px-3 py-3 text-right text-xs font-mono text-gray-600 dark:text-slate-400">
-        {fmtRpm(driver.rpm)}
+        {driver.rpm == null ? '—' : fmtRpm(driver.rpm)}
       </td>
     </tr>
   )
@@ -94,7 +94,7 @@ function DispatcherRow({ dispatcher, rank }) {
         {dispatcher.legs} load{dispatcher.legs === 1 ? '' : 's'}
       </td>
       <td className="px-3 py-3 text-right text-xs font-mono text-gray-600 dark:text-slate-400">
-        {fmtRpm(dispatcher.rpm)}
+        {dispatcher.rpm == null ? '—' : fmtRpm(dispatcher.rpm)}
       </td>
       <td className="px-3 py-3 text-right text-xs text-gray-600 dark:text-slate-400">
         {dispatcher.drivers} driver{dispatcher.drivers === 1 ? '' : 's'}
@@ -431,6 +431,7 @@ export default function TopPerformers({ range, phases }) {
       {/* Honesty note for drivers */}
       <p className="text-[11px] text-gray-400 dark:text-slate-500 text-center max-w-2xl mx-auto">
         By gross booked (company + owner-operator). Net-to-MANAS ranking comes with settlement data.
+        Gross &amp; loads include TONU; RPM &amp; miles exclude it.
       </p>
     </div>
   )

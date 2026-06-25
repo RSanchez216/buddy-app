@@ -19,7 +19,7 @@ export async function fetchLaneLegs({ from, to, basis = 'delivery' }) {
   const out = []
   for (let page = 0; ; page++) {
     const { data, error } = await supabase.from('v_lane_geo')
-      .select('leg_id, load_id, load_number, status, is_projected, load_phase, pickup_date, delivery_date, origin, destination, leg_revenue, leg_total_miles, customer_name, dispatcher_id, dispatcher_name, driver_display, trailer_id, trailer_display, origin_lat, origin_lng, dest_lat, dest_lng')
+      .select('leg_id, load_id, load_number, status, is_tonu, is_projected, load_phase, pickup_date, delivery_date, origin, destination, leg_revenue, leg_total_miles, customer_name, dispatcher_id, dispatcher_name, driver_display, trailer_id, trailer_display, origin_lat, origin_lng, dest_lat, dest_lng')
       .gte(dateCol, from).lte(dateCol, to)
       .order(dateCol, { ascending: true }).order('leg_id', { ascending: true })
       .range(page * 1000, page * 1000 + 999)
@@ -141,13 +141,18 @@ export function aggregateLanes(allLegs, phaseOrView, { byType = false } = {}) {
   const byCity = new Map()
   let geocodedLegs = 0
   let totRevenue = 0, totMiles = 0
+  // "real" = confirmed-non-TONU (is_tonu !== true: keep NULL + false, drop only
+  // true). Rates ($/mi, avg mi) use the real sums; dollars/counts use all.
+  let realRevenue = 0, realMiles = 0
 
   for (const leg of legs) {
     const origin = String(leg.origin || '').trim()
     const destination = String(leg.destination || '').trim()
     const revenue = Number(leg.leg_revenue) || 0
     const miles = Number(leg.leg_total_miles) || 0
+    const real = leg.is_tonu !== true
     totRevenue += revenue; totMiles += miles
+    if (real) { realRevenue += revenue; realMiles += miles }
 
     const type = byType ? (leg.trailer_type || UNKNOWN_TYPE) : null
     const key = byType ? `${origin} → ${destination} · ${type}` : `${origin} → ${destination}`
@@ -161,11 +166,13 @@ export function aggregateLanes(allLegs, phaseOrView, { byType = false } = {}) {
         key, origin, destination, oCoord, dCoord,
         geocoded: !!(oCoord && dCoord),
         loads: 0, revenue: 0, miles: 0, legs: [],
+        realRevenue: 0, realMiles: 0, realLegs: 0,
         ...(byType ? { trailerType: type } : {}),
       }
       byLane.set(key, lane)
     }
     lane.loads++; lane.revenue += revenue; lane.miles += miles
+    if (real) { lane.realRevenue += revenue; lane.realMiles += miles; lane.realLegs++ }
     lane.legs.push(leg)
     if (lane.geocoded) geocodedLegs++
 
@@ -179,8 +186,10 @@ export function aggregateLanes(allLegs, phaseOrView, { byType = false } = {}) {
 
   const lanes = [...byLane.values()]
   for (const lane of lanes) {
-    lane.rpm = lane.miles > 0 ? lane.revenue / lane.miles : null
-    lane.avgMiles = lane.loads > 0 ? lane.miles / lane.loads : 0
+    // $/mi and avg mi EXCLUDE TONU (real freight only). A lane whose only
+    // activity was a confirmed TONU has null rate/miles → renders "—".
+    lane.rpm = lane.realMiles > 0 ? lane.realRevenue / lane.realMiles : null
+    lane.avgMiles = lane.realLegs > 0 ? lane.realMiles / lane.realLegs : null
   }
 
   if (byType) {
@@ -207,6 +216,7 @@ export function aggregateLanes(allLegs, phaseOrView, { byType = false } = {}) {
         load_id: loadId,
         load_number: leg.load_number,
         status: leg.status,
+        is_tonu: leg.is_tonu ?? null, // shared across a load's legs
         legs: [],
         revenue: 0,
         miles: 0,
@@ -228,6 +238,9 @@ export function aggregateLanes(allLegs, phaseOrView, { byType = false } = {}) {
     destination: load.legs[load.legs.length - 1]?.destination || '',
   }))
 
+  // Confirmed-TONU loads in scope — drives the "+N TONU excluded" footnote.
+  const tonuLoads = loads.filter(l => l.is_tonu === true).length
+
   return {
     lanes,
     loads,
@@ -235,12 +248,13 @@ export function aggregateLanes(allLegs, phaseOrView, { byType = false } = {}) {
     totals: {
       legs: legs.length,
       // Distinct loads (a multi-leg load is one load) — for the LOADS KPI.
-      // Revenue/miles/$/mi remain summed across legs.
+      // Revenue/miles include TONU; $/mi excludes it (real sums).
       loads: byLoad.size,
       lanes: lanes.length,
       revenue: totRevenue,
       miles: totMiles,
-      rpm: totMiles > 0 ? totRevenue / totMiles : null,
+      rpm: realMiles > 0 ? realRevenue / realMiles : null,
+      tonuLoads,
     },
     coverage: legs.length > 0 ? geocodedLegs / legs.length : null,
   }
@@ -361,8 +375,10 @@ export const MIN_MILES_FOR_RPM_CARD = 50
 export function pickAllLoadMetrics(loads, excludedStatuses = []) {
   if (!loads || !loads.length) return null
 
-  // Filter out excluded statuses (case-sensitive)
-  const candidates = loads.filter(l => !excludedStatuses.includes(l.status))
+  // Filter out excluded statuses (case-sensitive) AND confirmed TONUs
+  // (is_tonu === true). A confirmed TONU can never headline a best/worst card;
+  // worst-by-revenue then rolls to the next real load.
+  const candidates = loads.filter(l => !excludedStatuses.includes(l.status) && l.is_tonu !== true)
   if (!candidates.length) return null
 
   // By revenue (no mileage restriction)
