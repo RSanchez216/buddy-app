@@ -11,6 +11,7 @@ import {
 } from './loanUtils'
 import AddLoanModal from './AddLoanModal'
 import TitleReleasePanel from './components/TitleReleasePanel'
+import { exportDebtScheduleXlsx } from './exportDebtSchedule'
 
 // Compact money formatter for the KPI tiles. Under $10k shows the raw
 // integer with commas; $10k–$999k as $XXX.Xk; ≥ $1M as $X.XM. Matches the
@@ -108,6 +109,7 @@ export default function DebtSchedule() {
   const [kpiSummary, setKpiSummary] = useState(null)
   const [loading, setLoading] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
+  const [exporting, setExporting] = useState(false)
 
   // ── Filter + sort state lives in the URL search params, not local
   // React state. This way: copy-pasting / bookmarking the URL preserves
@@ -297,6 +299,40 @@ export default function DebtSchedule() {
       return m.get(name) || String(name).toUpperCase()
     }
   }, [equipmentTypes])
+
+  // Human-readable list of the active filters, for the export's info sheet.
+  const exportFilterSummary = useMemo(() => {
+    const out = []
+    if (search.trim()) out.push(`Search: "${search.trim()}"`)
+    if (filterEntity) out.push(`Entity: ${entities.find(e => e.id === filterEntity)?.name || filterEntity}`)
+    if (filterLender) out.push(`Lender: ${lenders.find(l => l.id === filterLender)?.name || filterLender}`)
+    out.push(`Status: ${filterStatus === 'all' ? 'All' : (STATUS_LABELS[filterStatus] || filterStatus)}`)
+    if (filterEquipType) out.push(`Equipment type: ${formatEqLabel(filterEquipType)}`)
+    if (pastDueOnly) out.push('Past Due Only')
+    if (skippedUnresolvedOnly) out.push('Skipped Unresolved')
+    if (titlePendingOnly) out.push('Title Pending Only')
+    if (groupByEntity) out.push('Grouped by Entity')
+    return out
+  }, [search, filterEntity, filterLender, filterStatus, filterEquipType, pastDueOnly, skippedUnresolvedOnly, titlePendingOnly, groupByEntity, entities, lenders, formatEqLabel])
+
+  // Export the currently-filtered + sorted rows (full set, not a page) to .xlsx.
+  async function onExport() {
+    if (!sorted.length || exporting) return
+    setExporting(true)
+    try {
+      await exportDebtScheduleXlsx({
+        rows: sorted,
+        equipmentByLoan,
+        formatEqLabel,
+        filterSummary: exportFilterSummary,
+        headerContext: `${filtered.length} loans shown · ${loans.length} total`,
+      })
+    } catch (e) {
+      console.error('Debt schedule export failed:', e)
+    } finally {
+      setExporting(false)
+    }
+  }
 
   // Loans paid off but still missing one or more equipment titles.
   // Sorted oldest paid-off first so Rebeca works the longest-pending
@@ -524,6 +560,15 @@ export default function DebtSchedule() {
           className={S.filterBtn(groupByEntity)}
         >
           {groupByEntity ? 'Grouped by Entity' : 'Flat View'}
+        </button>
+        <button
+          onClick={onExport}
+          disabled={sorted.length === 0 || exporting}
+          title={sorted.length === 0 ? 'No rows to export' : 'Download the filtered rows as a formatted .xlsx'}
+          className="ml-auto inline-flex items-center gap-2 px-3 py-2 text-sm font-medium border border-gray-300 dark:border-slate-700 text-gray-700 dark:text-slate-300 rounded-xl hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+          {exporting ? 'Exporting…' : 'Export Excel'}
         </button>
       </div>
 

@@ -28,7 +28,6 @@ import SettingsRecurringExpenses from './pages/settings/RecurringExpenses'
 import SettingsUsers from './pages/settings/users/Users'
 import SettingsLayout from './pages/settings/SettingsLayout'
 import AcceptInvite from './pages/AcceptInvite'
-import DebtSchedule from './pages/financial-controls/DebtSchedule'
 import LoanDetail from './pages/financial-controls/LoanDetail'
 import DriverPurchasesPage from './pages/driver-purchases/DriverPurchasesPage'
 import DriverPurchaseDetail from './pages/driver-purchases/DriverPurchaseDetail'
@@ -65,6 +64,9 @@ const SettingsHub = lazy(() => import('./pages/settings/SettingsHub'))
 // Lazy — Lifeline is a destination screen (chart engine + animations), not a
 // daily-driver list; keep the main bundle lean.
 const Lifeline = lazy(() => import('./pages/cash-flow/lifeline/Lifeline'))
+// Lazy — Debt Schedule pulls SheetJS on export (dynamic import) and is its own
+// destination; split it into its own chunk off the main bundle.
+const DebtSchedule = lazy(() => import('./pages/financial-controls/DebtSchedule'))
 // Lazy — The Rig carries the whole three.js stack; it must never weigh on
 // any other route. Standalone preview, direct URL only (no nav entry yet).
 const RigPage = lazy(() => import('./pages/rig/RigPage'))
@@ -148,7 +150,13 @@ export default function App() {
                 </RequirePageAccess>
               } />
               {/* Financial Controls */}
-              <Route path="financial-controls/debt-schedule" element={<RequirePageAccess pageKey="financial-controls/debt-schedule"><DebtSchedule /></RequirePageAccess>} />
+              <Route path="financial-controls/debt-schedule" element={
+                <RequirePageAccess pageKey="financial-controls/debt-schedule">
+                  <Suspense fallback={<div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500" /></div>}>
+                    <DebtSchedule />
+                  </Suspense>
+                </RequirePageAccess>
+              } />
               <Route path="financial-controls/debt-schedule/:loanId" element={<RequirePageAccess pageKey="financial-controls/debt-schedule"><LoanDetail /></RequirePageAccess>} />
               <Route path="financial-controls/driver-purchases" element={<RequirePageAccess pageKey="financial-controls/driver-purchases"><DriverPurchasesPage /></RequirePageAccess>} />
               <Route path="financial-controls/driver-purchases/:id" element={<RequirePageAccess pageKey="financial-controls/driver-purchases"><DriverPurchaseDetail /></RequirePageAccess>} />
