@@ -105,3 +105,32 @@ export async function addTask(payload, actor) {
   await logActivity(data.id, actor, 'created', 'Task created')
   return data
 }
+
+// Full edit of an existing task. Core fields just update the row; the three
+// fields that have activity kinds (status, assignee, note) log when they change
+// — no new activity kind is invented (no schema change this round).
+export async function updateTask(prev, payload, actor, assigneeName) {
+  const patch = { ...payload }
+  const statusChanged = payload.status !== undefined && payload.status !== prev.status
+  if (statusChanged) patch.closed_at = payload.status === 'closed' ? new Date().toISOString() : null
+
+  const { data, error } = await supabase
+    .from('tasks')
+    .update(patch)
+    .eq('id', prev.id)
+    .select('*')
+    .single()
+  if (error) throw error
+
+  if (statusChanged) {
+    const kind = prev.status === 'closed' && payload.status !== 'closed' ? 'reopened' : 'status_changed'
+    await logActivity(prev.id, actor, kind, `Status → ${payload.status}`)
+  }
+  if (payload.assignee !== undefined && payload.assignee !== prev.assignee) {
+    await logActivity(prev.id, actor, 'assigned', assigneeName ? `Assigned to ${assigneeName}` : 'Reassigned')
+  }
+  if (payload.note !== undefined && (payload.note || '') !== (prev.note || '')) {
+    await logActivity(prev.id, actor, 'note_edited', 'Note updated')
+  }
+  return data
+}

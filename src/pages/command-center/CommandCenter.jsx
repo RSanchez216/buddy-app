@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
 import ErrorBoundary from '../../components/ErrorBoundary'
 import {
-  loadCommandCenter, loadActivity, setTaskStatus, saveTaskNote, reassignTask, addTask,
+  loadCommandCenter, loadActivity, setTaskStatus, saveTaskNote, reassignTask, addTask, updateTask,
   todayCT, ctDate, greetingDateParts, relTime,
 } from './commandCenterData'
 
@@ -34,12 +34,34 @@ const STATUSES = {
   closed:  { label: 'Closed',  pill: 'bg-green-50 text-green-700 border-green-200 dark:bg-green-500/15 dark:text-green-300 dark:border-green-500/30',      dot: 'bg-green-500' },
 }
 const PRIO_RANK = { high: 0, normal: 1, low: 2 }
-const cardSurface = 'bg-white dark:bg-[#18222E] border border-gray-200 dark:border-[#2A3744]'
+// Dark tokens lifted for contrast: card #1B2632 (clearly above page bg), hover
+// #22303F, border #30404F. Light theme unchanged.
+const cardSurface = 'bg-white dark:bg-[#1B2632] border border-gray-200 dark:border-[#30404F]'
 
 function initials(name) {
   return (name || '?').trim().split(/\s+/).slice(0, 2).map(w => w[0]?.toUpperCase() || '').join('') || '?'
 }
 function firstNameOf(name) { return (name || '').trim().split(/\s+/)[0] || 'there' }
+
+// Deterministic per-user avatar color. The signed-in user is always brand
+// orange; unassigned stays gray (null → gray classes in <Avatar>).
+const AVATAR_PALETTE = ['#F97316', '#2563EB', '#0D9488', '#7C3AED', '#DC2626', '#16A34A', '#D97706', '#DB2777', '#4F46E5']
+function hashStr(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h }
+function avatarColor(userId, me) {
+  if (!userId) return null
+  if (userId === me) return '#F97316'
+  return AVATAR_PALETTE[hashStr(String(userId)) % AVATAR_PALETTE.length]
+}
+function Avatar({ userId, name, me, size = 20, className = '' }) {
+  const color = avatarColor(userId, me)
+  return (
+    <span
+      className={`rounded-full grid place-items-center text-white font-bold shrink-0 ${color ? '' : 'bg-gray-400 dark:bg-slate-600'} ${className}`}
+      style={{ width: size, height: size, fontSize: Math.round(size * 0.42), ...(color ? { background: color } : null) }}>
+      {initials(name)}
+    </span>
+  )
+}
 
 // 'YYYY-MM-DD' → a short label (Today / Mon / Jun 26), built from local parts.
 function shortDue(s) {
@@ -54,6 +76,7 @@ export default function CommandCenter() {
   const { profile } = useAuth()
   const me = profile?.id || null
   const [tab, setTab] = useState('cc') // cc | add | ins
+  const [editTask, setEditTask] = useState(null) // when set, the form is in edit mode
 
   const [tasks, setTasks] = useState(null)
   const [usersById, setUsersById] = useState(new Map())
@@ -94,11 +117,21 @@ export default function CommandCenter() {
     try { const row = await reassignTask(task.id, userId, me, name); patchTask(task.id, row) }
     catch (e) { console.error(e); reload() }
   }
-  async function onAdd(payload) {
-    const row = await addTask(payload, me)
-    setTasks(prev => [row, ...(prev || [])])
+  // One submit path for both create and edit (TaskForm always calls onSubmit(payload)).
+  async function submitForm(payload) {
+    if (editTask) {
+      const name = usersById.get(payload.assignee)?.full_name
+      const row = await updateTask(editTask, payload, me, name)
+      patchTask(editTask.id, row)
+    } else {
+      const row = await addTask(payload, me)
+      setTasks(prev => [row, ...(prev || [])])
+    }
+    setEditTask(null)
     setTab('cc')
   }
+  function startEdit(task) { setEditTask(task); setTab('add') }
+  function selectTab(k) { if (k === 'add') setEditTask(null); setTab(k) }
 
   const firstName = firstNameOf(profile?.full_name)
   const { weekday, month, day } = greetingDateParts()
@@ -114,9 +147,9 @@ export default function CommandCenter() {
           <div className="font-bold text-lg tracking-wide text-gray-900 dark:text-white" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>BUDDY</div>
           <div className="text-[10px] tracking-[0.2em] uppercase text-gray-400 dark:text-slate-500 font-semibold">Command Center</div>
         </div>
-        <nav className="ml-auto flex gap-1 rounded-full p-1 bg-white dark:bg-[#18222E] border border-gray-200 dark:border-[#2A3744]">
+        <nav className="ml-auto flex gap-1 rounded-full p-1 bg-white dark:bg-[#1B2632] border border-gray-200 dark:border-[#30404F]">
           {[['cc', 'Command Center'], ['add', 'Add task'], ['ins', 'Insights']].map(([k, lbl]) => (
-            <button key={k} onClick={() => setTab(k)}
+            <button key={k} onClick={() => selectTab(k)}
               className={`px-3.5 py-1.5 rounded-full text-[13px] font-semibold transition-colors ${tab === k ? 'bg-orange-500 text-white' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-200'}`}>
               {lbl}
             </button>
@@ -132,13 +165,17 @@ export default function CommandCenter() {
             tasks={tasks} me={me} usersById={usersById}
             greeting={{ firstName, weekday, month, day }}
             onChangeStatus={changeStatus} onReassign={reassign}
-            onGoAdd={() => setTab('add')}
+            onGoAdd={() => selectTab('add')} onEditTask={startEdit}
           />
         </ErrorBoundary>
       )}
       {tab === 'add' && (
-        <ErrorBoundary label="the add-task form">
-          <AddTaskForm me={me} users={users} onAdd={onAdd} onCancel={() => setTab('cc')} />
+        <ErrorBoundary label="the task form">
+          <TaskForm
+            mode={editTask ? 'edit' : 'create'} task={editTask}
+            me={me} users={users} onSubmit={submitForm}
+            onCancel={() => { setEditTask(null); setTab('cc') }}
+          />
         </ErrorBoundary>
       )}
       {tab === 'ins' && <InsightsPlaceholder />}
@@ -151,7 +188,7 @@ export default function CommandCenter() {
 }
 
 // ── Command Center view ─────────────────────────────────────────────────────
-function CommandCenterView({ tasks, me, usersById, greeting, onChangeStatus, onReassign, onGoAdd }) {
+function CommandCenterView({ tasks, me, usersById, greeting, onChangeStatus, onReassign, onGoAdd, onEditTask }) {
   const [filters, setFilters] = useState({ source: 'all', status: 'open', priority: 'all' })
   const [revealed, setRevealed] = useState(false)
   const isDefault = filters.source === 'all' && filters.status === 'open' && filters.priority === 'all'
@@ -160,12 +197,12 @@ function CommandCenterView({ tasks, me, usersById, greeting, onChangeStatus, onR
   const loading = tasks === null
   const all = useMemo(() => tasks || [], [tasks])
 
-  // Focus = highest-priority open task (priority → due → created).
-  const focusId = useMemo(() => {
-    const open = all.filter(t => t.status === 'open')
-    if (!open.length) return null
-    const sorted = [...open].sort(cmpTask)
-    return sorted[0].id
+  // Focus now = EVERY open high-priority task (any source). Returning 'focus'
+  // first in assignGroup de-dupes these out of needs/calendar/upkeep/tagged.
+  const focusIds = useMemo(() => {
+    const s = new Set()
+    for (const t of all) if (t.status === 'open' && t.priority === 'high') s.add(t.id)
+    return s
   }, [all])
 
   const GROUPS = [
@@ -178,10 +215,10 @@ function CommandCenterView({ tasks, me, usersById, greeting, onChangeStatus, onR
   ]
   const byGroup = useMemo(() => {
     const m = { focus: [], upkeep: [], needs: [], tagged: [], calendar: [], closed: [] }
-    for (const t of all) { const g = assignGroup(t, focusId, me, today); if (g) m[g].push(t) }
+    for (const t of all) { const g = assignGroup(t, focusIds, me, today); if (g) m[g].push(t) }
     for (const k of Object.keys(m)) m[k].sort(cmpTask)
     return m
-  }, [all, focusId, me, today])
+  }, [all, focusIds, me, today])
 
   function passes(t) {
     if (filters.source !== 'all' && t.source !== filters.source) return false
@@ -191,9 +228,12 @@ function CommandCenterView({ tasks, me, usersById, greeting, onChangeStatus, onR
     return true
   }
 
-  // Upkeep progress (all upkeep tasks, regardless of filter).
-  const upkeep = byGroup.upkeep
-  const upkeepDone = upkeep.filter(t => t.status === 'closed').length
+  // Upkeep progress is computed from ALL source='upkeep' tasks — independent of
+  // which section renders them — so a high upkeep task moving into Focus now
+  // doesn't change the N / M math.
+  const upkeepAll = useMemo(() => all.filter(t => t.source === 'upkeep'), [all])
+  const upkeepTotal = upkeepAll.length
+  const upkeepDone = upkeepAll.filter(t => t.status === 'closed').length
 
   // Stat-card counts (over all tasks).
   const counts = useMemo(() => ({
@@ -224,10 +264,10 @@ function CommandCenterView({ tasks, me, usersById, greeting, onChangeStatus, onR
       {/* Greeting */}
       <div className="mb-3">
         <h1 className="text-[23px] font-bold tracking-tight text-gray-900 dark:text-white" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Hello, {greeting.firstName}</h1>
-        <p className="text-[13px] text-gray-500 dark:text-slate-500 mt-0.5">Today is {greeting.weekday}, {greeting.month} {greeting.day} · here’s where to point your attention.</p>
+        <p className="text-[13px] text-gray-500 dark:text-[#9AA8B6] mt-0.5">Today is {greeting.weekday}, {greeting.month} {greeting.day} · here’s where to point your attention.</p>
       </div>
 
-      <Briefing tasks={all} upkeepDone={upkeepDone} upkeepTotal={upkeep.length} />
+      <Briefing tasks={all} upkeepDone={upkeepDone} upkeepTotal={upkeepTotal} />
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mb-3">
@@ -247,12 +287,12 @@ function CommandCenterView({ tasks, me, usersById, greeting, onChangeStatus, onR
           ))}
           <button onClick={onGoAdd} className="ml-auto text-[12.5px] font-semibold bg-orange-500 text-white px-3.5 py-1.5 rounded-full hover:brightness-105">+ Add task</button>
         </div>
-        <div className="flex items-center gap-1.5 flex-wrap mt-2 pt-2 border-t border-dashed border-gray-200 dark:border-[#2A3744]">
+        <div className="flex items-center gap-1.5 flex-wrap mt-2 pt-2 border-t border-dashed border-gray-200 dark:border-[#30404F]">
           <span className="text-[9.5px] font-semibold tracking-widest uppercase text-gray-400 dark:text-slate-500 mr-1">Status</span>
           {['all', 'open', 'waiting', 'blocked', 'closed'].map(s => (
             <FChip key={s} active={filters.status === s} onClick={() => setFilters(f => ({ ...f, status: s }))}>{s === 'all' ? 'All' : STATUSES[s].label}</FChip>
           ))}
-          <span className="w-px h-4 bg-gray-200 dark:bg-[#2A3744] mx-1" />
+          <span className="w-px h-4 bg-gray-200 dark:bg-[#30404F] mx-1" />
           <span className="text-[9.5px] font-semibold tracking-widest uppercase text-gray-400 dark:text-slate-500 mr-1">Priority</span>
           {['all', 'high', 'normal', 'low'].map(p => (
             <FChip key={p} active={filters.priority === p} onClick={() => setFilters(f => ({ ...f, priority: p }))}>{p === 'all' ? 'All' : p[0].toUpperCase() + p.slice(1)}</FChip>
@@ -274,10 +314,10 @@ function CommandCenterView({ tasks, me, usersById, greeting, onChangeStatus, onR
           }
           return (
             <div key={g.key} className="flex flex-col gap-2.5">
-              <GroupHeader group={g} upkeep={g.key === 'upkeep' ? { done: upkeepDone, total: upkeep.length } : null} />
+              <GroupHeader group={g} upkeep={g.key === 'upkeep' ? { done: upkeepDone, total: upkeepTotal } : null} />
               {items.map(t => (
-                <TaskRow key={t.id} task={t} focus={t.id === focusId} usersById={usersById}
-                  users={[...usersById.values()]} onChangeStatus={onChangeStatus} onReassign={onReassign} />
+                <TaskRow key={t.id} task={t} focus={focusIds.has(t.id)} me={me} usersById={usersById}
+                  users={[...usersById.values()]} onChangeStatus={onChangeStatus} onReassign={onReassign} onEditTask={onEditTask} />
               ))}
               {hiddenLow > 0 && (
                 <button onClick={() => setRevealed(true)} className={`${cardSurface} rounded-xl py-2.5 text-[13px] font-semibold text-gray-700 dark:text-slate-300 border-dashed hover:bg-gray-50 dark:hover:bg-white/5`}>
@@ -297,8 +337,8 @@ function CommandCenterView({ tasks, me, usersById, greeting, onChangeStatus, onR
 
 // Which group a task lands in. Pure (no component closure) so the byGroup memo
 // stays valid under the React Compiler lint.
-function assignGroup(t, focusId, me, today) {
-  if (t.id === focusId) return 'focus'
+function assignGroup(t, focusIds, me, today) {
+  if (focusIds.has(t.id)) return 'focus'
   if (t.source === 'upkeep') return 'upkeep'
   if (t.source === 'calendar') return 'calendar'
   if (t.assignee === me && t.created_by && t.created_by !== me) return 'tagged'
@@ -319,7 +359,7 @@ function FChip({ active, dot, onClick, children }) {
   return (
     <button onClick={onClick}
       className={`text-[12px] font-medium px-2.5 py-1 rounded-full border inline-flex items-center gap-1.5 transition-colors ${
-        active ? 'bg-orange-500 text-white border-orange-500' : 'bg-white dark:bg-[#18222E] text-gray-600 dark:text-slate-300 border-gray-200 dark:border-[#2A3744] hover:border-gray-300 dark:hover:border-slate-600'
+        active ? 'bg-orange-500 text-white border-orange-500' : 'bg-white dark:bg-[#1B2632] text-gray-600 dark:text-slate-300 border-gray-200 dark:border-[#30404F] hover:border-gray-300 dark:hover:border-slate-600'
       }`}>
       {dot && <span className={`w-1.5 h-1.5 rounded-full ${active ? 'bg-white/80' : dot}`} />}
       {children}
@@ -330,10 +370,10 @@ function FChip({ active, dot, onClick, children }) {
 function StatCard({ n, label, attn, active, onClick }) {
   return (
     <button onClick={onClick}
-      className={`relative text-left rounded-xl px-3.5 py-3 transition-all ${cardSurface} hover:-translate-y-px ${active ? 'ring-[1.5px] ring-orange-500 border-orange-500' : ''}`}>
+      className={`relative text-left rounded-xl px-3.5 py-3 transition-all ${cardSurface} hover:-translate-y-px dark:hover:bg-[#22303F] ${active ? 'ring-[1.5px] ring-orange-500 border-orange-500' : ''}`}>
       {active && <span className="absolute top-2 right-2.5 text-[9px] font-semibold text-orange-500" style={{ fontFamily: 'JetBrains Mono, monospace' }}>▼ filtered</span>}
-      <div className={`text-[25px] font-bold leading-none ${attn ? 'text-orange-500' : 'text-gray-900 dark:text-white'}`} style={{ fontFamily: 'Space Grotesk, sans-serif' }}>{n}</div>
-      <div className="text-[10.5px] font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500 mt-1.5">{label}</div>
+      <div className={`text-[25px] font-bold leading-none ${attn ? 'text-orange-500' : 'text-gray-900 dark:text-[#F3F6FA]'}`} style={{ fontFamily: 'Space Grotesk, sans-serif' }}>{n}</div>
+      <div className="text-[10.5px] font-semibold uppercase tracking-wide text-gray-400 dark:text-[#B7C3D1] mt-1.5">{label}</div>
     </button>
   )
 }
@@ -355,7 +395,7 @@ function GroupHeader({ group, upkeep }) {
     )
   }
   return (
-    <div className="text-[11px] tracking-[0.18em] uppercase font-bold text-gray-400 dark:text-slate-500 mt-1.5 px-0.5 flex items-center gap-2">
+    <div className="text-[11px] tracking-[0.18em] uppercase font-bold text-gray-400 dark:text-[#9FB0BF] mt-1.5 px-0.5 flex items-center gap-2">
       {group.label}
       {group.key === 'tagged' && <span className="text-[9.5px] tracking-wide bg-orange-50 text-orange-700 dark:bg-orange-500/15 dark:text-orange-300 px-1.5 py-0.5 rounded normal-case font-semibold">Preview · rollout</span>}
     </div>
@@ -363,7 +403,7 @@ function GroupHeader({ group, upkeep }) {
 }
 
 // ── Task row + detail drawer ────────────────────────────────────────────────
-function TaskRow({ task, focus, usersById, users, onChangeStatus, onReassign }) {
+function TaskRow({ task, focus, me, usersById, users, onChangeStatus, onReassign, onEditTask }) {
   const [expanded, setExpanded] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const src = SOURCES[task.source] || SOURCES.manual
@@ -371,9 +411,10 @@ function TaskRow({ task, focus, usersById, users, onChangeStatus, onReassign }) 
   const isUpkeep = task.source === 'upkeep'
   const closed = task.status === 'closed'
   const timeLabel = task.due_date ? shortDue(task.due_date) : (isUpkeep ? 'daily' : '')
+  const taggedBy = task.created_by && task.created_by !== me ? usersById.get(task.created_by) : null
 
   return (
-    <div className={`relative rounded-xl ${cardSurface} ${isUpkeep ? 'px-4 py-2.5' : 'px-4 py-3'} ${focus ? 'ring-1 ring-orange-500 border-orange-500' : ''} ${closed ? 'opacity-60' : ''}`}>
+    <div className={`group relative rounded-xl ${cardSurface} dark:hover:bg-[#22303F] transition-colors ${isUpkeep ? 'px-4 py-2.5' : 'px-4 py-3'} ${focus ? 'ring-1 ring-orange-500 border-orange-500' : ''} ${closed ? 'opacity-60' : ''}`}>
       <span className={`absolute left-0 top-3 bottom-3 w-[3px] rounded ${src.spine}`} />
       {focus && <span className="absolute -top-2 left-3.5 bg-orange-500 text-white text-[9.5px] font-bold tracking-wider uppercase px-2 py-0.5 rounded" style={{ fontFamily: 'JetBrains Mono, monospace' }}>Can’t wait</span>}
       <div className="flex items-start gap-3 pl-2">
@@ -381,7 +422,7 @@ function TaskRow({ task, focus, usersById, users, onChangeStatus, onReassign }) 
         <button
           role="checkbox" aria-checked={closed} tabIndex={0}
           onClick={() => onChangeStatus(task, closed ? 'open' : 'closed')}
-          className={`w-5 h-5 rounded-md border-2 grid place-items-center shrink-0 mt-0.5 transition-colors ${closed ? 'bg-green-500 border-green-500' : 'border-gray-300 dark:border-[#2A3744] hover:border-green-500'}`}
+          className={`w-5 h-5 rounded-md border-2 grid place-items-center shrink-0 mt-0.5 transition-colors ${closed ? 'bg-green-500 border-green-500' : 'border-gray-300 dark:border-[#30404F] hover:border-green-500'}`}
           title={closed ? 'Reopen' : 'Mark done'}
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3.5" className={`w-3 h-3 ${closed ? 'opacity-100' : 'opacity-0'}`}><path d="M5 12l5 5L20 7" strokeLinecap="round" strokeLinejoin="round" /></svg>
@@ -392,11 +433,18 @@ function TaskRow({ task, focus, usersById, users, onChangeStatus, onReassign }) 
             <span className={`text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${src.chip}`} style={{ fontFamily: 'JetBrains Mono, monospace' }}>{src.tag}</span>
             {task.priority === 'high' && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300" style={{ fontFamily: 'JetBrains Mono, monospace' }}>High</span>}
             {task.priority === 'low' && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 dark:bg-white/5 dark:text-slate-500" style={{ fontFamily: 'JetBrains Mono, monospace' }}>Low</span>}
+            {taggedBy && <span className="inline-flex items-center gap-1 text-[11px] text-gray-500 dark:text-slate-400"><Avatar userId={taggedBy.id} name={taggedBy.full_name} me={me} size={16} />{firstNameOf(taggedBy.full_name)}</span>}
             {timeLabel && <span className="ml-auto text-[12px] text-gray-400 dark:text-slate-500 whitespace-nowrap" style={{ fontFamily: 'JetBrains Mono, monospace' }}>{timeLabel}</span>}
           </div>
           <div className={`font-semibold text-[14.5px] mt-0.5 ${closed ? 'line-through text-gray-400 dark:text-slate-600' : 'text-gray-900 dark:text-white'}`}>{task.title}</div>
           {task.note && !expanded && <div className="text-[11px] text-gray-400 dark:text-slate-500 mt-1">📝 note · tap to expand</div>}
         </div>
+
+        {/* edit (hover) */}
+        <button onClick={() => onEditTask(task)} title="Edit task"
+          className="opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity self-center shrink-0 text-gray-400 hover:text-orange-500 dark:text-slate-500 dark:hover:text-orange-400 p-1">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4"><path d="M12 20h9" strokeLinecap="round" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        </button>
 
         {/* status pill + menu */}
         <div className="relative self-center shrink-0">
@@ -410,7 +458,7 @@ function TaskRow({ task, focus, usersById, users, onChangeStatus, onReassign }) 
               <div className={`absolute right-0 top-[calc(100%+6px)] z-20 ${cardSurface} rounded-xl shadow-lg p-1.5 min-w-[140px]`}>
                 {['open', 'waiting', 'blocked', 'closed'].map(s => (
                   <button key={s} onClick={() => { setMenuOpen(false); onChangeStatus(task, s) }}
-                    className={`flex w-full items-center gap-2 text-[13px] px-2 py-1.5 rounded-lg text-left hover:bg-gray-50 dark:hover:bg-white/5 ${closed && s !== 'closed' ? 'mt-1 border-t border-gray-100 dark:border-[#2A3744] pt-2 text-green-700 dark:text-green-400 font-semibold' : 'text-gray-700 dark:text-slate-300'}`}>
+                    className={`flex w-full items-center gap-2 text-[13px] px-2 py-1.5 rounded-lg text-left hover:bg-gray-50 dark:hover:bg-white/5 ${closed && s !== 'closed' ? 'mt-1 border-t border-gray-100 dark:border-[#30404F] pt-2 text-green-700 dark:text-green-400 font-semibold' : 'text-gray-700 dark:text-slate-300'}`}>
                     <span className={`w-2 h-2 rounded-full ${STATUSES[s].dot}`} />
                     {closed && s !== 'closed' ? `Reopen → ${STATUSES[s].label}` : STATUSES[s].label}
                   </button>
@@ -423,16 +471,16 @@ function TaskRow({ task, focus, usersById, users, onChangeStatus, onReassign }) 
 
       {expanded && (
         <ErrorBoundary label="task details">
-          <TaskDetail task={task} usersById={usersById} users={users} onReassign={onReassign} />
+          <TaskDetail task={task} me={me} usersById={usersById} users={users} onReassign={onReassign} onEditTask={onEditTask} />
         </ErrorBoundary>
       )}
     </div>
   )
 }
 
-function TaskDetail({ task, usersById, users, onReassign }) {
+function TaskDetail({ task, me, usersById, users, onReassign, onEditTask }) {
   const { user } = useAuth()
-  const me = user?.id
+  const authMe = user?.id
   const [note, setNote] = useState(task.note || '')
   const [savedAt, setSavedAt] = useState(null)
   const [activity, setActivity] = useState(null)
@@ -451,7 +499,7 @@ function TaskDetail({ task, usersById, users, onReassign }) {
     if (timer.current) clearTimeout(timer.current)
     timer.current = setTimeout(async () => {
       try {
-        await saveTaskNote(task.id, v, me, firstEdit.current)
+        await saveTaskNote(task.id, v, authMe, firstEdit.current)
         firstEdit.current = false
         setSavedAt(Date.now())
         task.note = v // keep the row's note in sync without a reload
@@ -463,18 +511,22 @@ function TaskDetail({ task, usersById, users, onReassign }) {
   const assignee = task.assignee ? usersById.get(task.assignee) : null
 
   return (
-    <div className="mt-3 pt-3 border-t border-dashed border-gray-200 dark:border-[#2A3744]">
+    <div className="mt-3 pt-3 border-t border-dashed border-gray-200 dark:border-[#30404F]">
       <div className="flex items-center gap-2 mb-2.5">
-        <span className="w-6 h-6 rounded-full bg-orange-500 grid place-items-center text-white text-[10px] font-bold">{initials(assignee?.full_name || 'Unassigned')}</span>
+        <Avatar userId={task.assignee} name={assignee?.full_name || 'Unassigned'} me={me} size={24} />
         <span className="text-[13px] font-semibold text-gray-900 dark:text-white">{assignee?.full_name || 'Unassigned'}</span>
-        <button onClick={() => setReassigning(r => !r)} className="ml-auto text-[12px] text-orange-600 dark:text-orange-400 border border-dashed border-gray-300 dark:border-slate-600 rounded-lg px-2.5 py-1 hover:bg-orange-50 dark:hover:bg-orange-500/10">@ reassign</button>
+        <button onClick={() => onEditTask(task)} className="ml-auto inline-flex items-center gap-1.5 text-[12px] text-gray-600 dark:text-slate-300 border border-dashed border-gray-300 dark:border-slate-600 rounded-lg px-2.5 py-1 hover:bg-gray-50 dark:hover:bg-white/5">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5"><path d="M12 20h9" strokeLinecap="round" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" strokeLinecap="round" strokeLinejoin="round" /></svg>
+          Edit
+        </button>
+        <button onClick={() => setReassigning(r => !r)} className="text-[12px] text-orange-600 dark:text-orange-400 border border-dashed border-gray-300 dark:border-slate-600 rounded-lg px-2.5 py-1 hover:bg-orange-50 dark:hover:bg-orange-500/10">@ reassign</button>
       </div>
       {reassigning && (
         <div className="flex flex-wrap gap-1.5 mb-3">
           {users.map(u => (
             <button key={u.id} onClick={() => { onReassign(task, u.id); setReassigning(false) }}
-              className={`inline-flex items-center gap-1.5 text-[12px] rounded-full border px-2.5 py-1 ${task.assignee === u.id ? 'border-orange-300 bg-orange-50 text-orange-700 dark:bg-orange-500/15 dark:text-orange-300 dark:border-orange-500/30' : 'border-gray-200 dark:border-[#2A3744] text-gray-600 dark:text-slate-300 hover:border-gray-300'}`}>
-              <span className="w-4 h-4 rounded-full bg-gray-400 dark:bg-slate-600 grid place-items-center text-white text-[8px] font-bold">{initials(u.full_name)}</span>
+              className={`inline-flex items-center gap-1.5 text-[12px] rounded-full border px-2.5 py-1 ${task.assignee === u.id ? 'border-orange-300 bg-orange-50 text-orange-700 dark:bg-orange-500/15 dark:text-orange-300 dark:border-orange-500/30' : 'border-gray-200 dark:border-[#30404F] text-gray-600 dark:text-slate-300 hover:border-gray-300'}`}>
+              <Avatar userId={u.id} name={u.full_name} me={me} size={16} />
               {u.full_name}
             </button>
           ))}
@@ -484,7 +536,7 @@ function TaskDetail({ task, usersById, users, onReassign }) {
         <div className="flex-1 min-w-[200px]">
           <div className="text-[10px] tracking-[0.1em] uppercase font-semibold text-gray-400 dark:text-slate-500 mb-2" style={{ fontFamily: 'JetBrains Mono, monospace' }}>Issue / notes</div>
           <textarea value={note} onChange={e => onNote(e.target.value)} placeholder="Add a note or what’s blocking this…"
-            className="w-full rounded-lg border border-gray-200 dark:border-[#2A3744] bg-white dark:bg-[#0F1822] text-gray-900 dark:text-slate-100 text-[13px] px-3 py-2.5 min-h-[92px] resize-y focus:outline-none focus:ring-2 focus:ring-orange-500/40" />
+            className="w-full rounded-lg border border-gray-200 dark:border-[#30404F] bg-white dark:bg-[#0F1822] text-gray-900 dark:text-slate-100 text-[13px] px-3 py-2.5 min-h-[92px] resize-y focus:outline-none focus:ring-2 focus:ring-orange-500/40" />
           <div className="text-[10px] text-gray-400 dark:text-slate-500 mt-1.5 flex items-center gap-1.5" style={{ fontFamily: 'JetBrains Mono, monospace' }}>
             <span className="w-1.5 h-1.5 rounded-full bg-green-500" />{savedAt ? 'Saved' : 'Autosaves as you type'}
           </div>
@@ -546,8 +598,11 @@ function Briefing({ tasks, upkeepDone, upkeepTotal }) {
 
   return (
     <div className="relative overflow-hidden rounded-2xl mb-3 px-5 py-4 text-slate-100 bg-gradient-to-br from-[#1F2A37] to-[#0F1822] shadow">
-      <div className="text-[11px] tracking-[0.22em] uppercase font-bold text-orange-400 mb-2.5 flex items-center gap-2">
-        <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse" />Today’s briefing <span className="text-orange-300/70">· {dateLabel}</span>
+      <style>{`@keyframes ccPulse{0%{box-shadow:0 0 0 0 rgba(249,115,22,.55)}70%{box-shadow:0 0 0 10px rgba(249,115,22,0)}100%{box-shadow:0 0 0 0 rgba(249,115,22,0)}}@media (prefers-reduced-motion:reduce){.cc-pulse-dot{animation:none!important}}`}</style>
+      {/* top-right corner glow ("bright spot") — clipped by the card's overflow-hidden */}
+      <span aria-hidden className="pointer-events-none absolute -top-12 -right-12 w-[180px] h-[180px]" style={{ background: 'radial-gradient(circle, rgba(249,115,22,.38), transparent 65%)' }} />
+      <div className="relative text-[11px] tracking-[0.22em] uppercase font-bold text-orange-400 mb-2.5 flex items-center gap-2">
+        <span className="cc-pulse-dot rounded-full shrink-0" style={{ width: 8, height: 8, background: '#F97316', animation: 'ccPulse 2.4s infinite' }} />Today’s briefing <span className="text-orange-300/70">· {dateLabel}</span>
       </div>
       {lines.map((l, i) => (
         <div key={i} className={`flex gap-3 items-baseline py-1.5 ${i ? 'border-t border-white/10' : ''}`}>
@@ -561,16 +616,17 @@ function Briefing({ tasks, upkeepDone, upkeepTotal }) {
   )
 }
 
-// ── Add task form ───────────────────────────────────────────────────────────
-function AddTaskForm({ me, users, onAdd, onCancel }) {
-  const [title, setTitle] = useState('')
-  const [source, setSource] = useState('manual')
-  const [priority, setPriority] = useState('normal')
-  const [repeat, setRepeat] = useState('one_time')
-  const [dueDate, setDueDate] = useState(todayCT())
-  const [status, setStatus] = useState('open')
-  const [assignee, setAssignee] = useState(me)
-  const [note, setNote] = useState('')
+// ── Task form (create | edit) ───────────────────────────────────────────────
+function TaskForm({ mode = 'create', task = null, me, users, onSubmit, onCancel }) {
+  const isEdit = mode === 'edit'
+  const [title, setTitle] = useState(task?.title || '')
+  const [source, setSource] = useState(task?.source || 'manual')
+  const [priority, setPriority] = useState(task?.priority || 'normal')
+  const [repeat, setRepeat] = useState(task?.repeat || 'one_time')
+  const [dueDate, setDueDate] = useState(task?.due_date || todayCT())
+  const [status, setStatus] = useState(task?.status || 'open')
+  const [assignee, setAssignee] = useState(task?.assignee || me)
+  const [note, setNote] = useState(task?.note || '')
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
 
@@ -579,18 +635,18 @@ function AddTaskForm({ me, users, onAdd, onCancel }) {
     if (!title.trim()) { setErr('Give the task a title.'); return }
     setSaving(true); setErr('')
     try {
-      await onAdd({
+      await onSubmit({
         title: title.trim(), source, priority, repeat,
         due_date: dueDate || null, status, assignee: assignee || me, note: note.trim() || null,
       })
-    } catch (e) { console.error(e); setErr(e.message || 'Could not add the task'); setSaving(false) }
+    } catch (e) { console.error(e); setErr(e.message || (isEdit ? 'Could not save changes' : 'Could not add the task')); setSaving(false) }
   }
 
   return (
     <div className={`max-w-[560px] mx-auto rounded-2xl overflow-hidden ${cardSurface}`}>
       <div className="bg-gradient-to-br from-[#1F2A37] to-[#0F1822] text-slate-100 px-6 py-4">
-        <h2 className="text-lg font-bold" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Add a task</h2>
-        <p className="text-[12.5px] text-slate-400 mt-0.5">Drops straight into your command center.</p>
+        <h2 className="text-lg font-bold" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>{isEdit ? 'Edit task' : 'Add a task'}</h2>
+        <p className="text-[12.5px] text-slate-400 mt-0.5">{isEdit ? 'Changes apply right away in your command center.' : 'Drops straight into your command center.'}</p>
       </div>
       <div className="px-6 py-5 space-y-4">
         {err && <div className="rounded-lg border border-red-200 dark:border-red-500/20 bg-red-50 dark:bg-red-500/10 px-3 py-2 text-[13px] text-red-700 dark:text-red-300">{err}</div>}
@@ -601,7 +657,7 @@ function AddTaskForm({ me, users, onAdd, onCancel }) {
           <div className="flex gap-1.5 flex-wrap">
             {SOURCE_ORDER.map(s => (
               <button key={s} onClick={() => setSource(s)}
-                className={`text-[13px] inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 ${source === s ? 'border-orange-300 bg-orange-50 text-orange-700 font-semibold dark:bg-orange-500/15 dark:text-orange-300 dark:border-orange-500/30' : 'border-gray-200 dark:border-[#2A3744] text-gray-600 dark:text-slate-300'}`}>
+                className={`text-[13px] inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 ${source === s ? 'border-orange-300 bg-orange-50 text-orange-700 font-semibold dark:bg-orange-500/15 dark:text-orange-300 dark:border-orange-500/30' : 'border-gray-200 dark:border-[#30404F] text-gray-600 dark:text-slate-300'}`}>
                 <span className={`w-2 h-2 rounded-full ${SOURCES[s].dot}`} />{s === 'manual' ? 'Manual' : s === 'upkeep' ? 'BUDDY upkeep' : SOURCES[s].label}
               </button>
             ))}
@@ -631,8 +687,8 @@ function AddTaskForm({ me, users, onAdd, onCancel }) {
           <div className="flex gap-1.5 flex-wrap">
             {users.map(u => (
               <button key={u.id} onClick={() => setAssignee(u.id)}
-                className={`inline-flex items-center gap-1.5 text-[12.5px] rounded-full border px-2.5 py-1 ${assignee === u.id ? 'border-orange-300 bg-orange-50 text-orange-700 font-semibold dark:bg-orange-500/15 dark:text-orange-300 dark:border-orange-500/30' : 'border-gray-200 dark:border-[#2A3744] text-gray-600 dark:text-slate-300'}`}>
-                <span className="w-5 h-5 rounded-full bg-gray-400 dark:bg-slate-600 grid place-items-center text-white text-[9px] font-bold">{initials(u.full_name)}</span>
+                className={`inline-flex items-center gap-1.5 text-[12.5px] rounded-full border px-2.5 py-1 ${assignee === u.id ? 'border-orange-300 bg-orange-50 text-orange-700 font-semibold dark:bg-orange-500/15 dark:text-orange-300 dark:border-orange-500/30' : 'border-gray-200 dark:border-[#30404F] text-gray-600 dark:text-slate-300'}`}>
+                <Avatar userId={u.id} name={u.full_name} me={me} size={20} />
                 {u.id === me ? 'You' : u.full_name}
               </button>
             ))}
@@ -642,15 +698,15 @@ function AddTaskForm({ me, users, onAdd, onCancel }) {
           <textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Context, a blocker, anything to remember…" className={`${inputCls} min-h-[110px] resize-y`} />
         </Field>
       </div>
-      <div className="flex gap-2.5 px-6 py-4 border-t border-gray-100 dark:border-[#2A3744]">
-        <button onClick={submit} disabled={saving} className="flex-1 font-semibold text-sm bg-orange-500 hover:brightness-105 disabled:opacity-60 text-white rounded-xl py-2.5">{saving ? 'Adding…' : 'Add to command center'}</button>
-        <button onClick={onCancel} disabled={saving} className="font-semibold text-sm border border-gray-200 dark:border-[#2A3744] text-gray-600 dark:text-slate-300 rounded-xl px-5 py-2.5 hover:bg-gray-50 dark:hover:bg-white/5">Cancel</button>
+      <div className="flex gap-2.5 px-6 py-4 border-t border-gray-100 dark:border-[#30404F]">
+        <button onClick={submit} disabled={saving} className="flex-1 font-semibold text-sm bg-orange-500 hover:brightness-105 disabled:opacity-60 text-white rounded-xl py-2.5">{saving ? 'Saving…' : isEdit ? 'Save changes' : 'Add to command center'}</button>
+        <button onClick={onCancel} disabled={saving} className="font-semibold text-sm border border-gray-200 dark:border-[#30404F] text-gray-600 dark:text-slate-300 rounded-xl px-5 py-2.5 hover:bg-gray-50 dark:hover:bg-white/5">Cancel</button>
       </div>
     </div>
   )
 }
 
-const inputCls = 'w-full rounded-lg border border-gray-200 dark:border-[#2A3744] bg-white dark:bg-[#0F1822] text-gray-900 dark:text-slate-100 text-[14px] px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-orange-500/40'
+const inputCls = 'w-full rounded-lg border border-gray-200 dark:border-[#30404F] bg-white dark:bg-[#0F1822] text-gray-900 dark:text-slate-100 text-[14px] px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-orange-500/40'
 function Field({ label, hint, className = '', children }) {
   return (
     <div className={className}>
