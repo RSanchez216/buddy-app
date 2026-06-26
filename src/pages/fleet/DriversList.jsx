@@ -28,6 +28,9 @@ export default function DriversList() {
   const [filter, setFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('active')
   const [photoFilter, setPhotoFilter] = useState(null)
+  // Composes with the status filter (e.g. Active + Missing comp). Not reset on
+  // status change — that's the whole point.
+  const [missingCompFilter, setMissingCompFilter] = useState(false)
   const [sortField, setSortField] = useState('full_name')
   const [sortDir, setSortDir] = useState('asc')
   const [showModal, setShowModal] = useState(false)
@@ -85,6 +88,18 @@ export default function DriversList() {
     return base.filter(r => !r.photo_path).length
   }, [rows, statusFilter])
 
+  // "Missing comp" = no usable comp value (NULL, incl. unparseable raw text).
+  // Badge count is status-aware; the amber emphasis keys off ACTIVE drivers
+  // (the profitability-critical gap) regardless of the selected status.
+  const missingCompCount = useMemo(() => {
+    const base = statusFilter === 'all' ? rows : rows.filter(r => r.current_status === statusFilter)
+    return base.filter(r => r.compensation_value == null).length
+  }, [rows, statusFilter])
+  const activeMissingComp = useMemo(
+    () => rows.filter(r => r.current_status === 'active' && r.compensation_value == null).length,
+    [rows],
+  )
+
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase()
     const base = statusFilter === 'all' ? rows : rows.filter(r => r.current_status === statusFilter)
@@ -101,16 +116,32 @@ export default function DriversList() {
     if (photoFilter === 'missing') {
       result = result.filter(r => !r.photo_path)
     }
+    if (missingCompFilter) {
+      result = result.filter(r => r.compensation_value == null)
+    }
+
+    const dir = sortDir === 'desc' ? -1 : 1
+    // Compensation sorts NUMERICALLY by compensation_value (never the raw
+    // string), with NULLs pinned to the bottom in both directions.
+    if (sortField === 'compensation') {
+      return [...result].sort((a, b) => {
+        const av = a.compensation_value, bv = b.compensation_value
+        const an = av == null, bn = bv == null
+        if (an && bn) return 0
+        if (an) return 1
+        if (bn) return -1
+        return (Number(av) - Number(bv)) * dir
+      })
+    }
 
     const fn = SORT_FIELDS[sortField] || SORT_FIELDS.full_name
-    const dir = sortDir === 'desc' ? -1 : 1
     return [...result].sort((a, b) => {
       const va = fn(a); const vb = fn(b)
       if (va < vb) return -1 * dir
       if (va > vb) return  1 * dir
       return 0
     })
-  }, [rows, filter, statusFilter, photoFilter, sortField, sortDir])
+  }, [rows, filter, statusFilter, photoFilter, missingCompFilter, sortField, sortDir])
 
   function toggleSort(field) {
     if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
@@ -180,6 +211,20 @@ export default function DriversList() {
             📷 Missing photos <span className="font-semibold ml-1">{missingPhotoCount}</span>
           </button>
         )}
+        <button
+          onClick={() => setMissingCompFilter(v => !v)}
+          title="Drivers with no usable compensation value — unusable for profitability"
+          className={`px-3 py-1.5 text-xs font-medium rounded-full border transition-colors flex items-center gap-1 ${
+            missingCompFilter
+              ? 'bg-orange-50 dark:bg-orange-500/10 border-orange-300 dark:border-orange-500/30 text-orange-700 dark:text-orange-400'
+              : activeMissingComp > 0
+                ? 'bg-amber-50/70 dark:bg-amber-500/10 border-amber-300 dark:border-amber-500/40 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-500/15'
+                : 'border-gray-200 dark:border-slate-700/50 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5'
+          }`}
+        >
+          {activeMissingComp > 0 && <span aria-hidden>⚠️</span>}
+          Missing comp <span className="font-semibold ml-1">{missingCompCount}</span>
+        </button>
       </div>
 
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -205,7 +250,7 @@ export default function DriversList() {
                 <SortableTh field="carrier"        label="Carrier"         sortField={sortField} sortDir={sortDir} onToggle={toggleSort} minW="min-w-[180px]" />
                 <th className={`${S.th} min-w-[80px]`}>Truck</th>
                 <th className={`${S.th} min-w-[80px]`}>Trailer</th>
-                <th className={`${S.th} min-w-[180px]`}>Compensation</th>
+                <SortableTh field="compensation"   label="Compensation"    sortField={sortField} sortDir={sortDir} onToggle={toggleSort} minW="min-w-[180px]" />
                 <SortableTh field="current_status" label="Status"          sortField={sortField} sortDir={sortDir} onToggle={toggleSort} minW="min-w-[120px]" />
                 <th className={`${S.th} min-w-[130px]`}>Phone</th>
                 <th className={`${S.th} min-w-[180px]`}>Email</th>

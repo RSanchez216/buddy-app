@@ -38,7 +38,6 @@ import TrucksList from './pages/fleet/TrucksList'
 import TrailersList from './pages/fleet/TrailersList'
 import TruckDetail from './pages/fleet/TruckDetail'
 import TrailerDetail from './pages/fleet/TrailerDetail'
-import DriversList from './pages/fleet/DriversList'
 import DriverDetail from './pages/fleet/DriverDetail'
 import FleetCost from './pages/fleet/FleetCost'
 import SettlementsImport from './pages/fleet/settlements/SettlementsImport'
@@ -69,6 +68,9 @@ const DebtSchedule = lazy(() => import('./pages/financial-controls/DebtSchedule'
 // Lazy — the Loads importer statically pulls SheetJS (xlsx) to parse workbooks;
 // splitting it keeps that heavy lib out of the main bundle.
 const LoadsImport = lazy(() => import('./pages/fleet/loads/LoadsImport'))
+// Lazy — Drivers list (its Upload modal statically pulls SheetJS) ships as its
+// own chunk.
+const DriversList = lazy(() => import('./pages/fleet/DriversList'))
 // Lazy — The Rig carries the whole three.js stack; it must never weigh on
 // any other route. Standalone preview, direct URL only (no nav entry yet).
 const RigPage = lazy(() => import('./pages/rig/RigPage'))
@@ -120,7 +122,13 @@ export default function App() {
               <Route path="fleet/trucks/:id" element={<RequirePageAccess pageKey="fleet/trucks"><TruckDetail /></RequirePageAccess>} />
               <Route path="fleet/trailers" element={<RequirePageAccess pageKey="fleet/trailers"><TrailersList /></RequirePageAccess>} />
               <Route path="fleet/trailers/:id" element={<RequirePageAccess pageKey="fleet/trailers"><TrailerDetail /></RequirePageAccess>} />
-              <Route path="fleet/drivers" element={<RequirePageAccess pageKey="fleet/drivers"><DriversList /></RequirePageAccess>} />
+              <Route path="fleet/drivers" element={
+                <RequirePageAccess pageKey="fleet/drivers">
+                  <Suspense fallback={<div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500" /></div>}>
+                    <DriversList />
+                  </Suspense>
+                </RequirePageAccess>
+              } />
               <Route path="fleet/drivers/:id" element={<RequirePageAccess pageKey="fleet/drivers"><DriverDetail /></RequirePageAccess>} />
               <Route path="fleet/cost" element={<RequirePageAccess pageKey="fleet/cost"><FleetCost /></RequirePageAccess>} />
               <Route path="fleet/loads/import" element={
