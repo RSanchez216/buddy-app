@@ -12,9 +12,21 @@ const SOURCES = {
   calendar: { label: 'Calendar', tag: 'Cal',   spine: 'bg-green-500',  dot: 'bg-green-500',  chip: 'bg-green-50 text-green-700 dark:bg-green-500/15 dark:text-green-300' },
   telegram: { label: 'Telegram', tag: 'TG',    spine: 'bg-teal-500',   dot: 'bg-teal-500',   chip: 'bg-teal-50 text-teal-700 dark:bg-teal-500/15 dark:text-teal-300' },
   manual:   { label: 'Manual',   tag: 'Note',  spine: 'bg-amber-500',  dot: 'bg-amber-500',  chip: 'bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300' },
-  upkeep:   { label: 'Upkeep',   tag: 'Upkeep',spine: 'bg-violet-500', dot: 'bg-violet-500', chip: 'bg-violet-50 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300' },
+  // upkeep accent = violet-600 (#7C3AED) — exact, no gray fallback anywhere.
+  upkeep:   { label: 'Upkeep',   tag: 'Upkeep',spine: 'bg-violet-600', dot: 'bg-violet-600', chip: 'bg-violet-100 text-violet-700 dark:bg-violet-600/[0.18] dark:text-[#C4B0E8]' },
 }
 const SOURCE_ORDER = ['email', 'calendar', 'telegram', 'manual', 'upkeep']
+
+// Briefing label pills — tinted per source on the dark slate banner (same tints
+// in both themes, since the banner is dark in both). Keyed by source so every
+// label gets its own color instead of one flat gray pill.
+const BRIEF_LABEL = {
+  email:    { background: 'rgba(37,99,235,.28)',  color: '#BBD0FB' },
+  telegram: { background: 'rgba(13,148,136,.30)', color: '#A9E5DD' },
+  calendar: { background: 'rgba(22,163,74,.30)',  color: '#A8E6BC' },
+  manual:   { background: 'rgba(217,119,6,.30)',  color: '#F2CE97' },
+  upkeep:   { background: 'rgba(124,58,237,.30)', color: '#D2BCF7' },
+}
 const STATUSES = {
   open:    { label: 'Open',    pill: 'bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-500/15 dark:text-orange-300 dark:border-orange-500/30', dot: 'bg-orange-500' },
   waiting: { label: 'Waiting', pill: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:border-amber-500/30',     dot: 'bg-amber-500' },
@@ -332,11 +344,11 @@ function GroupHeader({ group, upkeep }) {
     return (
       <div className="flex items-center gap-2.5 flex-wrap mt-1.5 px-0.5">
         <div className="font-bold text-sm text-gray-900 dark:text-white flex items-center gap-1.5" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>⚙ Keep BUDDY running</div>
-        <span className="text-[9.5px] font-semibold tracking-wide uppercase bg-violet-50 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300 px-1.5 py-0.5 rounded">Recurring · resets daily</span>
+        <span className="text-[9.5px] font-semibold tracking-wide uppercase bg-violet-100 text-violet-700 dark:bg-violet-600/[0.18] dark:text-[#C4B0E8] px-1.5 py-0.5 rounded">Recurring · resets daily</span>
         <div className="ml-auto flex items-center gap-2">
           <span className="text-[11px] font-semibold text-gray-500 dark:text-slate-400" style={{ fontFamily: 'JetBrains Mono, monospace' }}>{upkeep.done} / {upkeep.total} done</span>
           <span className="w-[90px] h-[7px] rounded-full bg-gray-100 dark:bg-[#0F1822] overflow-hidden">
-            <span className="block h-full bg-violet-500 transition-[width] duration-300" style={{ width: `${pct}%` }} />
+            <span className="block h-full bg-violet-600 transition-[width] duration-300" style={{ width: `${pct}%` }} />
           </span>
         </div>
       </div>
@@ -528,15 +540,19 @@ function Briefing({ tasks, upkeepDone, upkeepTotal }) {
   const order = { email: 0, telegram: 1, calendar: 2, manual: 3, upkeep: 4 }
   lines.sort((a, b) => (order[a.src] ?? 9) - (order[b.src] ?? 9))
 
+  // Eyebrow date, built from America/Chicago parts (not new Date(iso)) → "FRI JUN 26".
+  const fmt = (o) => new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', ...o }).format(new Date())
+  const dateLabel = `${fmt({ weekday: 'short' })} ${fmt({ month: 'short' })} ${fmt({ day: 'numeric' })}`.toUpperCase()
+
   return (
     <div className="relative overflow-hidden rounded-2xl mb-3 px-5 py-4 text-slate-100 bg-gradient-to-br from-[#1F2A37] to-[#0F1822] shadow">
       <div className="text-[11px] tracking-[0.22em] uppercase font-bold text-orange-400 mb-2.5 flex items-center gap-2">
-        <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse" />Today’s briefing
+        <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse" />Today’s briefing <span className="text-orange-300/70">· {dateLabel}</span>
       </div>
       {lines.map((l, i) => (
         <div key={i} className={`flex gap-3 items-baseline py-1.5 ${i ? 'border-t border-white/10' : ''}`}>
-          <span className="text-[10px] font-semibold tracking-wide px-1.5 py-0.5 rounded w-16 text-center shrink-0 bg-white/10 text-slate-200" style={{ fontFamily: 'JetBrains Mono, monospace' }}>
-            {SOURCES[l.src].tag.toUpperCase()}
+          <span className="text-[10px] font-semibold tracking-wide px-[7px] py-0.5 rounded-[5px] text-center shrink-0" style={{ fontFamily: 'JetBrains Mono, monospace', minWidth: 64, ...(BRIEF_LABEL[l.src] || BRIEF_LABEL.manual) }}>
+            {(SOURCES[l.src]?.label || l.src).toUpperCase()}
           </span>
           <p className="text-[13.5px] text-slate-200">{l.text}</p>
         </div>
