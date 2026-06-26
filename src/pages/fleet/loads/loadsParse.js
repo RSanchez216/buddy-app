@@ -189,5 +189,7 @@ export function parseLoadsWorkbook(arrayBuffer) {
   }
 
   if (rows.length === 0) errors.push('No rows with both a load number and a driver were found.')
-  return { rows, errors }
+  // Return the resolved column map so the importer can warn on absent
+  // expected-optional columns using this exact (header-tolerant) resolution.
+  return { rows, errors, cols }
 }

@@ -41,7 +41,6 @@ import TrailerDetail from './pages/fleet/TrailerDetail'
 import DriversList from './pages/fleet/DriversList'
 import DriverDetail from './pages/fleet/DriverDetail'
 import FleetCost from './pages/fleet/FleetCost'
-import LoadsImport from './pages/fleet/loads/LoadsImport'
 import SettlementsImport from './pages/fleet/settlements/SettlementsImport'
 import FuelPrices from './pages/fleet/fuel-prices/FuelPrices'
 import Profitability from './pages/fleet/loads/Profitability'
@@ -67,6 +66,9 @@ const Lifeline = lazy(() => import('./pages/cash-flow/lifeline/Lifeline'))
 // Lazy — Debt Schedule pulls SheetJS on export (dynamic import) and is its own
 // destination; split it into its own chunk off the main bundle.
 const DebtSchedule = lazy(() => import('./pages/financial-controls/DebtSchedule'))
+// Lazy — the Loads importer statically pulls SheetJS (xlsx) to parse workbooks;
+// splitting it keeps that heavy lib out of the main bundle.
+const LoadsImport = lazy(() => import('./pages/fleet/loads/LoadsImport'))
 // Lazy — The Rig carries the whole three.js stack; it must never weigh on
 // any other route. Standalone preview, direct URL only (no nav entry yet).
 const RigPage = lazy(() => import('./pages/rig/RigPage'))
@@ -121,7 +123,15 @@ export default function App() {
               <Route path="fleet/drivers" element={<RequirePageAccess pageKey="fleet/drivers"><DriversList /></RequirePageAccess>} />
               <Route path="fleet/drivers/:id" element={<RequirePageAccess pageKey="fleet/drivers"><DriverDetail /></RequirePageAccess>} />
               <Route path="fleet/cost" element={<RequirePageAccess pageKey="fleet/cost"><FleetCost /></RequirePageAccess>} />
-              <Route path="fleet/loads/import" element={<RequirePageAccess pageKey="fleet/loads/import"><ErrorBoundary label="Loads Import"><LoadsImport /></ErrorBoundary></RequirePageAccess>} />
+              <Route path="fleet/loads/import" element={
+                <RequirePageAccess pageKey="fleet/loads/import">
+                  <ErrorBoundary label="Loads Import">
+                    <Suspense fallback={<div className="px-4 py-12 text-center"><div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500" /></div>}>
+                      <LoadsImport />
+                    </Suspense>
+                  </ErrorBoundary>
+                </RequirePageAccess>
+              } />
               <Route path="fleet/settlements/import" element={<RequirePageAccess pageKey="fleet/settlements/import"><SettlementsImport /></RequirePageAccess>} />
               <Route path="fleet/fuel-prices" element={<RequirePageAccess pageKey="fleet/fuel-prices"><FuelPrices /></RequirePageAccess>} />
               <Route path="fleet/profitability" element={<RequirePageAccess pageKey="fleet/profitability"><Profitability /></RequirePageAccess>} />

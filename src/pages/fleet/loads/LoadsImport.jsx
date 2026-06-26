@@ -21,6 +21,16 @@ function fmtVal(v) {
   return String(v)
 }
 
+// Expected-optional TMS columns. `key` matches the parser's resolved `cols`
+// map so "missing" agrees exactly with what populates the field. Warning only —
+// never blocks the import (required columns keep their hard-error behavior).
+const OPTIONAL_COLS = [
+  { key: 'truck',        label: 'Truck Number' },
+  { key: 'loadNotes',    label: 'Load Notes' },
+  { key: 'loadInstr',    label: 'Load Instructions' },
+  { key: 'invoiceNotes', label: 'Invoice Notes' },
+]
+
 // ── Import-time TONU heuristic ──────────────────────────────────────────────
 // Same-city pickup & drop under the realistic floor flags a possible TONU.
 const TONU_FLOOR = 500
@@ -129,6 +139,8 @@ export default function LoadsImport() {
   // their prior decision stands) + the reviewer's per-candidate decisions.
   const [tonuClassified, setTonuClassified] = useState(() => new Set())
   const [tonuDecisions, setTonuDecisions] = useState(() => new Map()) // load_number -> 'tonu' | 'real'
+  // Dismiss flag for the missing-optional-columns warning banner.
+  const [optionalWarningDismissed, setOptionalWarningDismissed] = useState(false)
 
   useEffect(() => { init() }, [])
 
@@ -170,8 +182,15 @@ export default function LoadsImport() {
     setBusy(true)
     try {
       const buf = await file.arrayBuffer()
-      const { rows, errors } = parseLoadsWorkbook(buf)
+      const { rows, errors, cols } = parseLoadsWorkbook(buf)
       if (errors.length) { toast.error("Couldn't read the file", errors[0]); return }
+
+      // Expected-optional columns absent from this file — detected via the
+      // parser's own resolved `cols` (same header matching that populates the
+      // fields), so it never disagrees with the real mapping. Warning only.
+      const missingOptional = OPTIONAL_COLS.filter(c => !cols?.[c.key]).map(c => c.label)
+      const presentOptional = OPTIONAL_COLS.filter(c => cols?.[c.key]).map(c => c.label)
+      setOptionalWarningDismissed(false)
 
       // Reference + existing-load data for resolve/diff.
       const loadNumbers = [...new Set(rows.map(r => r.load_number))]
@@ -202,7 +221,10 @@ export default function LoadsImport() {
         existing: { loads: existingLoads, legs: existingLegs },
       })
 
-      const { batchId, error } = await stageBatch({ plan: built, counts: builtCounts, filename: file.name, userId: user?.id })
+      // Stash the missing/present optional columns on the batch counts (jsonb,
+      // no schema change) so the warning survives the stage → reload round-trip.
+      const stagedCounts = { ...builtCounts, missing_optional: missingOptional, present_optional: presentOptional }
+      const { batchId, error } = await stageBatch({ plan: built, counts: stagedCounts, filename: file.name, userId: user?.id })
       if (error) { toast.error("Couldn't stage the import", error); return }
       toast.success(`Staged ${file.name} — review below`)
       // Reload from the staged rows (canonical source for review + apply).
@@ -398,6 +420,21 @@ export default function LoadsImport() {
     }
   }
 
+  // Cancel from the missing-optional-columns warning: discard the staged batch
+  // (nothing was written to loads yet) so the user can re-export with the
+  // columns ticked. Non-blocking — no window.confirm (the banner IS the prompt).
+  async function cancelForReexport() {
+    if (!batch || busy) return
+    setBusy(true)
+    try {
+      const { error } = await discardBatch(batch.id)
+      if (error) { toast.error("Couldn't discard", error); return }
+      await init()
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const linkOptionsFor = (type) => {
     const list = type === 'driver' ? fleet.drivers : type === 'truck' ? fleet.trucks : fleet.trailers
     return list.map(x => ({
@@ -438,6 +475,26 @@ export default function LoadsImport() {
         </div>
       ) : (
         <>
+          {/* Missing optional-columns warning — soft, non-blocking. Shown
+              before Apply; Continue keeps the staged batch, Cancel discards it
+              (nothing was written) so the user can re-export. */}
+          {Array.isArray(counts.missing_optional) && counts.missing_optional.length > 0 && !optionalWarningDismissed && (
+            <div className="rounded-xl border border-amber-200 dark:border-amber-500/20 bg-amber-50/70 dark:bg-amber-500/[0.06] px-4 py-3 text-amber-800 dark:text-amber-300">
+              <p className="text-sm font-semibold mb-1">⚠️ Heads up — some optional columns are missing from this file</p>
+              <p className="text-xs">
+                <span className="font-medium">Missing:</span> {counts.missing_optional.join(', ')}.
+                {counts.present_optional?.length ? <> <span className="font-medium">Present:</span> {counts.present_optional.join(', ')}.</> : null}
+              </p>
+              <p className="text-xs mt-1">
+                These aren&apos;t required, but <strong>Truck Number</strong> drives assignment matching, and the notes/instructions are collected for your records. If you continue, these fields will be blank for the loads in this file — or cancel and re-export from the TMS with the columns ticked.
+              </p>
+              <div className="flex items-center gap-2 mt-2.5">
+                <button onClick={() => setOptionalWarningDismissed(true)} disabled={busy} className={S.btnSave}>Continue import</button>
+                <button onClick={cancelForReexport} disabled={busy} className={S.btnCancel}>Cancel &amp; re-export</button>
+              </div>
+            </div>
+          )}
+
           {/* Summary */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
             <Stat label="New" value={counts.new ?? 0} tone="emerald" />
