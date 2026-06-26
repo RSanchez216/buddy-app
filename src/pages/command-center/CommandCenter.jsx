@@ -108,23 +108,23 @@ export default function CommandCenter() {
 
   async function changeStatus(task, status) {
     patchTask(task.id, { status, closed_at: status === 'closed' ? new Date().toISOString() : null })
-    try { const row = await setTaskStatus(task, status, me); patchTask(task.id, row) }
+    try { const row = await setTaskStatus(task, status); patchTask(task.id, row) }
     catch (e) { console.error(e); reload() }
   }
   async function reassign(task, userId) {
     const name = usersById.get(userId)?.full_name
     patchTask(task.id, { assignee: userId })
-    try { const row = await reassignTask(task.id, userId, me, name); patchTask(task.id, row) }
+    try { const row = await reassignTask(task.id, userId, name); patchTask(task.id, row) }
     catch (e) { console.error(e); reload() }
   }
   // One submit path for both create and edit (TaskForm always calls onSubmit(payload)).
   async function submitForm(payload) {
     if (editTask) {
       const name = usersById.get(payload.assignee)?.full_name
-      const row = await updateTask(editTask, payload, me, name)
+      const row = await updateTask(editTask, payload, name)
       patchTask(editTask.id, row)
     } else {
-      const row = await addTask(payload, me)
+      const row = await addTask(payload)
       setTasks(prev => [row, ...(prev || [])])
     }
     setEditTask(null)
@@ -264,7 +264,7 @@ function CommandCenterView({ tasks, me, usersById, greeting, onChangeStatus, onR
       {/* Greeting */}
       <div className="mb-3">
         <h1 className="text-[23px] font-bold tracking-tight text-gray-900 dark:text-white" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Hello, {greeting.firstName}</h1>
-        <p className="text-[13px] text-gray-500 dark:text-[#9AA8B6] mt-0.5">Today is {greeting.weekday}, {greeting.month} {greeting.day} · here’s where to point your attention.</p>
+        <p className="text-[13px] text-gray-500 dark:text-slate-400 mt-0.5">Today is {greeting.weekday}, {greeting.month} {greeting.day} · here’s where to point your attention.</p>
       </div>
 
       <Briefing tasks={all} upkeepDone={upkeepDone} upkeepTotal={upkeepTotal} />
@@ -479,8 +479,6 @@ function TaskRow({ task, focus, me, usersById, users, onChangeStatus, onReassign
 }
 
 function TaskDetail({ task, me, usersById, users, onReassign, onEditTask }) {
-  const { user } = useAuth()
-  const authMe = user?.id
   const [note, setNote] = useState(task.note || '')
   const [savedAt, setSavedAt] = useState(null)
   const [activity, setActivity] = useState(null)
@@ -499,7 +497,7 @@ function TaskDetail({ task, me, usersById, users, onReassign, onEditTask }) {
     if (timer.current) clearTimeout(timer.current)
     timer.current = setTimeout(async () => {
       try {
-        await saveTaskNote(task.id, v, authMe, firstEdit.current)
+        await saveTaskNote(task.id, v, firstEdit.current)
         firstEdit.current = false
         setSavedAt(Date.now())
         task.note = v // keep the row's note in sync without a reload

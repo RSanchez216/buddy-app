@@ -59,13 +59,30 @@ export async function loadActivity(taskId) {
   return data || []
 }
 
-async function logActivity(taskId, actor, kind, detail, metadata = null) {
-  const { error } = await supabase.from('task_activity').insert({ task_id: taskId, actor, kind, detail, metadata })
-  if (error) console.error('[CommandCenter] activity insert failed', error)
+const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s)
+
+// The signed-in user's id (= auth.uid()), read straight from the session.
+// task_activity's RLS `with check` requires actor = auth.uid(), so we never
+// trust a passed-in id — we source it from auth, the only value that passes.
+async function authUid() {
+  const { data } = await supabase.auth.getSession()
+  return data?.session?.user?.id ?? null
+}
+
+// Insert one activity row. actor is always the authenticated user. Failures are
+// surfaced to the console (with context) but never crash the calling action —
+// a missing log row shouldn't block closing/assigning a task.
+async function logActivity(taskId, kind, detail, metadata = null) {
+  const actor = await authUid()
+  if (!actor) { console.error('[CommandCenter] activity insert skipped — no authenticated user', { taskId, kind }); return }
+  const row = { task_id: taskId, actor, kind, detail }
+  if (metadata != null) row.metadata = metadata // omit when absent — don't reference a column we aren't using
+  const { error } = await supabase.from('task_activity').insert(row)
+  if (error) console.error('[CommandCenter] activity insert failed', { taskId, kind, actor, error })
 }
 
 // Status change → tasks.status (+ closed_at) + a status_changed / reopened entry.
-export async function setTaskStatus(task, status, actor) {
+export async function setTaskStatus(task, status) {
   const wasClosed = task.status === 'closed'
   const closed_at = status === 'closed' ? new Date().toISOString() : null
   const { data, error } = await supabase
@@ -76,40 +93,41 @@ export async function setTaskStatus(task, status, actor) {
     .single()
   if (error) throw error
   const kind = wasClosed && status !== 'closed' ? 'reopened' : 'status_changed'
-  await logActivity(task.id, actor, kind, `Status → ${status}`)
+  await logActivity(task.id, kind, `${cap(task.status)} → ${cap(status)}`)
   return data
 }
 
 // Debounced note save (caller debounces). Logs note_edited only on the first
 // save of a session (firstEdit=true) so we don't spam one per keystroke.
-export async function saveTaskNote(taskId, note, actor, firstEdit) {
+export async function saveTaskNote(taskId, note, firstEdit) {
   const { error } = await supabase.from('tasks').update({ note }).eq('id', taskId)
   if (error) throw error
-  if (firstEdit) await logActivity(taskId, actor, 'note_edited', 'Note updated')
+  if (firstEdit) await logActivity(taskId, 'note_edited', 'Note updated')
 }
 
-export async function reassignTask(taskId, assignee, actor, assigneeName) {
+export async function reassignTask(taskId, assignee, assigneeName) {
   const { data, error } = await supabase.from('tasks').update({ assignee }).eq('id', taskId).select('*').single()
   if (error) throw error
-  await logActivity(taskId, actor, 'assigned', assigneeName ? `Assigned to ${assigneeName}` : 'Reassigned')
+  await logActivity(taskId, 'assigned', assigneeName ? `Assigned to ${assigneeName}` : 'Reassigned')
   return data
 }
 
-export async function addTask(payload, actor) {
+export async function addTask(payload) {
+  const created_by = await authUid()
   const { data, error } = await supabase
     .from('tasks')
-    .insert({ ...payload, created_by: actor })
+    .insert({ ...payload, created_by })
     .select('*')
     .single()
   if (error) throw error
-  await logActivity(data.id, actor, 'created', 'Task created')
+  await logActivity(data.id, 'created', 'Task created')
   return data
 }
 
 // Full edit of an existing task. Core fields just update the row; the three
 // fields that have activity kinds (status, assignee, note) log when they change
 // — no new activity kind is invented (no schema change this round).
-export async function updateTask(prev, payload, actor, assigneeName) {
+export async function updateTask(prev, payload, assigneeName) {
   const patch = { ...payload }
   const statusChanged = payload.status !== undefined && payload.status !== prev.status
   if (statusChanged) patch.closed_at = payload.status === 'closed' ? new Date().toISOString() : null
@@ -124,13 +142,13 @@ export async function updateTask(prev, payload, actor, assigneeName) {
 
   if (statusChanged) {
     const kind = prev.status === 'closed' && payload.status !== 'closed' ? 'reopened' : 'status_changed'
-    await logActivity(prev.id, actor, kind, `Status → ${payload.status}`)
+    await logActivity(prev.id, kind, `${cap(prev.status)} → ${cap(payload.status)}`)
   }
   if (payload.assignee !== undefined && payload.assignee !== prev.assignee) {
-    await logActivity(prev.id, actor, 'assigned', assigneeName ? `Assigned to ${assigneeName}` : 'Reassigned')
+    await logActivity(prev.id, 'assigned', assigneeName ? `Assigned to ${assigneeName}` : 'Reassigned')
   }
   if (payload.note !== undefined && (payload.note || '') !== (prev.note || '')) {
-    await logActivity(prev.id, actor, 'note_edited', 'Note updated')
+    await logActivity(prev.id, 'note_edited', 'Note updated')
   }
   return data
 }
