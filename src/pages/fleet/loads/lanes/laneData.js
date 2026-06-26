@@ -19,7 +19,7 @@ export async function fetchLaneLegs({ from, to, basis = 'delivery' }) {
   const out = []
   for (let page = 0; ; page++) {
     const { data, error } = await supabase.from('v_lane_geo')
-      .select('leg_id, load_id, load_number, status, is_tonu, is_projected, load_phase, pickup_date, delivery_date, origin, destination, leg_revenue, leg_total_miles, customer_name, dispatcher_id, dispatcher_name, driver_display, trailer_id, trailer_display, origin_lat, origin_lng, dest_lat, dest_lng')
+      .select('leg_id, load_id, load_number, status, is_tonu, is_projected, load_phase, pickup_date, delivery_date, origin, destination, leg_revenue, leg_total_miles, customer_name, dispatcher_id, dispatcher_name, driver_display, trailer_id, trailer_display, effective_trailer_id, effective_trailer_unit, effective_trailer_type, trailer_inferred, origin_lat, origin_lng, dest_lat, dest_lng')
       .gte(dateCol, from).lte(dateCol, to)
       .order(dateCol, { ascending: true }).order('leg_id', { ascending: true })
       .range(page * 1000, page * 1000 + 999)
@@ -83,27 +83,17 @@ export async function fetchLaneGeoRollup({ from, to, basis = 'origin', grain = '
 }
 
 // ── Trailer types ───────────────────────────────────────────────────────
-// Loads imports carry only a trailer number — the type lives on the trailer
-// profile, and legs can gain a trailer days later via the weekly assignment
-// upload. So the type is resolved live at render time (leg.trailer_id →
-// trailers.trailer_type), never snapshotted at import.
+// Type classification now uses v_lane_geo.effective_trailer_type — the linked
+// trailer, or the one inferred from the driver's assignment window when the load
+// has no linked trailer. So we no longer recompute from trailer_id; "Unknown" is
+// only when effective_trailer_type is genuinely NULL (no covering assignment).
 export const UNKNOWN_TYPE = 'Unknown'
 
-export async function fetchTrailerTypes() {
-  const { data, error } = await supabase.from('trailers').select('id, trailer_type')
-  if (error) throw error
-  const byId = new Map()
-  for (const t of data || []) byId.set(t.id, t.trailer_type || null)
-  return byId
-}
-
-// Annotate legs with their live-resolved type. No trailer assigned yet, an
-// unmatched trailer_id, or a typeless profile all bucket as "Unknown" —
-// visible in every filter/leaderboard, never silently dropped.
-export function resolveLegTypes(legs, typeById) {
+// Bucket each leg's display type from effective_trailer_type (NULL → Unknown).
+export function resolveLegTypes(legs) {
   return (legs || []).map(l => ({
     ...l,
-    trailer_type: (l.trailer_id != null && typeById?.get(l.trailer_id)) || UNKNOWN_TYPE,
+    trailer_type: l.effective_trailer_type || UNKNOWN_TYPE,
   }))
 }
 

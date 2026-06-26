@@ -8,7 +8,7 @@ import LaneMapCanvas from './LaneMapCanvas'
 import GeoHeatMap from './GeoHeatMap'
 import TopPerformers from './TopPerformers'
 import TrailerTypeTrends from './TrailerTypeTrends'
-import { aggregateLanes, EXCLUDED_STATUSES, fetchLaneLegs, fetchTrailerTypes, makeRpmScale, makeTypeColorMap, makeWidthScale, pickAllLoadMetrics, resolveLegTypes, RPM_NULL_COLOR, UNKNOWN_TYPE } from './laneData'
+import { aggregateLanes, EXCLUDED_STATUSES, fetchLaneLegs, makeRpmScale, makeTypeColorMap, makeWidthScale, pickAllLoadMetrics, resolveLegTypes, RPM_NULL_COLOR, UNKNOWN_TYPE } from './laneData'
 import { binHeatCells } from './mapShared'
 import { fmtMoney, fmtNum, fmtRpm, formatRange, shiftYmd, spanDays, thisMonth, thisWeek } from '../spotlight/spotlightShared'
 
@@ -68,7 +68,10 @@ function LegRow({ leg, dateCol, rpmScale, showLane, showPhase }) {
         <p className="text-gray-400 dark:text-slate-500 truncate">{leg[dateCol] || '—'} · {leg.customer_name || '—'}</p>
         <p className="text-gray-400 dark:text-slate-500 truncate text-[11px]">Dispatcher: {leg.dispatcher_name || '—'}</p>
         <p className="text-gray-400 dark:text-slate-500 truncate text-[11px]">Driver: {leg.driver_display || '—'}</p>
-        <p className="text-gray-400 dark:text-slate-500 truncate text-[11px]">Trailer: {leg.trailer_display || '—'}{leg.trailer_type ? ` · ${leg.trailer_type}` : ''}</p>
+        <p className="text-gray-400 dark:text-slate-500 truncate text-[11px]">
+          Trailer: {leg.effective_trailer_unit || leg.trailer_display || '—'} · {leg.effective_trailer_type || UNKNOWN_TYPE}
+          {leg.trailer_inferred && <span className="ml-1 text-gray-300 dark:text-slate-600 italic">(inferred)</span>}
+        </p>
       </div>
       <div className="text-right shrink-0">
         <p className="font-mono text-gray-900 dark:text-slate-200">{fmtMoney(leg.leg_revenue)}</p>
@@ -257,18 +260,14 @@ export default function LaneFlowMap() {
   }, [setDispatcherFilter])
   useEffect(() => {
     let stale = false
-    Promise.all([
-      fetchLaneLegs({ from: range.from, to: range.to, basis }),
-      // Trailer type is resolved by a live join at render time — legs gain
-      // trailers days later via the weekly assignment upload, so the type is
-      // never snapshotted. A failed trailers fetch degrades to all-Unknown.
-      fetchTrailerTypes().catch(() => new Map()),
-    ])
-      .then(([legs, typeById]) => { if (!stale) setLegState({ key: dataKey, legs, typeById }) })
+    // Trailer type comes from v_lane_geo.effective_trailer_type (linked or
+    // inferred from the assignment window) — resolved in the query, not a join.
+    fetchLaneLegs({ from: range.from, to: range.to, basis })
+      .then(legs => { if (!stale) setLegState({ key: dataKey, legs }) })
       .catch(err => {
         if (!stale) {
           toast.error("Couldn't load lane data", err)
-          setLegState({ key: dataKey, legs: [], typeById: new Map() })
+          setLegState({ key: dataKey, legs: [] })
         }
       })
     return () => { stale = true }
@@ -276,7 +275,7 @@ export default function LaneFlowMap() {
   const loading = legState.key !== dataKey
 
   const typedLegs = useMemo(
-    () => (legState.legs ? resolveLegTypes(legState.legs, legState.typeById) : null),
+    () => (legState.legs ? resolveLegTypes(legState.legs) : null),
     [legState],
   )
 
