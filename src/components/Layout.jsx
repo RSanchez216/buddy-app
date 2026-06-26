@@ -37,6 +37,7 @@ const Icons = {
   lifeline:  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 12h4l2.5-6 4 12L16 12h5" /></svg>,
   merge:     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>,
   gear:      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>,
+  command:   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 3v2m0 14v2m9-9h-2M5 12H3m13.95 4.95l-1.414-1.414M8.464 8.464L7.05 7.05m9.9 0l-1.414 1.414M8.464 15.536L7.05 16.95M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>,
 }
 
 // ── Nav item ───────────────────────────────────────────────────────────────
@@ -142,7 +143,7 @@ export default function Layout() {
 
   // Count visible items per section for hiding empty groups
   const visibleCounts = {
-    today: ['/rig', '/fleet/profitability/boardroom', '/fleet/profitability/lanes', '/cash-flow/lifeline'].filter(r => accessibleRoutes.has(r)).length,
+    today: ['/command-center', '/rig', '/fleet/profitability/boardroom', '/fleet/profitability/lanes', '/cash-flow/lifeline'].filter(r => accessibleRoutes.has(r)).length,
     money: ['/cash-flow/payment-calendar', '/financial-controls/debt-schedule', '/financial-controls/driver-purchases'].filter(r => accessibleRoutes.has(r)).length,
     profitability: ['/fleet/profitability', '/fleet/profitability/spotlight', '/fleet/profitability/contribution', '/fleet/profitability/idle'].filter(r => accessibleRoutes.has(r)).length,
     fleet: ['/fleet/trucks', '/fleet/trailers', '/fleet/drivers', '/fleet/cost', '/fleet/loads/import', '/fleet/settlements/import', '/fleet/combined-loads'].filter(r => accessibleRoutes.has(r)).length,
@@ -176,6 +177,7 @@ export default function Layout() {
 
           {/* TODAY — pinned at top */}
           <NavSection id="today" label="Today" visibleCount={visibleCounts.today}>
+            <NavItem to="/command-center" label="Command Center" icon={Icons.command} onClick={close} visible={accessibleRoutes.has('/command-center')} />
             <NavItem to="/rig" label="The Rig" icon={Icons.truck} onClick={close} visible={accessibleRoutes.has('/rig')} />
             <NavItem to="/fleet/profitability/boardroom" label="Boardroom" icon={Icons.boardroom} onClick={close} visible={accessibleRoutes.has('/fleet/profitability/boardroom')} />
             <NavItem to="/fleet/profitability/lanes" label="Lane Map" icon={Icons.map} onClick={close} visible={accessibleRoutes.has('/fleet/profitability/lanes')} />

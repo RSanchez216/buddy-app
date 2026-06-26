@@ -71,6 +71,8 @@ const LoadsImport = lazy(() => import('./pages/fleet/loads/LoadsImport'))
 // Lazy — Drivers list (its Upload modal statically pulls SheetJS) ships as its
 // own chunk.
 const DriversList = lazy(() => import('./pages/fleet/DriversList'))
+// Lazy — Command Center is a standalone daily surface; its own chunk.
+const CommandCenter = lazy(() => import('./pages/command-center/CommandCenter'))
 // Lazy — The Rig carries the whole three.js stack; it must never weigh on
 // any other route. Standalone preview, direct URL only (no nav entry yet).
 const RigPage = lazy(() => import('./pages/rig/RigPage'))
@@ -112,6 +114,15 @@ export default function App() {
                 <Layout />
               </ProtectedRoute>
             }>
+              <Route path="command-center" element={
+                <RequirePageAccess pageKey="command_center">
+                  <ErrorBoundary label="the Command Center">
+                    <Suspense fallback={<div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500" /></div>}>
+                      <CommandCenter />
+                    </Suspense>
+                  </ErrorBoundary>
+                </RequirePageAccess>
+              } />
               <Route path="dashboard" element={<RequirePageAccess pageKey="dashboard"><Dashboard /></RequirePageAccess>} />
               <Route path="vendors" element={<RequirePageAccess pageKey="vendors"><VendorMaster /></RequirePageAccess>} />
               <Route path="invoices" element={<RequirePageAccess pageKey="invoices"><InvoiceInbox /></RequirePageAccess>} />
