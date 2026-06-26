@@ -18,33 +18,30 @@ import { supabase } from '../../../lib/supabase'
 import { S } from '../../../lib/styles'
 import Modal from '../../../components/Modal'
 import ErrorBoundary from '../../../components/ErrorBoundary'
-import { parseEquipmentAssignmentsWorkbook, normalizeUnitNumber } from './equipmentAssignmentsParser'
+import { parseEquipmentAssignmentsWorkbook } from './equipmentAssignmentsParser'
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024
 
-// Parsed file rows → normalized preview input. The TMS export carries
-// historical (closed) rows too; the *current* assignment is the OPEN row (no
-// end date), and the preview RPC compares against the open assignment — so we
-// send only open rows, deduped to the latest start per unit (defensive: a
-// clean export has one open row per unit).
+// Parsed file rows → normalized preview input. We send EVERY row (open and
+// closed): the preview RPC reads end_date and categorizes each row — closed
+// rows surface as `ended` (current assignment closes) or `end_date_fix` (a
+// past spell's end date is corrected). end_date is YYYY-MM-DD, '' when blank
+// (the RPC treats blank as open).
 function buildPreviewRows(parsed) {
-  const byUnit = new Map() // `${type}|${normUnit}` -> parsed row
-  for (const r of parsed) {
-    if (r.end_date) continue // closed/historical — not the current assignment
-    const key = `${r.equipment_type}|${normalizeUnitNumber(r.equipment_name_raw) || ''}`
-    const prev = byUnit.get(key)
-    if (!prev || (r.start_date || '') >= (prev.start_date || '')) byUnit.set(key, r)
-  }
-  return [...byUnit.values()].map(r => ({
+  return parsed.map(r => ({
     equipment_type: r.equipment_type,
     unit: r.equipment_name_raw,
     driver_code: r.tms_driver_id || null,   // TMS "Driver ID" = drivers.internal_id
     driver_name: r.driver_name_raw || null, // fallback match
     start_date: r.start_date || null,
+    end_date: r.end_date || '',
   }))
 }
 
+// Driver-setting categories (apply via set_unit_current_driver through
+// apply_assignment_import). End-date categories apply via apply_assignment_end.
 const ACTIONABLE = new Set(['new', 'reassignment', 'conflict_manual'])
+const END_ACTIONS = new Set(['ended', 'end_date_fix'])
 
 export default function EquipmentAssignmentsUploadModal({ open, equipmentType, onClose, onCommitted }) {
   const fileInputRef = useRef(null)
@@ -90,9 +87,10 @@ export default function EquipmentAssignmentsUploadModal({ open, equipmentType, o
       if (error) throw error
       const rows = data || []
       setPreview(rows)
-      // Default approvals: TMS wins for new + reassignment; manual conflicts
+      // Default approvals: TMS wins for new + reassignment, and the end-date
+      // categories (ended / end_date_fix) default on too; manual conflicts
       // start OFF (keep the system value) until explicitly chosen.
-      setApproved(new Set(rows.filter(r => r.category === 'new' || r.category === 'reassignment').map(r => r.row_index)))
+      setApproved(new Set(rows.filter(r => r.category === 'new' || r.category === 'reassignment' || END_ACTIONS.has(r.category)).map(r => r.row_index)))
       setStage('review')
     } catch (e) {
       console.error('[EquipmentAssignmentsUploadModal] preview failed', e)
@@ -107,7 +105,7 @@ export default function EquipmentAssignmentsUploadModal({ open, equipmentType, o
   function onDragOver(e) { e.preventDefault() }
 
   const groups = useMemo(() => {
-    const g = { new: [], reassignment: [], conflict_manual: [], unresolved: [], no_change: 0 }
+    const g = { new: [], reassignment: [], conflict_manual: [], ended: [], end_date_fix: [], unresolved: [], no_change: 0 }
     for (const r of preview) {
       if (r.category === 'no_change') g.no_change++
       else if (g[r.category]) g[r.category].push(r)
@@ -124,7 +122,7 @@ export default function EquipmentAssignmentsUploadModal({ open, equipmentType, o
     })
   }
 
-  // Decisions = approved actionable rows that actually resolved to a unit +
+  // Driver-set decisions = approved actionable rows that resolved to a unit +
   // driver (unresolved never reach here). driver_id is the TMS-matched uuid.
   const decisions = useMemo(() => preview
     .filter(r => ACTIONABLE.has(r.category) && approved.has(r.row_index) && r.unit_id && r.tms_driver_id)
@@ -136,12 +134,29 @@ export default function EquipmentAssignmentsUploadModal({ open, equipmentType, o
       effective: r.start_date,
     })), [preview, approved])
 
+  // End-date decisions = approved ended / end_date_fix rows that carry a target
+  // assignment + a date. Applied one-by-one via apply_assignment_end.
+  const endDecisions = useMemo(() => preview
+    .filter(r => END_ACTIONS.has(r.category) && approved.has(r.row_index) && r.target_assignment_id && r.end_date)
+    .map(r => ({ target_assignment_id: r.target_assignment_id, end_date: r.end_date })), [preview, approved])
+
+  const selectedCount = decisions.length + endDecisions.length
+
   async function doApply() {
     setApplying(true)
     try {
-      const { data, error } = await supabase.rpc('apply_assignment_import', { p_decisions: decisions })
-      if (error) throw error
-      setApplyResult(data || { applied: 0 })
+      let applied = 0
+      if (decisions.length) {
+        const { data, error } = await supabase.rpc('apply_assignment_import', { p_decisions: decisions })
+        if (error) throw error
+        applied += data?.applied ?? decisions.length
+      }
+      for (const d of endDecisions) {
+        const { error } = await supabase.rpc('apply_assignment_end', { p_assignment_id: d.target_assignment_id, p_end_date: d.end_date })
+        if (error) throw error
+        applied += 1
+      }
+      setApplyResult({ applied })
       setStage('done')
       onCommitted?.()
     } catch (e) {
@@ -197,9 +212,10 @@ export default function EquipmentAssignmentsUploadModal({ open, equipmentType, o
               fileName={fileName}
               unitNoun={unitNoun}
               groups={groups}
+              totalRows={preview.length}
               approved={approved}
               onToggle={toggle}
-              decisionCount={decisions.length}
+              decisionCount={selectedCount}
               applying={applying}
               onApply={doApply}
               onCancel={onClose}
@@ -229,18 +245,20 @@ export default function EquipmentAssignmentsUploadModal({ open, equipmentType, o
   )
 }
 
-function ReviewScreen({ fileName, unitNoun, groups, approved, onToggle, decisionCount, applying, onApply, onCancel }) {
-  const actionableTotal = groups.new.length + groups.reassignment.length + groups.conflict_manual.length
+function ReviewScreen({ fileName, unitNoun, groups, totalRows, approved, onToggle, decisionCount, applying, onApply, onCancel }) {
+  const actionableTotal = groups.new.length + groups.reassignment.length + groups.conflict_manual.length + groups.ended.length + groups.end_date_fix.length
   return (
     <>
       <div className={`${S.card} p-4 space-y-3`}>
         <p className="text-sm font-semibold text-gray-700 dark:text-slate-300">
           {fileName} <span className="font-normal text-gray-500 dark:text-slate-500">· {unitNoun} assignments · nothing written until you Apply</span>
         </p>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 text-xs">
           <Stat label="New" value={groups.new.length} />
           <Stat label="Reassignment" value={groups.reassignment.length} />
           <Stat label="Manual conflict" value={groups.conflict_manual.length} tone="amber" />
+          <Stat label="Ended" value={groups.ended.length} />
+          <Stat label="End-date fix" value={groups.end_date_fix.length} muted={!groups.end_date_fix.length} />
           <Stat label="Unchanged" value={groups.no_change} muted />
           <Stat label="Unresolved" value={groups.unresolved.length} tone={groups.unresolved.length ? 'amber' : undefined} muted={!groups.unresolved.length} />
         </div>
@@ -248,7 +266,9 @@ function ReviewScreen({ fileName, unitNoun, groups, approved, onToggle, decision
 
       {actionableTotal === 0 && groups.unresolved.length === 0 && (
         <div className={`${S.card} p-6 text-center text-sm text-gray-500 dark:text-slate-400`}>
-          Nothing to review — all {groups.no_change} current assignment{groups.no_change === 1 ? '' : 's'} already match TMS.
+          {totalRows === 0
+            ? 'No assignment rows found in the file.'
+            : `All ${totalRows} row${totalRows === 1 ? '' : 's'} already match — nothing to apply.`}
         </div>
       )}
 
@@ -281,6 +301,26 @@ function ReviewScreen({ fileName, unitNoun, groups, approved, onToggle, decision
               tone="amber" toggleLabel="Take TMS"
               unit={r.unit}
               label={<>System <span className="text-[10px] uppercase tracking-wide px-1 py-0.5 rounded bg-gray-200/70 dark:bg-white/10 text-gray-600 dark:text-slate-300">manual</span>: <span className="text-gray-700 dark:text-slate-300">{r.current_driver_name || '—'}</span> · TMS: <strong>{r.tms_driver_name}</strong></>} />
+          ))}
+        </Section>
+      )}
+
+      {groups.ended.length > 0 && (
+        <Section title={`Ended (${groups.ended.length})`} subtitle="File closes the current assignment — unit becomes unassigned. Default: apply.">
+          {groups.ended.map(r => (
+            <ItemRow key={r.row_index} on={approved.has(r.row_index)} onToggle={() => onToggle(r.row_index)}
+              unit={r.unit}
+              label={<>{(r.current_driver_name || r.tms_driver_name) ? <span className="text-gray-500 dark:text-slate-400">{r.current_driver_name || r.tms_driver_name} · </span> : null}{r.note || 'Current assignment ended'}</>} />
+          ))}
+        </Section>
+      )}
+
+      {groups.end_date_fix.length > 0 && (
+        <Section title={`End-date fixes (${groups.end_date_fix.length})`} subtitle="A past, already-closed spell has a different end date — minor correction. Default: apply." tone="muted">
+          {groups.end_date_fix.map(r => (
+            <ItemRow key={r.row_index} on={approved.has(r.row_index)} onToggle={() => onToggle(r.row_index)}
+              unit={r.unit}
+              label={<span className="text-gray-500 dark:text-slate-400">{(r.tms_driver_name || r.current_driver_name) ? `${r.tms_driver_name || r.current_driver_name} · ` : ''}{r.note || 'End date corrected'}</span>} />
           ))}
         </Section>
       )}
