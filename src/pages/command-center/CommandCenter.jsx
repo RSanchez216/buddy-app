@@ -81,12 +81,13 @@ export default function CommandCenter() {
   const [tasks, setTasks] = useState(null)
   const [usersById, setUsersById] = useState(new Map())
   const [users, setUsers] = useState([])
+  const [latestActivityByTask, setLatestActivityByTask] = useState(() => new Map())
   const [error, setError] = useState('')
 
   const reload = useCallback(async () => {
     try {
-      const { tasks, users, usersById } = await loadCommandCenter()
-      setTasks(tasks); setUsers(users); setUsersById(usersById); setError('')
+      const { tasks, users, usersById, latestActivityByTask } = await loadCommandCenter()
+      setTasks(tasks); setUsers(users); setUsersById(usersById); setLatestActivityByTask(latestActivityByTask); setError('')
     } catch (e) {
       console.error('[CommandCenter] load failed', e)
       setError(e.message || 'Failed to load tasks')
@@ -96,7 +97,7 @@ export default function CommandCenter() {
   useEffect(() => {
     let stale = false
     loadCommandCenter()
-      .then(({ tasks, users, usersById }) => { if (!stale) { setTasks(tasks); setUsers(users); setUsersById(usersById); setError('') } })
+      .then(({ tasks, users, usersById, latestActivityByTask }) => { if (!stale) { setTasks(tasks); setUsers(users); setUsersById(usersById); setLatestActivityByTask(latestActivityByTask); setError('') } })
       .catch(e => { if (!stale) { console.error('[CommandCenter] load failed', e); setError(e.message || 'Failed to load tasks'); setTasks([]) } })
     return () => { stale = true }
   }, [])
@@ -162,7 +163,7 @@ export default function CommandCenter() {
       {tab === 'cc' && (
         <ErrorBoundary label="the command center">
           <CommandCenterView
-            tasks={tasks} me={me} usersById={usersById}
+            tasks={tasks} me={me} usersById={usersById} latestActivityByTask={latestActivityByTask}
             greeting={{ firstName, weekday, month, day }}
             onChangeStatus={changeStatus} onReassign={reassign}
             onGoAdd={() => selectTab('add')} onEditTask={startEdit}
@@ -188,14 +189,33 @@ export default function CommandCenter() {
 }
 
 // ── Command Center view ─────────────────────────────────────────────────────
-function CommandCenterView({ tasks, me, usersById, greeting, onChangeStatus, onReassign, onGoAdd, onEditTask }) {
+function CommandCenterView({ tasks, me, usersById, latestActivityByTask, greeting, onChangeStatus, onReassign, onGoAdd, onEditTask }) {
   const [filters, setFilters] = useState({ source: 'all', status: 'open', priority: 'all' })
   const [revealed, setRevealed] = useState(false)
+  // Tasks the user has acted on this session — clears the "new reply" badge
+  // immediately (e.g. on note save) without waiting for a reload.
+  const [actedIds, setActedIds] = useState(() => new Set())
+  const markActed = useCallback((id) => setActedIds(prev => prev.has(id) ? prev : new Set(prev).add(id)), [])
   const isDefault = filters.source === 'all' && filters.status === 'open' && filters.priority === 'all'
 
   const today = todayCT()
   const loading = tasks === null
   const all = useMemo(() => tasks || [], [tasks])
+
+  // Open tasks whose most recent activity is a reply that hasn't been acted on
+  // yet — the heuristic for "a reply came in and you haven't responded." Reads
+  // only already-loaded data; missing activity simply means no badge.
+  const replyIds = useMemo(() => {
+    const s = new Set()
+    for (const t of all) {
+      if (t.status === 'open' && !actedIds.has(t.id) && latestActivityByTask.get(t.id)?.kind === 'reply_received') s.add(t.id)
+    }
+    return s
+  }, [all, actedIds, latestActivityByTask])
+
+  // Wrap the mutating actions so any of them also clears this row's reply badge.
+  const handleChangeStatus = useCallback((task, status) => { markActed(task.id); onChangeStatus(task, status) }, [markActed, onChangeStatus])
+  const handleReassign = useCallback((task, userId) => { markActed(task.id); onReassign(task, userId) }, [markActed, onReassign])
 
   // Focus now = EVERY open high-priority task (any source). Returning 'focus'
   // first in assignGroup de-dupes these out of needs/calendar/upkeep/tagged.
@@ -216,9 +236,9 @@ function CommandCenterView({ tasks, me, usersById, greeting, onChangeStatus, onR
   const byGroup = useMemo(() => {
     const m = { focus: [], upkeep: [], needs: [], tagged: [], calendar: [], closed: [] }
     for (const t of all) { const g = assignGroup(t, focusIds, me, today); if (g) m[g].push(t) }
-    for (const k of Object.keys(m)) m[k].sort(cmpTask)
+    for (const k of Object.keys(m)) m[k].sort((a, b) => cmpTask(a, b, replyIds))
     return m
-  }, [all, focusIds, me, today])
+  }, [all, focusIds, me, today, replyIds])
 
   function passes(t) {
     if (filters.source !== 'all' && t.source !== filters.source) return false
@@ -316,8 +336,8 @@ function CommandCenterView({ tasks, me, usersById, greeting, onChangeStatus, onR
             <div key={g.key} className="flex flex-col gap-2.5">
               <GroupHeader group={g} upkeep={g.key === 'upkeep' ? { done: upkeepDone, total: upkeepTotal } : null} />
               {items.map(t => (
-                <TaskRow key={t.id} task={t} focus={focusIds.has(t.id)} me={me} usersById={usersById}
-                  users={[...usersById.values()]} onChangeStatus={onChangeStatus} onReassign={onReassign} onEditTask={onEditTask} />
+                <TaskRow key={t.id} task={t} focus={focusIds.has(t.id)} hasNewReply={replyIds.has(t.id)} me={me} usersById={usersById}
+                  users={[...usersById.values()]} onChangeStatus={handleChangeStatus} onReassign={handleReassign} onEditTask={onEditTask} onActed={markActed} />
               ))}
               {hiddenLow > 0 && (
                 <button onClick={() => setRevealed(true)} className={`${cardSurface} rounded-xl py-2.5 text-[13px] font-semibold text-gray-700 dark:text-slate-300 border-dashed hover:bg-gray-50 dark:hover:bg-white/5`}>
@@ -346,10 +366,16 @@ function assignGroup(t, focusIds, me, today) {
   return 'needs'
 }
 
-// priority → due_date → created_at
-function cmpTask(a, b) {
+// priority → (unacted reply nudge) → due_date → created_at. The reply nudge only
+// breaks ties between equal-priority tasks, so re-surfaced items rise without
+// overriding priority order.
+function cmpTask(a, b, replyIds) {
   const pr = (PRIO_RANK[a.priority] ?? 1) - (PRIO_RANK[b.priority] ?? 1)
   if (pr) return pr
+  if (replyIds) {
+    const ar = replyIds.has(a.id), br = replyIds.has(b.id)
+    if (ar !== br) return ar ? -1 : 1
+  }
   const ad = a.due_date || '9999-12-31', bd = b.due_date || '9999-12-31'
   if (ad !== bd) return ad < bd ? -1 : 1
   return (a.created_at || '') < (b.created_at || '') ? -1 : 1
@@ -473,7 +499,7 @@ function SourceMetaLine({ task }) {
 }
 
 // ── Task row + detail drawer ────────────────────────────────────────────────
-function TaskRow({ task, focus, me, usersById, users, onChangeStatus, onReassign, onEditTask }) {
+function TaskRow({ task, focus, hasNewReply, me, usersById, users, onChangeStatus, onReassign, onEditTask, onActed }) {
   const [expanded, setExpanded] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const src = SOURCES[task.source] || SOURCES.manual
@@ -503,6 +529,7 @@ function TaskRow({ task, focus, me, usersById, users, onChangeStatus, onReassign
             <span className={`text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${src.chip}`} style={{ fontFamily: 'JetBrains Mono, monospace' }}>{src.tag}</span>
             {task.priority === 'high' && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300" style={{ fontFamily: 'JetBrains Mono, monospace' }}>High</span>}
             {task.priority === 'low' && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 dark:bg-white/5 dark:text-slate-500" style={{ fontFamily: 'JetBrains Mono, monospace' }}>Low</span>}
+            {hasNewReply && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-orange-500 text-white inline-flex items-center gap-1" style={{ fontFamily: 'JetBrains Mono, monospace' }}><span aria-hidden>↩</span> New reply</span>}
             {taggedBy && <span className="inline-flex items-center gap-1 text-[11px] text-gray-500 dark:text-slate-400"><Avatar userId={taggedBy.id} name={taggedBy.full_name} me={me} size={16} />{firstNameOf(taggedBy.full_name)}</span>}
             {timeLabel && <span className="ml-auto text-[12px] text-gray-400 dark:text-slate-500 whitespace-nowrap" style={{ fontFamily: 'JetBrains Mono, monospace' }}>{timeLabel}</span>}
           </div>
@@ -542,14 +569,14 @@ function TaskRow({ task, focus, me, usersById, users, onChangeStatus, onReassign
 
       {expanded && (
         <ErrorBoundary label="task details">
-          <TaskDetail task={task} me={me} usersById={usersById} users={users} onReassign={onReassign} onEditTask={onEditTask} />
+          <TaskDetail task={task} me={me} usersById={usersById} users={users} onReassign={onReassign} onEditTask={onEditTask} onActed={onActed} />
         </ErrorBoundary>
       )}
     </div>
   )
 }
 
-function TaskDetail({ task, me, usersById, users, onReassign, onEditTask }) {
+function TaskDetail({ task, me, usersById, users, onReassign, onEditTask, onActed }) {
   const [note, setNote] = useState(task.note || '')
   const [savedAt, setSavedAt] = useState(null)
   const [activity, setActivity] = useState(null)
@@ -572,6 +599,7 @@ function TaskDetail({ task, me, usersById, users, onReassign, onEditTask }) {
         firstEdit.current = false
         setSavedAt(Date.now())
         task.note = v // keep the row's note in sync without a reload
+        onActed?.(task.id) // acting on the task clears its "new reply" badge
       } catch (e) { console.error('[CommandCenter] note save failed', e) }
     }, 600)
   }
@@ -644,7 +672,7 @@ function TaskDetail({ task, me, usersById, users, onReassign, onEditTask }) {
             <div className="flex flex-col gap-2.5">
               {activity.map(a => (
                 <div key={a.id} className="flex gap-2.5 text-[12.5px] text-gray-600 dark:text-slate-400">
-                  <span className="w-2 h-2 rounded-full bg-gray-300 dark:bg-slate-600 mt-1.5 shrink-0" />
+                  <ActMarker kind={a.kind} />
                   <div>
                     <span className="text-gray-900 dark:text-slate-200 font-medium">{actLabel(a)}</span>
                     <div className="text-[10.5px] text-gray-400 dark:text-slate-500" style={{ fontFamily: 'JetBrains Mono, monospace' }}>
@@ -663,7 +691,15 @@ function TaskDetail({ task, me, usersById, users, onReassign, onEditTask }) {
 
 function actLabel(a) {
   if (a.detail) return a.detail
-  return ({ created: 'Created', status_changed: 'Status changed', note_edited: 'Note updated', assigned: 'Reassigned', reopened: 'Reopened', tagged: 'Tagged' })[a.kind] || a.kind
+  return ({ created: 'Created', status_changed: 'Status changed', note_edited: 'Note updated', assigned: 'Reassigned', reopened: 'Reopened', tagged: 'Tagged', reply_received: 'New reply' })[a.kind] || a.kind
+}
+
+// Per-kind marker in the activity timeline. Re-surfacing kinds get an accent
+// glyph; everything else (known or future) falls back to the neutral dot.
+function ActMarker({ kind }) {
+  if (kind === 'reply_received') return <span className="shrink-0 mt-0.5 text-[13px] leading-none text-orange-500 dark:text-orange-400" aria-hidden>↩</span>
+  if (kind === 'reopened') return <span className="shrink-0 mt-0.5 text-[13px] leading-none text-orange-500 dark:text-orange-400" aria-hidden>↺</span>
+  return <span className="w-2 h-2 rounded-full bg-gray-300 dark:bg-slate-600 mt-1.5 shrink-0" />
 }
 
 // ── Briefing ────────────────────────────────────────────────────────────────

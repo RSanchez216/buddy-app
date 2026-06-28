@@ -37,7 +37,8 @@ export function relTime(ts) {
   return new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric' }).format(new Date(ts))
 }
 
-// One round trip: the user's tasks + a users lookup for assignee/actor display.
+// One round trip: the user's tasks + a users lookup for assignee/actor display,
+// plus the latest activity row per task (for the "new reply" heuristic).
 export async function loadCommandCenter() {
   const [taskRes, userRes] = await Promise.all([
     supabase.from('tasks').select('*').order('created_at', { ascending: false }),
@@ -45,7 +46,27 @@ export async function loadCommandCenter() {
   ])
   if (taskRes.error) throw taskRes.error
   const usersById = new Map((userRes.data || []).map(u => [u.id, u]))
-  return { tasks: taskRes.data || [], users: userRes.data || [], usersById }
+  const tasks = taskRes.data || []
+  const latestActivityByTask = await loadLatestActivityByTask(tasks.map(t => t.id))
+  return { tasks, users: userRes.data || [], usersById, latestActivityByTask }
+}
+
+// Latest task_activity row per task, in one query (no per-row fetches). Used to
+// decide which open tasks carry an unacted reply. Degrades gracefully: on any
+// error it returns an empty map, so the page simply shows no reply badges.
+async function loadLatestActivityByTask(taskIds) {
+  const map = new Map()
+  if (!taskIds.length) return map
+  const { data, error } = await supabase
+    .from('task_activity')
+    .select('task_id, kind, detail, created_at')
+    .in('task_id', taskIds)
+    .order('created_at', { ascending: false })
+  if (error) { console.error('[CommandCenter] latest activity load failed', error); return map }
+  for (const r of data || []) {
+    if (!map.has(r.task_id)) map.set(r.task_id, r) // first per task = newest (desc order)
+  }
+  return map
 }
 
 // Activity for one task (newest first).
