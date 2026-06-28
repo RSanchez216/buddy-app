@@ -402,6 +402,76 @@ function GroupHeader({ group, upkeep }) {
   )
 }
 
+// ── Source metadata (email subject / from / source link) ────────────────────
+// metadata is jsonb on tasks; treat anything non-object as absent.
+function taskMeta(task) {
+  const m = task.metadata
+  return m && typeof m === 'object' && !Array.isArray(m) ? m : {}
+}
+
+const ctrlCls = 'shrink-0 inline-flex items-center justify-center gap-1 rounded p-0.5 text-gray-400 hover:text-orange-500 dark:text-slate-500 dark:hover:text-orange-400 transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-orange-500/60'
+
+// Copies `text` verbatim; icon swaps to a check for ~1.5s. Stops propagation so
+// it never toggles the row. Clipboard failures are swallowed.
+function CopyButton({ text, label }) {
+  const [copied, setCopied] = useState(false)
+  const tref = useRef(null)
+  useEffect(() => () => { if (tref.current) clearTimeout(tref.current) }, [])
+  async function onCopy(e) {
+    e.stopPropagation()
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      if (tref.current) clearTimeout(tref.current)
+      tref.current = setTimeout(() => setCopied(false), 1500)
+    } catch { /* clipboard unavailable — fail silently */ }
+  }
+  return (
+    <button type="button" onClick={onCopy} aria-label={label} title={copied ? 'Copied' : label} className={ctrlCls}>
+      {copied ? (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-3.5 h-3.5 text-green-600 dark:text-green-400"><path d="M5 12l5 5L20 7" strokeLinecap="round" strokeLinejoin="round" /></svg>
+      ) : (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5"><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" strokeLinecap="round" /></svg>
+      )}
+    </button>
+  )
+}
+
+// Opens `href` in a new tab. Stops propagation so it never toggles the row.
+function OpenLink({ href, label, children }) {
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer" aria-label={label} title={label}
+      onClick={e => e.stopPropagation()} className={`${ctrlCls} px-1`}>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5"><path d="M14 3h7v7" strokeLinecap="round" strokeLinejoin="round" /><path d="M21 3l-9 9" strokeLinecap="round" /><path d="M19 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+      {children}
+    </a>
+  )
+}
+
+// Compact secondary line for the collapsed row: ✉ subject [copy] · from … [open].
+// Renders only the elements whose metadata is present.
+function SourceMetaLine({ task }) {
+  const m = taskMeta(task)
+  const isEmail = task.source === 'email'
+  const subject = isEmail ? m.subject : null
+  const from = isEmail ? m.from : null
+  const link = m.link
+  if (!subject && !link) return null
+  return (
+    <div className="flex items-center gap-1.5 mt-1 text-[11px] text-gray-400 dark:text-slate-500 min-w-0" style={{ fontFamily: 'JetBrains Mono, monospace' }}>
+      {subject && (
+        <span className="inline-flex items-center gap-1 min-w-0">
+          <span className="shrink-0" aria-hidden>✉</span>
+          <span className="truncate">{subject}</span>
+          <CopyButton text={subject} label="Copy email subject" />
+        </span>
+      )}
+      {from && <span className="truncate hidden sm:inline max-w-[140px]">· from {from}</span>}
+      {link && <OpenLink href={link} label={isEmail ? 'Open source email' : 'Open source'} />}
+    </div>
+  )
+}
+
 // ── Task row + detail drawer ────────────────────────────────────────────────
 function TaskRow({ task, focus, me, usersById, users, onChangeStatus, onReassign, onEditTask }) {
   const [expanded, setExpanded] = useState(false)
@@ -437,6 +507,7 @@ function TaskRow({ task, focus, me, usersById, users, onChangeStatus, onReassign
             {timeLabel && <span className="ml-auto text-[12px] text-gray-400 dark:text-slate-500 whitespace-nowrap" style={{ fontFamily: 'JetBrains Mono, monospace' }}>{timeLabel}</span>}
           </div>
           <div className={`font-semibold text-[14.5px] mt-0.5 ${closed ? 'line-through text-gray-400 dark:text-slate-600' : 'text-gray-900 dark:text-white'}`}>{task.title}</div>
+          <SourceMetaLine task={task} />
           {task.note && !expanded && <div className="text-[11px] text-gray-400 dark:text-slate-500 mt-1">📝 note · tap to expand</div>}
         </div>
 
@@ -507,6 +578,11 @@ function TaskDetail({ task, me, usersById, users, onReassign, onEditTask }) {
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current) }, [])
 
   const assignee = task.assignee ? usersById.get(task.assignee) : null
+  const meta = taskMeta(task)
+  const isEmail = task.source === 'email'
+  const metaSubject = isEmail ? meta.subject : null
+  const metaFrom = isEmail ? meta.from : null
+  const metaLink = meta.link
 
   return (
     <div className="mt-3 pt-3 border-t border-dashed border-gray-200 dark:border-[#30404F]">
@@ -519,6 +595,25 @@ function TaskDetail({ task, me, usersById, users, onReassign, onEditTask }) {
         </button>
         <button onClick={() => setReassigning(r => !r)} className="text-[12px] text-orange-600 dark:text-orange-400 border border-dashed border-gray-300 dark:border-slate-600 rounded-lg px-2.5 py-1 hover:bg-orange-50 dark:hover:bg-orange-500/10">@ reassign</button>
       </div>
+      {(metaSubject || metaLink) && (
+        <div className="mb-3 rounded-lg border border-gray-200 dark:border-[#30404F] bg-gray-50 dark:bg-[#0F1822] px-3 py-2.5">
+          {metaSubject && (
+            <div className="flex items-start gap-2">
+              <span className="shrink-0 text-gray-400 dark:text-slate-500 text-[12.5px]" aria-hidden>✉</span>
+              <span className="flex-1 min-w-0 text-[12.5px] text-gray-700 dark:text-slate-300 break-words">{metaSubject}</span>
+              <CopyButton text={metaSubject} label="Copy email subject" />
+            </div>
+          )}
+          {metaFrom && <div className="mt-1 text-[11.5px] text-gray-400 dark:text-slate-500 break-words" style={{ fontFamily: 'JetBrains Mono, monospace' }}>from {metaFrom}</div>}
+          {metaLink && (
+            <div className="mt-2">
+              <OpenLink href={metaLink} label={isEmail ? 'Open source email' : 'Open source'}>
+                <span className="text-[12px] font-semibold">Open {isEmail ? 'email' : 'source'}</span>
+              </OpenLink>
+            </div>
+          )}
+        </div>
+      )}
       {reassigning && (
         <div className="flex flex-wrap gap-1.5 mb-3">
           {users.map(u => (
