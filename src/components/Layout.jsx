@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { countOpenTasks, TASKS_CHANGED_EVENT } from '../pages/command-center/commandCenterData'
 import { useAuth } from '../contexts/AuthContext'
 import { BuddyLogoSmall } from '../components/BuddyLogo'
 import NotificationBell from './NotificationBell'
@@ -44,7 +45,7 @@ const Icons = {
 // Always reserves a 2px left border so the active orange marker doesn't
 // shift the chip's width when it appears.
 // visible prop controls whether the item should be shown (default true)
-function NavItem({ to, label, icon, end = false, onClick, visible = true }) {
+function NavItem({ to, label, icon, end = false, onClick, visible = true, count = 0 }) {
   if (!visible) return null
   return (
     <NavLink
@@ -59,6 +60,11 @@ function NavItem({ to, label, icon, end = false, onClick, visible = true }) {
     >
       {icon}
       {label}
+      {count > 0 && (
+        <span className="ml-auto min-w-[18px] h-[18px] px-1 inline-flex items-center justify-center rounded-full bg-orange-500 text-white text-[10px] font-bold leading-none shrink-0">
+          {count > 99 ? '99+' : count}
+        </span>
+      )}
     </NavLink>
   )
 }
@@ -121,8 +127,20 @@ export default function Layout() {
   const { isAdmin } = useAuth()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [accessibleRoutes, setAccessibleRoutes] = useState(new Set()) // routes user can see
+  const [openTaskCount, setOpenTaskCount] = useState(0) // non-closed tasks → nav bubble
 
   const close = () => setSidebarOpen(false)
+
+  // Keep the Command Center open-count bubble roughly live: on load, whenever the
+  // page mutates a task (custom event), and on a gentle interval. Non-blocking.
+  useEffect(() => {
+    let stale = false
+    const refresh = () => countOpenTasks().then(c => { if (!stale && c !== null) setOpenTaskCount(c) })
+    refresh()
+    window.addEventListener(TASKS_CHANGED_EVENT, refresh)
+    const id = setInterval(refresh, 150000) // ~2.5 min
+    return () => { stale = true; window.removeEventListener(TASKS_CHANGED_EVENT, refresh); clearInterval(id) }
+  }, [])
 
   useEffect(() => {
     const loadAccessiblePages = async () => {
@@ -177,7 +195,7 @@ export default function Layout() {
 
           {/* TODAY — pinned at top */}
           <NavSection id="today" label="Today" visibleCount={visibleCounts.today}>
-            <NavItem to="/command-center" label="Command Center" icon={Icons.command} onClick={close} visible={accessibleRoutes.has('/command-center')} />
+            <NavItem to="/command-center" label="Command Center" icon={Icons.command} onClick={close} visible={accessibleRoutes.has('/command-center')} count={openTaskCount} />
             <NavItem to="/rig" label="The Rig" icon={Icons.truck} onClick={close} visible={accessibleRoutes.has('/rig')} />
             <NavItem to="/fleet/profitability/boardroom" label="Boardroom" icon={Icons.boardroom} onClick={close} visible={accessibleRoutes.has('/fleet/profitability/boardroom')} />
             <NavItem to="/fleet/profitability/lanes" label="Lane Map" icon={Icons.map} onClick={close} visible={accessibleRoutes.has('/fleet/profitability/lanes')} />

@@ -3,7 +3,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import ErrorBoundary from '../../components/ErrorBoundary'
 import {
   loadCommandCenter, loadActivity, setTaskStatus, saveTaskNote, reassignTask, addTask, updateTask,
-  todayCT, ctDate, greetingDateParts, relTime,
+  todayCT, ctDate, greetingDateParts, relTime, notifyTasksChanged,
 } from './commandCenterData'
 
 // ── Config: source + status + priority visual maps (light + dark) ───────────
@@ -16,6 +16,22 @@ const SOURCES = {
   upkeep:   { label: 'Upkeep',   tag: 'Upkeep',spine: 'bg-violet-600', dot: 'bg-violet-600', chip: 'bg-violet-100 text-violet-700 dark:bg-violet-600/[0.18] dark:text-[#C4B0E8]' },
 }
 const SOURCE_ORDER = ['email', 'calendar', 'telegram', 'manual', 'upkeep']
+
+// Display-only friendly names for tasks.source_account. The DB keeps the raw
+// key; this map is the single place to extend as mailboxes are added. Unknown
+// keys fall back to the raw value, title-cased.
+const MAILBOX_NAMES = {
+  'rebeca-manas':     'Manas · You',
+  'accounting-manas': 'Manas Accounting',
+  'accounting-tms':   'TMS',
+  'accounting-pj':    'PJ Twins',
+  'accounting-uskg':  'USKG',
+  'personal':         'Personal',
+}
+function mailboxName(key) {
+  if (MAILBOX_NAMES[key]) return MAILBOX_NAMES[key]
+  return String(key).split(/[-_]+/).filter(Boolean).map(w => w[0].toUpperCase() + w.slice(1)).join(' ')
+}
 
 // Briefing label pills — tinted per source on the dark slate banner (same tints
 // in both themes, since the banner is dark in both). Keyed by source so every
@@ -109,7 +125,8 @@ export default function CommandCenter() {
 
   async function changeStatus(task, status) {
     patchTask(task.id, { status, closed_at: status === 'closed' ? new Date().toISOString() : null })
-    try { const row = await setTaskStatus(task, status); patchTask(task.id, row) }
+    notifyTasksChanged() // refresh the nav's open-count bubble
+    try { const row = await setTaskStatus(task, status); patchTask(task.id, row); notifyTasksChanged() }
     catch (e) { console.error(e); reload() }
   }
   async function reassign(task, userId) {
@@ -128,6 +145,7 @@ export default function CommandCenter() {
       const row = await addTask(payload)
       setTasks(prev => [row, ...(prev || [])])
     }
+    notifyTasksChanged() // a create or status edit can change the open count
     setEditTask(null)
     setTab('cc')
   }
@@ -474,6 +492,18 @@ function OpenLink({ href, label, children }) {
   )
 }
 
+// Muted chip showing which mailbox an email task came from. Renders only when a
+// source_account is present; the name is display-only (see MAILBOX_NAMES).
+function MailboxChip({ account }) {
+  if (!account) return null
+  const name = mailboxName(account)
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 dark:bg-white/5 dark:text-slate-400" title={`Mailbox: ${name}`} style={{ fontFamily: 'JetBrains Mono, monospace' }}>
+      <span aria-hidden>📬</span>{name}
+    </span>
+  )
+}
+
 // Compact secondary line for the collapsed row: ✉ subject [copy] · from … [open].
 // Renders only the elements whose metadata is present.
 function SourceMetaLine({ task }) {
@@ -527,6 +557,7 @@ function TaskRow({ task, focus, hasNewReply, me, usersById, users, onChangeStatu
         <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setExpanded(e => !e)}>
           <div className="flex items-center gap-2 flex-wrap">
             <span className={`text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${src.chip}`} style={{ fontFamily: 'JetBrains Mono, monospace' }}>{src.tag}</span>
+            {task.source === 'email' && task.source_account && <MailboxChip account={task.source_account} />}
             {task.priority === 'high' && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300" style={{ fontFamily: 'JetBrains Mono, monospace' }}>High</span>}
             {task.priority === 'low' && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 dark:bg-white/5 dark:text-slate-500" style={{ fontFamily: 'JetBrains Mono, monospace' }}>Low</span>}
             {hasNewReply && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-orange-500 text-white inline-flex items-center gap-1" style={{ fontFamily: 'JetBrains Mono, monospace' }}><span aria-hidden>↩</span> New reply</span>}
@@ -623,6 +654,9 @@ function TaskDetail({ task, me, usersById, users, onReassign, onEditTask, onActe
         </button>
         <button onClick={() => setReassigning(r => !r)} className="text-[12px] text-orange-600 dark:text-orange-400 border border-dashed border-gray-300 dark:border-slate-600 rounded-lg px-2.5 py-1 hover:bg-orange-50 dark:hover:bg-orange-500/10">@ reassign</button>
       </div>
+      {isEmail && task.source_account && (
+        <div className="mb-2"><MailboxChip account={task.source_account} /></div>
+      )}
       {(metaSubject || metaLink) && (
         <div className="mb-3 rounded-lg border border-gray-200 dark:border-[#30404F] bg-gray-50 dark:bg-[#0F1822] px-3 py-2.5">
           {metaSubject && (

@@ -69,6 +69,25 @@ async function loadLatestActivityByTask(taskIds) {
   return map
 }
 
+// Count of the signed-in user's non-closed tasks (open + waiting + blocked).
+// head:true count-only query; RLS already scopes to the user. Returns null on
+// error so callers can simply skip showing the bubble.
+export async function countOpenTasks() {
+  const { count, error } = await supabase
+    .from('tasks')
+    .select('id', { count: 'exact', head: true })
+    .neq('status', 'closed')
+  if (error) { console.error('[CommandCenter] open count failed', error); return null }
+  return count ?? 0
+}
+
+// Cross-component nudge: the nav listens for this so its open-count bubble
+// refreshes right after the Command Center mutates a task.
+export const TASKS_CHANGED_EVENT = 'buddy:tasks-changed'
+export function notifyTasksChanged() {
+  try { window.dispatchEvent(new Event(TASKS_CHANGED_EVENT)) } catch { /* non-browser context */ }
+}
+
 // Activity for one task (newest first).
 export async function loadActivity(taskId) {
   const { data, error } = await supabase
