@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../../../lib/supabase'
 import { S } from '../../../lib/styles'
 import { fmtMoney, fmtNum, fmtRpm } from '../loads/spotlight/spotlightShared'
@@ -64,11 +64,11 @@ const LIST_CAP = 5
 // In-memory truncation for client-loaded lists: show the first LIST_CAP
 // items, expandable to the full list. Order is preserved (caller passes the
 // list already sorted newest-first).
-function useCappedList(items) {
+function useCappedList(items, cap = LIST_CAP) {
   const [expanded, setExpanded] = useState(false)
   const total = items.length
-  const visible = expanded ? items : items.slice(0, LIST_CAP)
-  return { visible, expanded, toggle: () => setExpanded(e => !e), total, hasMore: total > LIST_CAP }
+  const visible = expanded ? items : items.slice(0, cap)
+  return { visible, expanded, toggle: () => setExpanded(e => !e), total, hasMore: total > cap }
 }
 
 // "Show all (N)" / "Show fewer" control. Renders nothing when the list fits
@@ -871,12 +871,37 @@ function ExistingGroupsSection({ groups, onRefresh }) {
   )
 }
 
+// A row is "mappable" when its place string carries a real city + state
+// (i.e. contains a comma, e.g. "Blue Mound, TX"). "State-only" rows are bare
+// 2-letter state codes with no city (e.g. "FL") — the load itself is missing a
+// city, so they can't be fixed by adding coordinates here.
+function isMappablePlace(place) {
+  return typeof place === 'string' && place.includes(',')
+}
+
 function UnmappedCitiesSection({ cities }) {
+  // Sort mappable rows first, then state-only; alphabetical by place within each.
+  const sorted = useMemo(() => {
+    return [...cities].sort((a, b) => {
+      const am = isMappablePlace(a.place)
+      const bm = isMappablePlace(b.place)
+      if (am !== bm) return am ? -1 : 1
+      return (a.place || '').localeCompare(b.place || '')
+    })
+  }, [cities])
+
+  const mappableCount = useMemo(() => sorted.filter(c => isMappablePlace(c.place)).length, [sorted])
+  const stateOnlyCount = sorted.length - mappableCount
+
+  const { visible, expanded, toggle, total, hasMore } = useCappedList(sorted, 8)
+
   return (
     <div className={`${S.card}`}>
       <div className="px-4 py-3 border-b border-gray-100 dark:border-white/5">
         <h2 className="text-lg font-bold text-gray-900 dark:text-white">Unmapped cities</h2>
-        <p className="text-sm text-gray-500 dark:text-slate-500 mt-1">{cities.length} cities with no coordinates</p>
+        <p className="text-sm text-gray-500 dark:text-slate-500 mt-1">
+          {cities.length} with no coordinates · {mappableCount} mappable · {stateOnlyCount} state-only
+        </p>
       </div>
 
       {cities.length === 0 ? (
@@ -884,30 +909,47 @@ function UnmappedCitiesSection({ cities }) {
           All cities are mapped.
         </div>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead className={`${S.tableHead} bg-white dark:bg-[#0d0d1f]`}>
-              <tr>
-                <th className={`${S.th} !px-4`}>City</th>
-                <th className={`${S.th} !px-3`}>Role</th>
-                <th className={`${S.th} !px-3 text-right`}>Occurrences</th>
-                <th className={`${S.th} !px-3`}>Loads</th>
-              </tr>
-            </thead>
-            <tbody>
-              {cities.map((city, idx) => (
-                <tr key={idx} className={S.tableRow}>
-                  <td className="px-4 py-2 text-gray-900 dark:text-slate-200">{city.place}</td>
-                  <td className="px-3 py-2 text-gray-600 dark:text-slate-400">{city.role}</td>
-                  <td className="px-3 py-2 text-right text-gray-600 dark:text-slate-400">{city.occurrences}</td>
-                  <td className="px-3 py-2 text-gray-600 dark:text-slate-400 font-mono">
-                    {(city.load_numbers || []).join(', ') || '—'}
-                  </td>
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className={`${S.tableHead} bg-white dark:bg-[#0d0d1f]`}>
+                <tr>
+                  <th className={`${S.th} !px-4`}>City</th>
+                  <th className={`${S.th} !px-3`}>Role</th>
+                  <th className={`${S.th} !px-3 text-right`}>Occurrences</th>
+                  <th className={`${S.th} !px-3`}>Loads</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {visible.map((city, idx) => {
+                  const mappable = isMappablePlace(city.place)
+                  return (
+                    <tr
+                      key={idx}
+                      className={S.tableRow}
+                      title={mappable ? undefined : 'Load has no city — fix at the source'}
+                    >
+                      <td className={`px-4 py-2 ${mappable ? 'text-gray-900 dark:text-slate-200' : 'text-gray-400 dark:text-slate-500'}`}>
+                        {city.place}
+                        {!mappable && (
+                          <span className="ml-2 inline-block rounded px-1.5 py-0.5 text-[10px] font-medium bg-gray-100 text-gray-500 dark:bg-white/5 dark:text-slate-500">
+                            state-only
+                          </span>
+                        )}
+                      </td>
+                      <td className={`px-3 py-2 ${mappable ? 'text-gray-600 dark:text-slate-400' : 'text-gray-400 dark:text-slate-600'}`}>{city.role}</td>
+                      <td className={`px-3 py-2 text-right ${mappable ? 'text-gray-600 dark:text-slate-400' : 'text-gray-400 dark:text-slate-600'}`}>{city.occurrences}</td>
+                      <td className={`px-3 py-2 font-mono ${mappable ? 'text-gray-600 dark:text-slate-400' : 'text-gray-400 dark:text-slate-600'}`}>
+                        {(city.load_numbers || []).join(', ') || '—'}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+          <ShowMoreToggle expanded={expanded} total={total} hasMore={hasMore} onToggle={toggle} />
+        </>
       )}
     </div>
   )
