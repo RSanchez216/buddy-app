@@ -864,17 +864,53 @@ const STATUS_BADGE = {
   discarded:      { label: 'Discarded',      cls: 'bg-gray-100 dark:bg-slate-700/40 text-gray-500 dark:text-slate-400 border-gray-200 dark:border-slate-600/40' },
 }
 
+const RECENT_FILTERS = [
+  { key: 'applied', label: 'Applied' },
+  { key: 'discarded', label: 'Discarded' },
+]
+
 function RecentImports({ recent }) {
   const [openId, setOpenId] = useState(null)
+  const [statusFilter, setStatusFilter] = useState('applied')
   const num = (c, k) => Number(c?.[k] ?? 0)
+  const counts = useMemo(() => ({
+    applied: recent.filter(b => b.status === 'applied').length,
+    discarded: recent.filter(b => b.status !== 'applied').length,
+  }), [recent])
+  const filtered = useMemo(
+    () => recent.filter(b => (statusFilter === 'applied' ? b.status === 'applied' : b.status !== 'applied')),
+    [recent, statusFilter]
+  )
   return (
     <div className={`${S.card} p-4 space-y-3`}>
-      <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Recent imports</h2>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Recent imports</h2>
+        <div className="flex items-center gap-2">
+          {RECENT_FILTERS.map(f => {
+            const active = statusFilter === f.key
+            return (
+              <button
+                key={f.key}
+                onClick={() => { setStatusFilter(f.key); setOpenId(null) }}
+                className={`px-3 py-1.5 text-xs font-medium rounded-full border transition-colors ${
+                  active
+                    ? 'bg-orange-50 dark:bg-orange-500/10 border-orange-300 dark:border-orange-500/30 text-orange-700 dark:text-orange-400'
+                    : 'border-gray-200 dark:border-slate-700/50 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5'
+                }`}
+              >
+                {f.label} <span className="ml-1 opacity-70">{counts[f.key] ?? 0}</span>
+              </button>
+            )
+          })}
+        </div>
+      </div>
       {recent.length === 0 ? (
         <p className="text-xs text-gray-400 dark:text-slate-500">No imports yet.</p>
+      ) : filtered.length === 0 ? (
+        <p className="text-xs text-gray-400 dark:text-slate-500">No {statusFilter} imports.</p>
       ) : (
         <div className="divide-y divide-gray-100 dark:divide-white/5">
-          {recent.map(b => {
+          {filtered.map(b => {
             const badge = STATUS_BADGE[b.status] || STATUS_BADGE.discarded
             const c = b.counts || {}
             const open = openId === b.id
