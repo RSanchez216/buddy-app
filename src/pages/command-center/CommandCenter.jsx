@@ -237,11 +237,16 @@ function CommandCenterView({ tasks, me, usersById, latestActivityByTask, greetin
 
   // Focus now = EVERY open high-priority task (any source). Returning 'focus'
   // first in assignGroup de-dupes these out of needs/calendar/upkeep/tagged.
+  // Stale upkeep instances (a prior day's checklist) never surface anywhere.
   const focusIds = useMemo(() => {
     const s = new Set()
-    for (const t of all) if (t.status === 'open' && t.priority === 'high') s.add(t.id)
+    for (const t of all) {
+      if (t.status !== 'open' || t.priority !== 'high') continue
+      if (t.source === 'upkeep' && t.due_date !== today) continue
+      s.add(t.id)
+    }
     return s
-  }, [all])
+  }, [all, today])
 
   const GROUPS = [
     { key: 'focus',    label: 'Focus now' },
@@ -254,7 +259,10 @@ function CommandCenterView({ tasks, me, usersById, latestActivityByTask, greetin
   const byGroup = useMemo(() => {
     const m = { focus: [], upkeep: [], needs: [], tagged: [], calendar: [], closed: [] }
     for (const t of all) { const g = assignGroup(t, focusIds, me, today); if (g) m[g].push(t) }
-    for (const k of Object.keys(m)) m[k].sort((a, b) => cmpTask(a, b, replyIds))
+    for (const k of Object.keys(m)) {
+      if (k === 'upkeep') m[k].sort(cmpUpkeep) // checklist order: template sort_order, then title
+      else m[k].sort((a, b) => cmpTask(a, b, replyIds))
+    }
     return m
   }, [all, focusIds, me, today, replyIds])
 
@@ -266,12 +274,15 @@ function CommandCenterView({ tasks, me, usersById, latestActivityByTask, greetin
     return true
   }
 
-  // Upkeep progress is computed from ALL source='upkeep' tasks — independent of
-  // which section renders them — so a high upkeep task moving into Focus now
-  // doesn't change the N / M math.
-  const upkeepAll = useMemo(() => all.filter(t => t.source === 'upkeep'), [all])
+  // Upkeep progress is day-aware: only TODAY's generated instances (source
+  // 'upkeep' AND due_date === today) count. Computed independently of which
+  // section renders them, so a high upkeep task moving into Focus now doesn't
+  // change the N / M math.
+  const upkeepAll = useMemo(() => all.filter(t => t.source === 'upkeep' && t.due_date === today), [all, today])
   const upkeepTotal = upkeepAll.length
   const upkeepDone = upkeepAll.filter(t => t.status === 'closed').length
+  // The upkeep section is relevant only when the source filter permits upkeep.
+  const upkeepSectionShown = filters.source === 'all' || filters.source === 'upkeep'
 
   // Stat-card counts (over all tasks).
   const counts = useMemo(() => ({
@@ -341,6 +352,25 @@ function CommandCenterView({ tasks, me, usersById, latestActivityByTask, greetin
       {/* Grouped list */}
       <div className="flex flex-col gap-2.5">
         {GROUPS.map(g => {
+          // Upkeep is day-aware and always shown when the source filter permits,
+          // so the meter (or the "no checks today" empty state) stays visible
+          // even when the active status filter hides every row.
+          if (g.key === 'upkeep') {
+            if (!upkeepSectionShown) return null
+            const items = byGroup.upkeep.filter(passes)
+            return (
+              <div key="upkeep" className="flex flex-col gap-2.5">
+                <GroupHeader group={g} upkeep={{ done: upkeepDone, total: upkeepTotal }} />
+                {items.map(t => (
+                  <TaskRow key={t.id} task={t} focus={focusIds.has(t.id)} hasNewReply={replyIds.has(t.id)} me={me} usersById={usersById}
+                    users={[...usersById.values()]} onChangeStatus={handleChangeStatus} onReassign={handleReassign} onEditTask={onEditTask} onActed={markActed} />
+                ))}
+                {upkeepTotal > 0 && items.length === 0 && (
+                  <div className={`${cardSurface} rounded-xl py-2.5 px-4 text-[13px] text-gray-500 dark:text-slate-400 border-dashed`}>All of today’s checks are done. 🎉</div>
+                )}
+              </div>
+            )
+          }
           let items = byGroup[g.key].filter(passes)
           if (!items.length) return null
           // Default view: cap low-priority items in "needs" behind a reveal.
@@ -352,7 +382,7 @@ function CommandCenterView({ tasks, me, usersById, latestActivityByTask, greetin
           }
           return (
             <div key={g.key} className="flex flex-col gap-2.5">
-              <GroupHeader group={g} upkeep={g.key === 'upkeep' ? { done: upkeepDone, total: upkeepTotal } : null} />
+              <GroupHeader group={g} upkeep={null} />
               {items.map(t => (
                 <TaskRow key={t.id} task={t} focus={focusIds.has(t.id)} hasNewReply={replyIds.has(t.id)} me={me} usersById={usersById}
                   users={[...usersById.values()]} onChangeStatus={handleChangeStatus} onReassign={handleReassign} onEditTask={onEditTask} onActed={markActed} />
@@ -365,7 +395,7 @@ function CommandCenterView({ tasks, me, usersById, latestActivityByTask, greetin
             </div>
           )
         })}
-        {GROUPS.every(g => byGroup[g.key].filter(passes).length === 0) && (
+        {!upkeepSectionShown && GROUPS.every(g => byGroup[g.key].filter(passes).length === 0) && (
           <div className={`${cardSurface} rounded-2xl p-10 text-center text-sm text-gray-500 dark:text-slate-400`}>Nothing matches these filters.</div>
         )}
       </div>
@@ -377,11 +407,22 @@ function CommandCenterView({ tasks, me, usersById, latestActivityByTask, greetin
 // stays valid under the React Compiler lint.
 function assignGroup(t, focusIds, me, today) {
   if (focusIds.has(t.id)) return 'focus'
-  if (t.source === 'upkeep') return 'upkeep'
+  // Only today's upkeep instances belong to the checklist; a prior day's
+  // instances are dropped entirely (not shown anywhere).
+  if (t.source === 'upkeep') return t.due_date === today ? 'upkeep' : null
   if (t.source === 'calendar') return 'calendar'
   if (t.assignee === me && t.created_by && t.created_by !== me) return 'tagged'
   if (t.status === 'closed') return ctDate(t.closed_at) === today ? 'closed' : null
   return 'needs'
+}
+
+// Upkeep checklist order: the template's sort_order when present on the row,
+// else alphabetical by title. (Missing sort_order sorts last, so all-equal →
+// title.)
+function cmpUpkeep(a, b) {
+  const ao = a.sort_order ?? Infinity, bo = b.sort_order ?? Infinity
+  if (ao !== bo) return ao - bo
+  return (a.title || '').localeCompare(b.title || '')
 }
 
 // priority → (unacted reply nudge) → due_date → created_at. The reply nudge only
@@ -424,16 +465,23 @@ function StatCard({ n, label, attn, active, onClick }) {
 
 function GroupHeader({ group, upkeep }) {
   if (group.key === 'upkeep') {
+    const empty = !upkeep.total // no instances generated for today (e.g. weekend)
     const pct = upkeep.total ? Math.round((upkeep.done / upkeep.total) * 100) : 0
     return (
       <div className="flex items-center gap-2.5 flex-wrap mt-1.5 px-0.5">
         <div className="font-bold text-sm text-gray-900 dark:text-white flex items-center gap-1.5" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>⚙ Keep BUDDY running</div>
         <span className="text-[9.5px] font-semibold tracking-wide uppercase bg-violet-100 text-violet-700 dark:bg-violet-600/[0.18] dark:text-[#C4B0E8] px-1.5 py-0.5 rounded">Recurring · resets daily</span>
         <div className="ml-auto flex items-center gap-2">
-          <span className="text-[11px] font-semibold text-gray-500 dark:text-slate-400" style={{ fontFamily: 'JetBrains Mono, monospace' }}>{upkeep.done} / {upkeep.total} done</span>
-          <span className="w-[90px] h-[7px] rounded-full bg-gray-100 dark:bg-[#0F1822] overflow-hidden">
-            <span className="block h-full bg-violet-600 transition-[width] duration-300" style={{ width: `${pct}%` }} />
-          </span>
+          {empty ? (
+            <span className="text-[11px] font-medium text-gray-400 dark:text-slate-500" style={{ fontFamily: 'JetBrains Mono, monospace' }}>No checks scheduled today</span>
+          ) : (
+            <>
+              <span className="text-[11px] font-semibold text-gray-500 dark:text-slate-400" style={{ fontFamily: 'JetBrains Mono, monospace' }}>{upkeep.done} / {upkeep.total} done</span>
+              <span className="w-[90px] h-[7px] rounded-full bg-gray-100 dark:bg-[#0F1822] overflow-hidden">
+                <span className="block h-full bg-violet-600 transition-[width] duration-300" style={{ width: `${pct}%` }} />
+              </span>
+            </>
+          )}
         </div>
       </div>
     )
