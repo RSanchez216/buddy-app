@@ -88,6 +88,21 @@ export function notifyTasksChanged() {
   try { window.dispatchEvent(new Event(TASKS_CHANGED_EVENT)) } catch { /* non-browser context */ }
 }
 
+// Delete a single task (+ its activity). RLS allows only the task's created_by
+// or assignee; the RPC raises (42501) otherwise — let it throw to the caller.
+export async function deleteTask(taskId) {
+  const { error } = await supabase.rpc('delete_task', { p_task_id: taskId })
+  if (error) throw error
+}
+
+// Delete a recurring template and all its instances. Returns the row count
+// removed. Allowed only if the caller owns the template; raises otherwise.
+export async function deleteTaskSeries(templateId) {
+  const { data, error } = await supabase.rpc('delete_task_series', { p_template_id: templateId })
+  if (error) throw error
+  return data
+}
+
 // Activity for one task (newest first).
 export async function loadActivity(taskId) {
   const { data, error } = await supabase

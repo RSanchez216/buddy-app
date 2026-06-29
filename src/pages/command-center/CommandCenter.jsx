@@ -3,7 +3,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import ErrorBoundary from '../../components/ErrorBoundary'
 import {
   loadCommandCenter, loadActivity, setTaskStatus, saveTaskNote, reassignTask, addTask, updateTask,
-  todayCT, ctDate, greetingDateParts, relTime, notifyTasksChanged,
+  deleteTask, deleteTaskSeries, todayCT, ctDate, greetingDateParts, relTime, notifyTasksChanged,
 } from './commandCenterData'
 
 // ── Config: source + status + priority visual maps (light + dark) ───────────
@@ -135,6 +135,19 @@ export default function CommandCenter() {
     try { const row = await reassignTask(task.id, userId, name); patchTask(task.id, row) }
     catch (e) { console.error(e); reload() }
   }
+  // Delete one task, or the whole series. Safe order: await the RPC first, then
+  // drop the row(s) from local state — a failed delete throws back to the
+  // popover and leaves the row in place. Counts/meter/nav all derive from tasks.
+  async function deleteTaskAction(task, mode) {
+    if (mode === 'series' && task.template_id) {
+      await deleteTaskSeries(task.template_id)
+      setTasks(prev => (prev || []).filter(t => t.template_id !== task.template_id))
+    } else {
+      await deleteTask(task.id)
+      setTasks(prev => (prev || []).filter(t => t.id !== task.id))
+    }
+    notifyTasksChanged()
+  }
   // One submit path for both create and edit (TaskForm always calls onSubmit(payload)).
   async function submitForm(payload) {
     if (editTask) {
@@ -183,7 +196,7 @@ export default function CommandCenter() {
           <CommandCenterView
             tasks={tasks} me={me} usersById={usersById} latestActivityByTask={latestActivityByTask}
             greeting={{ firstName, weekday, month, day }}
-            onChangeStatus={changeStatus} onReassign={reassign}
+            onChangeStatus={changeStatus} onReassign={reassign} onDelete={deleteTaskAction}
             onGoAdd={() => selectTab('add')} onEditTask={startEdit}
           />
         </ErrorBoundary>
@@ -207,7 +220,7 @@ export default function CommandCenter() {
 }
 
 // ── Command Center view ─────────────────────────────────────────────────────
-function CommandCenterView({ tasks, me, usersById, latestActivityByTask, greeting, onChangeStatus, onReassign, onGoAdd, onEditTask }) {
+function CommandCenterView({ tasks, me, usersById, latestActivityByTask, greeting, onChangeStatus, onReassign, onDelete, onGoAdd, onEditTask }) {
   const [filters, setFilters] = useState({ source: 'all', status: 'open', priority: 'all' })
   const [revealed, setRevealed] = useState(false)
   // Tasks the user has acted on this session — clears the "new reply" badge
@@ -363,7 +376,7 @@ function CommandCenterView({ tasks, me, usersById, latestActivityByTask, greetin
                 <GroupHeader group={g} upkeep={{ done: upkeepDone, total: upkeepTotal }} />
                 {items.map(t => (
                   <TaskRow key={t.id} task={t} focus={focusIds.has(t.id)} hasNewReply={replyIds.has(t.id)} me={me} usersById={usersById}
-                    users={[...usersById.values()]} onChangeStatus={handleChangeStatus} onReassign={handleReassign} onEditTask={onEditTask} onActed={markActed} />
+                    users={[...usersById.values()]} onChangeStatus={handleChangeStatus} onReassign={handleReassign} onEditTask={onEditTask} onActed={markActed} onDelete={onDelete} />
                 ))}
                 {upkeepTotal > 0 && items.length === 0 && (
                   <div className={`${cardSurface} rounded-xl py-2.5 px-4 text-[13px] text-gray-500 dark:text-slate-400 border-dashed`}>All of today’s checks are done. 🎉</div>
@@ -385,7 +398,7 @@ function CommandCenterView({ tasks, me, usersById, latestActivityByTask, greetin
               <GroupHeader group={g} upkeep={null} />
               {items.map(t => (
                 <TaskRow key={t.id} task={t} focus={focusIds.has(t.id)} hasNewReply={replyIds.has(t.id)} me={me} usersById={usersById}
-                  users={[...usersById.values()]} onChangeStatus={handleChangeStatus} onReassign={handleReassign} onEditTask={onEditTask} onActed={markActed} />
+                  users={[...usersById.values()]} onChangeStatus={handleChangeStatus} onReassign={handleReassign} onEditTask={onEditTask} onActed={markActed} onDelete={onDelete} />
               ))}
               {hiddenLow > 0 && (
                 <button onClick={() => setRevealed(true)} className={`${cardSurface} rounded-xl py-2.5 text-[13px] font-semibold text-gray-700 dark:text-slate-300 border-dashed hover:bg-gray-50 dark:hover:bg-white/5`}>
@@ -576,8 +589,73 @@ function SourceMetaLine({ task }) {
   )
 }
 
+// Trash control + non-blocking confirm popover (no window.confirm/alert). For a
+// recurring instance it offers "just today" vs "stop recurring"; for a one-off,
+// a single "Delete task". onDelete(task, mode) throws on failure, so we keep the
+// popover open and surface an inline error rather than dropping the row.
+function DeleteMenu({ task, onDelete }) {
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const recurring = !!task.template_id
+
+  async function run(mode) {
+    setBusy(true); setErr('')
+    try {
+      await onDelete(task, mode) // success unmounts this row
+    } catch (e) {
+      console.error('[CommandCenter] delete failed', e)
+      setErr('Couldn’t delete — try again')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="relative self-center shrink-0">
+      <button onClick={() => { setOpen(o => !o); setErr('') }} aria-label="Delete task" title="Delete task"
+        className="opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity text-gray-400 hover:text-red-500 dark:text-slate-500 dark:hover:text-red-400 p-1 rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-red-500/60">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6" strokeLinecap="round" strokeLinejoin="round" /><path d="M10 11v6M14 11v6" strokeLinecap="round" /></svg>
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => !busy && setOpen(false)} />
+          <div className={`absolute right-0 top-[calc(100%+6px)] z-20 ${cardSurface} rounded-xl shadow-lg p-2 w-[240px] text-left`}>
+            {recurring ? (
+              <>
+                <div className="text-[10px] font-semibold text-gray-400 dark:text-slate-500 px-1 pb-1.5 uppercase tracking-wide" style={{ fontFamily: 'JetBrains Mono, monospace' }}>Recurring check</div>
+                <button disabled={busy} onClick={() => run('one')}
+                  className="flex w-full items-start gap-2 text-[13px] px-2 py-1.5 rounded-lg text-left text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-50">
+                  <TrashGlyph className="mt-0.5 text-gray-400 dark:text-slate-500" />
+                  <span>Delete just today<span className="block text-[11px] text-gray-400 dark:text-slate-500">removes today’s occurrence; it returns tomorrow</span></span>
+                </button>
+                <button disabled={busy} onClick={() => run('series')}
+                  className="mt-1 flex w-full items-start gap-2 text-[13px] px-2 py-2 rounded-lg text-left border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-500/20 disabled:opacity-50">
+                  <TrashGlyph className="mt-0.5" />
+                  <span className="font-semibold">Stop recurring<span className="block text-[11px] font-normal text-red-600/80 dark:text-red-300/80">deletes this check and all its days</span></span>
+                </button>
+              </>
+            ) : (
+              <button disabled={busy} onClick={() => run('one')}
+                className="flex w-full items-center gap-2 text-[13px] px-2 py-1.5 rounded-lg text-left text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50">
+                <TrashGlyph /> Delete task
+              </button>
+            )}
+            <button disabled={busy} onClick={() => setOpen(false)}
+              className="mt-1 w-full text-[13px] px-2 py-1.5 rounded-lg text-left text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-50">Cancel</button>
+            {busy && <div className="text-[11px] text-gray-400 dark:text-slate-500 px-2 pt-1" style={{ fontFamily: 'JetBrains Mono, monospace' }}>Deleting…</div>}
+            {err && <div className="text-[11px] text-red-600 dark:text-red-400 px-2 pt-1">{err}</div>}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+function TrashGlyph({ className = '' }) {
+  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`w-3.5 h-3.5 shrink-0 ${className}`}><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6" strokeLinecap="round" strokeLinejoin="round" /><path d="M10 11v6M14 11v6" strokeLinecap="round" /></svg>
+}
+
 // ── Task row + detail drawer ────────────────────────────────────────────────
-function TaskRow({ task, focus, hasNewReply, me, usersById, users, onChangeStatus, onReassign, onEditTask, onActed }) {
+function TaskRow({ task, focus, hasNewReply, me, usersById, users, onChangeStatus, onReassign, onEditTask, onActed, onDelete }) {
   const [expanded, setExpanded] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const src = SOURCES[task.source] || SOURCES.manual
@@ -622,6 +700,9 @@ function TaskRow({ task, focus, hasNewReply, me, usersById, users, onChangeStatu
           className="opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity self-center shrink-0 text-gray-400 hover:text-orange-500 dark:text-slate-500 dark:hover:text-orange-400 p-1">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4"><path d="M12 20h9" strokeLinecap="round" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </button>
+
+        {/* delete (hover) */}
+        {onDelete && <DeleteMenu task={task} onDelete={onDelete} />}
 
         {/* status pill + menu */}
         <div className="relative self-center shrink-0">
