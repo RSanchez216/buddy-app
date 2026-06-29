@@ -103,6 +103,49 @@ export async function deleteTaskSeries(templateId) {
   return data
 }
 
+// Dismiss = "this shouldn't have been a task — here's why." Closes the task,
+// logs activity, records feedback. Returns { sender, sender_dismiss_count } so
+// the caller can decide whether to suggest a skip rule. Owner/assignee only.
+export async function dismissTask(taskId, note) {
+  const { data, error } = await supabase.rpc('dismiss_task', { p_task_id: taskId, p_note: note })
+  if (error) throw error
+  return data || {}
+}
+
+// Create/update a triage skip rule (idempotent on owner+sender+pattern).
+export async function upsertTriageRule({ owner, matchSender, senderIsDomain, subjectPattern, reason, source = 'suggested' }) {
+  const { data, error } = await supabase.rpc('upsert_triage_rule', {
+    p_owner: owner,
+    p_match_sender: matchSender,
+    p_sender_is_domain: senderIsDomain,
+    p_subject_pattern: subjectPattern,
+    p_reason: reason,
+    p_source: source,
+  })
+  if (error) throw error
+  return data
+}
+
+// Triage rules management — direct table access, RLS-scoped to the owner.
+// Most-active first (high hit_count = most likely over-broad → review).
+export async function listTriageRules() {
+  const { data, error } = await supabase
+    .from('triage_rules')
+    .select('*')
+    .order('hit_count', { ascending: false })
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return data || []
+}
+export async function setTriageRuleActive(id, isActive) {
+  const { error } = await supabase.from('triage_rules').update({ is_active: isActive }).eq('id', id)
+  if (error) throw error
+}
+export async function deleteTriageRule(id) {
+  const { error } = await supabase.from('triage_rules').delete().eq('id', id)
+  if (error) throw error
+}
+
 // Activity for one task (newest first).
 export async function loadActivity(taskId) {
   const { data, error } = await supabase

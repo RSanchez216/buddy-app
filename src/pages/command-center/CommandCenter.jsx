@@ -3,7 +3,8 @@ import { useAuth } from '../../contexts/AuthContext'
 import ErrorBoundary from '../../components/ErrorBoundary'
 import {
   loadCommandCenter, loadActivity, setTaskStatus, saveTaskNote, reassignTask, addTask, updateTask,
-  deleteTask, deleteTaskSeries, todayCT, ctDate, greetingDateParts, relTime, notifyTasksChanged,
+  deleteTask, deleteTaskSeries, dismissTask, upsertTriageRule, listTriageRules, setTriageRuleActive, deleteTriageRule,
+  todayCT, ctDate, greetingDateParts, relTime, notifyTasksChanged,
 } from './commandCenterData'
 
 // ── Config: source + status + priority visual maps (light + dark) ───────────
@@ -135,6 +136,15 @@ export default function CommandCenter() {
     try { const row = await reassignTask(task.id, userId, name); patchTask(task.id, row) }
     catch (e) { console.error(e); reload() }
   }
+  // Dismiss = close + record why. Await the RPC, then mark the task closed
+  // locally so it leaves the open list. Returns { sender, sender_dismiss_count }
+  // for the skip-rule suggestion. Throws on failure (popover keeps the row).
+  async function dismiss(task, note) {
+    const res = await dismissTask(task.id, note)
+    patchTask(task.id, { status: 'closed', closed_at: new Date().toISOString() })
+    notifyTasksChanged()
+    return res
+  }
   // Delete one task, or the whole series. Safe order: await the RPC first, then
   // drop the row(s) from local state — a failed delete throws back to the
   // popover and leaves the row in place. Counts/meter/nav all derive from tasks.
@@ -196,7 +206,7 @@ export default function CommandCenter() {
           <CommandCenterView
             tasks={tasks} me={me} usersById={usersById} latestActivityByTask={latestActivityByTask}
             greeting={{ firstName, weekday, month, day }}
-            onChangeStatus={changeStatus} onReassign={reassign} onDelete={deleteTaskAction}
+            onChangeStatus={changeStatus} onReassign={reassign} onDelete={deleteTaskAction} onDismiss={dismiss}
             onGoAdd={() => selectTab('add')} onEditTask={startEdit}
           />
         </ErrorBoundary>
@@ -220,9 +230,21 @@ export default function CommandCenter() {
 }
 
 // ── Command Center view ─────────────────────────────────────────────────────
-function CommandCenterView({ tasks, me, usersById, latestActivityByTask, greeting, onChangeStatus, onReassign, onDelete, onGoAdd, onEditTask }) {
+function CommandCenterView({ tasks, me, usersById, latestActivityByTask, greeting, onChangeStatus, onReassign, onDelete, onDismiss, onGoAdd, onEditTask }) {
   const [filters, setFilters] = useState({ source: 'all', status: 'open', priority: 'all' })
   const [revealed, setRevealed] = useState(false)
+  const [suggestion, setSuggestion] = useState(null) // skip-rule prompt after a repeat dismiss
+  const [rulesOpen, setRulesOpen] = useState(false)   // Triage rules management modal
+
+  // Dismiss, then (for email tasks with a repeat-dismissed sender) offer to
+  // learn a skip rule. The row itself unmounts on success, so the suggestion is
+  // owned here, not in the row.
+  const handleDismiss = useCallback(async (task, note) => {
+    const res = await onDismiss(task, note)
+    if (task.source === 'email' && res?.sender && (res.sender_dismiss_count ?? 0) >= 2) {
+      setSuggestion({ sender: res.sender, count: res.sender_dismiss_count, subject: taskMeta(task).subject || '', note })
+    }
+  }, [onDismiss])
   // Tasks the user has acted on this session — clears the "new reply" badge
   // immediately (e.g. on note save) without waiting for a reload.
   const [actedIds, setActedIds] = useState(() => new Set())
@@ -347,7 +369,11 @@ function CommandCenterView({ tasks, me, usersById, latestActivityByTask, greetin
           {SOURCE_ORDER.map(s => (
             <FChip key={s} active={filters.source === s} dot={SOURCES[s].dot} onClick={() => setFilters(f => ({ ...f, source: s }))}>{SOURCES[s].label}</FChip>
           ))}
-          <button onClick={onGoAdd} className="ml-auto text-[12.5px] font-semibold bg-orange-500 text-white px-3.5 py-1.5 rounded-full hover:brightness-105">+ Add task</button>
+          <button onClick={() => setRulesOpen(true)} className="ml-auto text-[12px] font-semibold text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-[#30404F] px-3 py-1.5 rounded-full hover:bg-gray-50 dark:hover:bg-white/5 inline-flex items-center gap-1.5">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5"><path d="M3 6h18M6 12h12M10 18h4" strokeLinecap="round" /></svg>
+            Triage rules
+          </button>
+          <button onClick={onGoAdd} className="text-[12.5px] font-semibold bg-orange-500 text-white px-3.5 py-1.5 rounded-full hover:brightness-105">+ Add task</button>
         </div>
         <div className="flex items-center gap-1.5 flex-wrap mt-2 pt-2 border-t border-dashed border-gray-200 dark:border-[#30404F]">
           <span className="text-[9.5px] font-semibold tracking-widest uppercase text-gray-400 dark:text-slate-500 mr-1">Status</span>
@@ -376,7 +402,7 @@ function CommandCenterView({ tasks, me, usersById, latestActivityByTask, greetin
                 <GroupHeader group={g} upkeep={{ done: upkeepDone, total: upkeepTotal }} />
                 {items.map(t => (
                   <TaskRow key={t.id} task={t} focus={focusIds.has(t.id)} hasNewReply={replyIds.has(t.id)} me={me} usersById={usersById}
-                    users={[...usersById.values()]} onChangeStatus={handleChangeStatus} onReassign={handleReassign} onEditTask={onEditTask} onActed={markActed} onDelete={onDelete} />
+                    users={[...usersById.values()]} onChangeStatus={handleChangeStatus} onReassign={handleReassign} onEditTask={onEditTask} onActed={markActed} onDelete={onDelete} onDismiss={handleDismiss} />
                 ))}
                 {upkeepTotal > 0 && items.length === 0 && (
                   <div className={`${cardSurface} rounded-xl py-2.5 px-4 text-[13px] text-gray-500 dark:text-slate-400 border-dashed`}>All of today’s checks are done. 🎉</div>
@@ -398,7 +424,7 @@ function CommandCenterView({ tasks, me, usersById, latestActivityByTask, greetin
               <GroupHeader group={g} upkeep={null} />
               {items.map(t => (
                 <TaskRow key={t.id} task={t} focus={focusIds.has(t.id)} hasNewReply={replyIds.has(t.id)} me={me} usersById={usersById}
-                  users={[...usersById.values()]} onChangeStatus={handleChangeStatus} onReassign={handleReassign} onEditTask={onEditTask} onActed={markActed} onDelete={onDelete} />
+                  users={[...usersById.values()]} onChangeStatus={handleChangeStatus} onReassign={handleReassign} onEditTask={onEditTask} onActed={markActed} onDelete={onDelete} onDismiss={handleDismiss} />
               ))}
               {hiddenLow > 0 && (
                 <button onClick={() => setRevealed(true)} className={`${cardSurface} rounded-xl py-2.5 text-[13px] font-semibold text-gray-700 dark:text-slate-300 border-dashed hover:bg-gray-50 dark:hover:bg-white/5`}>
@@ -412,6 +438,17 @@ function CommandCenterView({ tasks, me, usersById, latestActivityByTask, greetin
           <div className={`${cardSurface} rounded-2xl p-10 text-center text-sm text-gray-500 dark:text-slate-400`}>Nothing matches these filters.</div>
         )}
       </div>
+
+      {suggestion && (
+        <ErrorBoundary label="the skip-rule suggestion">
+          <RuleSuggestionCard suggestion={suggestion} me={me} onClose={() => setSuggestion(null)} />
+        </ErrorBoundary>
+      )}
+      {rulesOpen && (
+        <ErrorBoundary label="triage rules">
+          <TriageRulesModal onClose={() => setRulesOpen(false)} />
+        </ErrorBoundary>
+      )}
     </>
   )
 }
@@ -589,6 +626,64 @@ function SourceMetaLine({ task }) {
   )
 }
 
+// A guess at a subject pattern: the dismissed subject up to the first digit or
+// '#', trimmed of trailing punctuation — e.g. "… Schedule Funded for Schedule
+// #1362" → "… Schedule Funded for Schedule". Editable/clearable by the user.
+function guessSubjectPattern(subject) {
+  if (!subject) return ''
+  const i = subject.search(/[0-9#]/)
+  const cut = i === -1 ? subject : subject.slice(0, i)
+  return cut.replace(/[\s:#/_,.–—-]+$/, '').trim()
+}
+
+// Dismiss control + non-blocking note popover (no window.confirm/alert). On
+// submit it closes the task and records why; the row then leaves the open list.
+function DismissMenu({ task, onDismiss }) {
+  const [open, setOpen] = useState(false)
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+
+  async function run() {
+    setBusy(true); setErr('')
+    try {
+      await onDismiss(task, note.trim())
+      setOpen(false); setBusy(false) // row usually unmounts; harmless if it stays
+    } catch (e) {
+      console.error('[CommandCenter] dismiss failed', e)
+      setErr('Couldn’t dismiss — try again')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="relative self-center shrink-0">
+      <button onClick={() => { setOpen(o => !o); setErr('') }} aria-label="Dismiss task" title="Dismiss — not a task"
+        className="opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity text-gray-400 hover:text-amber-600 dark:text-slate-500 dark:hover:text-amber-400 p-1 rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-amber-500/60">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4"><circle cx="12" cy="12" r="9" /><path d="M5.6 5.6l12.8 12.8" strokeLinecap="round" /></svg>
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => !busy && setOpen(false)} />
+          <div className={`absolute right-0 top-[calc(100%+6px)] z-20 ${cardSurface} rounded-xl shadow-lg p-3 w-[280px] text-left`}>
+            <div className="text-[12px] font-semibold text-gray-900 dark:text-white mb-1.5">Dismiss — not a task</div>
+            <textarea value={note} onChange={e => setNote(e.target.value)} autoFocus
+              placeholder="Why isn’t this a task? e.g. “Apex schedule-funded alerts are FYI”"
+              className="w-full rounded-lg border border-gray-200 dark:border-[#30404F] bg-white dark:bg-[#0F1822] text-gray-900 dark:text-slate-100 text-[12.5px] px-2.5 py-2 min-h-[64px] resize-y focus:outline-none focus:ring-2 focus:ring-orange-500/40" />
+            <div className="flex gap-2 mt-2">
+              <button disabled={busy} onClick={run}
+                className="flex-1 text-[12.5px] font-semibold bg-amber-500 text-white rounded-lg py-1.5 hover:brightness-105 disabled:opacity-50">{busy ? 'Dismissing…' : 'Dismiss'}</button>
+              <button disabled={busy} onClick={() => setOpen(false)}
+                className="text-[12.5px] font-medium text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-[#30404F] rounded-lg px-3 py-1.5 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-50">Cancel</button>
+            </div>
+            {err && <div className="text-[11px] text-red-600 dark:text-red-400 pt-1.5">{err}</div>}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 // Trash control + non-blocking confirm popover (no window.confirm/alert). For a
 // recurring instance it offers "just today" vs "stop recurring"; for a one-off,
 // a single "Delete task". onDelete(task, mode) throws on failure, so we keep the
@@ -655,7 +750,7 @@ function TrashGlyph({ className = '' }) {
 }
 
 // ── Task row + detail drawer ────────────────────────────────────────────────
-function TaskRow({ task, focus, hasNewReply, me, usersById, users, onChangeStatus, onReassign, onEditTask, onActed, onDelete }) {
+function TaskRow({ task, focus, hasNewReply, me, usersById, users, onChangeStatus, onReassign, onEditTask, onActed, onDelete, onDismiss }) {
   const [expanded, setExpanded] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const src = SOURCES[task.source] || SOURCES.manual
@@ -700,6 +795,9 @@ function TaskRow({ task, focus, hasNewReply, me, usersById, users, onChangeStatu
           className="opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity self-center shrink-0 text-gray-400 hover:text-orange-500 dark:text-slate-500 dark:hover:text-orange-400 p-1">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4"><path d="M12 20h9" strokeLinecap="round" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </button>
+
+        {/* dismiss (hover) — "this shouldn't have been a task" */}
+        {onDismiss && <DismissMenu task={task} onDismiss={onDismiss} />}
 
         {/* delete (hover) */}
         {onDelete && <DeleteMenu task={task} onDelete={onDelete} />}
@@ -863,6 +961,174 @@ function ActMarker({ kind }) {
   if (kind === 'reply_received') return <span className="shrink-0 mt-0.5 text-[13px] leading-none text-orange-500 dark:text-orange-400" aria-hidden>↩</span>
   if (kind === 'reopened') return <span className="shrink-0 mt-0.5 text-[13px] leading-none text-orange-500 dark:text-orange-400" aria-hidden>↺</span>
   return <span className="w-2 h-2 rounded-full bg-gray-300 dark:bg-slate-600 mt-1.5 shrink-0" />
+}
+
+// ── Triage skip rules: suggestion card + management modal ───────────────────
+function domainOf(s) { const at = String(s || '').lastIndexOf('@'); return at === -1 ? String(s || '') : s.slice(at + 1) }
+
+// Non-blocking card (bottom-right) offered after a repeat dismissal of a sender.
+// Lets the user save a scoped skip rule the triage agent will honor.
+function RuleSuggestionCard({ suggestion, me, onClose }) {
+  const [matchWholeDomain, setMatchWholeDomain] = useState(false)
+  const [sender, setSender] = useState(suggestion.sender)
+  const [subjectPattern, setSubjectPattern] = useState(guessSubjectPattern(suggestion.subject))
+  const [reason, setReason] = useState(suggestion.note || '')
+  const [busy, setBusy] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [err, setErr] = useState('')
+  const stored = matchWholeDomain ? domainOf(sender) : sender
+
+  async function create() {
+    setBusy(true); setErr('')
+    try {
+      await upsertTriageRule({
+        owner: me,
+        matchSender: stored,
+        senderIsDomain: matchWholeDomain,
+        subjectPattern: subjectPattern.trim(),
+        reason: reason.trim(),
+        source: 'suggested',
+      })
+      setSaved(true)
+    } catch (e) {
+      console.error('[CommandCenter] upsert rule failed', e)
+      setErr('Couldn’t save the rule — try again')
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <div className={`fixed bottom-4 right-4 z-40 w-[360px] max-w-[calc(100vw-2rem)] ${cardSurface} rounded-2xl shadow-xl p-4`}>
+      {saved ? (
+        <div>
+          <div className="flex items-start gap-2">
+            <span className="text-green-500 text-lg leading-none" aria-hidden>✓</span>
+            <p className="text-[13px] text-gray-700 dark:text-slate-200">Rule saved — future matches will be skipped and logged.</p>
+          </div>
+          <button onClick={onClose} className="mt-3 w-full text-[12.5px] font-semibold bg-orange-500 text-white rounded-lg py-1.5 hover:brightness-105">Done</button>
+        </div>
+      ) : (
+        <>
+          <div className="flex items-start justify-between gap-2">
+            <p className="text-[13px] text-gray-700 dark:text-slate-200">
+              You’ve dismissed <b className="text-gray-900 dark:text-white">{suggestion.sender}</b> {suggestion.count} times. Skip emails like this automatically?
+            </p>
+            <button onClick={onClose} aria-label="Not now" className="shrink-0 text-gray-400 hover:text-gray-700 dark:text-slate-500 dark:hover:text-slate-300 -mt-1">✕</button>
+          </div>
+
+          <div className="mt-3 space-y-2.5">
+            <div>
+              <label className="block text-[10px] uppercase tracking-wide font-semibold text-gray-400 dark:text-slate-500 mb-1" style={{ fontFamily: 'JetBrains Mono, monospace' }}>Sender match</label>
+              <input value={sender} onChange={e => setSender(e.target.value)} className={miniInput} />
+              <label className="flex items-center gap-2 mt-1.5 text-[12px] text-gray-600 dark:text-slate-300 cursor-pointer">
+                <input type="checkbox" checked={matchWholeDomain} onChange={e => setMatchWholeDomain(e.target.checked)} className="accent-orange-500" />
+                Match whole domain{matchWholeDomain && <span className="text-gray-400 dark:text-slate-500">→ {domainOf(sender)}</span>}
+              </label>
+            </div>
+            <div>
+              <label className="block text-[10px] uppercase tracking-wide font-semibold text-gray-400 dark:text-slate-500 mb-1" style={{ fontFamily: 'JetBrains Mono, monospace' }}>Only when subject contains</label>
+              <input value={subjectPattern} onChange={e => setSubjectPattern(e.target.value)} placeholder="(leave blank for any subject)" className={miniInput} />
+              {!subjectPattern.trim() && (
+                <p className="text-[10.5px] text-amber-600 dark:text-amber-400 mt-1">Blank = skip <b>all</b> mail from this sender. Broad, but safe — genuinely actionable mail (holds, overdue, collections, payment requests) is still always created by triage’s override.</p>
+              )}
+            </div>
+            <div>
+              <label className="block text-[10px] uppercase tracking-wide font-semibold text-gray-400 dark:text-slate-500 mb-1" style={{ fontFamily: 'JetBrains Mono, monospace' }}>Reason <span className="normal-case tracking-normal text-gray-400/70">(optional)</span></label>
+              <input value={reason} onChange={e => setReason(e.target.value)} className={miniInput} />
+            </div>
+          </div>
+
+          {err && <div className="text-[11px] text-red-600 dark:text-red-400 mt-2">{err}</div>}
+          <div className="flex gap-2 mt-3">
+            <button disabled={busy} onClick={create} className="flex-1 text-[12.5px] font-semibold bg-orange-500 text-white rounded-lg py-1.5 hover:brightness-105 disabled:opacity-50">{busy ? 'Saving…' : 'Create rule'}</button>
+            <button disabled={busy} onClick={onClose} className="text-[12.5px] font-medium text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-[#30404F] rounded-lg px-3 py-1.5 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-50">Not now</button>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+const miniInput = 'w-full rounded-lg border border-gray-200 dark:border-[#30404F] bg-white dark:bg-[#0F1822] text-gray-900 dark:text-slate-100 text-[12.5px] px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-orange-500/40'
+
+// Lightweight management view: list/toggle/delete triage rules. Reads/writes
+// triage_rules directly (RLS-scoped to the owner). Most-active first.
+function TriageRulesModal({ onClose }) {
+  const [rules, setRules] = useState(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let stale = false
+    listTriageRules().then(r => { if (!stale) setRules(r) }).catch(e => { if (!stale) { console.error(e); setError(e.message || 'Failed to load rules'); setRules([]) } })
+    return () => { stale = true }
+  }, [])
+
+  async function toggle(rule) {
+    const next = !rule.is_active
+    setRules(prev => prev.map(r => r.id === rule.id ? { ...r, is_active: next } : r))
+    try { await setTriageRuleActive(rule.id, next) }
+    catch (e) { console.error(e); setRules(prev => prev.map(r => r.id === rule.id ? { ...r, is_active: !next } : r)) }
+  }
+  async function remove(rule) {
+    const prev = rules
+    setRules(p => p.filter(r => r.id !== rule.id))
+    try { await deleteTriageRule(rule.id) }
+    catch (e) { console.error(e); setRules(prev) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-start justify-center p-4 sm:pt-16">
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <div className={`relative w-full max-w-[640px] max-h-[80vh] flex flex-col rounded-2xl overflow-hidden ${cardSurface} shadow-2xl`}>
+        <div className="px-5 py-3.5 border-b border-gray-100 dark:border-[#30404F] flex items-center justify-between">
+          <div>
+            <h2 className="text-[15px] font-bold text-gray-900 dark:text-white" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Triage rules</h2>
+            <p className="text-[11.5px] text-gray-400 dark:text-slate-500 mt-0.5">Senders the triage agent skips. High hit counts are worth a double-check.</p>
+          </div>
+          <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-700 dark:text-slate-500 dark:hover:text-slate-300 p-1">✕</button>
+        </div>
+        <div className="overflow-y-auto p-3">
+          {rules === null ? (
+            <div className="py-12 text-center"><div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500" /></div>
+          ) : error ? (
+            <div className="p-4 text-[13px] text-red-600 dark:text-red-400">{error}</div>
+          ) : rules.length === 0 ? (
+            <div className="p-8 text-center text-[13px] text-gray-500 dark:text-slate-400">No triage rules yet. Dismiss a repeated sender to create one.</div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {rules.map(rule => (
+                <div key={rule.id} className={`rounded-xl border border-gray-200 dark:border-[#30404F] px-3 py-2.5 ${rule.is_active ? '' : 'opacity-60'}`}>
+                  <div className="flex items-start gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[13px] font-semibold text-gray-900 dark:text-white break-all">{rule.match_sender}</span>
+                        {rule.sender_is_domain && <span className="text-[9.5px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300">domain</span>}
+                      </div>
+                      <div className="text-[11.5px] text-gray-500 dark:text-slate-400 mt-0.5">
+                        {rule.subject_pattern ? <>subject contains “<span className="text-gray-700 dark:text-slate-300">{rule.subject_pattern}</span>”</> : <span className="italic">any subject</span>}
+                      </div>
+                      {rule.reason && <div className="text-[11.5px] text-gray-400 dark:text-slate-500 mt-0.5 break-words">{rule.reason}</div>}
+                      <div className="text-[10.5px] text-gray-400 dark:text-slate-500 mt-1" style={{ fontFamily: 'JetBrains Mono, monospace' }}>
+                        {Number(rule.hit_count || 0)} hit{Number(rule.hit_count || 0) === 1 ? '' : 's'}{rule.last_hit_at ? ` · last ${relTime(rule.last_hit_at)}` : ''}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <label className="inline-flex items-center gap-1 text-[11px] text-gray-500 dark:text-slate-400 cursor-pointer" title={rule.is_active ? 'Active' : 'Inactive'}>
+                        <input type="checkbox" checked={!!rule.is_active} onChange={() => toggle(rule)} className="accent-orange-500" />
+                        Active
+                      </label>
+                      <button onClick={() => remove(rule)} aria-label="Delete rule" title="Delete rule"
+                        className="text-gray-400 hover:text-red-500 dark:text-slate-500 dark:hover:text-red-400 p-1">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6" strokeLinecap="round" strokeLinejoin="round" /><path d="M10 11v6M14 11v6" strokeLinecap="round" /></svg>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
 }
 
 // ── Briefing ────────────────────────────────────────────────────────────────
