@@ -3,6 +3,7 @@ import { useToast } from '../../../../contexts/ToastContext'
 import { useAuth } from '../../../../contexts/AuthContext'
 import { supabase } from '../../../../lib/supabase'
 import { S } from '../../../../lib/styles'
+import LoadsFreshness from '../../../../components/LoadsFreshness'
 import LaneHeatCanvas from './LaneHeatCanvas'
 import LaneMapCanvas from './LaneMapCanvas'
 import GeoHeatMap from './GeoHeatMap'
@@ -423,6 +424,9 @@ export default function LaneFlowMap() {
               Revenue view — net margin pending cost layer
             </span>
           </p>
+          {/* Freshness of the underlying loads — when data was last imported,
+              not the same as the date-range filter (that's when loads happened). */}
+          <LoadsFreshness className="mt-1" />
         </div>
       </div>
 
