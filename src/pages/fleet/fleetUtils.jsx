@@ -195,12 +195,18 @@ export function DriverStatusPill({ status }) {
 
 // "12% SERVICE CHARGE" / "$0.65 RATE" etc. → readable when raw is missing.
 export function fmtCompensation({ compensation_raw, compensation_type, compensation_value }) {
+  // Flat rate reads as a weekly salary even when the raw string ("$2000 FLAT
+  // RATE") is present, so the column shows "$2,000/wk" rather than the export text.
+  if (compensation_type === 'flat_rate' && compensation_value != null) {
+    return `$${Number(compensation_value).toLocaleString('en-US')}/wk`
+  }
   if (compensation_raw) return compensation_raw
   if (compensation_value == null) return '—'
   switch (compensation_type) {
     case 'service_charge_pct': return `${compensation_value}% service charge`
     case 'rate_pct':           return `${compensation_value}% rate`
     case 'rate_per_mile':      return `$${compensation_value}/mile`
+    case 'flat_rate':          return `$${Number(compensation_value).toLocaleString('en-US')}/wk`
     default:                   return String(compensation_value)
   }
 }

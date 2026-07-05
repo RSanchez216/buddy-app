@@ -8,11 +8,21 @@ export function parseInternalId(raw) {
   return m ? m[1] : null
 }
 
-// "12% SERVICE CHARGE" / "$0.65 RATE" / "30% RATE"
+// "12% SERVICE CHARGE" / "$0.65 RATE" / "30% RATE" / "$2000 FLAT RATE"
 export function parseCompensation(raw) {
   if (!raw) return { type: null, value: null }
   const trimmed = String(raw).trim()
   if (!trimmed) return { type: null, value: null }
+
+  // Flat rate — a fixed weekly salary, independent of gross or miles. Checked
+  // first (whole-string match) so any phrasing ("$2,000 FLAT RATE",
+  // "FLAT RATE - $2000/wk") is recognized before the per-mile/percent patterns.
+  if (/flat\s*rate/i.test(trimmed)) {
+    const amt = trimmed.match(/\$?\s*([\d,]+(?:\.\d+)?)/)
+    if (amt) return { type: 'flat_rate', value: parseFloat(amt[1].replace(/,/g, '')) }
+    // "flat rate" with no readable amount stays unparsed → a warning below.
+    return { type: null, value: null }
+  }
 
   const perMile = trimmed.match(/^\$([\d.]+)\s*RATE/i)
   if (perMile) return { type: 'rate_per_mile', value: parseFloat(perMile[1]) }
@@ -185,7 +195,10 @@ export function parseDriversWorkbook(arrayBuffer) {
     })
 
     if (compRaw && !comp.type) {
-      errors.push(`Row ${rowNum}: compensation format not recognized — "${compRaw}" (left unparsed)`)
+      const msg = /flat\s*rate/i.test(compRaw)
+        ? 'flat rate amount not found'
+        : 'compensation format not recognized'
+      errors.push(`Row ${rowNum}: ${msg} — "${compRaw}" (left unparsed)`)
     }
     if (driverTypeRaw && !driverType) {
       errors.push(`Row ${rowNum}: driver type not recognized — "${driverTypeRaw}"`)

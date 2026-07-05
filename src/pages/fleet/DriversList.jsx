@@ -284,7 +284,7 @@ export default function DriversList() {
                   <td className={`${S.td} text-gray-600 dark:text-slate-400 text-xs`}>{r.carrier || '—'}</td>
                   <td className={`${S.td} text-gray-600 dark:text-slate-400 font-mono text-xs`}>{r.truck_assignment_raw || '—'}</td>
                   <td className={`${S.td} text-gray-600 dark:text-slate-400 font-mono text-xs`}>{r.trailer_assignment_raw || '—'}</td>
-                  <td className={`${S.td} text-gray-600 dark:text-slate-400 text-xs`}>{r.compensation_raw || fmtCompensation(r)}</td>
+                  <td className={`${S.td} text-gray-600 dark:text-slate-400 text-xs`}>{fmtCompensation(r)}</td>
                   <td className={S.td}><DriverStatusPill status={r.current_status} /></td>
                   <td className={`${S.td} text-gray-500 dark:text-slate-400 text-xs whitespace-nowrap`}>{r.phone || '—'}</td>
                   <td

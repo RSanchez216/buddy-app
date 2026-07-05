@@ -577,11 +577,16 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
                           </td>
                           <td className={S.td}>
                             <div className="text-xs text-gray-700 dark:text-slate-300">{row.compensation_raw || '—'}</div>
-                            {row.compensation_type
-                              ? <div className="text-[10px] text-gray-400 dark:text-slate-500">({row.compensation_type} = {row.compensation_value})</div>
-                              : row.compensation_raw
-                                ? <div className="text-[10px] text-amber-700 dark:text-amber-400">⚠️ format not recognized</div>
-                                : null}
+                            {row.compensation_type === 'flat_rate'
+                              ? <div className="text-[10px] flex items-center gap-1 text-gray-500 dark:text-slate-400">
+                                  <span className="font-medium">${Number(row.compensation_value).toLocaleString('en-US')} / wk</span>
+                                  <span className="px-1 py-0.5 rounded bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 text-[9px] uppercase tracking-wide">flat rate</span>
+                                </div>
+                              : row.compensation_type
+                                ? <div className="text-[10px] text-gray-400 dark:text-slate-500">({row.compensation_type} = {row.compensation_value})</div>
+                                : row.compensation_raw
+                                  ? <div className="text-[10px] text-amber-700 dark:text-amber-400">⚠️ format not recognized</div>
+                                  : null}
                           </td>
                           <td className={S.td}>
                             <MatchCell row={row} idx={idx} onResolve={setRowResolution} />
