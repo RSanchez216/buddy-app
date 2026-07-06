@@ -58,6 +58,45 @@ function formatDateRange(pickupDate, deliveryDate) {
   return `${pickupStr} → ${deliveryStr}`
 }
 
+// Compact date parts for a pickup→delivery line: pickup shows month/day,
+// delivery adds the year only when it differs. '—' for a missing end; null when
+// neither date is present. Splits formatDateRange so candidate rows can
+// interleave clock times per side.
+function dateRangeParts(pickupDate, deliveryDate) {
+  const toDate = (d) => {
+    if (!d) return null
+    const dt = typeof d === 'string' ? new Date(d) : d
+    return isNaN(dt.getTime()) ? null : dt
+  }
+  const pickup = toDate(pickupDate), delivery = toDate(deliveryDate)
+  if (!pickup && !delivery) return null
+  const diffYear = pickup && delivery && pickup.getFullYear() !== delivery.getFullYear()
+  const pStr = pickup ? pickup.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'
+  const dStr = delivery
+    ? delivery.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: diffYear ? 'numeric' : undefined })
+    : '—'
+  return { pStr, dStr }
+}
+
+// Muted 24h appointment time appended to a date, e.g. "…, 12:00". Renders
+// nothing when the time is null/empty so there's no stray comma.
+function TimeSuffix({ time }) {
+  if (!time) return null
+  return <span className="text-gray-300 dark:text-slate-600">, {time}</span>
+}
+
+// Candidate-row pickup→delivery line with each date's clock time appended
+// (muted, secondary). Renders nothing when there are no dates.
+function LoadSchedule({ pickupDate, pickupTime, deliveryDate, deliveryTime }) {
+  const parts = dateRangeParts(pickupDate, deliveryDate)
+  if (!parts) return null
+  return (
+    <div className="text-[10px] text-gray-400 dark:text-slate-500 mt-0.5">
+      {parts.pStr}<TimeSuffix time={pickupTime} /> → {parts.dStr}<TimeSuffix time={deliveryTime} />
+    </div>
+  )
+}
+
 // Default number of rows a capped list shows before "Show all (N)".
 const LIST_CAP = 5
 
@@ -321,16 +360,12 @@ function CandidatesSection({ candidates, onRefresh }) {
                     <td className="px-3 py-2 text-gray-600 dark:text-slate-400">
                       <div>{pair.load_a}</div>
                       <div className="text-[10px] text-gray-400 dark:text-slate-500">{pair.lane_a}</div>
-                      {formatDateRange(pair.pickup_a, pair.delivery_a) && (
-                        <div className="text-[10px] text-gray-400 dark:text-slate-500 mt-0.5">{formatDateRange(pair.pickup_a, pair.delivery_a)}</div>
-                      )}
+                      <LoadSchedule pickupDate={pair.pickup_a} pickupTime={pair.pickup_time_a} deliveryDate={pair.delivery_a} deliveryTime={pair.delivery_time_a} />
                     </td>
                     <td className="px-3 py-2 text-gray-600 dark:text-slate-400">
                       <div>{pair.load_b}</div>
                       <div className="text-[10px] text-gray-400 dark:text-slate-500">{pair.lane_b}</div>
-                      {formatDateRange(pair.pickup_b, pair.delivery_b) && (
-                        <div className="text-[10px] text-gray-400 dark:text-slate-500 mt-0.5">{formatDateRange(pair.pickup_b, pair.delivery_b)}</div>
-                      )}
+                      <LoadSchedule pickupDate={pair.pickup_b} pickupTime={pair.pickup_time_b} deliveryDate={pair.delivery_b} deliveryTime={pair.delivery_time_b} />
                     </td>
                     <td className="px-3 py-2 text-right text-gray-600 dark:text-slate-400">{pair.overlap_days}d</td>
                     <td className="px-3 py-2 text-center">{pair.same_trailer ? '✓' : '—'}</td>
