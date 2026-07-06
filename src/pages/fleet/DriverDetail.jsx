@@ -3,12 +3,13 @@ import { useParams, Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { S } from '../../lib/styles'
-import { DriverTypePill, DriverStatusPill, DRIVER_STATUS_LABELS, fmtDate, fmtCompensation } from './fleetUtils'
+import Select from '../../components/Select'
+import { DRIVER_STATUSES, DRIVER_STATUS_LABELS, terminationFields, todayLocalYmd, fmtDate, fmtCompensation } from './fleetUtils'
 import DriverFormModal from './DriverFormModal'
 import DriverProfileHeader from './DriverProfileHeader'
 
 export default function DriverDetail() {
-  const { canEdit } = useAuth()
+  const { canEdit, user } = useAuth()
   const { id } = useParams()
   const [row, setRow] = useState(null)
   const [trucks, setTrucks] = useState([])
@@ -73,10 +74,13 @@ export default function DriverDetail() {
       <div className="flex items-start justify-between">
         <Link to="/fleet/drivers" className="text-xs text-orange-600 hover:underline">← Drivers</Link>
         {canEdit && (
-          <button onClick={() => setShowEdit(true)} className={S.btnPrimary}>
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
-            Edit
-          </button>
+          <div className="flex items-center gap-2">
+            <StatusQuickChange driver={row} userId={user?.id} onSaved={load} />
+            <button onClick={() => setShowEdit(true)} className={S.btnPrimary}>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+              Edit
+            </button>
+          </div>
         )}
       </div>
       <DriverProfileHeader driver={row} />
@@ -274,6 +278,93 @@ export default function DriverDetail() {
         onClose={() => setShowEdit(false)}
         onSaved={() => { setShowEdit(false); load() }}
       />
+    </div>
+  )
+}
+
+// Quick status change — flip a driver's status (e.g. Active → Terminated) from
+// the profile without opening the full Edit form. A non-blocking popover; on
+// Terminated it captures a termination date (defaults to today) + optional
+// reason. Writes current_status + status_changed_at + terminated_at and logs a
+// driver_status_history row, matching the Edit modal's write shape.
+function StatusQuickChange({ driver, userId, onSaved }) {
+  const [open, setOpen] = useState(false)
+  const [status, setStatus] = useState(driver.current_status)
+  const [date, setDate] = useState(driver.terminated_at || todayLocalYmd())
+  const [reason, setReason] = useState(driver.termination_reason || '')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  function openMenu() {
+    setStatus(driver.current_status)
+    setDate(driver.terminated_at || todayLocalYmd())
+    setReason(driver.termination_reason || '')
+    setError('')
+    setOpen(true)
+  }
+
+  async function save() {
+    setSaving(true); setError('')
+    try {
+      const changed = status !== driver.current_status
+      const patch = {
+        current_status: status,
+        updated_by: userId || null,
+        ...terminationFields(status, date, reason),
+      }
+      if (changed) patch.status_changed_at = new Date().toISOString()
+      const { error: err } = await supabase.from('drivers').update(patch).eq('id', driver.id)
+      if (err) throw err
+      if (changed) {
+        const { error: hErr } = await supabase.from('driver_status_history').insert({
+          driver_id: driver.id,
+          from_status: driver.current_status,
+          to_status: status,
+          reason: (reason && reason.trim()) || 'Quick status change',
+          created_by: userId || null,
+        })
+        if (hErr) console.error('[DriverDetail] status history insert failed', hErr)
+      }
+      setOpen(false)
+      onSaved?.()
+    } catch (e) {
+      console.error('[DriverDetail] status change failed', e)
+      setError(e.message || 'Update failed')
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="relative">
+      <button onClick={() => (open ? setOpen(false) : openMenu())} className={S.btnSecondary}>Change status</button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => !saving && setOpen(false)} />
+          <div className={`absolute right-0 top-[calc(100%+6px)] z-20 w-[300px] ${S.card} p-4 shadow-lg text-left`}>
+            <label className={S.label}>Status</label>
+            <Select value={status} onChange={e => setStatus(e.target.value)}>
+              {DRIVER_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </Select>
+            {status === 'terminated' && (
+              <div className="mt-3 space-y-3">
+                <div>
+                  <label className={S.label}>Termination date</label>
+                  <input type="date" className={S.input} value={date || ''} onChange={e => setDate(e.target.value)} />
+                </div>
+                <div>
+                  <label className={S.label}>Reason (optional)</label>
+                  <input className={S.input} value={reason} onChange={e => setReason(e.target.value)} placeholder="e.g. Voluntary resignation" />
+                </div>
+              </div>
+            )}
+            {error && <div className="mt-2 text-xs text-red-600 dark:text-red-400">{error}</div>}
+            <div className="flex justify-end gap-2 mt-4">
+              <button onClick={() => setOpen(false)} disabled={saving} className={S.btnCancel}>Cancel</button>
+              <button onClick={save} disabled={saving} className={S.btnSave}>{saving ? 'Saving…' : 'Save'}</button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }

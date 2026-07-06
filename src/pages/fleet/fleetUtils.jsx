@@ -172,6 +172,25 @@ export const DRIVER_STATUSES = [
 
 export const DRIVER_STATUS_LABELS = Object.fromEntries(DRIVER_STATUSES.map(s => [s.value, s.label]))
 
+// Today's calendar date (YYYY-MM-DD) in local time — a good default for a
+// termination that's happening "now".
+export function todayLocalYmd() {
+  const d = new Date()
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
+}
+
+// Termination columns derived from a status: set the date/reason only when the
+// status is 'terminated', clear both otherwise. Keeps the Edit modal and the
+// profile's quick status control writing the same shape. No implicit date
+// default here — callers that mean "now" pass todayLocalYmd().
+export function terminationFields(status, terminatedAt, reason) {
+  const isTerm = status === 'terminated'
+  return {
+    terminated_at: isTerm ? (terminatedAt || null) : null,
+    termination_reason: isTerm ? ((reason && reason.trim()) || null) : null,
+  }
+}
+
 export function driverStatusPillClasses(status) {
   switch (status) {
     case 'active':     return 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20'

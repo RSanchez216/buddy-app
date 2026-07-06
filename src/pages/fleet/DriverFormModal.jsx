@@ -5,7 +5,7 @@ import { S } from '../../lib/styles'
 import Modal from '../../components/Modal'
 import Select from '../../components/Select'
 import ComboBox from '../../components/ComboBox'
-import { DRIVER_TYPES, DRIVER_STATUSES } from './fleetUtils'
+import { DRIVER_TYPES, DRIVER_STATUSES, terminationFields } from './fleetUtils'
 import { useToast } from '../../contexts/ToastContext'
 import PhotoUploadField from './PhotoUploadField'
 
@@ -30,7 +30,7 @@ const empty = {
   truck_assignment_raw: '', trailer_assignment_raw: '',
   compensation_raw: '', compensation_type: '', compensation_value: '',
   referred_by: '', temporary_license: false, missing_op: '',
-  onboarded_at: '', current_status: 'active', notes: '',
+  onboarded_at: '', current_status: 'active', terminated_at: '', termination_reason: '', notes: '',
 }
 
 export default function DriverFormModal({ open, editItem, onClose, onSaved }) {
@@ -67,6 +67,8 @@ export default function DriverFormModal({ open, editItem, onClose, onSaved }) {
         missing_op: editItem.missing_op || '',
         onboarded_at: editItem.onboarded_at || '',
         current_status: editItem.current_status || 'active',
+        terminated_at: editItem.terminated_at || '',
+        termination_reason: editItem.termination_reason || '',
         notes: editItem.notes || '',
       })
     } else {
@@ -94,10 +96,16 @@ export default function DriverFormModal({ open, editItem, onClose, onSaved }) {
       missing_op: form.missing_op.trim() || null,
       onboarded_at: form.onboarded_at || null,
       current_status: form.current_status || 'active',
+      ...terminationFields(form.current_status, form.terminated_at, form.termination_reason),
       notes: form.notes.trim() || null,
       updated_by: user?.id || null,
     }
     if (!editItem) payload.created_by = user?.id || null
+    // Stamp the status change time so terminated_at / status_changed_at stay in
+    // step (there's no DB trigger for this).
+    if (editItem && editItem.current_status !== payload.current_status) {
+      payload.status_changed_at = new Date().toISOString()
+    }
 
     let res
     if (editItem) {
@@ -238,6 +246,17 @@ export default function DriverFormModal({ open, editItem, onClose, onSaved }) {
             </Select>
           </Field>
         </div>
+
+        {form.current_status === 'terminated' && (
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Termination Date">
+              <input type="date" className={S.input} value={form.terminated_at} onChange={e => setForm(f => ({ ...f, terminated_at: e.target.value }))} />
+            </Field>
+            <Field label="Termination Reason">
+              <input className={S.input} value={form.termination_reason} onChange={e => setForm(f => ({ ...f, termination_reason: e.target.value }))} placeholder="e.g. Voluntary resignation" />
+            </Field>
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-4">
           <Field label="Referred By">
