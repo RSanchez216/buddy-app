@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { supabase } from '../../../../lib/supabase'
 import { S } from '../../../../lib/styles'
@@ -75,6 +76,16 @@ function fmtDateOnly(s) {
   return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+// last_reviewed_at is a timestamptz (the row's updated_at, stamped when a
+// reason/note is saved). Render the calendar day in America/Chicago, e.g.
+// "Jul 6". Null → null (caller shows "Not reviewed").
+function fmtReviewed(ts) {
+  if (!ts) return null
+  try {
+    return new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric' }).format(new Date(ts))
+  } catch { return null }
+}
+
 // Opens the subject's profile (truck / trailer / driver) in a new tab.
 // subject_type is singular; the routes are plural (+'s'). Falls back to plain
 // text when there's no id to link to.
@@ -97,6 +108,7 @@ export default function IdleReview() {
   const [rows, setRows] = useState(null)
   const [error, setError] = useState(null)
   const [view, setView] = useState('active') // 'active' | 'resolved'
+  const [reviewFilter, setReviewFilter] = useState('all') // 'all' | 'reviewed' | 'needs' — separate axis
 
   async function load() {
     setError(null)
@@ -121,21 +133,43 @@ export default function IdleReview() {
     for (const r of list) (g[r.subject_type] || (g[r.subject_type] = [])).push(r)
     return g
   }
-  // Cards + bubble count ACTIVE only, so resolving a case lowers them.
+  // Cards + bubble count ACTIVE only (unaffected by the review filter), so
+  // resolving a case lowers them.
   const activeGroups = useMemo(() => groupOf(activeRows), [activeRows])
-  const viewGroups = useMemo(() => groupOf(view === 'resolved' ? resolvedRows : activeRows), [view, activeRows, resolvedRows])
+  // The tables honor the Reviewed/Needs-review filter on top of Active/Resolved.
+  // "Reviewed" = has a last_reviewed_at. Client-side, instant, no refetch.
+  const viewGroups = useMemo(() => {
+    const base = view === 'resolved' ? resolvedRows : activeRows
+    const list = reviewFilter === 'all'
+      ? base
+      : base.filter(r => (reviewFilter === 'reviewed' ? !!r.last_reviewed_at : !r.last_reviewed_at))
+    return groupOf(list)
+  }, [view, activeRows, resolvedRows, reviewFilter])
+
+  // Counts for the review-filter chips, within the current Active/Resolved view.
+  const reviewCounts = useMemo(() => {
+    const base = view === 'resolved' ? resolvedRows : activeRows
+    const reviewed = base.filter(r => !!r.last_reviewed_at).length
+    return { all: base.length, reviewed, needs: base.length - reviewed }
+  }, [view, activeRows, resolvedRows])
 
   const sumCost = (list) => list.reduce((s, r) => s + (Number(r.monthly_cost) || 0), 0)
 
+  // One call writes BOTH reason and note (the RPC overwrites both), so callers
+  // pass the field they're editing plus the row's CURRENT value for the other.
+  // Returns true on success so inline editors can show non-blocking feedback.
   async function setReason(row, reason, note) {
     try {
       const { error: err } = await supabase.rpc('set_idle_reason', {
-        p_subject_type: row.subject_type, p_subject_id: row.subject_id, p_reason: reason, p_note: note || null,
+        p_subject_type: row.subject_type, p_subject_id: row.subject_id,
+        p_reason: reason || null, p_note: note || null,
       })
       if (err) throw err
       await load()
+      return true
     } catch (e) {
       console.error('set_idle_reason failed:', e)
+      return false
     }
   }
   async function resolve(row) {
@@ -186,11 +220,18 @@ export default function IdleReview() {
         <SummaryCard label="Idle drivers" count={activeGroups.driver.length} sub="not moving freight" loading={loading} />
       </div>
 
-      {/* Active / Resolved toggle */}
-      <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-slate-700 text-xs w-fit">
-        {[['active', `Active (${activeRows.length})`], ['resolved', `Resolved (${resolvedRows.length})`]].map(([k, lbl]) => (
-          <button key={k} onClick={() => setView(k)} className={`px-3 py-1.5 whitespace-nowrap ${view === k ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5'}`}>{lbl}</button>
-        ))}
+      {/* Filters: Active/Resolved (which spell) + Reviewed/Needs (review state). */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-slate-700 text-xs w-fit">
+          {[['active', `Active (${activeRows.length})`], ['resolved', `Resolved (${resolvedRows.length})`]].map(([k, lbl]) => (
+            <button key={k} onClick={() => setView(k)} className={`px-3 py-1.5 whitespace-nowrap ${view === k ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5'}`}>{lbl}</button>
+          ))}
+        </div>
+        <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-slate-700 text-xs w-fit">
+          {[['all', `All (${reviewCounts.all})`], ['reviewed', `Reviewed (${reviewCounts.reviewed})`], ['needs', `Needs review (${reviewCounts.needs})`]].map(([k, lbl]) => (
+            <button key={k} onClick={() => setReviewFilter(k)} className={`px-3 py-1.5 whitespace-nowrap ${reviewFilter === k ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5'}`}>{lbl}</button>
+          ))}
+        </div>
       </div>
 
       {error && <div className={S.errorBox}>Couldn't load idle data: {error}</div>}
@@ -199,9 +240,9 @@ export default function IdleReview() {
         <div className={`${S.card} p-12 text-center text-sm text-gray-500 dark:text-slate-500 animate-pulse`}>Finding idle subjects…</div>
       ) : (
         <>
-          <IdleSection title="Trucks" kind="unit" rows={viewGroups.truck} reasons={UNIT_REASONS} resolvedView={resolvedView} onSetReason={setReason} onResolve={resolve} onReopen={reopen} />
-          <IdleSection title="Trailers" kind="unit" rows={viewGroups.trailer} reasons={UNIT_REASONS} resolvedView={resolvedView} onSetReason={setReason} onResolve={resolve} onReopen={reopen} />
-          <IdleSection title="Drivers" kind="driver" rows={viewGroups.driver} reasons={DRIVER_REASONS} resolvedView={resolvedView} onSetReason={setReason} onResolve={resolve} onReopen={reopen} />
+          <IdleSection title="Trucks" kind="unit" rows={viewGroups.truck} reasons={UNIT_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} />
+          <IdleSection title="Trailers" kind="unit" rows={viewGroups.trailer} reasons={UNIT_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} />
+          <IdleSection title="Drivers" kind="driver" rows={viewGroups.driver} reasons={DRIVER_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} />
         </>
       )}
     </div>
@@ -226,13 +267,19 @@ function SummaryCard({ label, count, sub, loading, tip }) {
   )
 }
 
-function IdleSection({ title, kind, rows, reasons, resolvedView, onSetReason, onResolve, onReopen }) {
+function IdleSection({ title, kind, rows, reasons, resolvedView, reviewFilter, onSetReason, onResolve, onReopen }) {
   const columns = kind === 'unit' ? UNIT_COLUMNS : DRIVER_COLUMNS
 
   const [sort, setSort] = useState({ key: 'days', dir: 'desc' })
   const [expanded, setExpanded] = useState(false)
 
   const sorted = useMemo(() => {
+    // Reviewed view: stalest review first (last_reviewed_at ascending) so the
+    // ones most due for a refresh sit at the top.
+    if (reviewFilter === 'reviewed') {
+      const ts = r => (r.last_reviewed_at ? new Date(r.last_reviewed_at).getTime() : Infinity)
+      return [...rows].sort((a, b) => ts(a) - ts(b))
+    }
     const col = columns.find(c => c.key === sort.key) || columns[1]
     const mul = sort.dir === 'asc' ? 1 : -1
     return [...rows].sort((a, b) => {
@@ -244,7 +291,7 @@ function IdleSection({ title, kind, rows, reasons, resolvedView, onSetReason, on
       if (na === nb) return 0
       return (na - nb) * mul
     })
-  }, [rows, sort, columns])
+  }, [rows, sort, columns, reviewFilter])
 
   const visible = expanded ? sorted : sorted.slice(0, CAP)
 
@@ -308,39 +355,104 @@ function IdleSection({ title, kind, rows, reasons, resolvedView, onSetReason, on
   )
 }
 
+// Per-row note affordance: a note icon (filled when a note exists, hover shows
+// a preview) opening a compact inline editor. Save preserves the row's current
+// reason (the setter overwrites both fields). Non-blocking feedback.
+function NoteButton({ row, onSetReason }) {
+  const btnRef = useRef(null)
+  const [pos, setPos] = useState(null) // fixed-position anchor (escapes table overflow)
+  const [draft, setDraft] = useState(row.reason_note || '')
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState('')
+  const hasNote = !!(row.reason_note && row.reason_note.trim())
+  const open = pos !== null
+
+  function openEditor() {
+    const r = btnRef.current?.getBoundingClientRect()
+    if (r) setPos({ top: r.bottom + 4, left: Math.min(r.left, window.innerWidth - 252) })
+    setDraft(row.reason_note || ''); setErr('')
+  }
+  function close() { setPos(null); setSaving(false) }
+  async function save() {
+    setSaving(true); setErr('')
+    const ok = await onSetReason(row, row.reason || '', draft.trim())
+    if (ok) close()
+    else { setErr('Save failed — try again'); setSaving(false) }
+  }
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        onClick={() => (open ? close() : openEditor())}
+        aria-label={hasNote ? 'Edit note' : 'Add note'}
+        title={hasNote ? row.reason_note : 'Add note'}
+        className={`p-1 rounded transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-orange-500/60 ${hasNote ? 'text-orange-500 dark:text-orange-400' : 'text-gray-300 dark:text-slate-600 hover:text-gray-500 dark:hover:text-slate-400'}`}
+      >
+        {hasNote ? (
+          <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4"><path d="M4 5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9l-4 4V5z" /></svg>
+        ) : (
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="w-4 h-4"><path d="M4 5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9l-4 4V5z" strokeLinejoin="round" /><path d="M8 9h8M8 12.5h5" strokeLinecap="round" /></svg>
+        )}
+      </button>
+      {open && createPortal(
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => !saving && close()} />
+          <div style={{ position: 'fixed', top: pos.top, left: pos.left }} className={`z-50 w-60 ${S.card} p-2 shadow-lg text-left`}>
+            <textarea
+              autoFocus rows={3} value={draft} onChange={e => setDraft(e.target.value)} placeholder="Add a note…"
+              className="w-full text-xs rounded-md border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 px-2 py-1.5 text-gray-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-orange-500/40 resize-y"
+            />
+            {err && <div className="text-[11px] text-red-600 dark:text-red-400 mt-1">{err}</div>}
+            <div className="flex justify-end gap-1.5 mt-1.5">
+              <button onClick={close} disabled={saving} className="text-[11px] px-2 py-1 rounded-md text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-50">Cancel</button>
+              <button onClick={save} disabled={saving} className="text-[11px] px-2 py-1 rounded-md bg-orange-500 text-white font-medium hover:brightness-105 disabled:opacity-50">{saving ? 'Saving…' : 'Save'}</button>
+            </div>
+          </div>
+        </>,
+        document.body
+      )}
+    </>
+  )
+}
+
 function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onReopen }) {
-  const [note, setNote] = useState(row.reason_note || '')
   const sev = severity(row)
 
   const daysCls = (row.days_idle ?? 0) >= 14 ? 'text-red-600 dark:text-red-400 font-semibold' : 'text-gray-700 dark:text-slate-300'
 
-  // Active rows: editable reason dropdown + note. Resolved rows: read-only.
+  // Auto-captured on every save — shown muted under the reason control.
+  const reviewLine = (
+    <div className="text-[10px] text-gray-400 dark:text-slate-500 mt-0.5">
+      {row.last_reviewed_at ? `Reviewed ${fmtReviewed(row.last_reviewed_at)}` : 'Not reviewed'}
+    </div>
+  )
+
+  // Active rows: editable reason dropdown + note popover. Resolved rows: read-only.
   const reasonCell = resolvedView ? (
-    <div className="flex items-center gap-1.5 text-xs">
-      <span className={`w-2 h-2 rounded-full shrink-0 ${SEV_DOT[sev]}`} />
-      <span className="text-gray-700 dark:text-slate-300">{row.reason || '— no reason —'}</span>
-      {row.reason_note && <span className="text-gray-400 dark:text-slate-500">· {row.reason_note}</span>}
+    <div className="flex flex-col gap-0.5">
+      <div className="flex items-center gap-1.5 text-xs">
+        <span className={`w-2 h-2 rounded-full shrink-0 ${SEV_DOT[sev]}`} />
+        <span className="text-gray-700 dark:text-slate-300">{row.reason || '— no reason —'}</span>
+        {row.reason_note && <span className="text-gray-400 dark:text-slate-500">· {row.reason_note}</span>}
+      </div>
+      {reviewLine}
     </div>
   ) : (
-    <div className="flex items-center gap-1.5">
-      <span className={`w-2 h-2 rounded-full shrink-0 ${SEV_DOT[sev]}`} title={sev === 'red' ? 'Needs attention' : sev === 'amber' ? 'Watch' : 'Expected idle'} />
-      <select
-        value={row.reason || ''}
-        onChange={e => onSetReason(row, e.target.value, note)}
-        className={`text-xs bg-white dark:bg-slate-800/80 border rounded-md px-1.5 py-0.5 focus:outline-none focus:ring-2 focus:ring-orange-500/40 ${row.reason ? 'border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200' : 'border-red-300 dark:border-red-500/40 text-red-700 dark:text-red-400'}`}
-      >
-        <option value="">{row.reason ? '— Clear —' : 'set reason'}</option>
-        {reasons.map(rs => <option key={rs} value={rs}>{rs}</option>)}
-      </select>
-      {row.reason && (
-        <input
-          value={note}
-          onChange={e => setNote(e.target.value)}
-          onBlur={() => { if ((note || '') !== (row.reason_note || '')) onSetReason(row, row.reason, note) }}
-          placeholder="note"
-          className="text-xs w-28 bg-white dark:bg-slate-800/80 border border-gray-200 dark:border-slate-700 rounded-md px-1.5 py-0.5 text-gray-600 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-orange-500/40"
-        />
-      )}
+    <div className="flex flex-col gap-0.5">
+      <div className="flex items-center gap-1.5">
+        <span className={`w-2 h-2 rounded-full shrink-0 ${SEV_DOT[sev]}`} title={sev === 'red' ? 'Needs attention' : sev === 'amber' ? 'Watch' : 'Expected idle'} />
+        <select
+          value={row.reason || ''}
+          onChange={e => onSetReason(row, e.target.value, row.reason_note || '')}
+          className={`text-xs bg-white dark:bg-slate-800/80 border rounded-md px-1.5 py-0.5 focus:outline-none focus:ring-2 focus:ring-orange-500/40 ${row.reason ? 'border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200' : 'border-red-300 dark:border-red-500/40 text-red-700 dark:text-red-400'}`}
+        >
+          <option value="">{row.reason ? '— Clear —' : 'set reason'}</option>
+          {reasons.map(rs => <option key={rs} value={rs}>{rs}</option>)}
+        </select>
+        <NoteButton row={row} onSetReason={onSetReason} />
+      </div>
+      {reviewLine}
     </div>
   )
 
