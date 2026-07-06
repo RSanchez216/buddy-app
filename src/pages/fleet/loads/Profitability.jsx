@@ -3,6 +3,7 @@ import { supabase } from '../../../lib/supabase'
 import { useToast } from '../../../contexts/ToastContext'
 import { S } from '../../../lib/styles'
 import Modal from '../../../components/Modal'
+import LoadsFreshness from '../../../components/LoadsFreshness'
 import ProfitabilityCalendar from './ProfitabilityCalendar'
 import ProfitabilityVariance from './ProfitabilityVariance'
 
@@ -210,6 +211,8 @@ export default function Profitability() {
           Revenue, miles, and $/mile by delivery date. Canceled excluded; Booked shown as upcoming income.
           Cost &amp; margin come in a later phase.
         </p>
+        {/* How current the underlying loads data is — separate from the date-range filter. */}
+        <LoadsFreshness className="mt-1" />
       </div>
 
       {/* Week summary — revenue-based "good week / bad week" read with

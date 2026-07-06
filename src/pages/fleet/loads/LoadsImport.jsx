@@ -5,6 +5,7 @@ import { useToast } from '../../../contexts/ToastContext'
 import { S } from '../../../lib/styles'
 import ComboBox from '../../../components/ComboBox'
 import CopyButton from '../../../components/CopyButton'
+import LoadsFreshness from '../../../components/LoadsFreshness'
 import { parseLoadsWorkbook } from './loadsParse'
 import { buildPlan } from './loadsPlan'
 import { stageBatch, loadPendingBatch, applyBatch, discardBatch, loadRecentBatches, linkKey } from './loadsApply'
@@ -455,6 +456,8 @@ export default function LoadsImport() {
           <p className="text-sm text-gray-500 dark:text-slate-500 mt-0.5">
             Upload the daily TMS “All Loads” export. Review changes, then apply — nothing is written until you approve.
           </p>
+          {/* How current the loads data is — reflects the last applied import. */}
+          <LoadsFreshness className="mt-1" />
         </div>
         {canEdit && !batch && (
           <div>
