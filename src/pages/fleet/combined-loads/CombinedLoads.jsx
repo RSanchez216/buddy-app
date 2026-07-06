@@ -15,17 +15,16 @@ const DISMISS_REASONS = [
   'Other'
 ]
 
-// Extract lane from pu_info/del_info JSON
+// Extract a member load's lane from its pu_info/del_info. These are plain TMS
+// text strings ("City, ST, US (TZ) date time …"), not JSON — so we take the
+// "City, ST" prefix before ", US", the same way v_load_leg_profit and the
+// loads importer resolve origin/destination. (The old JSON.parse always threw,
+// which is why every member row read "Unknown lane".)
 function extractLanes(puInfo, delInfo) {
-  try {
-    const pu = typeof puInfo === 'string' ? JSON.parse(puInfo) : puInfo
-    const del = typeof delInfo === 'string' ? JSON.parse(delInfo) : delInfo
-    const origin = pu?.city || ''
-    const destination = del?.city || ''
-    return origin && destination ? `${origin} → ${destination}` : 'Unknown lane'
-  } catch {
-    return 'Unknown lane'
-  }
+  const cityLabel = (info) => String(info || '').split(/,\s*US\b/i)[0].trim()
+  const origin = cityLabel(puInfo)
+  const destination = cityLabel(delInfo)
+  return origin && destination ? `${origin} → ${destination}` : 'Unknown lane'
 }
 
 // Format date range compactly (e.g., "Jun 12 → Jun 16")
