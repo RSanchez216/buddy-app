@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { supabase } from '../../../../lib/supabase'
 import { S } from '../../../../lib/styles'
 import CopyButton from '../../../../components/CopyButton'
@@ -72,6 +73,24 @@ function fmtDateOnly(s) {
   const [y, m, d] = String(s).split('-').map(Number)
   if (!y || !m || !d) return '—'
   return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+// Opens the subject's profile (truck / trailer / driver) in a new tab.
+// subject_type is singular; the routes are plural (+'s'). Falls back to plain
+// text when there's no id to link to.
+function SubjectLink({ row }) {
+  const label = row.label || '—'
+  if (!row.subject_id) return label
+  return (
+    <Link
+      to={`/fleet/${row.subject_type}s/${row.subject_id}`}
+      target="_blank" rel="noopener noreferrer"
+      title="Open profile in a new tab"
+      className="hover:underline hover:text-orange-600 dark:hover:text-orange-400"
+    >
+      {label}
+    </Link>
+  )
 }
 
 export default function IdleReview() {
@@ -341,7 +360,7 @@ function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onR
   if (kind === 'unit') {
     return (
       <tr className={S.tableRow}>
-        <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>{row.label || '—'}</td>
+        <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}><SubjectLink row={row} /></td>
         <td className={`${S.td} text-right font-mono ${daysCls}`}>{fmtDays(row.days_idle)}</td>
         <td className={`${S.td} text-gray-600 dark:text-slate-400 text-xs`}>
           {row.extra ? (
@@ -362,7 +381,7 @@ function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onR
     <tr className={S.tableRow}>
       <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>
         <span className="inline-flex items-center gap-1.5">
-          {row.label || '—'}
+          <SubjectLink row={row} />
           {row.label && <CopyButton value={row.label.trim()} label="Copy driver name" />}
           {row.detail && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-slate-700/40 text-gray-600 dark:text-slate-400">{row.detail}</span>}
         </span>
