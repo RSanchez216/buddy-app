@@ -125,6 +125,9 @@ export default function LoadsImport() {
   const [links, setLinks] = useState(() => new Map())
   // Determinate apply progress: { phase, done, total } while running.
   const [progress, setProgress] = useState(null)
+  // Non-blocking apply confirmation: when TONU candidates exist, Apply first
+  // shows a restated-consequence card instead of writing immediately.
+  const [confirmApply, setConfirmApply] = useState(false)
   // Set when an apply stops mid-way: { done, total } → show counter + Retry.
   const [applyError, setApplyError] = useState(null)
   // Recent import batches (history) + a dismissible post-apply summary.
@@ -353,6 +356,20 @@ export default function LoadsImport() {
   const tonuCandidates = useMemo(() => tonuMatches.filter(p => !tonuClassified.has(p.load_number)), [tonuMatches, tonuClassified])
   const tonuAlreadyCount = useMemo(() => tonuMatches.filter(p => tonuClassified.has(p.load_number)).length, [tonuMatches, tonuClassified])
 
+  // Opt-out tally: a candidate with no explicit decision defaults to TONU
+  // ('auto'); an explicit 'tonu' click is a human confirm; 'real' rescues it.
+  // What Apply will write: (auto + explicit tonu) → TONU, 'real' → Real.
+  const tonuTally = useMemo(() => {
+    let real = 0, explicitTonu = 0, auto = 0
+    for (const p of tonuCandidates) {
+      const d = tonuDecisions.get(p.load_number)
+      if (d === 'real') real++
+      else if (d === 'tonu') explicitTonu++
+      else auto++
+    }
+    return { real, explicitTonu, auto, tonu: auto + explicitTonu }
+  }, [tonuCandidates, tonuDecisions])
+
   function setTonuDecision(loadNumber, d) {
     setTonuDecisions(prev => { const n = new Map(prev); if (d) n.set(loadNumber, d); else n.delete(loadNumber); return n })
   }
@@ -360,8 +377,16 @@ export default function LoadsImport() {
     setTonuDecisions(prev => { const n = new Map(prev); for (const p of tonuCandidates) n.set(p.load_number, d); return n })
   }
 
+  // Apply gate: if there are TONU candidates, restate the consequence in a
+  // non-blocking confirm card first (never a blocking window.confirm).
+  function requestApply() {
+    if (tonuCandidates.length > 0) setConfirmApply(true)
+    else onApply()
+  }
+
   async function onApply() {
     if (!batch || busy) return
+    setConfirmApply(false)
     setBusy(true)
     setApplyError(null)
     setProgress({ phase: 'Starting', done: 0, total: 0 })
@@ -386,17 +411,25 @@ export default function LoadsImport() {
       }
       toast.success(`Applied — ${appliedLoads} load${appliedLoads === 1 ? '' : 's'}, ${appliedLegs} leg${appliedLegs === 1 ? '' : 's'}`)
 
-      // Classify reviewed TONU candidates via the RPC — the ONLY writer of the
-      // TONU columns. Runs AFTER the upsert so each load exists. Few per import,
-      // so a simple loop is fine; an RPC failure is logged, never blocks apply.
+      // Classify every surfaced TONU candidate via the RPC — the ONLY writer of
+      // the TONU columns. Runs AFTER the upsert so each load exists. Opt-out:
+      //   • 'real'            → explicit Real (is_tonu=false, stamps reviewer)
+      //   • 'tonu'            → explicit TONU (is_tonu=true, stamps reviewer)
+      //   • untouched default → auto TONU (is_tonu=true, NO reviewer) via p_auto
+      // The candidate set is is_tonu IS NULL only, and p_auto additionally guards
+      // is_tonu IS NULL, so a prior human decision is never flipped.
       let tonuApplied = 0
-      for (const [ln, d] of tonuDecisions) {
-        if (d !== 'tonu' && d !== 'real') continue
-        const { error: tErr } = await supabase.rpc('set_load_tonu', { p_load_number: ln, p_is_tonu: d === 'tonu' })
+      for (const p of tonuCandidates) {
+        const ln = p.load_number
+        const d = tonuDecisions.get(ln)
+        const params = (d === 'tonu' || d === 'real')
+          ? { p_load_number: ln, p_is_tonu: d === 'tonu' }        // explicit human click
+          : { p_load_number: ln, p_is_tonu: true, p_auto: true }  // pre-selected default
+        const { error: tErr } = await supabase.rpc('set_load_tonu', params)
         if (tErr) console.error('[LoadsImport] set_load_tonu failed for', ln, tErr)
         else tonuApplied++
       }
-      if (tonuApplied > 0) toast.success(`Classified ${tonuApplied} TONU review${tonuApplied === 1 ? '' : 's'}`)
+      if (tonuApplied > 0) toast.success(`Classified ${tonuApplied} TONU candidate${tonuApplied === 1 ? '' : 's'}`)
 
       // Durable summary so a user who navigated away still sees the outcome.
       setApplySummary({ filename: fname, loads: appliedLoads, legs: appliedLegs, customers: appliedCustomers, dispatchers: appliedDispatchers, cancelTonu })
@@ -532,14 +565,16 @@ export default function LoadsImport() {
             )
           })()}
 
-          {/* Possible TONUs — import-time review (manager only). Classified via
-              set_load_tonu after the upsert; untouched candidates stay NULL. */}
+          {/* Possible TONUs — import-time review (manager only), opt-out: every
+              candidate is pre-selected TONU; untouched rows auto-confirm on
+              Apply (is_tonu=true, no reviewer). set_load_tonu is the only writer. */}
           {canEdit && tonuCandidates.length > 0 && (
             <Section
               title={`Possible TONUs detected (${tonuCandidates.length})`}
-              subtitle={`Same-city pickup & drop under $${TONU_FLOOR}. Confirm TONU (excluded from rate metrics) or mark Real — untouched candidates stay unclassified.${tonuAlreadyCount > 0 ? ` ${tonuAlreadyCount} already classified, unchanged.` : ''}`}
+              subtitle={`Same-city pickup & drop under $${TONU_FLOOR} — pre-selected as TONU (excluded from rate metrics). Mark any as Real to keep it. Untouched rows confirm as TONU on Apply.${tonuAlreadyCount > 0 ? ` ${tonuAlreadyCount} already classified, unchanged.` : ''}`}
               action={
                 <span className="flex items-center gap-2">
+                  <span className="text-[11px] font-mono text-gray-500 dark:text-slate-400 mr-1">{tonuTally.tonu} → TONU · {tonuTally.real} → Real</span>
                   <button onClick={() => bulkTonu('tonu')} className={`${S.btnSecondary} text-xs`}>Confirm all</button>
                   <button onClick={() => bulkTonu('real')} className={`${S.btnSecondary} text-xs`}>Reject all</button>
                 </span>
@@ -554,17 +589,19 @@ export default function LoadsImport() {
                   </tr></thead>
                   <tbody>
                     {tonuCandidates.map(p => {
-                      const d = tonuDecisions.get(p.load_number) || ''
+                      const d = tonuDecisions.get(p.load_number)
+                      const isReal = d === 'real'
+                      const tonuActive = !isReal // default (untouched) + explicit 'tonu' both show TONU
                       const lh = p.header?.linehaul
                       return (
-                        <tr key={p.load_number} className={`${S.tableRow} ${d === 'tonu' ? 'bg-amber-50/40 dark:bg-amber-500/[0.04]' : ''}`}>
+                        <tr key={p.load_number} className={`${S.tableRow} ${tonuActive ? 'bg-amber-50/40 dark:bg-amber-500/[0.04]' : ''}`}>
                           <td className={`${S.td} font-mono`}>{p.load_number}</td>
                           <td className={S.td}>{tonuCityLabel(p.header?.pu_info) || '—'} → {tonuCityLabel(p.header?.del_info) || '—'}</td>
                           <td className={`${S.td} text-right font-mono`}>{lh == null ? '—' : `$${Number(lh).toLocaleString('en-US', { minimumFractionDigits: 2 })}`}</td>
                           <td className={`${S.td} text-right`}>
                             <span className="inline-flex rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700">
-                              <button onClick={() => setTonuDecision(p.load_number, 'tonu')} className={`px-2.5 py-1 ${d === 'tonu' ? 'bg-amber-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400'}`}>TONU</button>
-                              <button onClick={() => setTonuDecision(p.load_number, 'real')} className={`px-2.5 py-1 ${d === 'real' ? 'bg-emerald-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400'}`}>Real</button>
+                              <button onClick={() => setTonuDecision(p.load_number, 'tonu')} className={`px-2.5 py-1 ${tonuActive ? 'bg-amber-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400'}`}>TONU</button>
+                              <button onClick={() => setTonuDecision(p.load_number, 'real')} className={`px-2.5 py-1 ${isReal ? 'bg-emerald-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400'}`}>Real</button>
                             </span>
                           </td>
                         </tr>
@@ -827,9 +864,25 @@ export default function LoadsImport() {
 
           {/* Actions */}
           {canEdit && !progress && !applyError && (
-            <div className="flex items-center justify-end gap-3 pt-2">
-              <button onClick={onDiscard} disabled={busy} className={S.btnCancel}>Discard batch</button>
-              <button onClick={onApply} disabled={busy} className={S.btnSave}>{busy ? 'Applying…' : 'Apply approved'}</button>
+            <div className="pt-2">
+              {confirmApply ? (
+                <div className="rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50/70 dark:bg-amber-500/[0.08] px-4 py-3">
+                  <p className="text-sm text-amber-800 dark:text-amber-300">
+                    <span className="font-semibold">{tonuTally.tonu} load{tonuTally.tonu === 1 ? '' : 's'} will be marked TONU</span> and excluded from rate metrics
+                    {' '}({tonuTally.auto} auto from the default, {tonuTally.explicitTonu} you confirmed).
+                    {' '}{tonuTally.real} kept as Real. Mark any others as <span className="font-semibold">Real</span> before applying if needed.
+                  </p>
+                  <div className="flex items-center justify-end gap-3 mt-3">
+                    <button onClick={() => setConfirmApply(false)} disabled={busy} className={S.btnCancel}>Cancel</button>
+                    <button onClick={onApply} disabled={busy} className={S.btnSave}>{busy ? 'Applying…' : 'Apply now'}</button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center justify-end gap-3">
+                  <button onClick={onDiscard} disabled={busy} className={S.btnCancel}>Discard batch</button>
+                  <button onClick={requestApply} disabled={busy} className={S.btnSave}>{busy ? 'Applying…' : 'Apply approved'}</button>
+                </div>
+              )}
             </div>
           )}
         </>
