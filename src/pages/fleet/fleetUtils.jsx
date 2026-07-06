@@ -162,15 +162,22 @@ export function DriverTypePill({ type, short = false }) {
   )
 }
 
+// Ordered roughly by lifecycle: prospect → onboarding → active → paused states
+// → exit. 'vacation' replaces the former 'on_leave' value.
 export const DRIVER_STATUSES = [
+  { value: 'lead',       label: 'Lead',       icon: '🔷' },
+  { value: 'pre_hire',   label: 'Pre-hire',   icon: '🟦' },
   { value: 'active',     label: 'Active',     icon: '🟢' },
+  { value: 'vacation',   label: 'Vacation',   icon: '🏖️' },
+  { value: 'suspended',  label: 'Suspended',  icon: '⛔' },
   { value: 'inactive',   label: 'Inactive',   icon: '🟡' },
-  { value: 'on_leave',   label: 'On Leave',   icon: '🟣' },
   { value: 'terminated', label: 'Terminated', icon: '🔴' },
   { value: 'archived',   label: 'Archived',   icon: '📦' },
 ]
 
-export const DRIVER_STATUS_LABELS = Object.fromEntries(DRIVER_STATUSES.map(s => [s.value, s.label]))
+// Include a legacy 'on_leave' → 'Vacation' alias so any historical record still
+// renders with the new name (the value was renamed to 'vacation').
+export const DRIVER_STATUS_LABELS = { ...Object.fromEntries(DRIVER_STATUSES.map(s => [s.value, s.label])), on_leave: 'Vacation' }
 
 // Today's calendar date (YYYY-MM-DD) in local time — a good default for a
 // termination that's happening "now".
@@ -194,7 +201,11 @@ export function terminationFields(status, terminatedAt, reason) {
 export function driverStatusPillClasses(status) {
   switch (status) {
     case 'active':     return 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20'
+    case 'lead':       return 'bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-500/20'
+    case 'pre_hire':   return 'bg-cyan-50 dark:bg-cyan-500/10 text-cyan-700 dark:text-cyan-400 border border-cyan-200 dark:border-cyan-500/20'
     case 'inactive':   return 'bg-amber-50 dark:bg-amber-500/10 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-500/30'
+    case 'suspended':  return 'bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-400 border border-orange-200 dark:border-orange-500/20'
+    case 'vacation':
     case 'on_leave':   return 'bg-violet-50 dark:bg-violet-500/10 text-violet-700 dark:text-violet-400 border border-violet-200 dark:border-violet-500/20'
     case 'terminated': return 'bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-500/20'
     case 'archived':   return 'bg-gray-100 dark:bg-slate-700/40 text-gray-500 dark:text-slate-400 border border-gray-200 dark:border-slate-600/30 line-through'
@@ -207,7 +218,7 @@ export function DriverStatusPill({ status }) {
   return (
     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${driverStatusPillClasses(status)}`}>
       <span aria-hidden>{meta?.icon || ''}</span>
-      <span>{meta?.label || status || 'Unknown'}</span>
+      <span>{meta?.label || DRIVER_STATUS_LABELS[status] || status || 'Unknown'}</span>
     </span>
   )
 }
