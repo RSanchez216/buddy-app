@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../../../lib/supabase'
 import { S } from '../../../lib/styles'
+import CopyButton from '../../../components/CopyButton'
 import { fmtMoney, fmtNum, fmtRpm } from '../loads/spotlight/spotlightShared'
 
 const PRESET_LABEL = { week: 'This week', month: 'This month' }
@@ -311,7 +312,12 @@ function CandidatesSection({ candidates, onRefresh }) {
               <tbody>
                 {visibleCandidates.map((pair, idx) => (
                   <tr key={idx} className={S.tableRow}>
-                    <td className="px-4 py-2 font-medium text-gray-900 dark:text-slate-200">{pair.driver_name}</td>
+                    <td className="px-4 py-2 font-medium text-gray-900 dark:text-slate-200">
+                      <span className="inline-flex items-center gap-1.5">
+                        {pair.driver_name}
+                        {pair.driver_name && <CopyButton value={pair.driver_name} label="Copy driver name" />}
+                      </span>
+                    </td>
                     <td className="px-3 py-2 text-gray-600 dark:text-slate-400">
                       <div>{pair.load_a}</div>
                       <div className="text-[10px] text-gray-400 dark:text-slate-500">{pair.lane_a}</div>
