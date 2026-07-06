@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../../../../lib/supabase'
 import { S } from '../../../../lib/styles'
+import CopyButton from '../../../../components/CopyButton'
 import { fmtMoney } from '../spotlight/spotlightShared'
 
 // Idle review — trucks, trailers, and drivers earning $0 while still costing
@@ -342,7 +343,14 @@ function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onR
       <tr className={S.tableRow}>
         <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>{row.label || '—'}</td>
         <td className={`${S.td} text-right font-mono ${daysCls}`}>{fmtDays(row.days_idle)}</td>
-        <td className={`${S.td} text-gray-600 dark:text-slate-400 text-xs`}>{row.extra || '—'}</td>
+        <td className={`${S.td} text-gray-600 dark:text-slate-400 text-xs`}>
+          {row.extra ? (
+            <span className="inline-flex items-center gap-1.5">
+              {row.extra}
+              <CopyButton value={row.extra.trim()} label="Copy driver name" />
+            </span>
+          ) : '—'}
+        </td>
         <td className={`${S.td} text-right font-mono text-amber-600 dark:text-amber-400`}>{Number(row.monthly_cost) > 0 ? `${fmtMoney(row.monthly_cost)}` : '$0'}</td>
         <td className={S.td}>{reasonCell}</td>
         {actionsCell}
@@ -353,8 +361,11 @@ function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onR
   return (
     <tr className={S.tableRow}>
       <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>
-        {row.label || '—'}
-        {row.detail && <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-slate-700/40 text-gray-600 dark:text-slate-400">{row.detail}</span>}
+        <span className="inline-flex items-center gap-1.5">
+          {row.label || '—'}
+          {row.label && <CopyButton value={row.label.trim()} label="Copy driver name" />}
+          {row.detail && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-slate-700/40 text-gray-600 dark:text-slate-400">{row.detail}</span>}
+        </span>
       </td>
       <td className={`${S.td} text-right font-mono ${daysCls}`}>{fmtDays(row.days_idle)}</td>
       <td className={`${S.td} text-right`}>
