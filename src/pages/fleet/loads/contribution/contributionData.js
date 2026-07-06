@@ -34,13 +34,18 @@ export function prorateUnitCost({ monthly, weekly, permile }, { days, miles }) {
 // Pay mode (verified against v_load_leg_pay_estimate / live settlements).
 // Returns { pay, missing }; missing=true means the rate is unknown and pay is
 // treated as 0 (so Company Net is overstated and the row is flagged).
-export function estimateDriverPay({ comp_type, comp_value, revenue, miles }) {
+export function estimateDriverPay({ comp_type, comp_value, revenue, miles, periodDays }) {
   const v = Number(comp_value)
   const rev = Number(revenue) || 0
   const mi = Number(miles) || 0
   if (comp_type === 'rate_pct' && Number.isFinite(v)) return { pay: rev * v / 100, missing: false }
   if (comp_type === 'rate_per_mile' && Number.isFinite(v)) return { pay: mi * v, missing: false }
   if (comp_type === 'service_charge_pct' && Number.isFinite(v)) return { pay: rev * (1 - v / 100), missing: false }
+  // flat_rate = fixed weekly salary, prorated over the selected period
+  // (weeks = periodDays ÷ 7), independent of revenue or miles. Mirrors the DB
+  // rollup: weekly_salary × (period_days ÷ 7). periodDays is the inclusive day
+  // count of the page's from/to range, NOT active_days.
+  if (comp_type === 'flat_rate' && Number.isFinite(v)) return { pay: v * ((Number(periodDays) || 0) / 7), missing: false }
   return { pay: 0, missing: true }
 }
 

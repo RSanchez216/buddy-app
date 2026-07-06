@@ -57,7 +57,7 @@ const COMPANY_NET_COLUMNS = [
   { key: 'equipment',  label: 'Equipment',   num: r => r.equipment,
     tip: 'Truck + trailer carrying cost, monthly prorated to the period (monthly × period days ÷ 30.44) — same basis as Equipment Contrib. $0 for driver-owned units.' },
   { key: 'driverPay',  label: 'Driver pay',  num: r => r.driverPay,
-    tip: 'Estimated driver pay from the comp rate (per-mile × miles, % of revenue, or service-charge remainder) — same estimate as Est. Driver Pay. Not actual settlement.' },
+    tip: 'Estimated driver pay from the comp rate (per-mile × miles, % of revenue, service-charge remainder, or weekly salary prorated to the period) — same estimate as Est. Driver Pay. Not actual settlement.' },
   { key: 'companyNet', label: 'Company Net', num: r => r.companyNet,
     tip: 'Revenue − equipment − driver pay = what the company keeps. Fuel, insurance & repairs not included yet — not final net profit.' },
 ]
@@ -698,6 +698,12 @@ function payBasisText(d) {
   if (d.comp_type === 'rate_per_mile') return `rate_per_mile $${v.toFixed(2)} × ${fmtNum(d.miles)} mi`
   if (d.comp_type === 'rate_pct') return `${v}% of revenue`
   if (d.comp_type === 'service_charge_pct') return `${v}% service charge → driver keeps ${100 - v}%`
+  if (d.comp_type === 'flat_rate') {
+    // Weekly salary; the pay figure is the prorated total. Show a derived $/mi
+    // for comparison (≈), since the driver isn't actually paid per mile.
+    const derived = d.miles > 0 && Number.isFinite(d.driverPay) ? ` · ≈ $${(d.driverPay / d.miles).toFixed(2)}/mi` : ''
+    return `$${v.toLocaleString('en-US')} / wk · salary${derived}`
+  }
   return 'comp rate missing'
 }
 
@@ -732,7 +738,7 @@ function CompanyNetView({ from, to, basis, query }) {
       const trailerCost = trailerOwned ? 0 : prorateUnitCost({ monthly: d.trailer_monthly, weekly: d.trailer_weekly, permile: d.trailer_permile }, { days, miles: d.miles })
       const equipment = truckCost + trailerCost
       const revenue = Number(d.revenue) || 0
-      const { pay, missing } = estimateDriverPay({ comp_type: d.comp_type, comp_value: d.comp_value, revenue, miles: d.miles })
+      const { pay, missing } = estimateDriverPay({ comp_type: d.comp_type, comp_value: d.comp_value, revenue, miles: d.miles, periodDays: days })
       const companyNet = revenue - equipment - pay
       const netPct = revenue > 0 ? companyNet / revenue : null
 
