@@ -416,6 +416,28 @@ function NoteButton({ row, onSetReason }) {
   )
 }
 
+// Always-visible note text, filling the open space to the right of the reason
+// control. Short notes render in full; long ones clamp to ~3 lines with a small
+// click "more/less" toggle (no hover-only reveal). Nothing renders when empty.
+function InlineNote({ text }) {
+  const [expanded, setExpanded] = useState(false)
+  const long = text.length > 140
+  return (
+    <div className="min-w-0 text-xs leading-snug text-left text-gray-500 dark:text-slate-400 break-words">
+      <span className={!expanded && long ? 'line-clamp-3' : ''}>{text}</span>
+      {long && (
+        <button
+          type="button"
+          onClick={() => setExpanded(v => !v)}
+          className="ml-1 align-baseline text-[11px] font-medium text-orange-600 dark:text-orange-400 hover:underline"
+        >
+          {expanded ? 'less' : 'more'}
+        </button>
+      )}
+    </div>
+  )
+}
+
 function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onReopen }) {
   const sev = severity(row)
 
@@ -428,31 +450,43 @@ function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onR
     </div>
   )
 
+  // The note reads inline in the empty space to the right of the reason control
+  // (the icon stays the edit trigger). Rendered for active and resolved alike.
+  const noteTrimmed = row.reason_note && row.reason_note.trim()
+  const inlineNote = noteTrimmed
+    ? <div className="flex-1 min-w-0"><InlineNote text={noteTrimmed} /></div>
+    : null
+
   // Active rows: editable reason dropdown + note popover. Resolved rows: read-only.
   const reasonCell = resolvedView ? (
-    <div className="flex flex-col gap-0.5">
-      <div className="flex items-center gap-1.5 text-xs">
-        <span className={`w-2 h-2 rounded-full shrink-0 ${SEV_DOT[sev]}`} />
-        <span className="text-gray-700 dark:text-slate-300">{row.reason || '— no reason —'}</span>
-        {row.reason_note && <span className="text-gray-400 dark:text-slate-500">· {row.reason_note}</span>}
+    <div className="flex items-start gap-3">
+      <div className="flex flex-col gap-0.5 shrink-0">
+        <div className="flex items-center gap-1.5 text-xs">
+          <span className={`w-2 h-2 rounded-full shrink-0 ${SEV_DOT[sev]}`} />
+          <span className="text-gray-700 dark:text-slate-300">{row.reason || '— no reason —'}</span>
+        </div>
+        {reviewLine}
       </div>
-      {reviewLine}
+      {inlineNote}
     </div>
   ) : (
-    <div className="flex flex-col gap-0.5">
-      <div className="flex items-center gap-1.5">
-        <span className={`w-2 h-2 rounded-full shrink-0 ${SEV_DOT[sev]}`} title={sev === 'red' ? 'Needs attention' : sev === 'amber' ? 'Watch' : 'Expected idle'} />
-        <select
-          value={row.reason || ''}
-          onChange={e => onSetReason(row, e.target.value, row.reason_note || '')}
-          className={`text-xs bg-white dark:bg-slate-800/80 border rounded-md px-1.5 py-0.5 focus:outline-none focus:ring-2 focus:ring-orange-500/40 ${row.reason ? 'border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200' : 'border-red-300 dark:border-red-500/40 text-red-700 dark:text-red-400'}`}
-        >
-          <option value="">{row.reason ? '— Clear —' : 'set reason'}</option>
-          {reasons.map(rs => <option key={rs} value={rs}>{rs}</option>)}
-        </select>
-        <NoteButton row={row} onSetReason={onSetReason} />
+    <div className="flex items-start gap-3">
+      <div className="flex flex-col gap-0.5 shrink-0">
+        <div className="flex items-center gap-1.5">
+          <span className={`w-2 h-2 rounded-full shrink-0 ${SEV_DOT[sev]}`} title={sev === 'red' ? 'Needs attention' : sev === 'amber' ? 'Watch' : 'Expected idle'} />
+          <select
+            value={row.reason || ''}
+            onChange={e => onSetReason(row, e.target.value, row.reason_note || '')}
+            className={`text-xs bg-white dark:bg-slate-800/80 border rounded-md px-1.5 py-0.5 focus:outline-none focus:ring-2 focus:ring-orange-500/40 ${row.reason ? 'border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200' : 'border-red-300 dark:border-red-500/40 text-red-700 dark:text-red-400'}`}
+          >
+            <option value="">{row.reason ? '— Clear —' : 'set reason'}</option>
+            {reasons.map(rs => <option key={rs} value={rs}>{rs}</option>)}
+          </select>
+          <NoteButton row={row} onSetReason={onSetReason} />
+        </div>
+        {reviewLine}
       </div>
-      {reviewLine}
+      {inlineNote}
     </div>
   )
 
