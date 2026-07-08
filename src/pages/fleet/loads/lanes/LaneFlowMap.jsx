@@ -672,6 +672,12 @@ export default function LaneFlowMap() {
     })
   }, [agg, sortKey, sortDir])
 
+  // "Deadhead only" leaderboard filter — narrows to lanes carrying the warning
+  // icon. Composes with sort (applied to `ranked`) and the basis toggle.
+  const [deadheadOnly, setDeadheadOnly] = useState(false)
+  const deadheadCount = useMemo(() => ranked.filter(deadheadFlagged).length, [ranked])
+  const displayedLanes = useMemo(() => (deadheadOnly ? ranked.filter(deadheadFlagged) : ranked), [ranked, deadheadOnly])
+
   // Best/worst loads by both metrics simultaneously, independent of leaderboard toggle
   const allLoadMetrics = useMemo(() => (agg ? pickAllLoadMetrics(agg.loads, EXCLUDED_STATUSES) : null), [agg])
   // Confirmed-TONU loads in scope — drives the "+N TONU excluded" footnote.
@@ -1040,11 +1046,31 @@ export default function LaneFlowMap() {
           <div className={`${S.card} overflow-hidden`}>
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-white/5">
               <p className="text-xs font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">Lane leaderboard</p>
-              <Pills value={sortKey} onChange={setSortFromPills} options={LEADERBOARD_SORTS.map(s => [s.key, s.label])} title="Revenue — total $ on the lane · $/mile — revenue ÷ miles · Loads — how many loads ran this origin→destination. Or click a column header to sort (toggles asc/desc). Tied lanes sorted by revenue." />
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDeadheadOnly(v => !v)}
+                  disabled={!deadheadOnly && deadheadCount === 0}
+                  aria-pressed={deadheadOnly}
+                  aria-label="Show deadhead lanes only"
+                  title="Show deadhead lanes only"
+                  className={`inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                    deadheadOnly
+                      ? 'bg-amber-500 text-slate-900 border-amber-500'
+                      : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent'
+                  }`}
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" strokeLinejoin="round" /><path d="M12 9v4M12 17h.01" strokeLinecap="round" /></svg>
+                  {deadheadCount > 0 && <span>{deadheadCount}</span>}
+                </button>
+                <Pills value={sortKey} onChange={setSortFromPills} options={LEADERBOARD_SORTS.map(s => [s.key, s.label])} title="Revenue — total $ on the lane · $/mile — revenue ÷ miles · Loads — how many loads ran this origin→destination. Or click a column header to sort (toggles asc/desc). Tied lanes sorted by revenue." />
+              </div>
             </div>
             <div className="max-h-[460px] overflow-y-auto">
               {ranked.length === 0 ? (
                 <p className="p-8 text-center text-sm text-gray-400 dark:text-slate-500">No lanes in this window.</p>
+              ) : displayedLanes.length === 0 ? (
+                <p className="p-8 text-center text-sm text-gray-400 dark:text-slate-500">No deadhead-flagged lanes this period.</p>
               ) : (
                 <table className="w-full text-xs">
                   <thead className={`${S.tableHead} sticky top-0 bg-white dark:bg-[#0d0d1f] z-10`}>
@@ -1057,7 +1083,7 @@ export default function LaneFlowMap() {
                     </tr>
                   </thead>
                   <tbody>
-                    {ranked.map(lane => {
+                    {displayedLanes.map(lane => {
                       // Show phase breakdown in leaderboard when multiple phases shown
                       const phaseLabels = { booked: 'Booked', in_transit: 'In transit', delivered: 'Delivered' }
                       const phaseBreakdown = selectedPhases.size > 1 && lane.legs ? (() => {
@@ -1097,7 +1123,7 @@ export default function LaneFlowMap() {
                 </table>
               )}
             </div>
-            {ranked.length > 0 && (
+            {displayedLanes.length > 0 && (
               <div className="px-4 py-2 border-t border-gray-100 dark:border-white/5 text-[10px] text-gray-400 dark:text-slate-500">
                 $/mi &amp; avg mi exclude TONU · revenue &amp; loads include it
               </div>
