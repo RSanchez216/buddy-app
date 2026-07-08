@@ -34,29 +34,85 @@ const LEADERBOARD_COL_VAL = {
   avgMiles: l => l.avgMiles,
 }
 
-// Deadhead (empty-miles) warning thresholds — flag a lane running a high empty
-// share, but only once the absolute empty miles matter (skip tiny lanes).
-const DEADHEAD_PCT_WARN = 0.25 // ≥ 25% of miles empty
-const DEADHEAD_MIN_MI = 150    // and at least this many empty miles
-function deadheadFlagged(lane) {
-  return lane?.deadheadPct != null && lane.deadheadPct >= DEADHEAD_PCT_WARN && (lane.realEmptyMiles || 0) >= DEADHEAD_MIN_MI
+// Deadhead severity by AVERAGE EMPTY MILES PER LOAD (TONU-excluded, same basis
+// as $/mi & avg mi). Three tiers — the absolute avg-empty cap is the sole signal.
+const DEADHEAD_YELLOW = 250 // 250–349 → notable
+const DEADHEAD_ORANGE = 350 // 350–499 → heavy
+const DEADHEAD_RED = 500    // 500+    → extreme
+const DEADHEAD_TIERS = {
+  yellow: { range: '250–349', label: 'Yellow (250–349)', icon: 'text-yellow-500 dark:text-yellow-400', dot: 'bg-yellow-400', chip: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-500/20 dark:text-yellow-200' },
+  orange: { range: '350–499', label: 'Orange (350–499)', icon: 'text-orange-500 dark:text-orange-400', dot: 'bg-orange-500', chip: 'bg-orange-100 text-orange-800 dark:bg-orange-500/20 dark:text-orange-200' },
+  red:    { range: '500+',    label: 'Red (≥500)',       icon: 'text-red-600 dark:text-red-400',       dot: 'bg-red-500',    chip: 'bg-red-100 text-red-800 dark:bg-red-500/20 dark:text-red-200' },
+}
+const DEADHEAD_TIER_ORDER = ['yellow', 'orange', 'red']
+function deadheadTier(lane) {
+  const v = lane?.avgEmptyPerLoad
+  if (v == null || v < DEADHEAD_YELLOW) return null
+  if (v >= DEADHEAD_RED) return 'red'
+  if (v >= DEADHEAD_ORANGE) return 'orange'
+  return 'yellow'
 }
 
-// Amber ⚠ shown on deadhead-heavy leaderboard lanes; hover/focus reveals the
-// empty-miles breakdown. Informational — a flagged lane can be legitimate.
-// Renders nothing below threshold (keeps the table clean). TONU already excluded
-// upstream (deadhead sums use the lane's real miles).
+// Tier-colored ⚠ on deadhead-heavy leaderboard lanes; hover/focus reveals the
+// empty-miles-per-load detail + tier. Informational — a flagged lane can be
+// legitimate. Renders nothing below the yellow threshold (keeps the table clean).
 function DeadheadIcon({ lane }) {
-  if (!deadheadFlagged(lane)) return null
-  const empty = Math.round(lane.realEmptyMiles || 0)
-  const loaded = Math.round(lane.realLoadedMiles || 0)
-  const pct = Math.round((lane.deadheadPct || 0) * 100)
-  const label = `Deadhead: ${empty.toLocaleString()} empty mi · ${pct}% of total (${loaded.toLocaleString()} loaded + ${empty.toLocaleString()} empty)`
+  const tier = deadheadTier(lane)
+  if (!tier) return null
+  const meta = DEADHEAD_TIERS[tier]
+  const empty = Math.round(lane.avgEmptyPerLoad || 0)
+  const pct = lane.deadheadPct != null ? Math.round(lane.deadheadPct * 100) : null
+  const label = `Deadhead: ${empty.toLocaleString()} empty mi/load${pct != null ? ` · ${pct}% of total` : ''} — ${meta.label}`
   return (
     <button type="button" aria-label={label} title={label} onClick={e => e.stopPropagation()}
-      className="ml-1 inline-flex align-middle text-amber-500 dark:text-amber-400 focus:outline-none focus-visible:ring-1 focus-visible:ring-amber-500/60 rounded">
+      className={`ml-1 inline-flex align-middle ${meta.icon} focus:outline-none focus-visible:ring-1 focus-visible:ring-amber-500/60 rounded`}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" strokeLinejoin="round" /><path d="M12 9v4M12 17h.01" strokeLinecap="round" /></svg>
     </button>
+  )
+}
+
+// Small triangle-warning glyph.
+function WarnGlyph({ className }) {
+  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={className}><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" strokeLinejoin="round" /><path d="M12 9v4M12 17h.01" strokeLinecap="round" /></svg>
+}
+
+// Leaderboard header control: ⚠ badge (total flagged) that reveals a per-tier
+// breakdown on hover/focus; clicking a tier filters the table to that band.
+// Active state highlighted; re-click or "Clear" resets. CSS hover/focus-within
+// keeps it keyboard- and touch-reachable.
+function DeadheadFilterMenu({ counts, active, onPick }) {
+  const total = counts.all
+  const activeMeta = active && active !== 'all' ? DEADHEAD_TIERS[active] : null
+  const rowCls = (on) => `w-full flex items-center gap-2 text-[11px] px-2 py-1.5 rounded-md text-left transition-colors ${on ? 'bg-amber-100 dark:bg-amber-500/20 text-amber-800 dark:text-amber-200 font-semibold' : 'text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5'}`
+  return (
+    <div className="relative group">
+      <button type="button" disabled={total === 0 && !active} aria-haspopup="true" aria-expanded={!!active} aria-label="Filter deadhead lanes by tier" title="Deadhead lanes by tier"
+        className={`inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+          active
+            ? 'bg-amber-500 text-slate-900 border-amber-500'
+            : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent'
+        }`}>
+        <WarnGlyph className="w-3.5 h-3.5" />
+        {total > 0 && <span>{total}</span>}
+        {activeMeta && <span className={`w-2 h-2 rounded-full ${activeMeta.dot}`} />}
+      </button>
+      {total > 0 && (
+        <div className="absolute right-0 top-[calc(100%+4px)] z-30 w-52 rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-[#12132e] shadow-lg p-1.5 hidden group-hover:block group-focus-within:block">
+          <p className="px-2 pt-0.5 pb-1.5 text-[10px] uppercase tracking-wide font-semibold text-gray-400 dark:text-slate-500">Deadhead · empty mi/load</p>
+          <button onClick={() => onPick(active === 'all' ? null : 'all')} className={rowCls(active === 'all')}>
+            <WarnGlyph className="w-3 h-3 text-amber-500 dark:text-amber-400" /> All flagged (≥250) <span className="ml-auto font-mono">{counts.all}</span>
+          </button>
+          {DEADHEAD_TIER_ORDER.map(t => (
+            <button key={t} onClick={() => onPick(active === t ? null : t)} className={rowCls(active === t)}>
+              <span className={`w-2 h-2 rounded-full ${DEADHEAD_TIERS[t].dot}`} /> {DEADHEAD_TIERS[t].range} <span className="ml-auto font-mono">{counts[t]}</span>
+            </button>
+          ))}
+          {active && (
+            <button onClick={() => onPick(null)} className="w-full text-[11px] px-2 py-1.5 mt-0.5 rounded-md text-left text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 border-t border-gray-100 dark:border-white/5">Clear filter</button>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -672,11 +728,25 @@ export default function LaneFlowMap() {
     })
   }, [agg, sortKey, sortDir])
 
-  // "Deadhead only" leaderboard filter — narrows to lanes carrying the warning
-  // icon. Composes with sort (applied to `ranked`) and the basis toggle.
-  const [deadheadOnly, setDeadheadOnly] = useState(false)
-  const deadheadCount = useMemo(() => ranked.filter(deadheadFlagged).length, [ranked])
-  const displayedLanes = useMemo(() => (deadheadOnly ? ranked.filter(deadheadFlagged) : ranked), [ranked, deadheadOnly])
+  // Tier-aware deadhead leaderboard filter: null = all lanes, 'all' = every
+  // flagged lane, or a specific tier. Composes with sort (applied to `ranked`)
+  // and the basis toggle.
+  const [deadheadFilter, setDeadheadFilter] = useState(null)
+  const deadheadCounts = useMemo(() => {
+    const c = { yellow: 0, orange: 0, red: 0 }
+    for (const l of ranked) { const t = deadheadTier(l); if (t) c[t]++ }
+    return { ...c, all: c.yellow + c.orange + c.red }
+  }, [ranked])
+  const displayedLanes = useMemo(() => {
+    if (!deadheadFilter) return ranked
+    if (deadheadFilter === 'all') return ranked.filter(l => deadheadTier(l))
+    return ranked.filter(l => deadheadTier(l) === deadheadFilter)
+  }, [ranked, deadheadFilter])
+  // A stale tier selection (e.g. after a period change clears that tier) falls
+  // back to showing all, so the table never looks empty for no reason.
+  useEffect(() => {
+    if (deadheadFilter && deadheadCounts.all === 0) setDeadheadFilter(null)
+  }, [deadheadFilter, deadheadCounts.all])
 
   // Best/worst loads by both metrics simultaneously, independent of leaderboard toggle
   const allLoadMetrics = useMemo(() => (agg ? pickAllLoadMetrics(agg.loads, EXCLUDED_STATUSES) : null), [agg])
@@ -1047,22 +1117,7 @@ export default function LaneFlowMap() {
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-white/5">
               <p className="text-xs font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">Lane leaderboard</p>
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setDeadheadOnly(v => !v)}
-                  disabled={!deadheadOnly && deadheadCount === 0}
-                  aria-pressed={deadheadOnly}
-                  aria-label="Show deadhead lanes only"
-                  title="Show deadhead lanes only"
-                  className={`inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
-                    deadheadOnly
-                      ? 'bg-amber-500 text-slate-900 border-amber-500'
-                      : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent'
-                  }`}
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" strokeLinejoin="round" /><path d="M12 9v4M12 17h.01" strokeLinecap="round" /></svg>
-                  {deadheadCount > 0 && <span>{deadheadCount}</span>}
-                </button>
+                <DeadheadFilterMenu counts={deadheadCounts} active={deadheadFilter} onPick={setDeadheadFilter} />
                 <Pills value={sortKey} onChange={setSortFromPills} options={LEADERBOARD_SORTS.map(s => [s.key, s.label])} title="Revenue — total $ on the lane · $/mile — revenue ÷ miles · Loads — how many loads ran this origin→destination. Or click a column header to sort (toggles asc/desc). Tied lanes sorted by revenue." />
               </div>
             </div>

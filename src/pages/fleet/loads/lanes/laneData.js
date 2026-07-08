@@ -184,8 +184,9 @@ export function aggregateLanes(allLegs, phaseOrView, { byType = false } = {}) {
     // activity was a confirmed TONU has null rate/miles → renders "—".
     lane.rpm = lane.realMiles > 0 ? lane.realRevenue / lane.realMiles : null
     lane.avgMiles = lane.realLegs > 0 ? lane.realMiles / lane.realLegs : null
-    // Deadhead share of the lane's real (TONU-excluded) miles — for the
-    // empty-miles warning icon. Null when there are no real miles.
+    // Deadhead signals over the lane's real (TONU-excluded) legs: average empty
+    // miles per load (the tiering signal) + empty share of total (tooltip only).
+    lane.avgEmptyPerLoad = lane.realLegs > 0 ? lane.realEmptyMiles / lane.realLegs : null
     lane.deadheadPct = lane.realMiles > 0 ? lane.realEmptyMiles / lane.realMiles : null
   }
 
