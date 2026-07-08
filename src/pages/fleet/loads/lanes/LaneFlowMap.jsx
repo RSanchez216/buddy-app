@@ -97,7 +97,7 @@ function DeadheadFilterMenu({ counts, active, onPick }) {
         {activeMeta && <span className={`w-2 h-2 rounded-full ${activeMeta.dot}`} />}
       </button>
       {total > 0 && (
-        <div className="absolute right-0 top-[calc(100%+4px)] z-30 w-52 rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-[#12132e] shadow-lg p-1.5 hidden group-hover:block group-focus-within:block">
+        <div className="absolute left-0 top-[calc(100%+4px)] z-30 w-52 rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-[#12132e] shadow-lg p-1.5 hidden group-hover:block group-focus-within:block">
           <p className="px-2 pt-0.5 pb-1.5 text-[10px] uppercase tracking-wide font-semibold text-gray-400 dark:text-slate-500">Deadhead · empty mi/load</p>
           <button onClick={() => onPick(active === 'all' ? null : 'all')} className={rowCls(active === 'all')}>
             <WarnGlyph className="w-3 h-3 text-amber-500 dark:text-amber-400" /> All flagged (≥250) <span className="ml-auto font-mono">{counts.all}</span>
