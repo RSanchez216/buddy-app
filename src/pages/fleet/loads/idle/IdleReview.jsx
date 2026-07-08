@@ -11,7 +11,7 @@ import { fmtMoney } from '../spotlight/spotlightShared'
 // resolve when sold / terminated / back to work. Read/writes go through the
 // idle_subjects / set_idle_reason / resolve_idle RPCs (already deployed).
 
-const UNIT_REASONS = ['Available', 'Pending - TBD', 'Parked', 'Dedicated lane site', 'Under repairs', 'Under claim', 'For sale', 'Lease to Purchase', 'Other']
+const UNIT_REASONS = ['Available', 'Driver is off', 'Pending - TBD', 'Parked', 'Dedicated lane site', 'Under repairs', 'Under claim', 'For sale', 'Lease to Purchase', 'Other']
 const DRIVER_REASONS = ['Ready', 'Waiting for load', 'Pending - TBD', 'Vacation', 'Home-time', 'Under repairs', 'Health', 'Family', 'Other']
 
 // "Available" reasons: the subject is fine / ready — not a problem — so they
