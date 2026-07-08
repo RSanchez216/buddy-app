@@ -11,14 +11,21 @@ import { fmtMoney } from '../spotlight/spotlightShared'
 // resolve when sold / terminated / back to work. Read/writes go through the
 // idle_subjects / set_idle_reason / resolve_idle RPCs (already deployed).
 
-const UNIT_REASONS = ['Pending - TBD', 'Parked', 'Dedicated lane site', 'Under repairs', 'Under claim', 'For sale', 'Lease to Purchase', 'Other']
-const DRIVER_REASONS = ['Pending - TBD', 'Vacation', 'Home-time', 'Under repairs', 'Health', 'Family', 'Other']
+const UNIT_REASONS = ['Available', 'Pending - TBD', 'Parked', 'Dedicated lane site', 'Under repairs', 'Under claim', 'For sale', 'Lease to Purchase', 'Other']
+const DRIVER_REASONS = ['Ready', 'Waiting for load', 'Pending - TBD', 'Vacation', 'Home-time', 'Under repairs', 'Health', 'Family', 'Other']
+
+// "Available" reasons: the subject is fine / ready — not a problem — so they
+// mark green, above the severity ladder. Small named set, easy to extend.
+const AVAILABLE_REASONS = new Set(['Ready', 'Waiting for load', 'Available'])
 
 // Benign reasons read as expected idle (low severity); the rest are
 // "attention" (amber). Anything uncategorized, or idle 14+ days, escalates red.
 const BENIGN = new Set(['Vacation', 'Parked', 'Dedicated lane site', 'For sale'])
 
 function severity(row) {
+  // Available/ready reasons are green regardless of idle age — they signal the
+  // subject is fine, not idle-with-a-problem.
+  if (row.reason && AVAILABLE_REASONS.has(row.reason)) return 'available'
   const chronic = (row.days_idle ?? 0) >= 14
   // A driver holding no company-owned equipment ($0 run-rate) is low severity
   // — listed for the revenue gap, but no company cost. Chronic idle still
@@ -29,11 +36,12 @@ function severity(row) {
   if (BENIGN.has(row.reason)) return 'low'
   return 'amber'
 }
-const SEV_RANK = { red: 0, amber: 1, low: 2 }
+const SEV_RANK = { red: 0, amber: 1, low: 2, available: 3 }
 const SEV_DOT = {
   red: 'bg-red-500',
   amber: 'bg-amber-500',
   low: 'bg-teal-500',
+  available: 'bg-green-500',
 }
 
 const CAP = 10
@@ -437,21 +445,31 @@ function IdleSection({ title, kind, rows, reasons, resolvedView, reviewFilter, f
 
   const [sort, setSort] = useState({ key: 'days', dir: 'desc' })
   const [expanded, setExpanded] = useState(false)
+  const [reasonFilter, setReasonFilter] = useState('all') // 'all' | '__none__' | a reason
+
+  // Per-section reason filter — scoped to this section's reason set, plus All
+  // and Not-set. Client-side; ANDs with the view/review/finance filters (which
+  // already narrowed `rows`).
+  const filtered = useMemo(() => {
+    if (reasonFilter === 'all') return rows
+    if (reasonFilter === '__none__') return rows.filter(r => !r.reason)
+    return rows.filter(r => r.reason === reasonFilter)
+  }, [rows, reasonFilter])
 
   const sorted = useMemo(() => {
     // Reviewed view: stalest review first (last_reviewed_at ascending) so the
     // ones most due for a refresh sit at the top.
     if (reviewFilter === 'reviewed') {
       const ts = r => (r.last_reviewed_at ? new Date(r.last_reviewed_at).getTime() : Infinity)
-      return [...rows].sort((a, b) => ts(a) - ts(b))
+      return [...filtered].sort((a, b) => ts(a) - ts(b))
     }
     // Vendor-lease view: costliest idle lease first — surface the biggest bleed.
     if (financeFilter === 'lease') {
-      return [...rows].sort((a, b) => (Number(b.monthly_cost) || 0) - (Number(a.monthly_cost) || 0))
+      return [...filtered].sort((a, b) => (Number(b.monthly_cost) || 0) - (Number(a.monthly_cost) || 0))
     }
     const col = columns.find(c => c.key === sort.key) || columns[1]
     const mul = sort.dir === 'asc' ? 1 : -1
-    return [...rows].sort((a, b) => {
+    return [...filtered].sort((a, b) => {
       if (col.type === 'text') return col.get(a).localeCompare(col.get(b)) * mul
       // severity + num both numeric; null/NaN treated as lowest.
       const av = col.get(a), bv = col.get(b)
@@ -460,7 +478,7 @@ function IdleSection({ title, kind, rows, reasons, resolvedView, reviewFilter, f
       if (na === nb) return 0
       return (na - nb) * mul
     })
-  }, [rows, sort, columns, reviewFilter, financeFilter])
+  }, [filtered, sort, columns, reviewFilter, financeFilter])
 
   const visible = expanded ? sorted : sorted.slice(0, CAP)
 
@@ -476,14 +494,27 @@ function IdleSection({ title, kind, rows, reasons, resolvedView, reviewFilter, f
 
   return (
     <div className={`${S.card} overflow-hidden`}>
-      <div className="px-4 py-3 border-b border-gray-100 dark:border-white/5 flex items-center justify-between gap-2">
-        <h2 className="text-sm font-bold text-gray-900 dark:text-white">{title} <span className="font-normal text-gray-500 dark:text-slate-500">({rows.length})</span></h2>
-        {rows.length > 0 && <CopyAllButton rows={rows} />}
+      <div className="px-4 py-3 border-b border-gray-100 dark:border-white/5 flex items-center justify-between gap-2 flex-wrap">
+        <h2 className="text-sm font-bold text-gray-900 dark:text-white">{title} <span className="font-normal text-gray-500 dark:text-slate-500">({reasonFilter === 'all' ? rows.length : `${filtered.length} of ${rows.length}`})</span></h2>
+        {rows.length > 0 && (
+          <div className="flex items-center gap-2">
+            <select value={reasonFilter} onChange={e => setReasonFilter(e.target.value)}
+              className="text-[11px] bg-white dark:bg-slate-800/80 border border-gray-200 dark:border-slate-700 rounded-md px-1.5 py-1 text-gray-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-orange-500/40"
+              title="Filter this section by reason">
+              <option value="all">All reasons</option>
+              <option value="__none__">Not set</option>
+              {reasons.map(rs => <option key={rs} value={rs}>{rs}</option>)}
+            </select>
+            <CopyAllButton rows={filtered} />
+          </div>
+        )}
       </div>
       {rows.length === 0 ? (
         <div className="p-8 text-center text-sm text-gray-400 dark:text-slate-500">
           {resolvedView ? 'No resolved cases in this group.' : 'None idle — everything in this group is moving.'}
         </div>
+      ) : filtered.length === 0 ? (
+        <div className="p-8 text-center text-sm text-gray-400 dark:text-slate-500">No rows match this reason.</div>
       ) : (
         <>
           <div className="overflow-x-auto">
@@ -648,7 +679,7 @@ function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onR
     <div className="flex items-start gap-3">
       <div className="flex flex-col gap-0.5 shrink-0">
         <div className="flex items-center gap-1.5">
-          <span className={`w-2 h-2 rounded-full shrink-0 ${SEV_DOT[sev]}`} title={sev === 'red' ? 'Needs attention' : sev === 'amber' ? 'Watch' : 'Expected idle'} />
+          <span className={`w-2 h-2 rounded-full shrink-0 ${SEV_DOT[sev]}`} title={sev === 'red' ? 'Needs attention' : sev === 'amber' ? 'Watch' : sev === 'available' ? 'Available' : 'Expected idle'} />
           <select
             value={row.reason || ''}
             onChange={e => onSetReason(row, e.target.value, row.reason_note || '')}
