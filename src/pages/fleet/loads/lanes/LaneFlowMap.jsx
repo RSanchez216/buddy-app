@@ -34,6 +34,32 @@ const LEADERBOARD_COL_VAL = {
   avgMiles: l => l.avgMiles,
 }
 
+// Deadhead (empty-miles) warning thresholds — flag a lane running a high empty
+// share, but only once the absolute empty miles matter (skip tiny lanes).
+const DEADHEAD_PCT_WARN = 0.25 // ≥ 25% of miles empty
+const DEADHEAD_MIN_MI = 150    // and at least this many empty miles
+function deadheadFlagged(lane) {
+  return lane?.deadheadPct != null && lane.deadheadPct >= DEADHEAD_PCT_WARN && (lane.realEmptyMiles || 0) >= DEADHEAD_MIN_MI
+}
+
+// Amber ⚠ shown on deadhead-heavy leaderboard lanes; hover/focus reveals the
+// empty-miles breakdown. Informational — a flagged lane can be legitimate.
+// Renders nothing below threshold (keeps the table clean). TONU already excluded
+// upstream (deadhead sums use the lane's real miles).
+function DeadheadIcon({ lane }) {
+  if (!deadheadFlagged(lane)) return null
+  const empty = Math.round(lane.realEmptyMiles || 0)
+  const loaded = Math.round(lane.realLoadedMiles || 0)
+  const pct = Math.round((lane.deadheadPct || 0) * 100)
+  const label = `Deadhead: ${empty.toLocaleString()} empty mi · ${pct}% of total (${loaded.toLocaleString()} loaded + ${empty.toLocaleString()} empty)`
+  return (
+    <button type="button" aria-label={label} title={label} onClick={e => e.stopPropagation()}
+      className="ml-1 inline-flex align-middle text-amber-500 dark:text-amber-400 focus:outline-none focus-visible:ring-1 focus-visible:ring-amber-500/60 rounded">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" strokeLinejoin="round" /><path d="M12 9v4M12 17h.01" strokeLinecap="round" /></svg>
+    </button>
+  )
+}
+
 // Clickable, sortable column header with an active-sort arrow.
 function SortTh({ label, colKey, sortKey, sortDir, onSort, className }) {
   const active = sortKey === colKey
@@ -1046,7 +1072,7 @@ export default function LaneFlowMap() {
                         className={`${S.tableRow} cursor-pointer ${selectedKey === lane.key ? 'bg-orange-50 dark:bg-orange-500/10' : ''}`}>
                         <td className="px-3 py-2">
                           <p className="font-medium text-gray-900 dark:text-slate-200 leading-tight">{lane.origin}</p>
-                          <p className="text-gray-400 dark:text-slate-500 leading-tight">→ {lane.destination}{!lane.geocoded && <span className="ml-1 text-amber-600 dark:text-amber-400" title="This lane couldn't be geocoded, so it isn't drawn on the map.">⌀ off-map</span>}</p>
+                          <p className="text-gray-400 dark:text-slate-500 leading-tight">→ {lane.destination}{!lane.geocoded && <span className="ml-1 text-amber-600 dark:text-amber-400" title="This lane couldn't be geocoded, so it isn't drawn on the map.">⌀ off-map</span>}<DeadheadIcon lane={lane} /></p>
                           {lane.trailerType && <p className="mt-1 leading-none"><TypeBadge type={lane.trailerType} color={typeColorFor(lane.trailerType)} /></p>}
                           {phaseBreakdown && (
                             <p className="mt-1 text-[10px] text-gray-500 dark:text-slate-400 flex flex-wrap gap-1">

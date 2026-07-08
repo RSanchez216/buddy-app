@@ -156,13 +156,17 @@ export function aggregateLanes(allLegs, phaseOrView, { byType = false } = {}) {
         key, origin, destination, oCoord, dCoord,
         geocoded: !!(oCoord && dCoord),
         loads: 0, revenue: 0, miles: 0, legs: [],
-        realRevenue: 0, realMiles: 0, realLegs: 0,
+        realRevenue: 0, realMiles: 0, realLegs: 0, realEmptyMiles: 0, realLoadedMiles: 0,
         ...(byType ? { trailerType: type } : {}),
       }
       byLane.set(key, lane)
     }
     lane.loads++; lane.revenue += revenue; lane.miles += miles
-    if (real) { lane.realRevenue += revenue; lane.realMiles += miles; lane.realLegs++ }
+    if (real) {
+      lane.realRevenue += revenue; lane.realMiles += miles; lane.realLegs++
+      lane.realEmptyMiles += Number(leg.leg_empty_miles) || 0
+      lane.realLoadedMiles += Number(leg.leg_loaded_miles) || 0
+    }
     lane.legs.push(leg)
     if (lane.geocoded) geocodedLegs++
 
@@ -180,6 +184,9 @@ export function aggregateLanes(allLegs, phaseOrView, { byType = false } = {}) {
     // activity was a confirmed TONU has null rate/miles → renders "—".
     lane.rpm = lane.realMiles > 0 ? lane.realRevenue / lane.realMiles : null
     lane.avgMiles = lane.realLegs > 0 ? lane.realMiles / lane.realLegs : null
+    // Deadhead share of the lane's real (TONU-excluded) miles — for the
+    // empty-miles warning icon. Null when there are no real miles.
+    lane.deadheadPct = lane.realMiles > 0 ? lane.realEmptyMiles / lane.realMiles : null
   }
 
   if (byType) {
