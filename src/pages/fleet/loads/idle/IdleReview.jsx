@@ -104,11 +104,44 @@ function SubjectLink({ row }) {
   )
 }
 
+// Financing sub-line for truck/trailer rows. Leases are the priority — they
+// run 3–4× the loans, so an idle lease is the expensive bleed and gets an amber
+// accent pill + key glyph. Loans get a muted pill with payoff status. Owned
+// (incl. sold/totaled units the RPC downgrades to 'owned') render nothing.
+function FinanceBadge({ row }) {
+  const t = row.finance_type
+  if (t === 'lease') {
+    return (
+      <div className="mt-1">
+        <span
+          title={row.finance_party ? `Vendor lease — ${row.finance_party}` : 'Vendor lease'}
+          className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-100 dark:bg-amber-500/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-300/70 dark:ring-amber-500/30"
+        >
+          <svg viewBox="0 0 24 24" fill="currentColor" className="w-3 h-3 shrink-0"><path d="M7 14a4 4 0 1 1 3.874-5H22v3h-2v2h-2v-2h-2.126A4 4 0 0 1 7 14Zm-1.5-4.5a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" /></svg>
+          Lease{row.finance_party ? ` · ${row.finance_party}` : ''}
+        </span>
+      </div>
+    )
+  }
+  if (t === 'loan') {
+    const status = row.loan_status === 'paid_off' ? 'Paid off' : 'Active'
+    return (
+      <div className="mt-1">
+        <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md bg-gray-100 dark:bg-slate-700/40 text-gray-500 dark:text-slate-400">
+          {row.finance_party ? `${row.finance_party} · ${status}` : status}
+        </span>
+      </div>
+    )
+  }
+  return null
+}
+
 export default function IdleReview() {
   const [rows, setRows] = useState(null)
   const [error, setError] = useState(null)
   const [view, setView] = useState('active') // 'active' | 'resolved'
   const [reviewFilter, setReviewFilter] = useState('all') // 'all' | 'reviewed' | 'needs' | 'pending' — separate axis
+  const [financeFilter, setFinanceFilter] = useState('all') // 'all' | 'lease' | 'loan' | 'owned' — orthogonal axis (trucks/trailers)
 
   async function load() {
     setError(null)
@@ -140,13 +173,16 @@ export default function IdleReview() {
   // "Reviewed" = has a last_reviewed_at. Client-side, instant, no refetch.
   const viewGroups = useMemo(() => {
     const base = view === 'resolved' ? resolvedRows : activeRows
-    const list = reviewFilter === 'all'
+    let list = reviewFilter === 'all'
       ? base
       : reviewFilter === 'pending'
         ? base.filter(r => r.reason === 'Pending - TBD')
         : base.filter(r => (reviewFilter === 'reviewed' ? !!r.last_reviewed_at : !r.last_reviewed_at))
+    // Financing axis ANDs on top. Driver rows carry a null finance_type, so
+    // they fall out of lease/loan/owned automatically and only show under All.
+    if (financeFilter !== 'all') list = list.filter(r => r.finance_type === financeFilter)
     return groupOf(list)
-  }, [view, activeRows, resolvedRows, reviewFilter])
+  }, [view, activeRows, resolvedRows, reviewFilter, financeFilter])
 
   // Counts for the review-filter chips, within the current Active/Resolved view.
   const reviewCounts = useMemo(() => {
@@ -154,6 +190,16 @@ export default function IdleReview() {
     const reviewed = base.filter(r => !!r.last_reviewed_at).length
     const pending = base.filter(r => r.reason === 'Pending - TBD').length
     return { all: base.length, reviewed, needs: base.length - reviewed, pending }
+  }, [view, activeRows, resolvedRows])
+
+  // Counts for the Financing chips, within the current Active/Resolved view.
+  const financeCounts = useMemo(() => {
+    const base = view === 'resolved' ? resolvedRows : activeRows
+    return {
+      lease: base.filter(r => r.finance_type === 'lease').length,
+      loan: base.filter(r => r.finance_type === 'loan').length,
+      owned: base.filter(r => r.finance_type === 'owned').length,
+    }
   }, [view, activeRows, resolvedRows])
 
   const sumCost = (list) => list.reduce((s, r) => s + (Number(r.monthly_cost) || 0), 0)
@@ -235,6 +281,15 @@ export default function IdleReview() {
             <button key={k} onClick={() => setReviewFilter(k)} className={`px-3 py-1.5 whitespace-nowrap ${reviewFilter === k ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5'}`}>{lbl}</button>
           ))}
         </div>
+        {/* Financing — orthogonal axis (equipment only). Labeled to set it apart. */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">Financing</span>
+          <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-slate-700 text-xs w-fit">
+            {[['all', 'All'], ['lease', `Vendor lease (${financeCounts.lease})`], ['loan', `On loan (${financeCounts.loan})`], ['owned', `Owned (${financeCounts.owned})`]].map(([k, lbl]) => (
+              <button key={k} onClick={() => setFinanceFilter(k)} className={`px-3 py-1.5 whitespace-nowrap ${financeFilter === k ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5'}`}>{lbl}</button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {error && <div className={S.errorBox}>Couldn't load idle data: {error}</div>}
@@ -243,9 +298,9 @@ export default function IdleReview() {
         <div className={`${S.card} p-12 text-center text-sm text-gray-500 dark:text-slate-500 animate-pulse`}>Finding idle subjects…</div>
       ) : (
         <>
-          <IdleSection title="Trucks" kind="unit" rows={viewGroups.truck} reasons={UNIT_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} />
-          <IdleSection title="Trailers" kind="unit" rows={viewGroups.trailer} reasons={UNIT_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} />
-          <IdleSection title="Drivers" kind="driver" rows={viewGroups.driver} reasons={DRIVER_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} />
+          <IdleSection title="Trucks" kind="unit" rows={viewGroups.truck} reasons={UNIT_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} />
+          <IdleSection title="Trailers" kind="unit" rows={viewGroups.trailer} reasons={UNIT_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} />
+          <IdleSection title="Drivers" kind="driver" rows={viewGroups.driver} reasons={DRIVER_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} />
         </>
       )}
     </div>
@@ -270,7 +325,7 @@ function SummaryCard({ label, count, sub, loading, tip }) {
   )
 }
 
-function IdleSection({ title, kind, rows, reasons, resolvedView, reviewFilter, onSetReason, onResolve, onReopen }) {
+function IdleSection({ title, kind, rows, reasons, resolvedView, reviewFilter, financeFilter, onSetReason, onResolve, onReopen }) {
   const columns = kind === 'unit' ? UNIT_COLUMNS : DRIVER_COLUMNS
 
   const [sort, setSort] = useState({ key: 'days', dir: 'desc' })
@@ -283,6 +338,10 @@ function IdleSection({ title, kind, rows, reasons, resolvedView, reviewFilter, o
       const ts = r => (r.last_reviewed_at ? new Date(r.last_reviewed_at).getTime() : Infinity)
       return [...rows].sort((a, b) => ts(a) - ts(b))
     }
+    // Vendor-lease view: costliest idle lease first — surface the biggest bleed.
+    if (financeFilter === 'lease') {
+      return [...rows].sort((a, b) => (Number(b.monthly_cost) || 0) - (Number(a.monthly_cost) || 0))
+    }
     const col = columns.find(c => c.key === sort.key) || columns[1]
     const mul = sort.dir === 'asc' ? 1 : -1
     return [...rows].sort((a, b) => {
@@ -294,9 +353,14 @@ function IdleSection({ title, kind, rows, reasons, resolvedView, reviewFilter, o
       if (na === nb) return 0
       return (na - nb) * mul
     })
-  }, [rows, sort, columns, reviewFilter])
+  }, [rows, sort, columns, reviewFilter, financeFilter])
 
   const visible = expanded ? sorted : sorted.slice(0, CAP)
+
+  // Under an active Financing filter, a section with no matching rows collapses
+  // entirely (header included) — e.g. Drivers under "Vendor lease". The default
+  // "None idle" placeholder stays for the unfiltered/review-filtered views.
+  if (rows.length === 0 && financeFilter !== 'all') return null
 
   function toggleSort(key) {
     setSort(s => (s.key === key ? { key, dir: s.dir === 'desc' ? 'asc' : 'desc' } : { key, dir: 'desc' }))
@@ -509,11 +573,12 @@ function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onR
   if (kind === 'unit') {
     return (
       <tr className={S.tableRow}>
-        <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>
+        <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200 align-top`}>
           <span className="inline-flex items-center gap-1.5">
             <SubjectLink row={row} />
             {row.label && <CopyButton value={row.label.replace(/^#/, '').trim()} label="Copy unit number" />}
           </span>
+          <FinanceBadge row={row} />
         </td>
         <td className={`${S.td} text-right font-mono ${daysCls}`}>{fmtDays(row.days_idle)}</td>
         <td className={`${S.td} text-gray-600 dark:text-slate-400 text-xs`}>
