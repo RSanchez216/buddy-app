@@ -11,8 +11,8 @@ import { fmtMoney } from '../spotlight/spotlightShared'
 // resolve when sold / terminated / back to work. Read/writes go through the
 // idle_subjects / set_idle_reason / resolve_idle RPCs (already deployed).
 
-const UNIT_REASONS = ['Parked', 'Dedicated lane site', 'Under repairs', 'Under claim', 'For sale', 'Lease to Purchase', 'Other']
-const DRIVER_REASONS = ['Vacation', 'Home-time', 'Under repairs', 'Health', 'Family', 'Other']
+const UNIT_REASONS = ['Pending - TBD', 'Parked', 'Dedicated lane site', 'Under repairs', 'Under claim', 'For sale', 'Lease to Purchase', 'Other']
+const DRIVER_REASONS = ['Pending - TBD', 'Vacation', 'Home-time', 'Under repairs', 'Health', 'Family', 'Other']
 
 // Benign reasons read as expected idle (low severity); the rest are
 // "attention" (amber). Anything uncategorized, or idle 14+ days, escalates red.
@@ -108,7 +108,7 @@ export default function IdleReview() {
   const [rows, setRows] = useState(null)
   const [error, setError] = useState(null)
   const [view, setView] = useState('active') // 'active' | 'resolved'
-  const [reviewFilter, setReviewFilter] = useState('all') // 'all' | 'reviewed' | 'needs' — separate axis
+  const [reviewFilter, setReviewFilter] = useState('all') // 'all' | 'reviewed' | 'needs' | 'pending' — separate axis
 
   async function load() {
     setError(null)
@@ -142,7 +142,9 @@ export default function IdleReview() {
     const base = view === 'resolved' ? resolvedRows : activeRows
     const list = reviewFilter === 'all'
       ? base
-      : base.filter(r => (reviewFilter === 'reviewed' ? !!r.last_reviewed_at : !r.last_reviewed_at))
+      : reviewFilter === 'pending'
+        ? base.filter(r => r.reason === 'Pending - TBD')
+        : base.filter(r => (reviewFilter === 'reviewed' ? !!r.last_reviewed_at : !r.last_reviewed_at))
     return groupOf(list)
   }, [view, activeRows, resolvedRows, reviewFilter])
 
@@ -150,7 +152,8 @@ export default function IdleReview() {
   const reviewCounts = useMemo(() => {
     const base = view === 'resolved' ? resolvedRows : activeRows
     const reviewed = base.filter(r => !!r.last_reviewed_at).length
-    return { all: base.length, reviewed, needs: base.length - reviewed }
+    const pending = base.filter(r => r.reason === 'Pending - TBD').length
+    return { all: base.length, reviewed, needs: base.length - reviewed, pending }
   }, [view, activeRows, resolvedRows])
 
   const sumCost = (list) => list.reduce((s, r) => s + (Number(r.monthly_cost) || 0), 0)
@@ -228,7 +231,7 @@ export default function IdleReview() {
           ))}
         </div>
         <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-slate-700 text-xs w-fit">
-          {[['all', `All (${reviewCounts.all})`], ['reviewed', `Reviewed (${reviewCounts.reviewed})`], ['needs', `Needs review (${reviewCounts.needs})`]].map(([k, lbl]) => (
+          {[['all', `All (${reviewCounts.all})`], ['reviewed', `Reviewed (${reviewCounts.reviewed})`], ['needs', `Needs review (${reviewCounts.needs})`], ['pending', `Pending (${reviewCounts.pending})`]].map(([k, lbl]) => (
             <button key={k} onClick={() => setReviewFilter(k)} className={`px-3 py-1.5 whitespace-nowrap ${reviewFilter === k ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5'}`}>{lbl}</button>
           ))}
         </div>
