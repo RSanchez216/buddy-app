@@ -506,7 +506,12 @@ function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onR
   if (kind === 'unit') {
     return (
       <tr className={S.tableRow}>
-        <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}><SubjectLink row={row} /></td>
+        <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>
+          <span className="inline-flex items-center gap-1.5">
+            <SubjectLink row={row} />
+            {row.label && <CopyButton value={row.label.replace(/^#/, '').trim()} label="Copy unit number" />}
+          </span>
+        </td>
         <td className={`${S.td} text-right font-mono ${daysCls}`}>{fmtDays(row.days_idle)}</td>
         <td className={`${S.td} text-gray-600 dark:text-slate-400 text-xs`}>
           {row.extra ? (
