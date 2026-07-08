@@ -123,22 +123,32 @@ function fmtShort(s) {
 const money0 = (v) => `$${Math.round(Number(v) || 0).toLocaleString('en-US')}`
 const unitTag = (u) => `#${String(u || '').replace(/^#/, '').trim()}`
 
-// One monospace Telegram stanza per subject. Per-row copy emits one; copy-all
-// joins the section. Wrapped in a ``` code block so Telegram keeps alignment.
-function telegramStanza(row) {
-  const sub = row.detail || row.extra
-  const head = `🚛 ${row.label || '—'}${sub ? ` · ${sub}` : ''} · idle ${row.days_idle ?? 0}d`
-  const last = row.last_load_number
-    ? `   Last: ${unitTag(row.last_load_number)}  ${row.last_lane || ''} · del ${fmtShort(row.last_delivery)}${row.last_dispatcher ? ` · disp ${row.last_dispatcher}` : ''}`
-    : '   Last: no prior load'
-  const bd = []
-  if (row.truck_unit) bd.push(`truck ${unitTag(row.truck_unit)} ${money0(row.truck_holding)}`)
-  if (row.trailer_unit) bd.push(`trailer ${unitTag(row.trailer_unit)} ${money0(row.trailer_holding)}`)
-  const hold = `   Holding: ${money0(row.holding_prorated)}${bd.length ? `  (${bd.join(' + ')})` : ''}`
-  return [head, last, hold, `   Reason: ${row.reason || '—'}`].join('\n')
+// Unit ownership/finance label (Telegram + reference). Mirrors FinanceBadge.
+function ownershipLabel(row) {
+  if (row.finance_type === 'lease') return row.finance_party ? `Lease · ${row.finance_party}` : 'Lease'
+  if (row.finance_type === 'loan') return row.finance_party ? `Loan · ${row.finance_party}` : 'Loan'
+  return 'Owned'
 }
-const telegramWrap = (t) => '```\n' + t + '\n```'
-const telegramBlock = (rows) => telegramWrap((rows || []).map(telegramStanza).join('\n\n'))
+
+// One Telegram stanza per subject: *bold name*, then type/ownership · idle, the
+// last load + lane + delivery on one line, dispatcher, and reason. No code
+// fence (so *bold* renders); holding omitted for now. Missing fields are
+// dropped cleanly (no empty Last:/Disp: lines).
+function telegramStanza(row) {
+  const isUnit = row.subject_type !== 'driver'
+  const typeLabel = isUnit ? ownershipLabel(row) : (row.detail || '')
+  const lines = [`*${row.label || '—'}*`, [typeLabel, `idle ${row.days_idle ?? 0}d`].filter(Boolean).join(' · ')]
+  if (row.last_load_number) {
+    let l = `Last: ${unitTag(row.last_load_number)}`
+    if (row.last_lane) l += ` ${row.last_lane}`
+    if (row.last_delivery) l += ` · del ${fmtShort(row.last_delivery)}`
+    lines.push(l)
+  }
+  if (row.last_dispatcher) lines.push(`Disp: ${row.last_dispatcher}`)
+  lines.push(`Reason: ${row.reason || '—'}`)
+  return lines.join('\n')
+}
+const telegramBlock = (rows) => (rows || []).map(telegramStanza).join('\n\n')
 
 // Excel: Drivers / Trucks / Trailers sheets from the currently-displayed groups
 // (respects the active view + review/finance filters — the caller passes them).
@@ -173,12 +183,12 @@ async function exportIdleExcel(groups) {
 
 // Muted "last load that used this subject" line.
 function LastLoadLine({ row }) {
-  if (!row.last_load_number) return <div className="text-[10px] text-gray-400 dark:text-slate-500 mt-0.5">No prior load</div>
+  if (!row.last_load_number) return <div className="text-[10px] text-gray-600 dark:text-slate-400 mt-0.5">No prior load</div>
   const parts = [unitTag(row.last_load_number)]
   if (row.last_lane) parts.push(row.last_lane)
   if (row.last_delivery) parts.push(fmtShort(row.last_delivery))
   if (row.last_dispatcher) parts.push(row.last_dispatcher)
-  return <div className="text-[10px] text-gray-400 dark:text-slate-500 mt-0.5 max-w-[22rem] truncate" title={`Last: ${parts.join(' · ')}`}>Last: {parts.join(' · ')}</div>
+  return <div className="text-[10px] text-gray-600 dark:text-slate-400 mt-0.5 max-w-[22rem] truncate" title={`Last: ${parts.join(' · ')}`}>Last: {parts.join(' · ')}</div>
 }
 
 // Exact prorated holding for the idle span, with the truck/trailer split and the
@@ -192,9 +202,9 @@ function HoldingCell({ row }) {
   if (row.trailer_unit) bd.push(`trailer ${part(row.trailer_unit, row.trailer_holding)}`)
   return (
     <div className="text-right">
-      <div className="font-mono text-amber-600 dark:text-amber-400 whitespace-nowrap">{held > 0 ? money0(held) : '$0'} <span className="text-[9px] font-sans text-gray-400 dark:text-slate-500">held · {row.days_idle ?? 0}d</span></div>
-      <div className="text-[10px] font-mono text-gray-400 dark:text-slate-500 whitespace-nowrap">{monthly > 0 ? `${money0(monthly)}/mo` : '$0 (owned)'}</div>
-      {bd.length > 0 && <div className="text-[10px] text-gray-400 dark:text-slate-500">{bd.join(' + ')}</div>}
+      <div className="font-mono text-amber-600 dark:text-amber-400 whitespace-nowrap">{held > 0 ? money0(held) : '$0'} <span className="text-[9px] font-sans text-gray-600 dark:text-slate-400">held · {row.days_idle ?? 0}d</span></div>
+      <div className="text-[10px] font-mono text-gray-600 dark:text-slate-400 whitespace-nowrap">{monthly > 0 ? `${money0(monthly)}/mo` : '$0 (owned)'}</div>
+      {bd.length > 0 && <div className="text-[10px] text-gray-600 dark:text-slate-400">{bd.join(' + ')}</div>}
     </div>
   )
 }
@@ -212,7 +222,7 @@ function CopyAllButton({ rows }) {
     } catch { /* clipboard unavailable */ }
   }
   return (
-    <button onClick={copy} className="text-[11px] font-medium px-2 py-1 rounded-md border border-gray-300 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5" title="Copy this section as a Telegram code block">
+    <button onClick={copy} className="text-[11px] font-medium px-2 py-1 rounded-md border border-gray-300 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5" title="Copy this section for Telegram">
       {done ? '✓ Copied' : '✈ Telegram'}
     </button>
   )
@@ -651,7 +661,7 @@ function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onR
 
   // Auto-captured on every save — shown muted under the reason control.
   const reviewLine = (
-    <div className="text-[10px] text-gray-400 dark:text-slate-500 mt-0.5">
+    <div className="text-[10px] text-gray-600 dark:text-slate-400 mt-0.5">
       {row.last_reviewed_at ? `Reviewed ${fmtReviewed(row.last_reviewed_at)}` : 'Not reviewed'}
     </div>
   )
@@ -699,7 +709,7 @@ function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onR
   const actionsCell = (
     <td className={`${S.td} text-right whitespace-nowrap align-top`}>
       <span className="inline-flex items-center gap-2">
-        <CopyButton value={telegramWrap(telegramStanza(row))} label="Copy this row for Telegram" />
+        <CopyButton value={telegramStanza(row)} label="Copy this row for Telegram" />
         {resolvedView ? (
           <>
             <span className="text-[11px] text-gray-500 dark:text-slate-500">Resolved {fmtDateOnly(row.resolved_on)}</span>
