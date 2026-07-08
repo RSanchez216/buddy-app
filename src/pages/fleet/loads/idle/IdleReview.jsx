@@ -639,21 +639,12 @@ function NoteButton({ row, onSetReason }) {
 // Always-visible note text, filling the open space to the right of the reason
 // control. Short notes render in full; long ones clamp to ~3 lines with a small
 // click "more/less" toggle (no hover-only reveal). Nothing renders when empty.
+// Full note, wrapped within a bounded width (an auto-layout table won't wrap it
+// otherwise — it would stretch the row). No truncation: the row grows in height.
 function InlineNote({ text }) {
-  const [expanded, setExpanded] = useState(false)
-  const long = text.length > 140
   return (
-    <div className="min-w-0 text-xs leading-snug text-left text-gray-500 dark:text-slate-400 break-words">
-      <span className={!expanded && long ? 'line-clamp-3' : ''}>{text}</span>
-      {long && (
-        <button
-          type="button"
-          onClick={() => setExpanded(v => !v)}
-          className="ml-1 align-baseline text-[11px] font-medium text-orange-600 dark:text-orange-400 hover:underline"
-        >
-          {expanded ? 'less' : 'more'}
-        </button>
-      )}
+    <div className="min-w-0 max-w-[22rem] text-xs leading-snug text-left text-gray-500 dark:text-slate-400 whitespace-normal break-words [overflow-wrap:anywhere]">
+      {text}
     </div>
   )
 }
