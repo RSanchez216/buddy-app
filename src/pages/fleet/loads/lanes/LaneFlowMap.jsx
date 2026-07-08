@@ -5,6 +5,7 @@ import { useAuth } from '../../../../contexts/AuthContext'
 import { supabase } from '../../../../lib/supabase'
 import { S } from '../../../../lib/styles'
 import LoadsFreshness from '../../../../components/LoadsFreshness'
+import CopyButton from '../../../../components/CopyButton'
 import LaneHeatCanvas from './LaneHeatCanvas'
 import LaneMapCanvas from './LaneMapCanvas'
 import GeoHeatMap from './GeoHeatMap'
@@ -75,8 +76,9 @@ function LegRow({ leg, dateCol, rpmScale, showLane, showPhase, canEdit, onMilesS
   return (
     <li className="px-4 py-2.5 flex items-center justify-between gap-3 text-xs">
       <div className="min-w-0">
-        <p className="font-medium text-gray-900 dark:text-slate-200 truncate">
+        <p className="font-medium text-gray-900 dark:text-slate-200 truncate inline-flex items-center gap-0.5">
           #{leg.load_number || leg.load_id}
+          {leg.load_number && <CopyButton value={String(leg.load_number).trim()} label="Copy load number" />}
           {showPhase && leg.load_phase && <span className={`ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full ${
             leg.load_phase === 'booked' ? 'bg-cyan-50 dark:bg-cyan-500/10 text-cyan-700 dark:text-cyan-400' :
             leg.load_phase === 'in_transit' ? 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400' :
@@ -125,15 +127,16 @@ function MilesEditor({ legId, loaded, empty, total, canEdit, onSaved }) {
   async function openEditor() {
     const r = btnRef.current?.getBoundingClientRect()
     setPos(r ? { top: r.bottom + 4, left: Math.min(r.left, window.innerWidth - 236) } : { top: 80, left: 80 })
-    setNote(''); setMiles(total != null ? String(total) : ''); setHasOverride(false)
+    setNote(''); setMiles(''); setHasOverride(false) // blank input; current total shown as placeholder
     // Fetch the override state so "Clear override" only shows when one exists.
     const { data } = await supabase.from('load_legs').select('total_miles_override, miles_override_note').eq('id', legId).maybeSingle()
     if (data?.total_miles_override != null) setHasOverride(true)
     if (data?.miles_override_note) setNote(data.miles_override_note)
   }
+  const validMiles = miles.trim() !== '' && Number.isFinite(Number(miles)) && Number(miles) > 0
   async function save() {
+    if (!validMiles) return // guard against blank / 0 / negative no-op overrides
     const v = Number(miles)
-    if (!Number.isFinite(v) || v < 0) { toast.error('Enter valid miles'); return }
     setBusy(true)
     const { error } = await supabase.rpc('set_load_leg_miles', { p_leg_id: legId, p_miles: v, p_note: note.trim() || null })
     setBusy(false)
@@ -163,14 +166,16 @@ function MilesEditor({ legId, loaded, empty, total, canEdit, onSaved }) {
             </p>
             <label className="block text-[10px] uppercase tracking-wide font-semibold text-gray-400 dark:text-slate-500 mb-1">Corrected total miles</label>
             <input type="number" min="0" step="0.01" value={miles} onChange={e => setMiles(e.target.value)}
-              className="w-full text-xs rounded-md border border-gray-200 dark:border-slate-700 bg-white dark:bg-[#0d0d1f] px-2 py-1 text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-orange-500/40" />
+              placeholder={total != null ? String(total) : 'miles'}
+              className="w-full text-xs rounded-md border border-gray-200 dark:border-slate-700 bg-white dark:bg-[#0d0d1f] px-2 py-1 text-gray-900 dark:text-slate-100 placeholder:text-gray-400 dark:placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-orange-500/40" />
             {loaded != null && Number(loaded) > 0 && (
               <button type="button" onClick={() => setMiles(String(loaded))} className="mt-1.5 text-[11px] text-orange-600 dark:text-orange-400 hover:underline">Use loaded miles ({fmtNum(loaded)})</button>
             )}
+            {miles.trim() !== '' && !validMiles && <p className="mt-1 text-[10px] text-red-600 dark:text-red-400">Enter miles greater than 0</p>}
             <input value={note} onChange={e => setNote(e.target.value)} placeholder="note (optional)"
               className="w-full mt-2 text-[11px] rounded-md border border-gray-200 dark:border-slate-700 bg-white dark:bg-[#0d0d1f] px-2 py-1 text-gray-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-orange-500/40" />
             <div className="flex items-center gap-2 mt-2.5">
-              <button disabled={busy} onClick={save} className="text-[11px] px-2 py-1 rounded-md bg-orange-500 text-white font-medium hover:brightness-105 disabled:opacity-50">{busy ? '…' : 'Save'}</button>
+              <button disabled={busy || !validMiles} onClick={save} className="text-[11px] px-2 py-1 rounded-md bg-orange-500 text-white font-medium hover:brightness-105 disabled:opacity-50 disabled:cursor-not-allowed">{busy ? '…' : 'Save'}</button>
               {hasOverride && <button disabled={busy} onClick={clearOverride} className="text-[11px] px-2 py-1 rounded-md border border-gray-300 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-50">Clear override</button>}
               <button disabled={busy} onClick={close} className="text-[11px] px-2 py-1 rounded-md text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 ml-auto">Cancel</button>
             </div>
@@ -220,7 +225,10 @@ function MilesReviewBanner({ from, to, reloadKey, canEdit, onSaved }) {
           {rows.map(r => (
             <div key={r.leg_id} className="px-4 py-2 flex items-center gap-x-2 gap-y-1 flex-wrap text-xs">
               <span className="font-medium text-gray-900 dark:text-slate-200">{r.origin} → {r.destination}</span>
-              <span className="font-mono text-gray-500 dark:text-slate-400">#{r.load_number}</span>
+              <span className="inline-flex items-center gap-0.5">
+                <span className="font-mono text-gray-500 dark:text-slate-400">#{r.load_number}</span>
+                {r.load_number && <CopyButton value={String(r.load_number).trim()} label="Copy load number" />}
+              </span>
               <span className="text-gray-500 dark:text-slate-400">· {r.customer || '—'}</span>
               <span className="text-gray-500 dark:text-slate-400">· {r.driver_name || '—'}</span>
               <span className="font-mono text-gray-700 dark:text-slate-300">· {fmtMoney(r.revenue)}</span>
@@ -840,7 +848,7 @@ export default function LaneFlowMap() {
                     <p className={`text-lg font-bold font-mono leading-tight mt-0.5 ${cls}`}>{fmtMoney(load.revenue)}</p>
                     <p className="text-[11px] text-gray-500 dark:text-slate-400 truncate" title={`${load.origin} → ${load.destination}`}>{load.origin} → {load.destination}</p>
                     {load.trailer_type && <p className="mt-0.5"><TypeBadge type={load.trailer_type} color={typeColorFor(load.trailer_type)} /></p>}
-                    <p className="text-[10px] text-gray-400 dark:text-slate-500">#{load.load_number}</p>
+                    <p className="text-[10px] text-gray-400 dark:text-slate-500 inline-flex items-center gap-0.5">#{load.load_number}{load.load_number && <CopyButton value={String(load.load_number).trim()} label="Copy load number" />}</p>
                     <p className="text-[10px] text-gray-400 dark:text-slate-500 inline-flex items-center gap-1">
                       {fmtRpm(load.rpm)}/mi · {fmtNum(load.miles)} mi
                       <MilesEditor legId={load.leg_id} loaded={load.loaded_miles} empty={load.empty_miles} total={load.total_miles} canEdit={canEdit} onSaved={reloadLanes} />
@@ -863,7 +871,7 @@ export default function LaneFlowMap() {
                         <p className={`text-lg font-bold font-mono leading-tight mt-0.5 ${cls}`}>{fmtRpm(load.rpm)}/mi</p>
                         <p className="text-[11px] text-gray-500 dark:text-slate-400 truncate" title={`${load.origin} → ${load.destination}`}>{load.origin} → {load.destination}</p>
                         {load.trailer_type && <p className="mt-0.5"><TypeBadge type={load.trailer_type} color={typeColorFor(load.trailer_type)} /></p>}
-                        <p className="text-[10px] text-gray-400 dark:text-slate-500">#{load.load_number}</p>
+                        <p className="text-[10px] text-gray-400 dark:text-slate-500 inline-flex items-center gap-0.5">#{load.load_number}{load.load_number && <CopyButton value={String(load.load_number).trim()} label="Copy load number" />}</p>
                         <p className="text-[10px] text-gray-400 dark:text-slate-500 inline-flex items-center gap-1">
                           {fmtMoney(load.revenue)} · {fmtNum(load.miles)} mi
                           <MilesEditor legId={load.leg_id} loaded={load.loaded_miles} empty={load.empty_miles} total={load.total_miles} canEdit={canEdit} onSaved={reloadLanes} />
