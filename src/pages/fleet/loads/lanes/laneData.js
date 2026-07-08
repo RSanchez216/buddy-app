@@ -164,8 +164,15 @@ export function aggregateLanes(allLegs, phaseOrView, { byType = false } = {}) {
     lane.loads++; lane.revenue += revenue; lane.miles += miles
     if (real) {
       lane.realRevenue += revenue; lane.realMiles += miles; lane.realLegs++
-      lane.realEmptyMiles += Number(leg.leg_empty_miles) || 0
-      lane.realLoadedMiles += Number(leg.leg_loaded_miles) || 0
+      // Effective (override-aware) empty — the deadhead the system actually
+      // counts. `miles` is leg_total_miles = COALESCE(override, total), so a load
+      // corrected to loaded-only yields 0 empty; falls back to raw when total is
+      // missing. Same formula as the miles-review list + Miles & Performance.
+      const loaded = Number(leg.leg_loaded_miles) || 0
+      const rawEmpty = Number(leg.leg_empty_miles) || 0
+      const effTotal = miles > 0 ? miles : (loaded + rawEmpty)
+      lane.realEmptyMiles += Math.max(0, effTotal - loaded)
+      lane.realLoadedMiles += loaded
     }
     lane.legs.push(leg)
     if (lane.geocoded) geocodedLegs++
