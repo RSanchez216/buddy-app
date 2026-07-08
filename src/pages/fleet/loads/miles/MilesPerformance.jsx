@@ -67,6 +67,14 @@ function deadheadCls(pct) {
   if (p < 40) return 'text-orange-600 dark:text-orange-400'
   return 'text-red-600 dark:text-red-400'
 }
+// Bar fill by the same tiers as the text colors.
+function deadheadBarCls(pct) {
+  const p = (pct || 0) * 100
+  if (p < 15) return 'bg-emerald-500'
+  if (p < 25) return 'bg-yellow-400'
+  if (p < 40) return 'bg-orange-500'
+  return 'bg-red-500'
+}
 const fmtPct = (p) => (p == null ? '—' : `${(p * 100).toFixed(1)}%`)
 
 // ── aggregation ──────────────────────────────────────────────────────────────
@@ -119,7 +127,7 @@ export default function MilesPerformance() {
   const [timeframe, setTimeframe] = useState('month')
   const [range, setRange] = useState(() => periodOf(todayYmd(), 'month'))
   const [tab, setTab] = useState('driver')
-  const [sort, setSort] = useState({ key: 'empty', dir: 'desc' })
+  const [sort, setSort] = useState({ key: 'deadheadPct', dir: 'desc' }) // deadhead % is the point of the report
   const [expanded, setExpanded] = useState(() => new Set())
   const [loads, setLoads] = useState(null)
   const [priorLoads, setPriorLoads] = useState(null)
@@ -257,6 +265,9 @@ export default function MilesPerformance() {
             className={`px-3 py-1.5 font-medium transition-colors ${tab === t.key ? 'bg-orange-500 text-white' : 'text-gray-700 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5'}`}>{t.label}</button>
         ))}
       </div>
+
+      {/* Region deadhead bars — at-a-glance which regions run empty */}
+      {tab === 'region' && !loading && rows.length > 0 && <RegionDeadheadBars rows={rows} />}
 
       {/* Summary table + accordion */}
       <div className={`${S.card} overflow-hidden`}>
@@ -431,6 +442,31 @@ function Th({ label, k, sort, onSort, left }) {
     <th className={`${S.th} ${left ? '!px-3 text-left' : '!px-2 text-right'} cursor-pointer select-none hover:text-gray-700 dark:hover:text-slate-300`} onClick={() => onSort(k)}>
       <span className={`inline-flex items-center gap-0.5 ${left ? '' : 'justify-end'}`}>{label}{active && <span className="text-orange-500">{sort.dir === 'desc' ? '▾' : '▴'}</span>}</span>
     </th>
+  )
+}
+
+// Colored deadhead bars, one per region, high→low. Bar width is proportional
+// to the top region's % (so the worst reads full-width); tier-colored.
+function RegionDeadheadBars({ rows }) {
+  const sorted = [...rows].filter(r => r.deadheadPct != null).sort((a, b) => b.deadheadPct - a.deadheadPct)
+  if (!sorted.length) return null
+  const max = Math.max(...sorted.map(r => r.deadheadPct)) || 1
+  return (
+    <div className={`${S.card} p-4`}>
+      <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Deadhead by region</h2>
+      <div className="space-y-2">
+        {sorted.map(r => (
+          <div key={r.key} className="flex items-center gap-3 text-xs">
+            <span className="w-28 shrink-0 truncate font-medium text-gray-700 dark:text-slate-300">{r.name}</span>
+            <div className="flex-1 h-4 rounded bg-gray-100 dark:bg-white/5 overflow-hidden">
+              <div className={`h-full rounded ${deadheadBarCls(r.deadheadPct)}`} style={{ width: `${Math.max(3, (r.deadheadPct / max) * 100)}%` }} />
+            </div>
+            <span className={`w-14 text-right font-mono font-semibold ${deadheadCls(r.deadheadPct)}`}>{fmtPct(r.deadheadPct)}</span>
+            <span className="w-12 text-right font-mono text-gray-400 dark:text-slate-500">({r.loads})</span>
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
 
