@@ -50,13 +50,13 @@ const UNIT_COLUMNS = [
   { key: 'label', label: 'Unit', type: 'text', get: r => r.label || '' },
   { key: 'days', label: 'Idle', type: 'num', align: 'right', get: r => r.days_idle },
   { key: 'extra', label: 'Assigned driver', type: 'text', get: r => r.extra || '' },
-  { key: 'cost', label: '$/mo', type: 'num', align: 'right', tip: COST_TIP, get: r => Number(r.monthly_cost) },
+  { key: 'cost', label: 'Holding', type: 'num', align: 'right', tip: COST_TIP, get: r => Number(r.holding_prorated) },
   { key: 'reason', label: 'Reason', type: 'severity', get: r => SEV_RANK[severity(r)] },
 ]
 const DRIVER_COLUMNS = [
   { key: 'label', label: 'Driver', type: 'text', get: r => r.label || '' },
   { key: 'days', label: 'Idle', type: 'num', align: 'right', get: r => r.days_idle },
-  { key: 'cost', label: 'Holding (cost)', type: 'num', align: 'right', tip: COST_TIP, get: r => Number(r.monthly_cost) },
+  { key: 'cost', label: 'Holding', type: 'num', align: 'right', tip: COST_TIP, get: r => Number(r.holding_prorated) },
   { key: 'reason', label: 'Reason', type: 'severity', get: r => SEV_RANK[severity(r)] },
 ]
 
@@ -101,6 +101,112 @@ function SubjectLink({ row }) {
     >
       {label}
     </Link>
+  )
+}
+
+// ── enriched-row helpers (last load, exact holding, Telegram, Excel) ─────────
+// Short "Jun 30" (no year), no UTC shift.
+function fmtShort(s) {
+  if (!s) return ''
+  const [y, m, d] = String(s).split('-').map(Number)
+  if (!y || !m || !d) return ''
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+const money0 = (v) => `$${Math.round(Number(v) || 0).toLocaleString('en-US')}`
+const unitTag = (u) => `#${String(u || '').replace(/^#/, '').trim()}`
+
+// One monospace Telegram stanza per subject. Per-row copy emits one; copy-all
+// joins the section. Wrapped in a ``` code block so Telegram keeps alignment.
+function telegramStanza(row) {
+  const sub = row.detail || row.extra
+  const head = `🚛 ${row.label || '—'}${sub ? ` · ${sub}` : ''} · idle ${row.days_idle ?? 0}d`
+  const last = row.last_load_number
+    ? `   Last: ${unitTag(row.last_load_number)}  ${row.last_lane || ''} · del ${fmtShort(row.last_delivery)}${row.last_dispatcher ? ` · disp ${row.last_dispatcher}` : ''}`
+    : '   Last: no prior load'
+  const bd = []
+  if (row.truck_unit) bd.push(`truck ${unitTag(row.truck_unit)} ${money0(row.truck_holding)}`)
+  if (row.trailer_unit) bd.push(`trailer ${unitTag(row.trailer_unit)} ${money0(row.trailer_holding)}`)
+  const hold = `   Holding: ${money0(row.holding_prorated)}${bd.length ? `  (${bd.join(' + ')})` : ''}`
+  return [head, last, hold, `   Reason: ${row.reason || '—'}`].join('\n')
+}
+const telegramWrap = (t) => '```\n' + t + '\n```'
+const telegramBlock = (rows) => telegramWrap((rows || []).map(telegramStanza).join('\n\n'))
+
+// Excel: Drivers / Trucks / Trailers sheets from the currently-displayed groups
+// (respects the active view + review/finance filters — the caller passes them).
+async function exportIdleExcel(groups) {
+  const mod = await import('xlsx')
+  const XLSX = mod && mod.utils ? mod : (mod.default ?? mod)
+  if (!XLSX?.utils) return
+  const num = (v) => Number(v) || 0
+  const mapRow = (r) => ({
+    'Unit / Driver': r.label || '', 'Type': r.detail || '', 'Idle days': r.days_idle ?? '',
+    'Last activity': r.last_activity || '', 'Last load #': r.last_load_number || '', 'Last lane': r.last_lane || '',
+    'Last delivery': r.last_delivery || '', 'Last dispatcher': r.last_dispatcher || '',
+    'Truck unit': r.truck_unit || '', 'Truck holding': num(r.truck_holding),
+    'Trailer unit': r.trailer_unit || '', 'Trailer holding': num(r.trailer_holding),
+    'Total holding': num(r.holding_prorated), 'Monthly cost': num(r.monthly_cost),
+    'Reason': r.reason || '', 'Note': r.reason_note || '',
+    'Reviewed': r.last_reviewed_at ? fmtReviewed(r.last_reviewed_at) : '', 'Resolved': r.resolved ? (r.resolved_on || 'yes') : '',
+  })
+  const costCols = ['J', 'L', 'M', 'N'] // truck/trailer/total holding + monthly
+  const wb = XLSX.utils.book_new()
+  for (const [name, list] of [['Drivers', groups.driver], ['Trucks', groups.truck], ['Trailers', groups.trailer]]) {
+    const ws = XLSX.utils.json_to_sheet((list || []).map(mapRow))
+    const rng = XLSX.utils.decode_range(ws['!ref'] || 'A1')
+    for (let R = 1; R <= rng.e.r; R++) for (const C of costCols) {
+      const cell = ws[`${C}${R + 1}`]; if (cell && typeof cell.v === 'number') cell.z = '$#,##0'
+    }
+    XLSX.utils.book_append_sheet(wb, ws, name)
+  }
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago' }).format(new Date())
+  XLSX.writeFile(wb, `idle-report-${today}.xlsx`)
+}
+
+// Muted "last load that used this subject" line.
+function LastLoadLine({ row }) {
+  if (!row.last_load_number) return <div className="text-[10px] text-gray-400 dark:text-slate-500 mt-0.5">No prior load</div>
+  const parts = [unitTag(row.last_load_number)]
+  if (row.last_lane) parts.push(row.last_lane)
+  if (row.last_delivery) parts.push(fmtShort(row.last_delivery))
+  if (row.last_dispatcher) parts.push(row.last_dispatcher)
+  return <div className="text-[10px] text-gray-400 dark:text-slate-500 mt-0.5 max-w-[22rem] truncate" title={`Last: ${parts.join(' · ')}`}>Last: {parts.join(' · ')}</div>
+}
+
+// Exact prorated holding for the idle span, with the truck/trailer split and the
+// monthly kept as a muted reference. Owned units read $0 (owned).
+function HoldingCell({ row }) {
+  const held = Number(row.holding_prorated) || 0
+  const monthly = Number(row.monthly_cost) || 0
+  const part = (u, v) => `${unitTag(u)} ${Number(v) > 0 ? money0(v) : '$0 (owned)'}`
+  const bd = []
+  if (row.truck_unit) bd.push(`truck ${part(row.truck_unit, row.truck_holding)}`)
+  if (row.trailer_unit) bd.push(`trailer ${part(row.trailer_unit, row.trailer_holding)}`)
+  return (
+    <div className="text-right">
+      <div className="font-mono text-amber-600 dark:text-amber-400 whitespace-nowrap">{held > 0 ? money0(held) : '$0'} <span className="text-[9px] font-sans text-gray-400 dark:text-slate-500">held · {row.days_idle ?? 0}d</span></div>
+      <div className="text-[10px] font-mono text-gray-400 dark:text-slate-500 whitespace-nowrap">{monthly > 0 ? `${money0(monthly)}/mo` : '$0 (owned)'}</div>
+      {bd.length > 0 && <div className="text-[10px] text-gray-400 dark:text-slate-500">{bd.join(' + ')}</div>}
+    </div>
+  )
+}
+
+// Per-section "Copy for Telegram" (copy-all) with non-blocking feedback.
+function CopyAllButton({ rows }) {
+  const [done, setDone] = useState(false)
+  const tref = useRef(null)
+  useEffect(() => () => { if (tref.current) clearTimeout(tref.current) }, [])
+  async function copy() {
+    if (!rows?.length) return
+    try {
+      await navigator.clipboard.writeText(telegramBlock(rows))
+      setDone(true); if (tref.current) clearTimeout(tref.current); tref.current = setTimeout(() => setDone(false), 1500)
+    } catch { /* clipboard unavailable */ }
+  }
+  return (
+    <button onClick={copy} className="text-[11px] font-medium px-2 py-1 rounded-md border border-gray-300 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5" title="Copy this section as a Telegram code block">
+      {done ? '✓ Copied' : '✈ Telegram'}
+    </button>
   )
 }
 
@@ -290,6 +396,7 @@ export default function IdleReview() {
             ))}
           </div>
         </div>
+        <button onClick={() => exportIdleExcel(viewGroups)} disabled={loading} className="ml-auto text-xs font-semibold px-3 py-1.5 rounded-lg border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-40" title="Export Drivers / Trucks / Trailers (current filters) to Excel">↓ Export Excel</button>
       </div>
 
       {error && <div className={S.errorBox}>Couldn't load idle data: {error}</div>}
@@ -369,8 +476,9 @@ function IdleSection({ title, kind, rows, reasons, resolvedView, reviewFilter, f
 
   return (
     <div className={`${S.card} overflow-hidden`}>
-      <div className="px-4 py-3 border-b border-gray-100 dark:border-white/5 flex items-baseline justify-between">
+      <div className="px-4 py-3 border-b border-gray-100 dark:border-white/5 flex items-center justify-between gap-2">
         <h2 className="text-sm font-bold text-gray-900 dark:text-white">{title} <span className="font-normal text-gray-500 dark:text-slate-500">({rows.length})</span></h2>
+        {rows.length > 0 && <CopyAllButton rows={rows} />}
       </div>
       {rows.length === 0 ? (
         <div className="p-8 text-center text-sm text-gray-400 dark:text-slate-500">
@@ -558,15 +666,18 @@ function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onR
   )
 
   const actionsCell = (
-    <td className={`${S.td} text-right whitespace-nowrap`}>
-      {resolvedView ? (
-        <span className="inline-flex items-center gap-2">
-          <span className="text-[11px] text-gray-500 dark:text-slate-500">Resolved {fmtDateOnly(row.resolved_on)}</span>
-          <button onClick={() => onReopen(row)} className={ROW_BTN} title="Retract this resolve — returns the case to Active for review">Reopen</button>
-        </span>
-      ) : (
-        <button onClick={() => onResolve(row)} className={ROW_BTN} title="Close this idle spell (sold, terminated, or back to work). Reversible from the Resolved tab.">Resolve</button>
-      )}
+    <td className={`${S.td} text-right whitespace-nowrap align-top`}>
+      <span className="inline-flex items-center gap-2">
+        <CopyButton value={telegramWrap(telegramStanza(row))} label="Copy this row for Telegram" />
+        {resolvedView ? (
+          <>
+            <span className="text-[11px] text-gray-500 dark:text-slate-500">Resolved {fmtDateOnly(row.resolved_on)}</span>
+            <button onClick={() => onReopen(row)} className={ROW_BTN} title="Retract this resolve — returns the case to Active for review">Reopen</button>
+          </>
+        ) : (
+          <button onClick={() => onResolve(row)} className={ROW_BTN} title="Close this idle spell (sold, terminated, or back to work). Reversible from the Resolved tab.">Resolve</button>
+        )}
+      </span>
     </td>
   )
 
@@ -579,9 +690,10 @@ function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onR
             {row.label && <CopyButton value={row.label.replace(/^#/, '').trim()} label="Copy unit number" />}
           </span>
           <FinanceBadge row={row} />
+          <LastLoadLine row={row} />
         </td>
-        <td className={`${S.td} text-right font-mono ${daysCls}`}>{fmtDays(row.days_idle)}</td>
-        <td className={`${S.td} text-gray-600 dark:text-slate-400 text-xs`}>
+        <td className={`${S.td} text-right font-mono align-top ${daysCls}`}>{fmtDays(row.days_idle)}</td>
+        <td className={`${S.td} text-gray-600 dark:text-slate-400 text-xs align-top`}>
           {row.extra ? (
             <span className="inline-flex items-center gap-1.5">
               {row.extra}
@@ -589,8 +701,8 @@ function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onR
             </span>
           ) : '—'}
         </td>
-        <td className={`${S.td} text-right font-mono text-amber-600 dark:text-amber-400`}>{Number(row.monthly_cost) > 0 ? `${fmtMoney(row.monthly_cost)}` : '$0'}</td>
-        <td className={S.td}>{reasonCell}</td>
+        <td className={`${S.td} align-top`}><HoldingCell row={row} /></td>
+        <td className={`${S.td} align-top`}>{reasonCell}</td>
         {actionsCell}
       </tr>
     )
@@ -598,19 +710,17 @@ function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onR
   // driver
   return (
     <tr className={S.tableRow}>
-      <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>
+      <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200 align-top`}>
         <span className="inline-flex items-center gap-1.5">
           <SubjectLink row={row} />
           {row.label && <CopyButton value={row.label.trim()} label="Copy driver name" />}
           {row.detail && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-slate-700/40 text-gray-600 dark:text-slate-400">{row.detail}</span>}
         </span>
+        <LastLoadLine row={row} />
       </td>
-      <td className={`${S.td} text-right font-mono ${daysCls}`}>{fmtDays(row.days_idle)}</td>
-      <td className={`${S.td} text-right`}>
-        <span className={`font-mono ${Number(row.monthly_cost) > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-gray-400 dark:text-slate-600'}`}>{Number(row.monthly_cost) > 0 ? `${fmtMoney(row.monthly_cost)}/mo` : '$0'}</span>
-        {row.extra && <div className="text-[11px] text-gray-500 dark:text-slate-500">{row.extra}</div>}
-      </td>
-      <td className={S.td}>{reasonCell}</td>
+      <td className={`${S.td} text-right font-mono align-top ${daysCls}`}>{fmtDays(row.days_idle)}</td>
+      <td className={`${S.td} align-top`}><HoldingCell row={row} /></td>
+      <td className={`${S.td} align-top`}>{reasonCell}</td>
       {actionsCell}
     </tr>
   )
