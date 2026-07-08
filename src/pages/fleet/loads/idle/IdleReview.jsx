@@ -130,22 +130,26 @@ function ownershipLabel(row) {
   return 'Owned'
 }
 
-// One Telegram stanza per subject: *bold name*, then type/ownership · idle, the
-// last load + lane + delivery on one line, dispatcher, and reason. No code
-// fence (so *bold* renders); holding omitted for now. Missing fields are
-// dropped cleanly (no empty Last:/Disp: lines).
+// One Telegram stanza per subject. Bold via **…** (Telegram's client syntax,
+// renders on paste); no code fence so bold + emoji show. Holding omitted for
+// now. Missing fields drop their line cleanly.
+const SUBJECT_LABEL = { driver: 'Driver', truck: 'Truck', trailer: 'Trailer' }
 function telegramStanza(row) {
   const isUnit = row.subject_type !== 'driver'
+  const section = SUBJECT_LABEL[row.subject_type] || 'Subject'
   const typeLabel = isUnit ? ownershipLabel(row) : (row.detail || '')
-  const lines = [`*${row.label || '—'}*`, [typeLabel, `idle ${row.days_idle ?? 0}d`].filter(Boolean).join(' · ')]
+  const lines = [
+    `🚛 ${section}: **${row.label || '—'}**`,
+    `${typeLabel ? `${typeLabel} · ` : ''}**idle ${row.days_idle ?? 0}d** ‼️`,
+  ]
   if (row.last_load_number) {
-    let l = `Last: ${unitTag(row.last_load_number)}`
+    let l = `Last Load : ${unitTag(row.last_load_number)}`
     if (row.last_lane) l += ` ${row.last_lane}`
-    if (row.last_delivery) l += ` · del ${fmtShort(row.last_delivery)}`
+    if (row.last_delivery) l += ` · del **${fmtShort(row.last_delivery)}**`
     lines.push(l)
   }
   if (row.last_dispatcher) lines.push(`Disp: ${row.last_dispatcher}`)
-  lines.push(`Reason: ${row.reason || '—'}`)
+  lines.push(`Reason: ${row.reason || '❓'}`)
   return lines.join('\n')
 }
 const telegramBlock = (rows) => (rows || []).map(telegramStanza).join('\n\n')
