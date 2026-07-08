@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useToast } from '../../../../contexts/ToastContext'
 import { useAuth } from '../../../../contexts/AuthContext'
 import { supabase } from '../../../../lib/supabase'
@@ -24,6 +25,23 @@ const LEADERBOARD_SORTS = [
   { key: 'rpm', label: '$/mile', fn: (a, b) => (b.rpm ?? -1) - (a.rpm ?? -1) },
   { key: 'loads', label: 'Loads', fn: (a, b) => b.loads - a.loads || b.revenue - a.revenue },
 ]
+// Sort-value accessor per leaderboard column (for the clickable header sort).
+const LEADERBOARD_COL_VAL = {
+  loads: l => l.loads,
+  revenue: l => l.revenue,
+  rpm: l => l.rpm,
+  avgMiles: l => l.avgMiles,
+}
+
+// Clickable, sortable column header with an active-sort arrow.
+function SortTh({ label, colKey, sortKey, sortDir, onSort, className }) {
+  const active = sortKey === colKey
+  return (
+    <th className={`${className} cursor-pointer select-none hover:text-gray-700 dark:hover:text-slate-300`} onClick={() => onSort(colKey)} title="Click to sort">
+      <span className="inline-flex items-center gap-0.5 justify-end">{label}{active && <span className="text-orange-500">{sortDir === 'desc' ? '▾' : '▴'}</span>}</span>
+    </th>
+  )
+}
 
 // options: [key, label, disabled?] — disabled keeps the pill visible so the
 // toolbar has the same shape in every view; it just can't be picked here.
@@ -51,7 +69,7 @@ function TypeBadge({ type, color }) {
 
 // One load-leg line item — shared by the "Loads on this lane" card (arc
 // click) and the "Loads in this area" card (heat-spot click).
-function LegRow({ leg, dateCol, rpmScale, showLane, showPhase }) {
+function LegRow({ leg, dateCol, rpmScale, showLane, showPhase, canEdit, onMilesSaved }) {
   const legRpm = leg.leg_total_miles > 0 ? leg.leg_revenue / leg.leg_total_miles : null
   const phaseLabels = { booked: 'Booked', in_transit: 'In transit', delivered: 'Delivered' }
   return (
@@ -79,9 +97,140 @@ function LegRow({ leg, dateCol, rpmScale, showLane, showPhase }) {
         <p className="font-mono text-[11px]" style={{ color: rpmScale ? rpmScale.color(legRpm) : undefined }}>
           {legRpm != null ? `${fmtRpm(legRpm)}/mi` : '—'}
         </p>
-        <p className="font-mono text-gray-400 dark:text-slate-500">{fmtNum(leg.leg_total_miles)} mi</p>
+        <p className="font-mono text-gray-400 dark:text-slate-500 inline-flex items-center gap-1 justify-end">
+          {fmtNum(leg.leg_total_miles)} mi
+          <MilesEditor legId={leg.leg_id} loaded={leg.leg_loaded_miles} empty={leg.leg_empty_miles} total={leg.leg_total_miles} canEdit={canEdit} onSaved={onMilesSaved} />
+        </p>
       </div>
     </li>
+  )
+}
+
+// Inline miles editor — a pencil + non-blocking popover to correct a leg's
+// total miles (override flows through leg_total_miles → $/mi, avg mi, cards,
+// leaderboard on refetch). Renders nothing without canEdit or a leg_id (e.g. a
+// multi-leg load, which the single-leg override can't cleanly target).
+function MilesEditor({ legId, loaded, empty, total, canEdit, onSaved }) {
+  const toast = useToast()
+  const btnRef = useRef(null)
+  const [pos, setPos] = useState(null) // fixed anchor → escapes scroll-container clipping
+  const [miles, setMiles] = useState('')
+  const [note, setNote] = useState('')
+  const [hasOverride, setHasOverride] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const open = pos !== null
+  if (!canEdit || !legId) return null
+
+  function close() { setPos(null); setBusy(false) }
+  async function openEditor() {
+    const r = btnRef.current?.getBoundingClientRect()
+    setPos(r ? { top: r.bottom + 4, left: Math.min(r.left, window.innerWidth - 236) } : { top: 80, left: 80 })
+    setNote(''); setMiles(total != null ? String(total) : ''); setHasOverride(false)
+    // Fetch the override state so "Clear override" only shows when one exists.
+    const { data } = await supabase.from('load_legs').select('total_miles_override, miles_override_note').eq('id', legId).maybeSingle()
+    if (data?.total_miles_override != null) setHasOverride(true)
+    if (data?.miles_override_note) setNote(data.miles_override_note)
+  }
+  async function save() {
+    const v = Number(miles)
+    if (!Number.isFinite(v) || v < 0) { toast.error('Enter valid miles'); return }
+    setBusy(true)
+    const { error } = await supabase.rpc('set_load_leg_miles', { p_leg_id: legId, p_miles: v, p_note: note.trim() || null })
+    setBusy(false)
+    if (error) { toast.error("Couldn't save miles", error); return }
+    close(); onSaved?.()
+  }
+  async function clearOverride() {
+    setBusy(true)
+    const { error } = await supabase.rpc('clear_load_leg_miles', { p_leg_id: legId })
+    setBusy(false)
+    if (error) { toast.error("Couldn't clear override", error); return }
+    close(); onSaved?.()
+  }
+
+  return (
+    <span className="inline-flex align-middle" onClick={e => e.stopPropagation()}>
+      <button ref={btnRef} type="button" onClick={() => (open ? close() : openEditor())} title="Edit miles" aria-label="Edit miles"
+        className="p-0.5 text-gray-300 dark:text-slate-600 hover:text-orange-500 dark:hover:text-orange-400 transition-colors">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5"><path d="M12 20h9" strokeLinecap="round" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" strokeLinecap="round" strokeLinejoin="round" /></svg>
+      </button>
+      {open && createPortal(
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => !busy && close()} />
+          <div style={{ position: 'fixed', top: pos.top, left: pos.left }} className="z-50 w-56 rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-[#12132e] shadow-lg p-3 text-left">
+            <p className="text-[11px] text-gray-500 dark:text-slate-400 mb-2">
+              Total {fmtNum(total)} · loaded {fmtNum(loaded)} · empty {fmtNum(empty)} mi
+            </p>
+            <label className="block text-[10px] uppercase tracking-wide font-semibold text-gray-400 dark:text-slate-500 mb-1">Corrected total miles</label>
+            <input type="number" min="0" step="0.01" value={miles} onChange={e => setMiles(e.target.value)}
+              className="w-full text-xs rounded-md border border-gray-200 dark:border-slate-700 bg-white dark:bg-[#0d0d1f] px-2 py-1 text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-orange-500/40" />
+            {loaded != null && Number(loaded) > 0 && (
+              <button type="button" onClick={() => setMiles(String(loaded))} className="mt-1.5 text-[11px] text-orange-600 dark:text-orange-400 hover:underline">Use loaded miles ({fmtNum(loaded)})</button>
+            )}
+            <input value={note} onChange={e => setNote(e.target.value)} placeholder="note (optional)"
+              className="w-full mt-2 text-[11px] rounded-md border border-gray-200 dark:border-slate-700 bg-white dark:bg-[#0d0d1f] px-2 py-1 text-gray-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-orange-500/40" />
+            <div className="flex items-center gap-2 mt-2.5">
+              <button disabled={busy} onClick={save} className="text-[11px] px-2 py-1 rounded-md bg-orange-500 text-white font-medium hover:brightness-105 disabled:opacity-50">{busy ? '…' : 'Save'}</button>
+              {hasOverride && <button disabled={busy} onClick={clearOverride} className="text-[11px] px-2 py-1 rounded-md border border-gray-300 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-50">Clear override</button>}
+              <button disabled={busy} onClick={close} className="text-[11px] px-2 py-1 rounded-md text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 ml-auto">Cancel</button>
+            </div>
+          </div>
+        </>,
+        document.body
+      )}
+    </span>
+  )
+}
+
+function ReasonBadge({ reason }) {
+  const map = {
+    missing: { label: 'No miles', cls: 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300' },
+    inflated: { label: 'Deadhead?', cls: 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300' },
+  }
+  const m = map[reason] || { label: reason || '—', cls: 'bg-gray-100 text-gray-600 dark:bg-slate-700/40 dark:text-slate-300' }
+  return <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full whitespace-nowrap ${m.cls}`}>{m.label}</span>
+}
+
+// Pinned "needs miles review" banner — real (non-TONU) loads with no RPM or
+// inflated deadhead for the current period, biggest revenue first (RPC order).
+// Self-clears as loads are overridden (RPC excludes them); hidden at zero.
+// Refetches on period change and after any miles edit (reloadKey bump).
+function MilesReviewBanner({ from, to, reloadKey, canEdit, onSaved }) {
+  const [rows, setRows] = useState(null)
+  const [open, setOpen] = useState(false)
+  useEffect(() => {
+    let stale = false
+    supabase.rpc('loads_needing_miles_review', { p_start: from, p_end: to })
+      .then(({ data, error }) => { if (!stale) setRows(error ? [] : (data || [])) })
+      .catch(() => { if (!stale) setRows([]) })
+    return () => { stale = true }
+  }, [from, to, reloadKey])
+  const count = rows?.length || 0
+  if (!rows || count === 0) return null
+  return (
+    <div className="rounded-2xl border border-amber-200 dark:border-amber-500/30 bg-amber-50/70 dark:bg-amber-500/[0.08] overflow-hidden">
+      <button onClick={() => setOpen(o => !o)} className="w-full flex items-center justify-between gap-3 px-4 py-2.5 text-left">
+        <span className="text-sm font-semibold text-amber-800 dark:text-amber-300">⚠ Miles review ({count})</span>
+        <span className="text-[11px] text-amber-700/80 dark:text-amber-300/70 inline-flex items-center gap-1">
+          {open ? 'Hide' : 'Real loads with missing or inflated miles — fix to correct $/mi'} <span>{open ? '▾' : '▸'}</span>
+        </span>
+      </button>
+      {open && (
+        <div className="divide-y divide-amber-200/60 dark:divide-amber-500/20 max-h-[320px] overflow-y-auto border-t border-amber-200/60 dark:border-amber-500/20">
+          {rows.map(r => (
+            <div key={r.leg_id} className="px-4 py-2 flex items-center gap-x-2 gap-y-1 flex-wrap text-xs">
+              <span className="font-medium text-gray-900 dark:text-slate-200">{r.origin} → {r.destination}</span>
+              <span className="font-mono text-gray-500 dark:text-slate-400">#{r.load_number}</span>
+              <span className="text-gray-500 dark:text-slate-400">· {r.customer || '—'}</span>
+              <span className="text-gray-500 dark:text-slate-400">· {r.driver_name || '—'}</span>
+              <span className="font-mono text-gray-700 dark:text-slate-300">· {fmtMoney(r.revenue)}</span>
+              <ReasonBadge reason={r.reason} />
+              <span className="ml-auto"><MilesEditor legId={r.leg_id} loaded={r.loaded_miles} empty={r.empty_miles} total={r.total_miles} canEdit={canEdit} onSaved={onSaved} /></span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -238,6 +387,15 @@ export default function LaneFlowMap() {
     if (m === 'lanes' && weight === 'rpm') setWeight('revenue')
   }
   const [sortKey, setSortKey] = useState('revenue')
+  const [sortDir, setSortDir] = useState('desc')
+  // Pills pick a metric (always descending); column headers toggle asc/desc.
+  const setSortFromPills = useCallback((key) => { setSortKey(key); setSortDir('desc') }, [])
+  const toggleColSort = useCallback((key) => {
+    setSortKey(prevKey => {
+      if (prevKey === key) { setSortDir(d => (d === 'desc' ? 'asc' : 'desc')); return key }
+      setSortDir('desc'); return key
+    })
+  }, [])
   const [dispatcherSearchOpen, setDispatcherSearchOpen] = useState(false)
   const [dispatcherSearchQuery, setDispatcherSearchQuery] = useState('')
   const dispatcherInputRef = useRef(null)
@@ -341,8 +499,23 @@ export default function LaneFlowMap() {
   const rpmScale = useMemo(() => (agg ? makeRpmScale(agg.lanes) : null), [agg])
   const widthFor = useMemo(() => (agg ? makeWidthScale(agg.lanes, weight === 'rpm' ? 'revenue' : weight) : null), [agg, weight])
 
-  const sortDef = LEADERBOARD_SORTS.find(s => s.key === sortKey) || LEADERBOARD_SORTS[0]
-  const ranked = useMemo(() => (agg ? [...agg.lanes].sort(sortDef.fn) : []), [agg, sortDef])
+  // Client-side leaderboard sort: current column + direction, nulls/— last,
+  // revenue as the tiebreak. Instant on the already-loaded lanes.
+  const ranked = useMemo(() => {
+    if (!agg) return []
+    const get = LEADERBOARD_COL_VAL[sortKey] || LEADERBOARD_COL_VAL.revenue
+    const dir = sortDir === 'asc' ? 1 : -1
+    return [...agg.lanes].sort((a, b) => {
+      const av = get(a), bv = get(b)
+      const an = av == null || !Number.isFinite(av)
+      const bn = bv == null || !Number.isFinite(bv)
+      if (an && bn) return b.revenue - a.revenue
+      if (an) return 1   // nulls always last, regardless of direction
+      if (bn) return -1
+      if (av === bv) return b.revenue - a.revenue
+      return (av - bv) * dir
+    })
+  }, [agg, sortKey, sortDir])
 
   // Best/worst loads by both metrics simultaneously, independent of leaderboard toggle
   const allLoadMetrics = useMemo(() => (agg ? pickAllLoadMetrics(agg.loads, EXCLUDED_STATUSES) : null), [agg])
@@ -564,6 +737,9 @@ export default function LaneFlowMap() {
           }).map(p => p === 'in_transit' ? 'In transit' : p.charAt(0).toUpperCase() + p.slice(1)).join(' + ')} · {formatRange(range.from, range.to)} · by {basis} date</p>
       </div>
 
+      {/* Miles review — pinned worklist of real loads with missing/inflated miles. */}
+      <MilesReviewBanner from={range.from} to={range.to} reloadKey={reloadKey} canEdit={canEdit} onSaved={reloadLanes} />
+
       {/* ── Map + leaderboard ── */}
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_400px]">
         {/* Map card */}
@@ -665,7 +841,10 @@ export default function LaneFlowMap() {
                     <p className="text-[11px] text-gray-500 dark:text-slate-400 truncate" title={`${load.origin} → ${load.destination}`}>{load.origin} → {load.destination}</p>
                     {load.trailer_type && <p className="mt-0.5"><TypeBadge type={load.trailer_type} color={typeColorFor(load.trailer_type)} /></p>}
                     <p className="text-[10px] text-gray-400 dark:text-slate-500">#{load.load_number}</p>
-                    <p className="text-[10px] text-gray-400 dark:text-slate-500">{fmtRpm(load.rpm)}/mi · {fmtNum(load.miles)} mi</p>
+                    <p className="text-[10px] text-gray-400 dark:text-slate-500 inline-flex items-center gap-1">
+                      {fmtRpm(load.rpm)}/mi · {fmtNum(load.miles)} mi
+                      <MilesEditor legId={load.leg_id} loaded={load.loaded_miles} empty={load.empty_miles} total={load.total_miles} canEdit={canEdit} onSaved={reloadLanes} />
+                    </p>
                     {lbl.startsWith('Worst') && <WorstRevenueNote load={load} canEdit={canEdit} onReviewed={reloadLanes} />}
                     <ExcludedTonuFootnote tonuLoads={tonuExcluded} />
                   </div>
@@ -685,7 +864,10 @@ export default function LaneFlowMap() {
                         <p className="text-[11px] text-gray-500 dark:text-slate-400 truncate" title={`${load.origin} → ${load.destination}`}>{load.origin} → {load.destination}</p>
                         {load.trailer_type && <p className="mt-0.5"><TypeBadge type={load.trailer_type} color={typeColorFor(load.trailer_type)} /></p>}
                         <p className="text-[10px] text-gray-400 dark:text-slate-500">#{load.load_number}</p>
-                        <p className="text-[10px] text-gray-400 dark:text-slate-500">{fmtMoney(load.revenue)} · {fmtNum(load.miles)} mi</p>
+                        <p className="text-[10px] text-gray-400 dark:text-slate-500 inline-flex items-center gap-1">
+                          {fmtMoney(load.revenue)} · {fmtNum(load.miles)} mi
+                          <MilesEditor legId={load.leg_id} loaded={load.loaded_miles} empty={load.empty_miles} total={load.total_miles} canEdit={canEdit} onSaved={reloadLanes} />
+                        </p>
                         {lbl.startsWith('Worst') && <WorstRpmCombineNote key={load.load_number} loadNumber={load.load_number} />}
                         <ExcludedTonuFootnote tonuLoads={tonuExcluded} />
                       </>
@@ -703,7 +885,7 @@ export default function LaneFlowMap() {
           <div className={`${S.card} overflow-hidden`}>
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-white/5">
               <p className="text-xs font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">Lane leaderboard</p>
-              <Pills value={sortKey} onChange={setSortKey} options={LEADERBOARD_SORTS.map(s => [s.key, s.label])} title="Revenue — total $ on the lane · $/mile — revenue ÷ miles · Loads — how many loads ran this origin→destination. Tied lanes sorted by revenue." />
+              <Pills value={sortKey} onChange={setSortFromPills} options={LEADERBOARD_SORTS.map(s => [s.key, s.label])} title="Revenue — total $ on the lane · $/mile — revenue ÷ miles · Loads — how many loads ran this origin→destination. Or click a column header to sort (toggles asc/desc). Tied lanes sorted by revenue." />
             </div>
             <div className="max-h-[460px] overflow-y-auto">
               {ranked.length === 0 ? (
@@ -713,10 +895,10 @@ export default function LaneFlowMap() {
                   <thead className={`${S.tableHead} sticky top-0 bg-white dark:bg-[#0d0d1f] z-10`}>
                     <tr>
                       <th className={`${S.th} !px-3`}>Lane</th>
-                      <th className={`${S.th} !px-2 text-right`}>Loads</th>
-                      <th className={`${S.th} !px-2 text-right`}>Revenue</th>
-                      <th className={`${S.th} !px-2 text-right`}>$/mi</th>
-                      <th className={`${S.th} !px-3 text-right`}>Avg mi</th>
+                      <SortTh label="Loads" colKey="loads" sortKey={sortKey} sortDir={sortDir} onSort={toggleColSort} className={`${S.th} !px-2 text-right`} />
+                      <SortTh label="Revenue" colKey="revenue" sortKey={sortKey} sortDir={sortDir} onSort={toggleColSort} className={`${S.th} !px-2 text-right`} />
+                      <SortTh label="$/mi" colKey="rpm" sortKey={sortKey} sortDir={sortDir} onSort={toggleColSort} className={`${S.th} !px-2 text-right`} />
+                      <SortTh label="Avg mi" colKey="avgMiles" sortKey={sortKey} sortDir={sortDir} onSort={toggleColSort} className={`${S.th} !px-3 text-right`} />
                     </tr>
                   </thead>
                   <tbody>
@@ -782,7 +964,7 @@ export default function LaneFlowMap() {
                   title="Clear selection and show the lane leaderboard">← Leaderboard</button>
               </div>
               <ul className="divide-y divide-gray-50 dark:divide-white/[0.03] max-h-72 overflow-y-auto">
-                {selectedLane.legs.map(leg => <LegRow key={leg.leg_id} leg={leg} dateCol={dateCol} rpmScale={rpmScale} showPhase={selectedPhases.size > 1} />)}
+                {selectedLane.legs.map(leg => <LegRow key={leg.leg_id} leg={leg} dateCol={dateCol} rpmScale={rpmScale} showPhase={selectedPhases.size > 1} canEdit={canEdit} onMilesSaved={reloadLanes} />)}
               </ul>
             </div>
           )}
@@ -801,7 +983,7 @@ export default function LaneFlowMap() {
                   title="Clear selection and show the lane leaderboard">← Leaderboard</button>
               </div>
               <ul className="divide-y divide-gray-50 dark:divide-white/[0.03] max-h-72 overflow-y-auto">
-                {selectedCell.legs.map(leg => <LegRow key={leg.leg_id} leg={leg} dateCol={dateCol} rpmScale={rpmScale} showLane showPhase={selectedPhases.size > 1} />)}
+                {selectedCell.legs.map(leg => <LegRow key={leg.leg_id} leg={leg} dateCol={dateCol} rpmScale={rpmScale} showLane showPhase={selectedPhases.size > 1} canEdit={canEdit} onMilesSaved={reloadLanes} />)}
               </ul>
             </div>
           )}

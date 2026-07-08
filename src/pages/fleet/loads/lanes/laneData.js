@@ -19,7 +19,7 @@ export async function fetchLaneLegs({ from, to, basis = 'delivery' }) {
   const out = []
   for (let page = 0; ; page++) {
     const { data, error } = await supabase.from('v_lane_geo')
-      .select('leg_id, load_id, load_number, status, is_tonu, is_projected, load_phase, pickup_date, delivery_date, origin, destination, leg_revenue, leg_total_miles, customer_name, dispatcher_id, dispatcher_name, driver_display, trailer_id, trailer_display, effective_trailer_id, effective_trailer_unit, effective_trailer_type, trailer_inferred, origin_lat, origin_lng, dest_lat, dest_lng')
+      .select('leg_id, load_id, load_number, status, is_tonu, is_projected, load_phase, pickup_date, delivery_date, origin, destination, leg_revenue, leg_total_miles, leg_loaded_miles, leg_empty_miles, customer_name, dispatcher_id, dispatcher_name, driver_display, trailer_id, trailer_display, effective_trailer_id, effective_trailer_unit, effective_trailer_type, trailer_inferred, origin_lat, origin_lng, dest_lat, dest_lng')
       .gte(dateCol, from).lte(dateCol, to)
       .order(dateCol, { ascending: true }).order('leg_id', { ascending: true })
       .range(page * 1000, page * 1000 + 999)
@@ -226,6 +226,12 @@ export function aggregateLanes(allLegs, phaseOrView, { byType = false } = {}) {
     // Lane = origin of first leg → destination of last leg (ordered by seq or appearance)
     origin: load.legs[0]?.origin || '',
     destination: load.legs[load.legs.length - 1]?.destination || '',
+    // Miles-editor targets a single leg. Expose leg_id only for single-leg loads
+    // (the common case); loaded/empty summed for the editor's context display.
+    leg_id: load.legs.length === 1 ? load.legs[0].leg_id : null,
+    loaded_miles: load.legs.reduce((s, l) => s + (Number(l.leg_loaded_miles) || 0), 0),
+    empty_miles: load.legs.reduce((s, l) => s + (Number(l.leg_empty_miles) || 0), 0),
+    total_miles: load.miles,
   }))
 
   // Confirmed-TONU loads in scope — drives the "+N TONU excluded" footnote.
