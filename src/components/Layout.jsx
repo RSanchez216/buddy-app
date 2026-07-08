@@ -163,7 +163,7 @@ export default function Layout() {
   const visibleCounts = {
     today: ['/command-center', '/rig', '/fleet/profitability/boardroom', '/fleet/profitability/lanes', '/cash-flow/lifeline'].filter(r => accessibleRoutes.has(r)).length,
     money: ['/cash-flow/payment-calendar', '/financial-controls/debt-schedule', '/financial-controls/driver-purchases'].filter(r => accessibleRoutes.has(r)).length,
-    profitability: ['/fleet/profitability', '/fleet/profitability/spotlight', '/fleet/profitability/contribution', '/fleet/profitability/idle'].filter(r => accessibleRoutes.has(r)).length,
+    profitability: ['/fleet/profitability', '/fleet/profitability/spotlight', '/fleet/profitability/contribution', '/fleet/profitability/idle', '/fleet/profitability/miles-performance'].filter(r => accessibleRoutes.has(r)).length,
     fleet: ['/fleet/trucks', '/fleet/trailers', '/fleet/drivers', '/fleet/cost', '/fleet/loads/import', '/fleet/settlements/import', '/fleet/combined-loads'].filter(r => accessibleRoutes.has(r)).length,
     payables: ['/dashboard', '/vendors', '/invoices', '/transactions', '/reports'].filter(r => accessibleRoutes.has(r)).length,
   }
@@ -215,6 +215,7 @@ export default function Layout() {
             <NavItem to="/fleet/profitability/spotlight" label="Driver Spotlight" icon={Icons.driver} onClick={close} visible={accessibleRoutes.has('/fleet/profitability/spotlight')} />
             <NavItem to="/fleet/profitability/contribution" label="Contribution" icon={Icons.report} onClick={close} visible={accessibleRoutes.has('/fleet/profitability/contribution')} />
             <NavItem to="/fleet/profitability/idle" label="Idle review" icon={Icons.cost} onClick={close} visible={accessibleRoutes.has('/fleet/profitability/idle')} />
+            <NavItem to="/fleet/profitability/miles-performance" label="Miles & Performance" icon={Icons.map} onClick={close} visible={accessibleRoutes.has('/fleet/profitability/miles-performance')} />
           </NavSection>
 
           {/* FLEET */}

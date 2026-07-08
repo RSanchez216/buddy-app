@@ -57,6 +57,8 @@ const Boardroom = lazy(() => import('./pages/fleet/loads/boardroom/Boardroom'))
 // Lazy — Idle Review is a destination review screen, not a daily-driver list;
 // split it into its own chunk off the main bundle.
 const IdleReview = lazy(() => import('./pages/fleet/loads/idle/IdleReview'))
+// Lazy — heavy report route (recharts + xlsx/jspdf on export).
+const MilesPerformance = lazy(() => import('./pages/fleet/loads/miles/MilesPerformance'))
 // Lazy — the Settings hub consolidates 9 reference-data screens; keep it
 // out of the main bundle as a navigation hub.
 const CombinedLoads = lazy(() => import('./pages/fleet/combined-loads/CombinedLoads'))
@@ -179,6 +181,15 @@ export default function App() {
                   <Suspense fallback={<div className="p-8 text-sm text-gray-400 dark:text-slate-500">Loading lane map…</div>}>
                     <LaneFlowMap />
                   </Suspense>
+                </RequirePageAccess>
+              } />
+              <Route path="fleet/profitability/miles-performance" element={
+                <RequirePageAccess pageKey="miles_performance">
+                  <ErrorBoundary label="Miles & Performance">
+                    <Suspense fallback={<div className="p-8 text-sm text-gray-400 dark:text-slate-500">Loading miles & performance…</div>}>
+                      <MilesPerformance />
+                    </Suspense>
+                  </ErrorBoundary>
                 </RequirePageAccess>
               } />
               <Route path="fleet/combined-loads" element={
