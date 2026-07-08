@@ -196,46 +196,167 @@ function ReasonBadge({ reason }) {
   return <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full whitespace-nowrap ${m.cls}`}>{m.label}</span>
 }
 
+// Calendar day of a timestamptz in America/Chicago, e.g. "Jul 8".
+function fmtReviewedAt(ts) {
+  if (!ts) return '—'
+  try { return new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric' }).format(new Date(ts)) } catch { return '—' }
+}
+
+// "Mark reviewed" (✓) — accept a load's miles as correct and stop flagging it,
+// WITHOUT changing the miles (distinct from the pencil edit). Non-blocking
+// confirm, portal-anchored so a scroll container can't clip it.
+function MarkReviewedButton({ legId, loadNumber, onDone }) {
+  const toast = useToast()
+  const btnRef = useRef(null)
+  const [pos, setPos] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const open = pos !== null
+  function openMenu() {
+    const r = btnRef.current?.getBoundingClientRect()
+    setPos(r ? { top: r.bottom + 4, left: Math.min(r.left, window.innerWidth - 236) } : { top: 80, left: 80 })
+  }
+  function close() { setPos(null); setBusy(false) }
+  async function confirm() {
+    setBusy(true)
+    const { error } = await supabase.rpc('dismiss_miles_review', { p_leg_id: legId, p_note: null })
+    setBusy(false)
+    if (error) { toast.error("Couldn't mark reviewed", error); return }
+    close(); onDone?.()
+  }
+  return (
+    <span className="inline-flex align-middle" onClick={e => e.stopPropagation()}>
+      <button ref={btnRef} type="button" onClick={() => (open ? close() : openMenu())} title="Mark miles reviewed — accept as-is" aria-label="Mark miles reviewed"
+        className="p-0.5 text-gray-300 dark:text-slate-600 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-3.5 h-3.5"><path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" /></svg>
+      </button>
+      {open && createPortal(
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => !busy && close()} />
+          <div style={{ position: 'fixed', top: pos.top, left: pos.left }} className="z-50 w-60 rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-[#12132e] shadow-lg p-3 text-left">
+            <p className="text-[11px] text-gray-600 dark:text-slate-300">
+              Mark <span className="font-mono font-semibold">{loadNumber}</span> miles as reviewed? It&apos;ll drop off unless the miles change on a future import.
+            </p>
+            <div className="flex items-center gap-2 mt-2.5 justify-end">
+              <button disabled={busy} onClick={close} className="text-[11px] px-2 py-1 rounded-md text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-50">Cancel</button>
+              <button disabled={busy} onClick={confirm} className="text-[11px] px-2 py-1 rounded-md bg-emerald-600 text-white font-medium hover:brightness-105 disabled:opacity-50">{busy ? '…' : 'Mark reviewed'}</button>
+            </div>
+          </div>
+        </>,
+        document.body
+      )}
+    </span>
+  )
+}
+
+// Undo a "mark reviewed" — safe/reversible, so no confirm.
+function RestoreReviewButton({ legId, onDone }) {
+  const toast = useToast()
+  const [busy, setBusy] = useState(false)
+  async function restore() {
+    setBusy(true)
+    const { error } = await supabase.rpc('restore_miles_review', { p_leg_id: legId })
+    setBusy(false)
+    if (error) { toast.error("Couldn't restore", error); return }
+    onDone?.()
+  }
+  return (
+    <button disabled={busy} onClick={restore} className="ml-auto text-[11px] font-medium px-2 py-0.5 rounded-md border border-gray-300 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-50">
+      {busy ? '…' : 'Restore'}
+    </button>
+  )
+}
+
 // Pinned "needs miles review" banner — real (non-TONU) loads with no RPM or
 // inflated deadhead for the current period, biggest revenue first (RPC order).
-// Self-clears as loads are overridden (RPC excludes them); hidden at zero.
-// Refetches on period change and after any miles edit (reloadKey bump).
+// Each row can be fixed (pencil) or accepted as-is (✓ Mark reviewed). Reviewed
+// loads live in a collapsed subsection with Restore. Self-clears as loads are
+// overridden/reviewed; a reviewed load re-surfaces if its miles later change.
+// Refetches on period change, after any miles edit (reloadKey), and after a
+// mark/restore (local tick).
 function MilesReviewBanner({ from, to, reloadKey, canEdit, onSaved }) {
   const [rows, setRows] = useState(null)
+  const [dismissed, setDismissed] = useState([])
   const [open, setOpen] = useState(false)
+  const [showReviewed, setShowReviewed] = useState(false)
+  const [tick, setTick] = useState(0)
+  const refetch = useCallback(() => setTick(t => t + 1), [])
+
   useEffect(() => {
     let stale = false
-    supabase.rpc('loads_needing_miles_review', { p_start: from, p_end: to })
-      .then(({ data, error }) => { if (!stale) setRows(error ? [] : (data || [])) })
-      .catch(() => { if (!stale) setRows([]) })
+    Promise.all([
+      supabase.rpc('loads_needing_miles_review', { p_start: from, p_end: to }),
+      supabase.rpc('miles_review_dismissed', { p_start: from, p_end: to }),
+    ]).then(([act, dis]) => {
+      if (stale) return
+      setRows(act.error ? [] : (act.data || []))
+      setDismissed(dis.error ? [] : (dis.data || []))
+    }).catch(() => { if (!stale) { setRows([]); setDismissed([]) } })
     return () => { stale = true }
-  }, [from, to, reloadKey])
+  }, [from, to, reloadKey, tick])
+
   const count = rows?.length || 0
-  if (!rows || count === 0) return null
+  // Show while there's anything to act on — active OR reviewed (so Reviewed
+  // stays reachable for Restore even once every active row is cleared).
+  if (!rows || (count === 0 && dismissed.length === 0)) return null
+
   return (
     <div className="rounded-2xl border border-amber-200 dark:border-amber-500/30 bg-amber-50/70 dark:bg-amber-500/[0.08] overflow-hidden">
       <button onClick={() => setOpen(o => !o)} className="w-full flex items-center justify-between gap-3 px-4 py-2.5 text-left">
         <span className="text-sm font-semibold text-amber-800 dark:text-amber-300">⚠ Miles review ({count})</span>
         <span className="text-[11px] text-amber-700/80 dark:text-amber-300/70 inline-flex items-center gap-1">
-          {open ? 'Hide' : 'Real loads with missing or inflated miles — fix to correct $/mi'} <span>{open ? '▾' : '▸'}</span>
+          {open ? 'Hide' : 'Real loads with missing or inflated miles — fix or accept'} <span>{open ? '▾' : '▸'}</span>
         </span>
       </button>
       {open && (
-        <div className="divide-y divide-amber-200/60 dark:divide-amber-500/20 max-h-[320px] overflow-y-auto border-t border-amber-200/60 dark:border-amber-500/20">
-          {rows.map(r => (
-            <div key={r.leg_id} className="px-4 py-2 flex items-center gap-x-2 gap-y-1 flex-wrap text-xs">
-              <span className="font-medium text-gray-900 dark:text-slate-200">{r.origin} → {r.destination}</span>
-              <span className="inline-flex items-center gap-0.5">
-                <span className="font-mono text-gray-500 dark:text-slate-400">#{r.load_number}</span>
-                {r.load_number && <CopyButton value={String(r.load_number).trim()} label="Copy load number" />}
-              </span>
-              <span className="text-gray-500 dark:text-slate-400">· {r.customer || '—'}</span>
-              <span className="text-gray-500 dark:text-slate-400">· {r.driver_name || '—'}</span>
-              <span className="font-mono text-gray-700 dark:text-slate-300">· {fmtMoney(r.revenue)}</span>
-              <ReasonBadge reason={r.reason} />
-              <span className="ml-auto"><MilesEditor legId={r.leg_id} loaded={r.loaded_miles} empty={r.empty_miles} total={r.total_miles} canEdit={canEdit} onSaved={onSaved} /></span>
+        <div className="border-t border-amber-200/60 dark:border-amber-500/20">
+          {count === 0 ? (
+            <p className="px-4 py-2 text-xs text-amber-700/80 dark:text-amber-300/70">No loads need review right now.</p>
+          ) : (
+            <div className="divide-y divide-amber-200/60 dark:divide-amber-500/20 max-h-[320px] overflow-y-auto">
+              {rows.map(r => (
+                <div key={r.leg_id} className="px-4 py-2 flex items-center gap-x-2 gap-y-1 flex-wrap text-xs">
+                  <span className="font-medium text-gray-900 dark:text-slate-200">{r.origin} → {r.destination}</span>
+                  <span className="inline-flex items-center gap-0.5">
+                    <span className="font-mono text-gray-500 dark:text-slate-400">#{r.load_number}</span>
+                    {r.load_number && <CopyButton value={String(r.load_number).trim()} label="Copy load number" />}
+                  </span>
+                  <span className="text-gray-500 dark:text-slate-400">· {r.customer || '—'}</span>
+                  <span className="text-gray-500 dark:text-slate-400">· {r.driver_name || '—'}</span>
+                  <span className="font-mono text-gray-700 dark:text-slate-300">· {fmtMoney(r.revenue)}</span>
+                  <ReasonBadge reason={r.reason} />
+                  <span className="ml-auto inline-flex items-center gap-1">
+                    <MilesEditor legId={r.leg_id} loaded={r.loaded_miles} empty={r.empty_miles} total={r.total_miles} canEdit={canEdit} onSaved={onSaved} />
+                    {canEdit && <MarkReviewedButton legId={r.leg_id} loadNumber={r.load_number} onDone={refetch} />}
+                  </span>
+                </div>
+              ))}
             </div>
-          ))}
+          )}
+
+          {dismissed.length > 0 && (
+            <div className="border-t border-amber-200/60 dark:border-amber-500/20 px-4 py-2">
+              <button onClick={() => setShowReviewed(s => !s)} className="text-xs font-semibold text-amber-700/90 dark:text-amber-300/80 hover:text-amber-900 dark:hover:text-amber-200 inline-flex items-center gap-1">
+                <span className="w-3">{showReviewed ? '▾' : '▸'}</span> Reviewed ({dismissed.length})
+              </button>
+              {showReviewed && (
+                <div className="mt-2 divide-y divide-amber-200/50 dark:divide-amber-500/15 max-h-[240px] overflow-y-auto">
+                  {dismissed.map(d => (
+                    <div key={d.leg_id} className="py-1.5 flex items-center gap-x-2 gap-y-1 flex-wrap text-xs">
+                      <span className="font-medium text-gray-800 dark:text-slate-300">{d.origin} → {d.destination}</span>
+                      <span className="inline-flex items-center gap-0.5">
+                        <span className="font-mono text-gray-500 dark:text-slate-400">#{d.load_number}</span>
+                        {d.load_number && <CopyButton value={String(d.load_number).trim()} label="Copy load number" />}
+                      </span>
+                      <span className="font-mono text-gray-600 dark:text-slate-400">· {fmtMoney(d.revenue)}</span>
+                      <span className="text-gray-400 dark:text-slate-500">· reviewed {fmtReviewedAt(d.dismissed_at)}</span>
+                      {d.note && <span className="text-gray-400 dark:text-slate-500 truncate">· {d.note}</span>}
+                      {canEdit && <RestoreReviewButton legId={d.leg_id} onDone={refetch} />}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
