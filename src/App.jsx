@@ -45,7 +45,6 @@ import FuelPrices from './pages/fleet/fuel-prices/FuelPrices'
 import Profitability from './pages/fleet/loads/Profitability'
 import Spotlight from './pages/fleet/loads/spotlight/Spotlight'
 import Contribution from './pages/fleet/loads/contribution/Contribution'
-import IdleReview from './pages/fleet/loads/idle/IdleReview'
 import SetPassword from './pages/auth/SetPassword'
 import SmartLanding from './pages/SmartLanding'
 
@@ -55,6 +54,9 @@ const LaneFlowMap = lazy(() => import('./pages/fleet/loads/lanes/LaneFlowMap'))
 // Lazy — the Boardroom pulls several rollups plus the lane and contribution
 // data layers at once; keep it out of the main bundle.
 const Boardroom = lazy(() => import('./pages/fleet/loads/boardroom/Boardroom'))
+// Lazy — Idle Review is a destination review screen, not a daily-driver list;
+// split it into its own chunk off the main bundle.
+const IdleReview = lazy(() => import('./pages/fleet/loads/idle/IdleReview'))
 // Lazy — the Settings hub consolidates 9 reference-data screens; keep it
 // out of the main bundle as a navigation hub.
 const CombinedLoads = lazy(() => import('./pages/fleet/combined-loads/CombinedLoads'))
@@ -163,7 +165,15 @@ export default function App() {
               } />
               <Route path="fleet/profitability/spotlight" element={<RequirePageAccess pageKey="fleet/profitability/spotlight"><Spotlight dimension="driver" /></RequirePageAccess>} />
               <Route path="fleet/profitability/contribution" element={<RequirePageAccess pageKey="fleet/profitability/contribution"><Contribution /></RequirePageAccess>} />
-              <Route path="fleet/profitability/idle" element={<RequirePageAccess pageKey="idle_review"><ErrorBoundary label="Idle review"><IdleReview /></ErrorBoundary></RequirePageAccess>} />
+              <Route path="fleet/profitability/idle" element={
+                <RequirePageAccess pageKey="idle_review">
+                  <ErrorBoundary label="Idle review">
+                    <Suspense fallback={<div className="p-8 text-sm text-gray-400 dark:text-slate-500">Loading idle review…</div>}>
+                      <IdleReview />
+                    </Suspense>
+                  </ErrorBoundary>
+                </RequirePageAccess>
+              } />
               <Route path="fleet/profitability/lanes" element={
                 <RequirePageAccess pageKey="fleet/profitability/lanes">
                   <Suspense fallback={<div className="p-8 text-sm text-gray-400 dark:text-slate-500">Loading lane map…</div>}>
