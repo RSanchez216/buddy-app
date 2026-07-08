@@ -148,15 +148,34 @@ export default function LoadsImport() {
   // Missing-trailers worklist — reflects current data (independent of any single
   // import run); refreshed on load and after an apply. null = loading.
   const [missingTrailers, setMissingTrailers] = useState(null)
+  const [missingTrailersDismissed, setMissingTrailersDismissed] = useState([])
 
   useEffect(() => { init() }, [])
 
   async function loadMissingTrailers() {
-    const { data, error } = await supabase.rpc('missing_trailer_loads')
-    if (error) { console.error('[LoadsImport] missing_trailer_loads failed', error); setMissingTrailers([]) }
-    else setMissingTrailers(data || [])
+    const [act, dis] = await Promise.all([
+      supabase.rpc('missing_trailer_loads'),
+      supabase.rpc('missing_trailer_dismissed'),
+    ])
+    if (act.error) { console.error('[LoadsImport] missing_trailer_loads failed', act.error); setMissingTrailers([]) }
+    else setMissingTrailers(act.data || [])
+    if (dis.error) { console.error('[LoadsImport] missing_trailer_dismissed failed', dis.error); setMissingTrailersDismissed([]) }
+    else setMissingTrailersDismissed(dis.data || [])
   }
   useEffect(() => { loadMissingTrailers() }, [])
+
+  // Manual resolve / restore for a driver. Both refetch so the active + resolved
+  // lists stay in step. Errors bubble to the caller for inline feedback.
+  async function resolveMissingTrailer(driverId, note) {
+    const { error } = await supabase.rpc('dismiss_missing_trailer', { p_driver_id: driverId, p_note: note || null })
+    if (error) throw error
+    await loadMissingTrailers()
+  }
+  async function restoreMissingTrailer(driverId) {
+    const { error } = await supabase.rpc('restore_missing_trailer', { p_driver_id: driverId })
+    if (error) throw error
+    await loadMissingTrailers()
+  }
 
   // Which of this batch's loads are already TONU-classified — so we never
   // re-prompt a prior decision. Re-runs when the staged plan changes.
@@ -914,7 +933,7 @@ export default function LoadsImport() {
       )}
 
       {/* Missing Trailers worklist — current data, independent of this run. */}
-      <MissingTrailersPanel rows={missingTrailers} />
+      <MissingTrailersPanel rows={missingTrailers} dismissed={missingTrailersDismissed} onResolve={resolveMissingTrailer} onRestore={restoreMissingTrailer} />
 
       {/* Recent imports — durable history; renders in every state. */}
       {!loading && <RecentImports recent={recent} />}
@@ -934,17 +953,59 @@ function fmtLoadDate(s) {
   return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
-function MissingTrailersPanel({ rows }) {
+const MT_BTN = 'text-[11px] font-medium px-2 py-1 rounded-md border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors'
+
+// Non-blocking resolve confirm for one driver (no window.confirm). On success
+// the parent refetch drops the driver, so this unmounts.
+function ResolveButton({ driverId, name, onResolve }) {
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  async function confirm() {
+    setBusy(true); setErr('')
+    try { await onResolve(driverId, null) }
+    catch (e) { console.error('[LoadsImport] resolve missing-trailer failed', e); setErr('Failed — try again'); setBusy(false) }
+  }
+  return (
+    <div className="relative">
+      <button onClick={() => { setErr(''); setOpen(o => !o) }} className={MT_BTN}>Resolve</button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => !busy && setOpen(false)} />
+          <div className={`absolute right-0 top-[calc(100%+6px)] z-20 w-64 ${S.card} p-3 shadow-lg text-left`}>
+            <p className="text-xs text-gray-700 dark:text-slate-300">
+              Resolve missing-trailer for <span className="font-semibold">{name || 'this driver'}</span>? They&apos;ll reappear only if a new load comes in without a trailer.
+            </p>
+            {err && <div className="text-[11px] text-red-600 dark:text-red-400 mt-1.5">{err}</div>}
+            <div className="flex justify-end gap-2 mt-2.5">
+              <button onClick={() => setOpen(false)} disabled={busy} className="text-[11px] px-2 py-1 rounded-md text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-50">Cancel</button>
+              <button onClick={confirm} disabled={busy} className="text-[11px] px-2 py-1 rounded-md bg-orange-500 text-white font-medium hover:brightness-105 disabled:opacity-50">{busy ? 'Resolving…' : 'Resolve'}</button>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+function MissingTrailersPanel({ rows, dismissed, onResolve, onRestore }) {
   const loading = rows === null
+  const [expanded, setExpanded] = useState(() => new Set())
+  const [showResolved, setShowResolved] = useState(false)
+
   const groups = useMemo(() => {
     const m = new Map()
     for (const r of rows || []) {
       const key = r.driver_id || r.driver_code || r.driver_name || 'unknown'
-      if (!m.has(key)) m.set(key, { key, driver_code: r.driver_code, driver_name: r.driver_name, loads: [] })
+      if (!m.has(key)) m.set(key, { key, driver_id: r.driver_id, driver_code: r.driver_code, driver_name: r.driver_name, loads: [] })
       m.get(key).loads.push(r)
     }
     return [...m.values()].sort((a, b) => b.loads.length - a.loads.length || (a.driver_name || '').localeCompare(b.driver_name || ''))
   }, [rows])
+
+  function toggle(key) {
+    setExpanded(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n })
+  }
 
   return (
     <div className={`${S.card} p-4 space-y-3`}>
@@ -953,43 +1014,77 @@ function MissingTrailersPanel({ rows }) {
           Missing Trailers <span className="font-normal text-gray-500 dark:text-slate-500">({loading ? '…' : groups.length})</span>
         </h2>
         <p className="text-xs text-gray-400 dark:text-slate-500 mt-0.5">
-          Drivers with loads that have no trailer, from customers that require one. Clears automatically when a trailer is assigned.
+          Active drivers with loads that have no trailer, from customers that require one. Clears automatically when a trailer is assigned.
         </p>
       </div>
+
       {loading ? (
         <p className="text-xs text-gray-400 dark:text-slate-500">Loading…</p>
       ) : groups.length === 0 ? (
-        <p className="text-xs text-gray-400 dark:text-slate-500">No drivers are currently missing a trailer.</p>
+        <p className="text-xs text-gray-400 dark:text-slate-500">No active drivers are currently missing a trailer.</p>
       ) : (
         <div className="divide-y divide-gray-100 dark:divide-white/5">
-          {groups.map(g => (
-            <div key={g.key} className="py-2.5 first:pt-0 last:pb-0">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="text-sm font-medium text-gray-900 dark:text-slate-200">
-                  {g.driver_code && <span className="font-mono text-gray-500 dark:text-slate-400">{g.driver_code} · </span>}
-                  {g.driver_name || '—'}
-                </span>
-                {g.driver_name && <CopyButton value={g.driver_name} label="Copy driver name" />}
-                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
-                  {g.loads.length} load{g.loads.length === 1 ? '' : 's'}
-                </span>
-              </div>
-              <ul className="mt-1.5 space-y-1 pl-1">
-                {g.loads.map(l => (
-                  <li key={l.load_number} className="flex items-center gap-1.5 flex-wrap text-xs text-gray-600 dark:text-slate-400">
-                    <span className="inline-flex items-center gap-1">
-                      <span className="font-mono text-gray-800 dark:text-slate-300">{l.load_number}</span>
-                      <CopyButton value={l.load_number} label="Copy load number" />
+          {groups.map(g => {
+            const open = expanded.has(g.key)
+            return (
+              <div key={g.key} className="py-2 first:pt-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <button onClick={() => toggle(g.key)} aria-expanded={open} className="flex items-center gap-1.5 text-left min-w-0">
+                    <span className="text-gray-400 dark:text-slate-500 text-[10px] w-3 shrink-0">{open ? '▾' : '▸'}</span>
+                    <span className="text-sm font-medium text-gray-900 dark:text-slate-200 truncate">
+                      {g.driver_code && <span className="font-mono text-gray-500 dark:text-slate-400">{g.driver_code} · </span>}
+                      {g.driver_name || '—'}
                     </span>
-                    <span className="text-gray-300 dark:text-slate-600">·</span>
-                    <span>{l.customer || '—'}</span>
-                    <span className="text-gray-300 dark:text-slate-600">·</span>
-                    <span className="text-gray-500 dark:text-slate-500 whitespace-nowrap">{fmtLoadDate(l.pickup_date)} → {fmtLoadDate(l.delivery_date)}</span>
-                  </li>
-                ))}
-              </ul>
+                  </button>
+                  {g.driver_name && <CopyButton value={g.driver_name} label="Copy driver name" />}
+                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
+                    {g.loads.length} load{g.loads.length === 1 ? '' : 's'}
+                  </span>
+                  <span className="ml-auto"><ResolveButton driverId={g.driver_id} name={g.driver_name} onResolve={onResolve} /></span>
+                </div>
+                {open && (
+                  <ul className="mt-1.5 space-y-1 pl-5">
+                    {g.loads.map(l => (
+                      <li key={l.load_number} className="flex items-center gap-1.5 flex-wrap text-xs text-gray-600 dark:text-slate-400">
+                        <span className="inline-flex items-center gap-1">
+                          <span className="font-mono text-gray-800 dark:text-slate-300">{l.load_number}</span>
+                          <CopyButton value={l.load_number} label="Copy load number" />
+                        </span>
+                        <span className="text-gray-300 dark:text-slate-600">·</span>
+                        <span>{l.customer || '—'}</span>
+                        <span className="text-gray-300 dark:text-slate-600">·</span>
+                        <span className="text-gray-500 dark:text-slate-500 whitespace-nowrap">{fmtLoadDate(l.pickup_date)} → {fmtLoadDate(l.delivery_date)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Resolved (manually dismissed) drivers — collapsed subsection + restore. */}
+      {dismissed && dismissed.length > 0 && (
+        <div className="pt-2.5 border-t border-gray-100 dark:border-white/5">
+          <button onClick={() => setShowResolved(s => !s)} className="text-xs font-semibold text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 inline-flex items-center gap-1">
+            <span className="text-[10px] w-3">{showResolved ? '▾' : '▸'}</span> Resolved ({dismissed.length})
+          </button>
+          {showResolved && (
+            <div className="mt-2 divide-y divide-gray-100 dark:divide-white/5">
+              {dismissed.map(d => (
+                <div key={d.driver_id} className="py-2 flex items-center gap-1.5 flex-wrap text-xs">
+                  <span className="text-gray-700 dark:text-slate-300">
+                    {d.driver_code && <span className="font-mono text-gray-500 dark:text-slate-400">{d.driver_code} · </span>}
+                    {d.driver_name || '—'}
+                  </span>
+                  <span className="text-gray-400 dark:text-slate-500">· resolved {fmtChicago(d.dismissed_at)}</span>
+                  {d.note && <span className="text-gray-400 dark:text-slate-500">· {d.note}</span>}
+                  <button onClick={() => onRestore(d.driver_id)} className={`ml-auto ${MT_BTN}`}>Restore</button>
+                </div>
+              ))}
             </div>
-          ))}
+          )}
         </div>
       )}
     </div>
