@@ -16,16 +16,6 @@ const HEADER_FIELDS = [
   'linehaul', 'weight', 'commodity',
 ]
 
-// Customers who provide their own trailers — a missing trailer is expected, not
-// an exception, so the "Missing trailer" advisory is suppressed for them.
-// Case-insensitive substring match on the customer name catches variants like
-// "Amazon Logistics Inc.", "Amazon Logistics, Inc.", "Amazon Logistics LLC".
-// Add more own-trailer customers here with one line.
-const OWN_TRAILER_CUSTOMERS = ['amazon']
-function suppliesOwnTrailer(customerName) {
-  const n = String(customerName || '').toLowerCase()
-  return OWN_TRAILER_CUSTOMERS.some(entry => n.includes(entry))
-}
 
 // numeric-aware, null-aware equality for diffing
 function eqVal(a, b) {
@@ -280,15 +270,14 @@ export function buildPlan({ rows, refs, existing }) {
     else classification = 'unchanged'
 
     // "Needs review" — advisory, non-blocking. Today the only reason is a
-    // missing trailer on a non-Canceled load whose customer requires one.
-    // Own-trailer customers (Amazon Logistics, and any customer flagged
-    // trailer_required=false) are exempt — the name substring check also covers
-    // brand-new / variantly-named customers that don't have a row yet.
+    // missing trailer on a non-Canceled load whose customer requires one. The
+    // exemption is driven purely by customers.trailer_required: a customer
+    // flagged trailer_required=false (e.g. Amazon) is exempt. A new / unmatched
+    // customer (no map entry) defaults to requiring a trailer — safer to flag.
     // Structured as a reasons LIST so more checks (missing truck, zero miles, …)
     // can be added later.
     const custNorm = normName(custRaw)
-    const ownTrailerCustomer = suppliesOwnTrailer(custRaw)
-    const customerRequiresTrailer = !ownTrailerCustomer && customerTrailerReq.get(custNorm) !== false
+    const customerRequiresTrailer = customerTrailerReq.get(custNorm) !== false
     const notCanceled = !(newStatusNorm === 'canceled' || newStatusNorm === 'cancelled')
     const someLegMissingTrailer = legs.some(l => l.parsed.trailer_raw == null || String(l.parsed.trailer_raw).trim() === '')
     const reviewReasons = []

@@ -145,8 +145,18 @@ export default function LoadsImport() {
   const [tonuDecisions, setTonuDecisions] = useState(() => new Map()) // load_number -> 'tonu' | 'real'
   // Dismiss flag for the missing-optional-columns warning banner.
   const [optionalWarningDismissed, setOptionalWarningDismissed] = useState(false)
+  // Missing-trailers worklist — reflects current data (independent of any single
+  // import run); refreshed on load and after an apply. null = loading.
+  const [missingTrailers, setMissingTrailers] = useState(null)
 
   useEffect(() => { init() }, [])
+
+  async function loadMissingTrailers() {
+    const { data, error } = await supabase.rpc('missing_trailer_loads')
+    if (error) { console.error('[LoadsImport] missing_trailer_loads failed', error); setMissingTrailers([]) }
+    else setMissingTrailers(data || [])
+  }
+  useEffect(() => { loadMissingTrailers() }, [])
 
   // Which of this batch's loads are already TONU-classified — so we never
   // re-prompt a prior decision. Re-runs when the staged plan changes.
@@ -435,6 +445,7 @@ export default function LoadsImport() {
       setApplySummary({ filename: fname, loads: appliedLoads, legs: appliedLegs, customers: appliedCustomers, dispatchers: appliedDispatchers, cancelTonu })
       setProgress(null)
       await init()
+      loadMissingTrailers() // resolved drivers drop off, new ones appear
     } finally {
       setBusy(false)
     }
@@ -902,8 +913,85 @@ export default function LoadsImport() {
         </div>
       )}
 
+      {/* Missing Trailers worklist — current data, independent of this run. */}
+      <MissingTrailersPanel rows={missingTrailers} />
+
       {/* Recent imports — durable history; renders in every state. */}
       {!loading && <RecentImports recent={recent} />}
+    </div>
+  )
+}
+
+// ── Missing Trailers worklist ───────────────────────────────────────────────
+// Drivers running loads with no trailer, from customers that require one (RPC
+// filters out own-trailer customers + drivers who already hold an open board
+// trailer). Self-maintaining: a driver drops off once their loads get a trailer
+// or they get an open assignment. Grouped by driver.
+function fmtLoadDate(s) {
+  if (!s) return '—'
+  const [y, m, d] = String(s).slice(0, 10).split('-').map(Number)
+  if (!y || !m || !d) return '—'
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+function MissingTrailersPanel({ rows }) {
+  const loading = rows === null
+  const groups = useMemo(() => {
+    const m = new Map()
+    for (const r of rows || []) {
+      const key = r.driver_id || r.driver_code || r.driver_name || 'unknown'
+      if (!m.has(key)) m.set(key, { key, driver_code: r.driver_code, driver_name: r.driver_name, loads: [] })
+      m.get(key).loads.push(r)
+    }
+    return [...m.values()].sort((a, b) => b.loads.length - a.loads.length || (a.driver_name || '').localeCompare(b.driver_name || ''))
+  }, [rows])
+
+  return (
+    <div className={`${S.card} p-4 space-y-3`}>
+      <div>
+        <h2 className="text-sm font-semibold text-gray-900 dark:text-white">
+          Missing Trailers <span className="font-normal text-gray-500 dark:text-slate-500">({loading ? '…' : groups.length})</span>
+        </h2>
+        <p className="text-xs text-gray-400 dark:text-slate-500 mt-0.5">
+          Drivers with loads that have no trailer, from customers that require one. Clears automatically when a trailer is assigned.
+        </p>
+      </div>
+      {loading ? (
+        <p className="text-xs text-gray-400 dark:text-slate-500">Loading…</p>
+      ) : groups.length === 0 ? (
+        <p className="text-xs text-gray-400 dark:text-slate-500">No drivers are currently missing a trailer.</p>
+      ) : (
+        <div className="divide-y divide-gray-100 dark:divide-white/5">
+          {groups.map(g => (
+            <div key={g.key} className="py-2.5 first:pt-0 last:pb-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-sm font-medium text-gray-900 dark:text-slate-200">
+                  {g.driver_code && <span className="font-mono text-gray-500 dark:text-slate-400">{g.driver_code} · </span>}
+                  {g.driver_name || '—'}
+                </span>
+                {g.driver_name && <CopyButton value={g.driver_name} label="Copy driver name" />}
+                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
+                  {g.loads.length} load{g.loads.length === 1 ? '' : 's'}
+                </span>
+              </div>
+              <ul className="mt-1.5 space-y-1 pl-1">
+                {g.loads.map(l => (
+                  <li key={l.load_number} className="flex items-center gap-1.5 flex-wrap text-xs text-gray-600 dark:text-slate-400">
+                    <span className="inline-flex items-center gap-1">
+                      <span className="font-mono text-gray-800 dark:text-slate-300">{l.load_number}</span>
+                      <CopyButton value={l.load_number} label="Copy load number" />
+                    </span>
+                    <span className="text-gray-300 dark:text-slate-600">·</span>
+                    <span>{l.customer || '—'}</span>
+                    <span className="text-gray-300 dark:text-slate-600">·</span>
+                    <span className="text-gray-500 dark:text-slate-500 whitespace-nowrap">{fmtLoadDate(l.pickup_date)} → {fmtLoadDate(l.delivery_date)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
