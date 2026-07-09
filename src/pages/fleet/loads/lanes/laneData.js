@@ -28,23 +28,30 @@ export async function fetchLaneLegs({ from, to, basis = 'delivery' }) {
     if (!data || data.length < 1000) break
   }
 
-  // combine_group_id lives on v_load_leg_profit (not v_lane_geo), so pull the
-  // combined legs for this window and stamp each leg with its group id. Only a
-  // handful of loads are ever combined, so this is a tiny second read; legs
-  // with no group stay undefined (→ non-combined everywhere downstream).
+  // combine_group_id and trailer_required live on v_load_leg_profit (not
+  // v_lane_geo), so stamp the two rare buckets onto the legs: combined loads
+  // and own-trailer (trailer_required=false, e.g. Amazon) loads. Two tiny reads
+  // (each returns only a handful of rows); unstamped legs stay undefined (→
+  // non-combined / trailer-required everywhere downstream).
   try {
-    const { data: combos, error: cErr } = await supabase.from('v_load_leg_profit')
-      .select('leg_id, combine_group_id')
-      .not('combine_group_id', 'is', null)
-      .gte(dateCol, from).lte(dateCol, to)
-    if (!cErr && combos?.length) {
-      const groupByLeg = new Map(combos.map(c => [c.leg_id, c.combine_group_id]))
+    const [combos, ownTrailer] = await Promise.all([
+      supabase.from('v_load_leg_profit').select('leg_id, combine_group_id')
+        .not('combine_group_id', 'is', null).gte(dateCol, from).lte(dateCol, to),
+      supabase.from('v_load_leg_profit').select('leg_id')
+        .eq('trailer_required', false).gte(dateCol, from).lte(dateCol, to),
+    ])
+    if (!combos.error && combos.data?.length) {
+      const groupByLeg = new Map(combos.data.map(c => [c.leg_id, c.combine_group_id]))
       for (const leg of out) {
         const gid = groupByLeg.get(leg.leg_id)
         if (gid) leg.combine_group_id = gid
       }
     }
-  } catch { /* non-fatal: combine styling just won't apply this load */ }
+    if (!ownTrailer.error && ownTrailer.data?.length) {
+      const ownLegs = new Set(ownTrailer.data.map(r => r.leg_id))
+      for (const leg of out) if (ownLegs.has(leg.leg_id)) leg.trailer_required = false
+    }
+  } catch { /* non-fatal: combine/Amazon styling just won't apply this load */ }
 
   return out
 }
@@ -107,12 +114,19 @@ export async function fetchLaneGeoRollup({ from, to, basis = 'origin', grain = '
 // has no linked trailer. So we no longer recompute from trailer_id; "Unknown" is
 // only when effective_trailer_type is genuinely NULL (no covering assignment).
 export const UNKNOWN_TYPE = 'Unknown'
+// Own-trailer customers (Amazon et al.) legitimately have no trailer — bucketed
+// separately so genuine gaps don't hide inside Unknown. Driven off the
+// trailer_required flag, not a customer name, so new own-trailer customers stay
+// correct; the label can stay "Amazon" for now.
+export const AMAZON_TYPE = 'Amazon'
 
-// Bucket each leg's display type from effective_trailer_type (NULL → Unknown).
+// Bucket each leg's display type: the effective trailer if present; else Amazon
+// when the load doesn't require a trailer (trailer_required === false); else a
+// genuine Unknown (trailer required but none linked/inferred).
 export function resolveLegTypes(legs) {
   return (legs || []).map(l => ({
     ...l,
-    trailer_type: l.effective_trailer_type || UNKNOWN_TYPE,
+    trailer_type: l.effective_trailer_type || (l.trailer_required === false ? AMAZON_TYPE : UNKNOWN_TYPE),
   }))
 }
 
@@ -121,10 +135,14 @@ export function resolveLegTypes(legs) {
 // Unknown is always gray.
 const TYPE_PALETTE = ['#38bdf8', '#fb923c', '#2dd4bf', '#c084fc', '#f472b6', '#facc15', '#4ade80', '#fb7185']
 export const UNKNOWN_TYPE_COLOR = '#64748b'
+// Amazon gets a fixed, distinct color (indigo — outside the rotating palette and
+// clearly not the gray Unknown) so the own-trailer bucket reads at a glance.
+export const AMAZON_TYPE_COLOR = '#6366f1'
 export function makeTypeColorMap(types) {
   const m = new Map()
-  const known = [...new Set(types)].filter(t => t && t !== UNKNOWN_TYPE).sort((a, b) => a.localeCompare(b))
+  const known = [...new Set(types)].filter(t => t && t !== UNKNOWN_TYPE && t !== AMAZON_TYPE).sort((a, b) => a.localeCompare(b))
   known.forEach((t, i) => m.set(t, TYPE_PALETTE[i % TYPE_PALETTE.length]))
+  m.set(AMAZON_TYPE, AMAZON_TYPE_COLOR)
   m.set(UNKNOWN_TYPE, UNKNOWN_TYPE_COLOR)
   return m
 }

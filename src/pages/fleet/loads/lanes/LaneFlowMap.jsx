@@ -11,7 +11,7 @@ import LaneMapCanvas from './LaneMapCanvas'
 import GeoHeatMap from './GeoHeatMap'
 import TopPerformers from './TopPerformers'
 import TrailerTypeTrends from './TrailerTypeTrends'
-import { aggregateLanes, EXCLUDED_STATUSES, fetchLaneLegs, makeRpmScale, makeTypeColorMap, makeWidthScale, pickAllLoadMetrics, resolveLegTypes, RPM_NULL_COLOR, UNKNOWN_TYPE } from './laneData'
+import { aggregateLanes, AMAZON_TYPE, EXCLUDED_STATUSES, fetchLaneLegs, makeRpmScale, makeTypeColorMap, makeWidthScale, pickAllLoadMetrics, resolveLegTypes, RPM_NULL_COLOR, UNKNOWN_TYPE } from './laneData'
 import { binHeatCells } from './mapShared'
 import { fmtMoney, fmtNum, fmtRpm, formatRange, shiftYmd, spanDays, thisMonth, thisWeek } from '../spotlight/spotlightShared'
 
@@ -668,8 +668,13 @@ export default function LaneFlowMap() {
   const typeOptions = useMemo(() => {
     if (!typedLegs) return []
     const set = new Set(typedLegs.map(l => l.trailer_type))
-    const known = [...set].filter(t => t !== UNKNOWN_TYPE).sort((a, b) => a.localeCompare(b))
-    return set.has(UNKNOWN_TYPE) ? [...known, UNKNOWN_TYPE] : known
+    // Real trailer types sorted A→Z, then Amazon (own-trailer) and Unknown pinned
+    // to the tail so the two "no real trailer" buckets sit together at the end.
+    const known = [...set].filter(t => t !== UNKNOWN_TYPE && t !== AMAZON_TYPE).sort((a, b) => a.localeCompare(b))
+    const tail = []
+    if (set.has(AMAZON_TYPE)) tail.push(AMAZON_TYPE)
+    if (set.has(UNKNOWN_TYPE)) tail.push(UNKNOWN_TYPE)
+    return [...known, ...tail]
   }, [typedLegs])
 
   const typeColorMap = useMemo(() => makeTypeColorMap(typeOptions), [typeOptions])
@@ -784,21 +789,34 @@ export default function LaneFlowMap() {
   // flagged lane, or a specific tier. Composes with sort (applied to `ranked`)
   // and the basis toggle.
   const [deadheadFilter, setDeadheadFilter] = useState(null)
+  // Combined-only chip + load-number search — both client-side, AND with the
+  // deadhead filter, sort, and basis toggle.
+  const [combinedOnly, setCombinedOnly] = useState(false)
+  const [loadSearch, setLoadSearch] = useState('')
   const deadheadCounts = useMemo(() => {
     const c = { yellow: 0, orange: 0, red: 0 }
     for (const l of ranked) { const t = deadheadTier(l); if (t) c[t]++ }
     return { ...c, all: c.yellow + c.orange + c.red }
   }, [ranked])
+  const combinedLaneCount = useMemo(() => ranked.filter(l => combine.laneGroupId.has(l.key)).length, [ranked, combine])
   const displayedLanes = useMemo(() => {
-    if (!deadheadFilter) return ranked
-    if (deadheadFilter === 'all') return ranked.filter(l => deadheadTier(l))
-    return ranked.filter(l => deadheadTier(l) === deadheadFilter)
-  }, [ranked, deadheadFilter])
+    let list = ranked
+    if (deadheadFilter === 'all') list = list.filter(l => deadheadTier(l))
+    else if (deadheadFilter) list = list.filter(l => deadheadTier(l) === deadheadFilter)
+    if (combinedOnly) list = list.filter(l => combine.laneGroupId.has(l.key))
+    const q = loadSearch.trim().toLowerCase()
+    if (q) list = list.filter(l => (l.legs || []).some(leg => String(leg.load_number || '').toLowerCase().includes(q)))
+    return list
+  }, [ranked, deadheadFilter, combinedOnly, loadSearch, combine])
+  const leaderboardFiltered = !!deadheadFilter || combinedOnly || !!loadSearch.trim()
   // A stale tier selection (e.g. after a period change clears that tier) falls
   // back to showing all, so the table never looks empty for no reason.
   useEffect(() => {
     if (deadheadFilter && deadheadCounts.all === 0) setDeadheadFilter(null)
   }, [deadheadFilter, deadheadCounts.all])
+  useEffect(() => {
+    if (combinedOnly && combinedLaneCount === 0) setCombinedOnly(false)
+  }, [combinedOnly, combinedLaneCount])
 
   // Best/worst loads by both metrics simultaneously, independent of leaderboard toggle
   const allLoadMetrics = useMemo(() => (agg ? pickAllLoadMetrics(agg.loads, EXCLUDED_STATUSES) : null), [agg])
@@ -1368,15 +1386,44 @@ export default function LaneFlowMap() {
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-white/5">
               <p className="text-xs font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">Lane leaderboard</p>
               <div className="flex items-center gap-2">
+                {/* Combined-only chip — lanes containing a combine-group load. */}
+                <button type="button" onClick={() => setCombinedOnly(v => !v)}
+                  disabled={combinedLaneCount === 0 && !combinedOnly}
+                  title="Show only lanes with combined loads"
+                  className={`inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                    combinedOnly
+                      ? 'bg-orange-500 text-slate-900 border-orange-500'
+                      : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent'
+                  }`}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5"><path d="M7 3v6a5 5 0 0 0 5 5h5m0 0-3-3m3 3-3 3" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                  Combined{combinedLaneCount > 0 && <span>{combinedLaneCount}</span>}
+                </button>
                 <DeadheadFilterMenu counts={deadheadCounts} active={deadheadFilter} onPick={setDeadheadFilter} />
                 <Pills value={sortKey} onChange={setSortFromPills} options={LEADERBOARD_SORTS.map(s => [s.key, s.label])} title="Revenue — total $ on the lane · $/mile — revenue ÷ miles · Loads — how many loads ran this origin→destination. Or click a column header to sort (toggles asc/desc). Tied lanes sorted by revenue." />
+              </div>
+            </div>
+            {/* Load-number search — filters to lanes whose loads match. */}
+            <div className="px-4 py-2 border-b border-gray-100 dark:border-white/5">
+              <div className="relative">
+                <input
+                  type="text" value={loadSearch} onChange={e => setLoadSearch(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Escape') setLoadSearch('') }}
+                  placeholder="Search load #…"
+                  className={`${S.input} w-full text-xs ${loadSearch ? 'pr-7 ring-2 ring-orange-400/50' : ''}`}
+                  title="Filter the leaderboard to lanes containing a matching load number"
+                />
+                {loadSearch && (
+                  <button onClick={() => setLoadSearch('')}
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 w-4 h-4 flex items-center justify-center rounded-full text-[10px] leading-none text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-white/10"
+                    title="Clear load search" aria-label="Clear load search">✕</button>
+                )}
               </div>
             </div>
             <div className="max-h-[460px] overflow-y-auto">
               {ranked.length === 0 ? (
                 <p className="p-8 text-center text-sm text-gray-400 dark:text-slate-500">No lanes in this window.</p>
               ) : displayedLanes.length === 0 ? (
-                <p className="p-8 text-center text-sm text-gray-400 dark:text-slate-500">No deadhead-flagged lanes this period.</p>
+                <p className="p-8 text-center text-sm text-gray-400 dark:text-slate-500">{leaderboardFiltered ? 'No lanes match the current filters.' : 'No lanes in this window.'}</p>
               ) : (
                 <table className="w-full text-xs">
                   <thead className={`${S.tableHead} sticky top-0 bg-white dark:bg-[#0d0d1f] z-10`}>
