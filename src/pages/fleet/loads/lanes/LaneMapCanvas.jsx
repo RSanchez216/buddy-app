@@ -116,9 +116,13 @@ export default function LaneMapCanvas({ lanes, cities, colorFor, widthFor, selec
   }
 
   return (
-    <div ref={wrapRef} className="relative">
+    <div ref={wrapRef} className="relative w-full aspect-[975/610]">
       <style>{`@keyframes laneFlow { to { stroke-dashoffset: -56; } }`}</style>
-      <svg viewBox={focusViewBox || `0 0 ${W} ${H}`} className="w-full h-auto block select-none transition-all duration-500 motion-reduce:transition-none" role="img" aria-label="US map of freight lanes">
+      {/* Fixed aspect box + absolute-fill svg: the element size is locked to the
+          map frame, so zooming the viewBox to a focused load path pans/zooms the
+          CONTENT without ever resizing or clipping the map itself. */}
+      <svg viewBox={focusViewBox || `0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet"
+        className="absolute inset-0 w-full h-full block select-none" role="img" aria-label="US map of freight lanes">
         {/* Land */}
         <path d={NATION_OUTLINE} className="fill-gray-100 dark:fill-white/[0.025]" />
         <path d={STATES_OUTLINE} fill="none" strokeWidth="0.75" className="stroke-gray-300 dark:stroke-white/[0.07]" />

@@ -363,7 +363,7 @@ function RestoreReviewButton({ legId, onDone }) {
 // overridden/reviewed; a reviewed load re-surfaces if its miles later change.
 // Refetches on period change, after any miles edit (reloadKey), and after a
 // mark/restore (local tick).
-function MilesReviewBanner({ from, to, reloadKey, canEdit, onSaved }) {
+function MilesReviewBanner({ from, to, reloadKey, canEdit, onSaved, onOpenLoad }) {
   const [rows, setRows] = useState(null)
   const [dismissed, setDismissed] = useState([])
   const [open, setOpen] = useState(false)
@@ -404,7 +404,13 @@ function MilesReviewBanner({ from, to, reloadKey, canEdit, onSaved }) {
           ) : (
             <div className="divide-y divide-amber-200/60 dark:divide-amber-500/20 max-h-[320px] overflow-y-auto">
               {rows.map(r => (
-                <div key={r.leg_id} className="px-4 py-2 flex items-center gap-x-2 gap-y-1 flex-wrap text-xs">
+                <div key={r.leg_id}
+                  role={onOpenLoad ? 'button' : undefined}
+                  tabIndex={onOpenLoad ? 0 : undefined}
+                  onClick={onOpenLoad ? () => onOpenLoad(r) : undefined}
+                  onKeyDown={onOpenLoad ? (e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenLoad(r) } }) : undefined}
+                  title={onOpenLoad ? 'Show this load’s deadhead + loaded path on the map' : undefined}
+                  className={`px-4 py-2 flex items-center gap-x-2 gap-y-1 flex-wrap text-xs ${onOpenLoad ? 'cursor-pointer hover:bg-amber-100/60 dark:hover:bg-amber-500/[0.12] transition-colors' : ''}`}>
                   <span className="font-medium text-gray-900 dark:text-slate-200">{r.origin} → {r.destination}</span>
                   <span className="inline-flex items-center gap-0.5">
                     <span className="font-mono text-gray-500 dark:text-slate-400">#{r.load_number}</span>
@@ -820,6 +826,23 @@ export default function LaneFlowMap() {
     setMapMode(legDetail.prevMode || 'heat')
     setLegDetail({ legId: null, leg: null, geo: null, loading: false, error: false, prevMode: 'heat' })
   }
+  // Miles-review rows carry their own field names; normalize to the leg shape
+  // LegRow/the panel expect, so a review row opens straight to its LOAD PATH.
+  const openLegFromReview = useCallback((r) => openLeg({
+    leg_id: r.leg_id,
+    load_id: r.load_id,
+    load_number: r.load_number,
+    origin: r.origin,
+    destination: r.destination,
+    customer_name: r.customer,
+    dispatcher_name: r.dispatcher_name,
+    driver_display: r.driver_name,
+    leg_revenue: r.revenue,
+    leg_total_miles: r.total_miles,
+    leg_loaded_miles: r.loaded_miles,
+    leg_empty_miles: r.empty_miles,
+    load_phase: r.load_phase,
+  }), [openLeg])
   const extended = legDetail.legId != null
 
   // The map focuses only once coords are in hand. Loaded leg reuses the arc
@@ -1020,10 +1043,13 @@ export default function LaneFlowMap() {
       </div>
 
       {/* Miles review — pinned worklist of real loads with missing/inflated miles. */}
-      <MilesReviewBanner from={range.from} to={range.to} reloadKey={reloadKey} canEdit={canEdit} onSaved={reloadLanes} />
+      <MilesReviewBanner from={range.from} to={range.to} reloadKey={reloadKey} canEdit={canEdit} onSaved={reloadLanes} onOpenLoad={openLegFromReview} />
 
       {/* ── Map + leaderboard ── */}
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_400px]">
+      {/* LOAD PATH gets a narrower fixed panel so the map keeps (a little more
+          than) its full width; both columns are fixed-track so the map's size
+          never depends on which detail panel is open. */}
+      <div className={`grid gap-4 ${extended ? 'xl:grid-cols-[minmax(0,1fr)_340px]' : 'xl:grid-cols-[minmax(0,1fr)_400px]'}`}>
         {/* Map card */}
         <div className="rounded-3xl border border-gray-200 dark:border-white/10 bg-gradient-to-b from-white to-gray-50 dark:from-[#12132e] dark:to-[#0a0a18] overflow-hidden">
           <div className="flex items-start justify-between flex-wrap gap-4 px-5 pt-4">
@@ -1259,7 +1285,14 @@ export default function LaneFlowMap() {
                         return phases
                       })() : null
                       return (
-                      <tr key={lane.key} onClick={() => setSelected(lane.key === selectedKey ? null : lane.key)}
+                      <tr key={lane.key}
+                        onClick={() => {
+                          // One load to show → straight to its LOAD PATH; skip the
+                          // single-item "Loads on this lane" card. Multi-load lanes
+                          // still open the list so the manager can pick.
+                          if (lane.legs && lane.legs.length === 1) openLeg(lane.legs[0])
+                          else setSelected(lane.key === selectedKey ? null : lane.key)
+                        }}
                         className={`${S.tableRow} cursor-pointer ${selectedKey === lane.key ? 'bg-orange-50 dark:bg-orange-500/10' : ''}`}>
                         <td className="px-3 py-2">
                           <p className="font-medium text-gray-900 dark:text-slate-200 leading-tight">{lane.origin}</p>
