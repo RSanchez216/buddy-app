@@ -85,7 +85,7 @@ function DeadheadFilterMenu({ counts, active, onPick }) {
   const activeMeta = active && active !== 'all' ? DEADHEAD_TIERS[active] : null
   const rowCls = (on) => `w-full flex items-center gap-2 text-[11px] px-2 py-1.5 rounded-md text-left transition-colors ${on ? 'bg-amber-100 dark:bg-amber-500/20 text-amber-800 dark:text-amber-200 font-semibold' : 'text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5'}`
   return (
-    <div className="relative group">
+    <div className="relative group shrink-0">
       <button type="button" disabled={total === 0 && !active} aria-haspopup="true" aria-expanded={!!active} aria-label="Filter deadhead lanes by tier" title="Deadhead lanes by tier"
         className={`inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
           active
@@ -767,13 +767,55 @@ export default function LaneFlowMap() {
     return { groupByLeg, laneGroupId, partners, blendedRpm }
   }, [agg])
 
+  // Leaderboard rows: non-combined lanes pass through as-is; each combine group
+  // collapses into ONE synthetic row with the honest combined economics —
+  // revenue = Σ leg_revenue, miles = the anchor's (max leg miles, not summed, so
+  // the 0-mi member doesn't drag it), $/mi = blended, loads = group size. The
+  // row is labeled with the anchor lane + a "Combined · n" badge and, on click,
+  // opens the combined LOAD PATH via the anchor leg. The map (agg.lanes) still
+  // draws both arcs — this collapse is leaderboard-only.
+  const leaderboardLanes = useMemo(() => {
+    if (!agg) return []
+    const groups = new Map() // gid -> lanes[]
+    const out = []
+    for (const lane of agg.lanes) {
+      const gid = combine.laneGroupId.get(lane.key)
+      if (gid) { (groups.get(gid) || groups.set(gid, []).get(gid)).push(lane) }
+      else out.push(lane)
+    }
+    for (const [gid, lanes] of groups) {
+      const legs = lanes.flatMap(l => (l.legs || []).filter(leg => leg.combine_group_id === gid))
+      const revenue = legs.reduce((s, leg) => s + (Number(leg.leg_revenue) || 0), 0)
+      const combinedMiles = legs.reduce((m, leg) => Math.max(m, Number(leg.leg_total_miles) || 0), 0)
+      const anchorLeg = legs.reduce((best, leg) => ((Number(leg.leg_total_miles) || 0) > (Number(best?.leg_total_miles) || 0) ? leg : best), null)
+      const anchorLane = lanes.find(l => (l.legs || []).some(leg => leg === anchorLeg)) || lanes[0]
+      out.push({
+        key: `combine:${gid}`,
+        origin: anchorLane.origin,
+        destination: anchorLane.destination,
+        trailerType: anchorLane.trailerType,
+        geocoded: anchorLane.geocoded,
+        legs,
+        revenue,
+        loads: legs.length,
+        miles: combinedMiles || null,
+        avgMiles: combinedMiles || null,
+        rpm: combinedMiles > 0 ? revenue / combinedMiles : null,
+        combineGroupId: gid,
+        combinedCount: legs.length,
+        anchorLeg,
+      })
+    }
+    return out
+  }, [agg, combine])
+
   // Client-side leaderboard sort: current column + direction, nulls/— last,
   // revenue as the tiebreak. Instant on the already-loaded lanes.
   const ranked = useMemo(() => {
     if (!agg) return []
     const get = LEADERBOARD_COL_VAL[sortKey] || LEADERBOARD_COL_VAL.revenue
     const dir = sortDir === 'asc' ? 1 : -1
-    return [...agg.lanes].sort((a, b) => {
+    return [...leaderboardLanes].sort((a, b) => {
       const av = get(a), bv = get(b)
       const an = av == null || !Number.isFinite(av)
       const bn = bv == null || !Number.isFinite(bv)
@@ -783,7 +825,7 @@ export default function LaneFlowMap() {
       if (av === bv) return b.revenue - a.revenue
       return (av - bv) * dir
     })
-  }, [agg, sortKey, sortDir])
+  }, [agg, leaderboardLanes, sortKey, sortDir])
 
   // Tier-aware deadhead leaderboard filter: null = all lanes, 'all' = every
   // flagged lane, or a specific tier. Composes with sort (applied to `ranked`)
@@ -798,16 +840,16 @@ export default function LaneFlowMap() {
     for (const l of ranked) { const t = deadheadTier(l); if (t) c[t]++ }
     return { ...c, all: c.yellow + c.orange + c.red }
   }, [ranked])
-  const combinedLaneCount = useMemo(() => ranked.filter(l => combine.laneGroupId.has(l.key)).length, [ranked, combine])
+  const combinedLaneCount = useMemo(() => ranked.filter(l => l.combineGroupId).length, [ranked])
   const displayedLanes = useMemo(() => {
     let list = ranked
     if (deadheadFilter === 'all') list = list.filter(l => deadheadTier(l))
     else if (deadheadFilter) list = list.filter(l => deadheadTier(l) === deadheadFilter)
-    if (combinedOnly) list = list.filter(l => combine.laneGroupId.has(l.key))
+    if (combinedOnly) list = list.filter(l => l.combineGroupId)
     const q = loadSearch.trim().toLowerCase()
     if (q) list = list.filter(l => (l.legs || []).some(leg => String(leg.load_number || '').toLowerCase().includes(q)))
     return list
-  }, [ranked, deadheadFilter, combinedOnly, loadSearch, combine])
+  }, [ranked, deadheadFilter, combinedOnly, loadSearch])
   const leaderboardFiltered = !!deadheadFilter || combinedOnly || !!loadSearch.trim()
   // A stale tier selection (e.g. after a period change clears that tier) falls
   // back to showing all, so the table never looks empty for no reason.
@@ -1388,15 +1430,16 @@ export default function LaneFlowMap() {
               <p className="text-xs font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">Lane leaderboard</p>
               <Pills value={sortKey} onChange={setSortFromPills} options={LEADERBOARD_SORTS.map(s => [s.key, s.label])} title="Revenue — total $ on the lane · $/mile — revenue ÷ miles · Loads — how many loads ran this origin→destination. Or click a column header to sort (toggles asc/desc). Tied lanes sorted by revenue." />
             </div>
-            {/* Row 2 — deadhead + Combined filters and a narrow load-# search;
-                wraps cleanly so it never overflows the panel width. */}
-            <div className="flex items-center flex-wrap gap-2 px-4 py-2 border-b border-gray-100 dark:border-white/5">
+            {/* Row 2 — deadhead + Combined filters and a narrow load-# search,
+                all on one row. Chips hold their width; the search flexes down so
+                it always fits inline (never drops to a third row). */}
+            <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-100 dark:border-white/5">
               <DeadheadFilterMenu counts={deadheadCounts} active={deadheadFilter} onPick={setDeadheadFilter} />
               {/* Combined-only chip — lanes containing a combine-group load. */}
               <button type="button" onClick={() => setCombinedOnly(v => !v)}
                 disabled={combinedLaneCount === 0 && !combinedOnly}
                 title="Show only lanes with combined loads"
-                className={`inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                className={`shrink-0 inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
                   combinedOnly
                     ? 'bg-orange-500 text-slate-900 border-orange-500'
                     : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent'
@@ -1404,7 +1447,7 @@ export default function LaneFlowMap() {
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5"><path d="M7 3v6a5 5 0 0 0 5 5h5m0 0-3-3m3 3-3 3" strokeLinecap="round" strokeLinejoin="round" /></svg>
                 Combined{combinedLaneCount > 0 && <span>{combinedLaneCount}</span>}
               </button>
-              <div className="relative w-52 max-w-full">
+              <div className="relative flex-1 min-w-0 max-w-[220px]">
                 <input
                   type="text" value={loadSearch} onChange={e => setLoadSearch(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Escape') setLoadSearch('') }}
@@ -1449,16 +1492,25 @@ export default function LaneFlowMap() {
                       return (
                       <tr key={lane.key}
                         onClick={() => {
-                          // One load to show → straight to its LOAD PATH; skip the
-                          // single-item "Loads on this lane" card. Multi-load lanes
-                          // still open the list so the manager can pick.
-                          if (lane.legs && lane.legs.length === 1) openLeg(lane.legs[0])
+                          // Combined group → its combined LOAD PATH (via the anchor
+                          // leg). Otherwise one load → straight to its LOAD PATH;
+                          // multi-load lanes open the list so the manager can pick.
+                          if (lane.combineGroupId) openLeg(lane.anchorLeg)
+                          else if (lane.legs && lane.legs.length === 1) openLeg(lane.legs[0])
                           else setSelected(lane.key === selectedKey ? null : lane.key)
                         }}
                         className={`${S.tableRow} cursor-pointer ${selectedKey === lane.key ? 'bg-orange-50 dark:bg-orange-500/10' : ''}`}>
                         <td className="px-3 py-2">
                           <p className="font-medium text-gray-900 dark:text-slate-200 leading-tight">{lane.origin}</p>
                           <p className="text-gray-400 dark:text-slate-500 leading-tight">→ {lane.destination}{!lane.geocoded && <span className="ml-1 text-amber-600 dark:text-amber-400" title="This lane couldn't be geocoded, so it isn't drawn on the map.">⌀ off-map</span>}<DeadheadIcon lane={lane} /></p>
+                          {lane.combineGroupId && (
+                            <p className="mt-1 leading-none">
+                              <span className="inline-flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-2.5 h-2.5"><path d="M7 3v6a5 5 0 0 0 5 5h5m0 0-3-3m3 3-3 3" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                                Combined · {lane.combinedCount}
+                              </span>
+                            </p>
+                          )}
                           {lane.trailerType && <p className="mt-1 leading-none"><TypeBadge type={lane.trailerType} color={typeColorFor(lane.trailerType)} /></p>}
                           {phaseBreakdown && (
                             <p className="mt-1 text-[10px] text-gray-500 dark:text-slate-400 flex flex-wrap gap-1">
