@@ -28,14 +28,22 @@ function extractLanes(puInfo, delInfo) {
   return origin && destination ? `${origin} → ${destination}` : 'Unknown lane'
 }
 
+// Parse a date-only value WITHOUT a timezone shift. `new Date('2026-07-06')`
+// parses as UTC midnight and renders a day early in a negative-offset zone
+// (CT = UTC−6); building from the Y-M-D parts constructs local midnight, so the
+// calendar day is preserved. Already-a-Date and other formats pass through.
+function parseYmdLocal(d) {
+  if (!d) return null
+  if (d instanceof Date) return isNaN(d.getTime()) ? null : d
+  const m = String(d).match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+  const dt = new Date(d)
+  return isNaN(dt.getTime()) ? null : dt
+}
+
 // Format date range compactly (e.g., "Jun 12 → Jun 16")
 function formatDateRange(pickupDate, deliveryDate) {
-  const formatDate = (d) => {
-    if (!d) return null
-    const date = typeof d === 'string' ? new Date(d) : d
-    if (isNaN(date.getTime())) return null
-    return date
-  }
+  const formatDate = parseYmdLocal
 
   const pickup = formatDate(pickupDate)
   const delivery = formatDate(deliveryDate)
@@ -63,11 +71,7 @@ function formatDateRange(pickupDate, deliveryDate) {
 // neither date is present. Splits formatDateRange so candidate rows can
 // interleave clock times per side.
 function dateRangeParts(pickupDate, deliveryDate) {
-  const toDate = (d) => {
-    if (!d) return null
-    const dt = typeof d === 'string' ? new Date(d) : d
-    return isNaN(dt.getTime()) ? null : dt
-  }
+  const toDate = parseYmdLocal
   const pickup = toDate(pickupDate), delivery = toDate(deliveryDate)
   if (!pickup && !delivery) return null
   const diffYear = pickup && delivery && pickup.getFullYear() !== delivery.getFullYear()
