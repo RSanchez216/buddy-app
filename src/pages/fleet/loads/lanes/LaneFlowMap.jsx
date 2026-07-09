@@ -724,6 +724,44 @@ export default function LaneFlowMap() {
   const rpmScale = useMemo(() => (agg ? makeRpmScale(agg.lanes) : null), [agg])
   const widthFor = useMemo(() => (agg ? makeWidthScale(agg.lanes, weight === 'rpm' ? 'revenue' : weight) : null), [agg, weight])
 
+  // ── Combined loads ──────────────────────────────────────────────────────────
+  // Two legs booked as one trip share a combine_group_id (stamped in
+  // fetchLaneLegs). Group totals give the honest blended $/mi (Σrev ÷ Σmiles) so
+  // the 0-mile member arc no longer renders colorless; the lane→group map,
+  // partner labels, and per-leg lookup drive routing + the map's combined style.
+  const combine = useMemo(() => {
+    const groupByLeg = new Map()   // leg_id  -> groupId
+    const laneGroupId = new Map()  // lane.key -> groupId (first combined leg wins)
+    const totals = new Map()       // groupId -> { rev, miles }
+    const laneLabels = new Map()   // groupId -> Map<lane.key, label>
+    if (agg) for (const lane of agg.lanes) {
+      let laneGid = null
+      for (const leg of lane.legs || []) {
+        const gid = leg.combine_group_id
+        if (!gid) continue
+        groupByLeg.set(leg.leg_id, gid)
+        if (!laneGid) laneGid = gid
+        const t = totals.get(gid) || { rev: 0, miles: 0 }
+        t.rev += Number(leg.leg_revenue) || 0
+        t.miles += Number(leg.leg_total_miles) || 0
+        totals.set(gid, t)
+      }
+      if (laneGid) {
+        laneGroupId.set(lane.key, laneGid)
+        if (!laneLabels.has(laneGid)) laneLabels.set(laneGid, new Map())
+        laneLabels.get(laneGid).set(lane.key, `${lane.origin} → ${lane.destination}`)
+      }
+    }
+    const partners = new Map()     // lane.key -> [other lane labels in the group]
+    for (const [, labelMap] of laneLabels) {
+      for (const [key] of labelMap) {
+        partners.set(key, [...labelMap.entries()].filter(([k]) => k !== key).map(([, l]) => l))
+      }
+    }
+    const blendedRpm = (gid) => { const t = totals.get(gid); return t && t.miles > 0 ? t.rev / t.miles : null }
+    return { groupByLeg, laneGroupId, partners, blendedRpm }
+  }, [agg])
+
   // Client-side leaderboard sort: current column + direction, nulls/— last,
   // revenue as the tiebreak. Instant on the already-loaded lanes.
   const ranked = useMemo(() => {
@@ -805,26 +843,38 @@ export default function LaneFlowMap() {
   // Extended per-load view: clicking a load fetches load_deadhead_geometry and
   // draws its two-color path (red deadhead + loaded leg) focused on the map.
   // Keyed to the leg_id so a stale RPC response can't overwrite a newer pick.
-  const [legDetail, setLegDetail] = useState({ legId: null, leg: null, geo: null, loading: false, error: false, prevMode: 'heat' })
+  const [legDetail, setLegDetail] = useState({ legId: null, leg: null, kind: 'deadhead', geo: null, group: null, loading: false, error: false, prevMode: 'heat' })
   const openLeg = useCallback(async (leg) => {
     // Arcs only draw in the Lanes canvas; the focus path lives there. Remember
     // the mode we came from so Back returns to Heat if that's where we were.
     const prevMode = mapMode
+    // A combined load routes to the combined view, never the deadhead one. The
+    // group id may be on the leg, or resolvable by leg_id (e.g. a combined
+    // member opened from the miles-review banner, whose row lacks the field).
+    const gid = leg.combine_group_id || combine.groupByLeg.get(leg.leg_id) || null
+    const kind = gid ? 'combined' : 'deadhead'
     setMapMode('lanes')
-    setLegDetail({ legId: leg.leg_id, leg, geo: null, loading: true, error: false, prevMode })
+    setLegDetail({ legId: leg.leg_id, leg, kind, geo: null, group: null, loading: true, error: false, prevMode })
     try {
-      const { data, error } = await supabase.rpc('load_deadhead_geometry', { p_leg_id: leg.leg_id })
-      if (error) throw error
-      const row = Array.isArray(data) && data.length ? data[0] : null
-      setLegDetail(s => (s.legId === leg.leg_id ? { ...s, geo: row, loading: false, error: !row } : s))
+      if (kind === 'combined') {
+        const { data, error } = await supabase.rpc('load_combine_geometry', { p_leg_id: leg.leg_id })
+        if (error) throw error
+        const rows = Array.isArray(data) ? data : []
+        setLegDetail(s => (s.legId === leg.leg_id ? { ...s, group: rows, loading: false, error: rows.length === 0 } : s))
+      } else {
+        const { data, error } = await supabase.rpc('load_deadhead_geometry', { p_leg_id: leg.leg_id })
+        if (error) throw error
+        const row = Array.isArray(data) && data.length ? data[0] : null
+        setLegDetail(s => (s.legId === leg.leg_id ? { ...s, geo: row, loading: false, error: !row } : s))
+      }
     } catch (e) {
       toast.error("Couldn't load this load's path", e)
       setLegDetail(s => (s.legId === leg.leg_id ? { ...s, loading: false, error: true } : s))
     }
-  }, [toast, mapMode])
+  }, [toast, mapMode, combine])
   function closeLeg() {
     setMapMode(legDetail.prevMode || 'heat')
-    setLegDetail({ legId: null, leg: null, geo: null, loading: false, error: false, prevMode: 'heat' })
+    setLegDetail({ legId: null, leg: null, kind: 'deadhead', geo: null, group: null, loading: false, error: false, prevMode: 'heat' })
   }
   // Miles-review rows carry their own field names; normalize to the leg shape
   // LegRow/the panel expect, so a review row opens straight to its LOAD PATH.
@@ -852,7 +902,7 @@ export default function LaneFlowMap() {
   const loadedColor = rpmScale ? rpmScale.color(legDetailRpm) : RPM_NULL_COLOR
   const geo = legDetail.geo
   const hasDeadheadOrigin = !!(geo && geo.deadhead_lat != null && geo.deadhead_lng != null)
-  const focus = geo && geo.pickup_lat != null && geo.delivery_lat != null ? {
+  const focus = legDetail.kind === 'deadhead' && geo && geo.pickup_lat != null && geo.delivery_lat != null ? {
     deadhead: hasDeadheadOrigin ? [Number(geo.deadhead_lat), Number(geo.deadhead_lng)] : null,
     pickup: [Number(geo.pickup_lat), Number(geo.pickup_lng)],
     delivery: [Number(geo.delivery_lat), Number(geo.delivery_lng)],
@@ -860,6 +910,23 @@ export default function LaneFlowMap() {
     deadheadLabel: geo.deadhead_label,
     pickupLabel: geo.pickup_label,
     deliveryLabel: geo.delivery_label,
+  } : null
+
+  // Combined view: every lane in the group drawn together, all in the group's
+  // blended-$/mi color. Members with 0 loaded miles still carry real
+  // origin/dest coords, so both arcs draw.
+  const group = legDetail.group
+  const combineColor = group && group.length && rpmScale ? rpmScale.color(Number(group[0].blended_rpm)) : RPM_NULL_COLOR
+  const combineFocus = legDetail.kind === 'combined' && group && group.length ? {
+    color: combineColor,
+    lanes: group
+      .filter(m => m.origin_lat != null && m.dest_lat != null)
+      .map(m => ({
+        origin: [Number(m.origin_lat), Number(m.origin_lng)],
+        dest: [Number(m.dest_lat), Number(m.dest_lng)],
+        label: m.lane_label,
+        isAnchor: m.is_anchor,
+      })),
   } : null
 
   function setPresetRange(p) {
@@ -881,7 +948,18 @@ export default function LaneFlowMap() {
     () => (agg ? typeOptions.filter(t => agg.lanes.some(l => l.trailerType === t)) : []),
     [agg, typeOptions],
   )
-  const laneColorFor = colorBy === 'type' ? (lane) => typeColorFor(lane.trailerType) : null
+  // Arc color: trailer-type color, else the $/mi gradient — but a combined
+  // lane uses its group's blended $/mi so both lanes share one honest color and
+  // the 0-mile member stops rendering as a colorless no-RPM arc.
+  const laneColorFor = useCallback((lane) => {
+    if (colorBy === 'type') return typeColorFor(lane.trailerType)
+    const gid = combine.laneGroupId.get(lane.key)
+    if (gid) {
+      const r = combine.blendedRpm(gid)
+      if (r != null && rpmScale) return rpmScale.color(r)
+    }
+    return rpmScale ? rpmScale.color(lane.rpm) : RPM_NULL_COLOR
+  }, [colorBy, typeColorFor, combine, rpmScale])
   // Isolating a single trailer type tints the heat ramp toward that type's
   // color so a screenshot identifies itself.
   const heatTint = typeFilter && typeFilter.length === 1 ? typeColorFor(typeFilter[0]) : null
@@ -1105,6 +1183,8 @@ export default function LaneFlowMap() {
                     typeColorFor={typeColorFor}
                     selectedPhases={selectedPhases}
                     focus={focus}
+                    combineFocus={combineFocus}
+                    combinePartners={combine.partners}
                   />
                 </div>
                 <div className={`transition-opacity duration-300 motion-reduce:transition-none ${mapMode === 'lanes' ? 'opacity-0 pointer-events-none absolute inset-0' : 'opacity-100'}`} aria-hidden={mapMode === 'lanes'}>
@@ -1141,17 +1221,52 @@ export default function LaneFlowMap() {
             <div className={`${S.card} overflow-hidden`}>
               <div className="flex items-start justify-between gap-2 px-4 py-3 border-b border-gray-100 dark:border-white/5">
                 <div className="min-w-0">
-                  <p className="text-xs font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">Load path</p>
+                  <p className="text-xs font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">
+                    {legDetail.kind === 'combined' ? `Combined load${group && group.length ? ` · ${group.length} loads` : ''}` : 'Load path'}
+                  </p>
                   <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">
                     #{legDetail.leg.load_number || legDetail.leg.load_id}
                   </p>
                 </div>
                 <button onClick={closeLeg}
                   className="shrink-0 text-[11px] font-medium text-orange-600 dark:text-orange-400 hover:underline"
-                  title="Close the load path and return to the map">← Back</button>
+                  title="Close and return to the leaderboard">← Back</button>
               </div>
 
-              {legDetail.loading ? (
+              {legDetail.kind === 'combined' ? (
+                legDetail.loading ? (
+                  <div className="p-6 text-center text-sm text-gray-400 dark:text-slate-500 animate-pulse">Assembling this combined trip…</div>
+                ) : legDetail.error || !group || !group.length ? (
+                  <div className="p-6 text-center text-sm text-gray-400 dark:text-slate-500">Couldn’t load this combined trip.</div>
+                ) : (
+                  <div className="text-xs">
+                    {/* Honest blended group headline — vs the misleading per-arc
+                        $/mi / no-RPM on the split legs. */}
+                    <div className="px-4 py-3 border-b border-gray-100 dark:border-white/5">
+                      <p className="inline-flex items-center gap-1.5 text-sm font-mono font-semibold text-gray-900 dark:text-white">
+                        <span className="inline-block w-4 rounded-full" style={{ height: 3, background: combineColor }} />
+                        {fmtNum(Number(group[0].combined_miles))} mi · {fmtMoney(group[0].combined_revenue)} · {fmtRpm(group[0].blended_rpm)}/mi combined
+                      </p>
+                      <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-0.5">Blended across all loads in the group.</p>
+                    </div>
+                    {/* Each load in the group; anchor marked. */}
+                    <ul className="divide-y divide-gray-50 dark:divide-white/[0.03]">
+                      {group.map((m, i) => (
+                        <li key={`${m.load_number}:${i}`} className="px-4 py-2.5 flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="font-medium text-gray-900 dark:text-slate-200 inline-flex items-center gap-1.5">
+                              #{m.load_number}
+                              {m.is_anchor && <span className="text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300">Anchor</span>}
+                            </p>
+                            <p className="text-gray-400 dark:text-slate-500 truncate text-[11px]">{m.lane_label}</p>
+                          </div>
+                          <p className="font-mono text-gray-700 dark:text-slate-300 shrink-0">{fmtMoney(m.load_revenue)}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )
+              ) : legDetail.loading ? (
                 <div className="p-6 text-center text-sm text-gray-400 dark:text-slate-500 animate-pulse">Tracing this load’s path…</div>
               ) : legDetail.error || !geo ? (
                 <div className="p-6 text-center text-sm text-gray-400 dark:text-slate-500">Couldn’t trace this load’s path.</div>

@@ -27,6 +27,25 @@ export async function fetchLaneLegs({ from, to, basis = 'delivery' }) {
     out.push(...(data || []))
     if (!data || data.length < 1000) break
   }
+
+  // combine_group_id lives on v_load_leg_profit (not v_lane_geo), so pull the
+  // combined legs for this window and stamp each leg with its group id. Only a
+  // handful of loads are ever combined, so this is a tiny second read; legs
+  // with no group stay undefined (→ non-combined everywhere downstream).
+  try {
+    const { data: combos, error: cErr } = await supabase.from('v_load_leg_profit')
+      .select('leg_id, combine_group_id')
+      .not('combine_group_id', 'is', null)
+      .gte(dateCol, from).lte(dateCol, to)
+    if (!cErr && combos?.length) {
+      const groupByLeg = new Map(combos.map(c => [c.leg_id, c.combine_group_id]))
+      for (const leg of out) {
+        const gid = groupByLeg.get(leg.leg_id)
+        if (gid) leg.combine_group_id = gid
+      }
+    }
+  } catch { /* non-fatal: combine styling just won't apply this load */ }
+
   return out
 }
 

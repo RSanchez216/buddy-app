@@ -37,10 +37,12 @@ const DEADHEAD_COLOR = '#ef4444' // red-500 — reads on the light land + dark f
 // zooms the viewBox to fit those points. Shape:
 //   { deadhead:[lat,lng]|null, pickup:[lat,lng], delivery:[lat,lng],
 //     loadedColor, deadheadLabel, pickupLabel, deliveryLabel }
-export default function LaneMapCanvas({ lanes, cities, colorFor, widthFor, selectedKey, onSelect, laneColorFor, typeColorFor, selectedPhases, focus }) {
+export default function LaneMapCanvas({ lanes, cities, colorFor, widthFor, selectedKey, onSelect, laneColorFor, typeColorFor, selectedPhases, focus, combineFocus, combinePartners }) {
   const wrapRef = useRef(null)
   const [hover, setHover] = useState(null) // { key, x, y }
-  const focusing = !!focus
+  // Either a deadhead path or a combined group focuses the map — both dim the
+  // rest of the field and disable arc interaction.
+  const focusing = !!focus || !!combineFocus
 
   // Project the focus load's points once. Pickup/delivery are always present;
   // deadhead origin is null when the prior drop isn't derivable/geocoded.
@@ -52,6 +54,18 @@ export default function LaneMapCanvas({ lanes, cities, colorFor, widthFor, selec
     const dh = focus.deadhead ? projection([focus.deadhead[1], focus.deadhead[0]]) : null
     return { pk, dv, dh }
   }, [focus])
+
+  // Project each lane in a combined group (all in the group's blended color).
+  const combineDrawn = useMemo(() => {
+    if (!combineFocus) return null
+    const arcs = []
+    for (const ln of combineFocus.lanes) {
+      const a = projection([ln.origin[1], ln.origin[0]])
+      const b = projection([ln.dest[1], ln.dest[0]])
+      if (a && b) arcs.push({ a, b, label: ln.label, isAnchor: ln.isAnchor })
+    }
+    return arcs.length ? { arcs, color: combineFocus.color } : null
+  }, [combineFocus])
 
 
   // Project once per lane set; lanes that don't land on the AlbersUSA frame
@@ -189,6 +203,30 @@ export default function LaneMapCanvas({ lanes, cities, colorFor, widthFor, selec
           </g>
         )}
 
+        {/* Combined group — every lane in the group drawn together in the group's
+            blended-$/mi color, each with the selected-lane animation, so the two
+            legs of one trip read as a set. */}
+        {combineDrawn && (
+          <g>
+            {combineDrawn.arcs.map((arc, i) => {
+              const d = segPath(arc.a, arc.b)
+              return (
+                <g key={i}>
+                  <path d={d} fill="none" stroke={combineDrawn.color} strokeWidth={3.6} strokeLinecap="round"
+                    opacity="0.98" style={{ filter: `drop-shadow(0 0 6px ${combineDrawn.color})` }} />
+                  <path d={d} fill="none" strokeWidth={1.5} strokeLinecap="round"
+                    strokeDasharray="7 21" opacity="0.9" className="stroke-gray-900/60 dark:stroke-white"
+                    style={{ animation: 'laneFlow 1.1s linear infinite' }} />
+                </g>
+              )
+            })}
+            {combineDrawn.arcs.flatMap((arc, i) => [
+              <circle key={`o${i}`} cx={arc.a[0]} cy={arc.a[1]} r={3.5} fill={combineDrawn.color} stroke="#fff" strokeWidth="1.5" pointerEvents="none" />,
+              <circle key={`d${i}`} cx={arc.b[0]} cy={arc.b[1]} r={3.5} fill={combineDrawn.color} stroke="#fff" strokeWidth="1.5" pointerEvents="none" />,
+            ])}
+          </g>
+        )}
+
         {/* City dots + top-city labels */}
         {cityDots.dots.map(c => (
           <g key={c.city} pointerEvents="none">
@@ -219,6 +257,17 @@ export default function LaneMapCanvas({ lanes, cities, colorFor, widthFor, selec
         </div>
       )}
 
+      {/* Combined-group legend — both lanes share the group's blended color. */}
+      {combineFocus && (
+        <div className="absolute top-2 left-2 z-20 rounded-lg border border-gray-200 dark:border-white/10 bg-white/90 dark:bg-[#12132e]/90 backdrop-blur px-3 py-2 text-[11px] shadow-lg">
+          <p className="font-semibold text-gray-700 dark:text-slate-200 mb-1">Combined trip</p>
+          <div className="flex items-center gap-1.5">
+            <span className="inline-block w-4 rounded-full" style={{ height: 3, background: combineFocus.color }} />
+            <span className="text-gray-600 dark:text-slate-300">{combineFocus.lanes.length} lanes · blended $/mi</span>
+          </div>
+        </div>
+      )}
+
       {/* Tooltip */}
       {hoveredLane && hover && (
         <div
@@ -226,6 +275,15 @@ export default function LaneMapCanvas({ lanes, cities, colorFor, widthFor, selec
           style={{ left: Math.min(hover.x + 14, (hover.w || 600) - 215), top: Math.max(hover.y - 64, 6), width: 205 }}
         >
           <p className="text-xs font-semibold text-gray-900 dark:text-white leading-snug">{hoveredLane.origin} <span className="text-orange-500">→</span> {hoveredLane.destination}</p>
+          {combinePartners?.get(hoveredLane.key)?.length > 0 && (
+            <div className="mt-1 text-[10px] rounded-md bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-300 px-1.5 py-1 leading-snug">
+              <span className="font-semibold inline-flex items-center gap-1">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3 h-3 shrink-0"><path d="M7 3v6a5 5 0 0 0 5 5h5m0 0-3-3m3 3-3 3" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                Combined load
+              </span>
+              <span className="text-orange-600/80 dark:text-orange-300/80"> · with {combinePartners.get(hoveredLane.key).join(', ')}</span>
+            </div>
+          )}
           <div className="mt-1 flex items-baseline justify-between text-[11px] text-gray-500 dark:text-slate-400">
             <span>{hoveredLane.loads} load{hoveredLane.loads === 1 ? '' : 's'} · {fmtNum(hoveredLane.miles)} mi</span>
             <span className="font-mono">{fmtMoney(hoveredLane.revenue)}</span>
