@@ -494,7 +494,28 @@ function IdleSection({ title, kind, rows, reasons, resolvedView, reviewFilter, f
     })
   }, [filtered, sort, columns, reviewFilter, financeFilter])
 
-  const visible = expanded ? sorted : sorted.slice(0, CAP)
+  // Group teammate driver rows (shared team_id) into one team item, positioned
+  // where the team's first member falls in the sorted list — members share
+  // days_idle, so under the default day-sort they're already adjacent, and the
+  // first-encounter push keeps them together under any sort. Solo rows and all
+  // equipment rows (team_id null) stay individual, so units are unchanged.
+  const renderItems = useMemo(() => {
+    const byTeam = new Map()
+    const items = []
+    for (const r of sorted) {
+      if (r.team_id) {
+        let t = byTeam.get(r.team_id)
+        if (!t) { t = { type: 'team', team_id: r.team_id, rows: [] }; byTeam.set(r.team_id, t); items.push(t) }
+        t.rows.push(r)
+      } else {
+        items.push({ type: 'solo', row: r })
+      }
+    }
+    for (const t of byTeam.values()) t.rows.sort((a, b) => (a.team_role === 'primary' ? -1 : b.team_role === 'primary' ? 1 : 0))
+    return items
+  }, [sorted])
+
+  const visible = expanded ? renderItems : renderItems.slice(0, CAP)
 
   // Under an active Financing filter, a section with no matching rows collapses
   // entirely (header included) — e.g. Drivers under "Vendor lease". The default
@@ -556,16 +577,17 @@ function IdleSection({ title, kind, rows, reasons, resolvedView, reviewFilter, f
                 </tr>
               </thead>
               <tbody>
-                {visible.map(r => (
-                  <IdleRow key={`${r.subject_type}:${r.subject_id}`} row={r} kind={kind} reasons={reasons} resolvedView={resolvedView} onSetReason={onSetReason} onResolve={onResolve} onReopen={onReopen} />
-                ))}
+                {visible.map(item => item.type === 'team'
+                  ? <TeamGroup key={`team:${item.team_id}`} team={item} colSpan={columns.length + 1} reasons={reasons} resolvedView={resolvedView} onSetReason={onSetReason} onResolve={onResolve} onReopen={onReopen} />
+                  : <IdleRow key={`${item.row.subject_type}:${item.row.subject_id}`} row={item.row} kind={kind} reasons={reasons} resolvedView={resolvedView} onSetReason={onSetReason} onResolve={onResolve} onReopen={onReopen} />
+                )}
               </tbody>
             </table>
           </div>
-          {sorted.length > CAP && (
+          {renderItems.length > CAP && (
             <div className="px-4 py-2.5 border-t border-gray-100 dark:border-white/5">
               <button onClick={() => setExpanded(e => !e)} className="text-xs font-semibold text-orange-600 dark:text-orange-400 hover:underline">
-                {expanded ? 'Show fewer' : `Show all (${sorted.length})`}
+                {expanded ? 'Show fewer' : `Show all (${renderItems.length})`}
               </button>
             </div>
           )}
@@ -649,7 +671,53 @@ function InlineNote({ text }) {
   )
 }
 
-function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onReopen }) {
+// Small primary/co pill next to a team member's name.
+function RolePill({ role }) {
+  const primary = role === 'primary'
+  return (
+    <span className={`text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full ${
+      primary ? 'bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300'
+              : 'bg-gray-100 text-gray-600 dark:bg-slate-700/50 dark:text-slate-300'
+    }`}>{primary ? 'primary' : 'co'}</span>
+  )
+}
+
+// One linked team card: a header row (team name, TEAM·n pill, shared idle +
+// combined held + last load, shown once) followed by the members' own idle
+// rows. The shared orange band + left bracket read as one unit; each member
+// keeps their own reason / note / holding / Resolve (nothing merges).
+function TeamGroup({ team, colSpan, reasons, resolvedView, onSetReason, onResolve, onReopen }) {
+  const rows = team.rows
+  const repr = rows.find(r => r.team_role === 'primary') || rows[0]
+  const combinedHeld = rows.reduce((s, r) => s + (Number(r.holding_prorated) || 0), 0)
+  const last = []
+  if (repr.last_load_number) last.push(unitTag(repr.last_load_number))
+  if (repr.last_lane) last.push(repr.last_lane)
+  if (repr.last_delivery) last.push(fmtShort(repr.last_delivery))
+  if (repr.last_dispatcher) last.push(repr.last_dispatcher)
+  return (
+    <>
+      <tr className="bg-orange-50/60 dark:bg-orange-500/[0.07]">
+        <td colSpan={colSpan} className="px-4 pt-3 pb-2 border-t-2 border-t-orange-300 dark:border-t-orange-500/40 border-l-[3px] border-l-orange-400 dark:border-l-orange-500/50">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-bold text-gray-900 dark:text-white">{repr.team_name || 'Team'}</span>
+            <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300">Team · {rows.length}</span>
+            <span className="text-[11px] font-mono text-gray-600 dark:text-slate-300">idle {repr.days_idle ?? 0}d</span>
+            <span className="text-[11px] font-mono text-amber-600 dark:text-amber-400" title="Combined prorated holding across the team's members">{combinedHeld > 0 ? money0(combinedHeld) : '$0'} held</span>
+          </div>
+          {last.length > 0 && (
+            <div className="text-[10px] text-gray-600 dark:text-slate-400 mt-0.5 max-w-[30rem] truncate" title={`Last: ${last.join(' · ')}`}>Last: {last.join(' · ')}</div>
+          )}
+        </td>
+      </tr>
+      {rows.map(r => (
+        <IdleRow key={`${r.subject_type}:${r.subject_id}`} row={r} kind="driver" reasons={reasons} resolvedView={resolvedView} onSetReason={onSetReason} onResolve={onResolve} onReopen={onReopen} teamMember />
+      ))}
+    </>
+  )
+}
+
+function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onReopen, teamMember = false }) {
   const sev = severity(row)
 
   const daysCls = (row.days_idle ?? 0) >= 14 ? 'text-red-600 dark:text-red-400 font-semibold' : 'text-gray-700 dark:text-slate-300'
@@ -743,16 +811,19 @@ function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onR
       </tr>
     )
   }
-  // driver
+  // driver — team members get a shared orange band + a left bracket on the first
+  // cell so the group reads as one card; the shared last-load lives in the team
+  // header, so it's suppressed here to avoid duplication.
   return (
-    <tr className={S.tableRow}>
-      <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200 align-top`}>
-        <span className="inline-flex items-center gap-1.5">
+    <tr className={`${S.tableRow} ${teamMember ? 'bg-orange-50/30 dark:bg-orange-500/[0.04]' : ''}`}>
+      <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200 align-top ${teamMember ? 'border-l-[3px] border-l-orange-400 dark:border-l-orange-500/50 pl-5' : ''}`}>
+        <span className="inline-flex items-center gap-1.5 flex-wrap">
           <SubjectLink row={row} />
           {row.label && <CopyButton value={row.label.trim()} label="Copy driver name" />}
           {row.detail && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-slate-700/40 text-gray-600 dark:text-slate-400">{row.detail}</span>}
+          {teamMember && row.team_role && <RolePill role={row.team_role} />}
         </span>
-        <LastLoadLine row={row} />
+        {!teamMember && <LastLoadLine row={row} />}
       </td>
       <td className={`${S.td} text-right font-mono align-top ${daysCls}`}>{fmtDays(row.days_idle)}</td>
       <td className={`${S.td} align-top`}><HoldingCell row={row} /></td>
