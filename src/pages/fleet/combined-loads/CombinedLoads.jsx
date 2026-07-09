@@ -86,7 +86,7 @@ function dateRangeParts(pickupDate, deliveryDate) {
 // nothing when the time is null/empty so there's no stray comma.
 function TimeSuffix({ time }) {
   if (!time) return null
-  return <span className="text-gray-300 dark:text-slate-600">, {time}</span>
+  return <span className="text-gray-500 dark:text-slate-400">, {time}</span>
 }
 
 // Candidate-row pickup→delivery line with each date's clock time appended
@@ -95,7 +95,7 @@ function LoadSchedule({ pickupDate, pickupTime, deliveryDate, deliveryTime }) {
   const parts = dateRangeParts(pickupDate, deliveryDate)
   if (!parts) return null
   return (
-    <div className="text-[10px] text-gray-400 dark:text-slate-500 mt-0.5">
+    <div className="text-[10px] text-gray-600 dark:text-slate-300 mt-0.5">
       {parts.pStr}<TimeSuffix time={pickupTime} /> → {parts.dStr}<TimeSuffix time={deliveryTime} />
     </div>
   )
@@ -363,12 +363,12 @@ function CandidatesSection({ candidates, onRefresh }) {
                     </td>
                     <td className="px-3 py-2 text-gray-600 dark:text-slate-400">
                       <div>{pair.load_a}</div>
-                      <div className="text-[10px] text-gray-400 dark:text-slate-500">{pair.lane_a}</div>
+                      <div className="text-[10px] text-gray-600 dark:text-slate-400">{pair.lane_a}</div>
                       <LoadSchedule pickupDate={pair.pickup_a} pickupTime={pair.pickup_time_a} deliveryDate={pair.delivery_a} deliveryTime={pair.delivery_time_a} />
                     </td>
                     <td className="px-3 py-2 text-gray-600 dark:text-slate-400">
                       <div>{pair.load_b}</div>
-                      <div className="text-[10px] text-gray-400 dark:text-slate-500">{pair.lane_b}</div>
+                      <div className="text-[10px] text-gray-600 dark:text-slate-400">{pair.lane_b}</div>
                       <LoadSchedule pickupDate={pair.pickup_b} pickupTime={pair.pickup_time_b} deliveryDate={pair.delivery_b} deliveryTime={pair.delivery_time_b} />
                     </td>
                     <td className="px-3 py-2 text-right text-gray-600 dark:text-slate-400">{pair.overlap_days}d</td>
