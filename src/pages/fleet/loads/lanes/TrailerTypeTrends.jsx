@@ -15,6 +15,7 @@ const TRAILER_COLORS = {
   'Flatbed': '#ef4444',      // red
   'Reefer': '#10b981',       // emerald
   'Power Only': '#8b5cf6',   // violet
+  'Amazon': '#6366f1',       // indigo — matches the Lane Map trailer-type color
   'Unassigned': '#6b7280',   // gray
 }
 
@@ -90,9 +91,11 @@ export default function TrailerTypeTrends() {
 
     const sortedPeriods = [...seenPeriods].sort()
     const sortedTypes = [...seenTypes].sort((a, b) => {
-      // Unassigned last, rest alphabetical
-      if (a === 'Unassigned') return 1
-      if (b === 'Unassigned') return -1
+      // Real trailer types alphabetical; the two "no real trailer" buckets pinned
+      // to the tail — Amazon (own-trailer) then Unassigned last.
+      const tail = { Amazon: 1, Unassigned: 2 }
+      const at = tail[a] || 0, bt = tail[b] || 0
+      if (at || bt) return at - bt
       return a.localeCompare(b)
     })
 
