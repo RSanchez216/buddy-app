@@ -20,13 +20,62 @@ function arcPath(a, b, lift = 0) {
   return `M${a[0]},${a[1]} Q${(a[0] + b[0]) / 2 + px * k},${(a[1] + b[1]) / 2 + py * k} ${b[0]},${b[1]}`
 }
 
+// Focus-path segment: a bowed arc like arcPath, but same-city legs (arcPath
+// returns null) fall back to a straight line so a short deadhead still draws.
+function segPath(a, b) {
+  return arcPath(a, b) || `M${a[0]},${a[1]} L${b[0]},${b[1]}`
+}
+
+// Grow a projected bounding box to the map's aspect ratio (W/H), centered, so
+// focusing on a load's points pans/zooms without distorting the map or
+// changing the SVG's intrinsic height (h-auto follows the viewBox ratio).
+function fitAspect(minX, minY, maxX, maxY, aspect) {
+  const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2
+  let w = maxX - minX, h = maxY - minY
+  if (w / h < aspect) w = h * aspect
+  else h = w / aspect
+  return [cx - w / 2, cy - h / 2, w, h]
+}
+
+const DEADHEAD_COLOR = '#ef4444' // red-500 — reads on the light land + dark frame
+
 // laneColorFor (whole-lane → color) and typeColorFor (trailer type → color)
 // are optional; without them the canvas behaves exactly as before.
 // selectedPhases (Set of phase strings) is used to distinguish in-transit arcs
 // from delivered arcs visually when both are shown.
-export default function LaneMapCanvas({ lanes, cities, colorFor, widthFor, selectedKey, onSelect, laneColorFor, typeColorFor, selectedPhases }) {
+// `focus`, when set, draws a single load's two-color path (deadhead → pickup in
+// red, pickup → delivery in the loaded color) on top of a dimmed lane field and
+// zooms the viewBox to fit those points. Shape:
+//   { deadhead:[lat,lng]|null, pickup:[lat,lng], delivery:[lat,lng],
+//     loadedColor, deadheadLabel, pickupLabel, deliveryLabel }
+export default function LaneMapCanvas({ lanes, cities, colorFor, widthFor, selectedKey, onSelect, laneColorFor, typeColorFor, selectedPhases, focus }) {
   const wrapRef = useRef(null)
   const [hover, setHover] = useState(null) // { key, x, y }
+  const focusing = !!focus
+
+  // Project the focus load's points once. Pickup/delivery are always present;
+  // deadhead origin is null when the prior drop isn't derivable/geocoded.
+  const focusDrawn = useMemo(() => {
+    if (!focus) return null
+    const pk = projection([focus.pickup[1], focus.pickup[0]])
+    const dv = projection([focus.delivery[1], focus.delivery[0]])
+    if (!pk || !dv) return null
+    const dh = focus.deadhead ? projection([focus.deadhead[1], focus.deadhead[0]]) : null
+    return { pk, dv, dh }
+  }, [focus])
+
+  // Zoom the viewBox to the load's points (deadhead included when present).
+  const focusViewBox = useMemo(() => {
+    if (!focusDrawn) return null
+    const pts = [focusDrawn.pk, focusDrawn.dv, focusDrawn.dh].filter(Boolean)
+    const xs = pts.map(p => p[0]), ys = pts.map(p => p[1])
+    let minX = Math.min(...xs), maxX = Math.max(...xs)
+    let minY = Math.min(...ys), maxY = Math.max(...ys)
+    const padX = (maxX - minX) * 0.22 + 70, padY = (maxY - minY) * 0.22 + 70
+    minX -= padX; maxX += padX; minY -= padY; maxY += padY
+    const [x, y, w, h] = fitAspect(minX, minY, maxX, maxY, W / H)
+    return `${x} ${y} ${w} ${h}`
+  }, [focusDrawn])
 
   // Project once per lane set; lanes that don't land on the AlbersUSA frame
   // are dropped here (defensive — all coords are US already).
@@ -69,7 +118,7 @@ export default function LaneMapCanvas({ lanes, cities, colorFor, widthFor, selec
   return (
     <div ref={wrapRef} className="relative">
       <style>{`@keyframes laneFlow { to { stroke-dashoffset: -56; } }`}</style>
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto block select-none" role="img" aria-label="US map of freight lanes">
+      <svg viewBox={focusViewBox || `0 0 ${W} ${H}`} className="w-full h-auto block select-none transition-all duration-500 motion-reduce:transition-none" role="img" aria-label="US map of freight lanes">
         {/* Land */}
         <path d={NATION_OUTLINE} className="fill-gray-100 dark:fill-white/[0.025]" />
         <path d={STATES_OUTLINE} fill="none" strokeWidth="0.75" className="stroke-gray-300 dark:stroke-white/[0.07]" />
@@ -79,7 +128,9 @@ export default function LaneMapCanvas({ lanes, cities, colorFor, widthFor, selec
         {drawn.map(({ lane, a, d }) => {
           const w = widthFor(lane)
           const color = laneColorFor ? laneColorFor(lane) : colorFor(lane.rpm)
-          const active = lane.key === selectedKey || lane.key === hover?.key
+          // While focusing a single load, no lane is "active" and the whole
+          // field recedes so the two-color path stands out.
+          const active = !focusing && (lane.key === selectedKey || lane.key === hover?.key)
           // Check if this lane has in-transit loads (used for visual distinction)
           const hasInTransit = selectedPhases && selectedPhases.size > 1 && lane.legs &&
             lane.legs.some(l => l.load_phase === 'in_transit')
@@ -88,7 +139,7 @@ export default function LaneMapCanvas({ lanes, cities, colorFor, widthFor, selec
           const t = (w - WIDTH_RANGE[0]) / (WIDTH_RANGE[1] - WIDTH_RANGE[0])
           const baseOpacity = dimmed(lane.key) ? 0.07 : 0.2 + t * 0.72
           // In-transit arcs are lighter to distinguish from delivered
-          const arcOpacity = hasInTransit ? baseOpacity * 0.65 : baseOpacity
+          const arcOpacity = focusing ? 0.06 : hasInTransit ? baseOpacity * 0.65 : baseOpacity
           if (!d) {
             // Same-city move: a small ring at the city instead of an arc.
             return (
@@ -107,13 +158,44 @@ export default function LaneMapCanvas({ lanes, cities, colorFor, widthFor, selec
                   strokeDasharray="7 21" opacity="0.9" className="stroke-gray-900/60 dark:stroke-white"
                   style={{ animation: 'laneFlow 1.1s linear infinite' }} />
               )}
-              {/* Fat invisible hit area */}
-              <path d={d} fill="none" stroke="transparent" strokeWidth={Math.max(11, w + 8)} className="cursor-pointer"
-                onMouseMove={e => move(e, lane.key)} onMouseLeave={() => setHover(null)}
-                onClick={() => onSelect(lane.key === selectedKey ? null : lane.key)} />
+              {/* Fat invisible hit area — inert while a load path is focused */}
+              <path d={d} fill="none" stroke="transparent" strokeWidth={Math.max(11, w + 8)}
+                className={focusing ? '' : 'cursor-pointer'} style={focusing ? { pointerEvents: 'none' } : undefined}
+                onMouseMove={e => !focusing && move(e, lane.key)} onMouseLeave={() => setHover(null)}
+                onClick={() => !focusing && onSelect(lane.key === selectedKey ? null : lane.key)} />
             </g>
           )
         })}
+
+        {/* Focused load path — red deadhead (empty) + loaded color, on top of
+            the dimmed field. Drawn between real coordinates; the red line's
+            on-map length is the true geography, not scaled to empty_miles. */}
+        {focusDrawn && (
+          <g>
+            {focusDrawn.dh && (
+              <path d={segPath(focusDrawn.dh, focusDrawn.pk)} fill="none" stroke={DEADHEAD_COLOR}
+                strokeWidth={3.2} strokeLinecap="round" strokeDasharray="7 5" opacity="0.95"
+                style={{ filter: `drop-shadow(0 0 5px ${DEADHEAD_COLOR})` }} />
+            )}
+            <path d={segPath(focusDrawn.pk, focusDrawn.dv)} fill="none" stroke={focus.loadedColor}
+              strokeWidth={3.8} strokeLinecap="round" opacity="0.98"
+              style={{ filter: `drop-shadow(0 0 5px ${focus.loadedColor})` }} />
+            {[[focusDrawn.dh, focus.deadheadLabel, DEADHEAD_COLOR], [focusDrawn.pk, focus.pickupLabel, focus.loadedColor], [focusDrawn.dv, focus.deliveryLabel, focus.loadedColor]]
+              .filter(([p]) => p)
+              .map(([p, label, color], i) => (
+                <g key={i} pointerEvents="none">
+                  <circle cx={p[0]} cy={p[1]} r={4} fill={color} stroke="#fff" strokeWidth="1.5" />
+                  {label && (
+                    <text x={p[0]} y={p[1] - 9} textAnchor="middle" strokeWidth="3"
+                      className="fill-gray-700 dark:fill-slate-100 stroke-white dark:stroke-[#0a0a18] text-[11px] font-semibold"
+                      style={{ paintOrder: 'stroke' }}>
+                      {String(label).split(',')[0]}
+                    </text>
+                  )}
+                </g>
+              ))}
+          </g>
+        )}
 
         {/* City dots + top-city labels */}
         {cityDots.dots.map(c => (
@@ -129,6 +211,21 @@ export default function LaneMapCanvas({ lanes, cities, colorFor, widthFor, selec
           </g>
         ))}
       </svg>
+
+      {/* Focus legend — red = deadhead (empty), loaded color = loaded leg. */}
+      {focus && (
+        <div className="absolute top-2 left-2 z-20 rounded-lg border border-gray-200 dark:border-white/10 bg-white/90 dark:bg-[#12132e]/90 backdrop-blur px-3 py-2 text-[11px] shadow-lg">
+          <p className="font-semibold text-gray-700 dark:text-slate-200 mb-1">Selected load path</p>
+          <div className="flex items-center gap-1.5">
+            <span className="inline-block w-4 rounded-full" style={{ height: 3, background: DEADHEAD_COLOR }} />
+            <span className="text-gray-600 dark:text-slate-300">Deadhead (empty)</span>
+          </div>
+          <div className="flex items-center gap-1.5 mt-0.5">
+            <span className="inline-block w-4 rounded-full" style={{ height: 3, background: focus.loadedColor }} />
+            <span className="text-gray-600 dark:text-slate-300">Loaded</span>
+          </div>
+        </div>
+      )}
 
       {/* Tooltip */}
       {hoveredLane && hover && (

@@ -152,11 +152,19 @@ function TypeBadge({ type, color }) {
 
 // One load-leg line item — shared by the "Loads on this lane" card (arc
 // click) and the "Loads in this area" card (heat-spot click).
-function LegRow({ leg, dateCol, rpmScale, showLane, showPhase, canEdit, onMilesSaved }) {
+function LegRow({ leg, dateCol, rpmScale, showLane, showPhase, canEdit, onMilesSaved, onOpen }) {
   const legRpm = leg.leg_total_miles > 0 ? leg.leg_revenue / leg.leg_total_miles : null
   const phaseLabels = { booked: 'Booked', in_transit: 'In transit', delivered: 'Delivered' }
+  const clickable = !!onOpen
   return (
-    <li className="px-4 py-2.5 flex items-center justify-between gap-3 text-xs">
+    <li
+      className={`px-4 py-2.5 flex items-center justify-between gap-3 text-xs ${clickable ? 'cursor-pointer hover:bg-orange-50 dark:hover:bg-orange-500/[0.07] transition-colors' : ''}`}
+      role={clickable ? 'button' : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onClick={clickable ? () => onOpen(leg) : undefined}
+      onKeyDown={clickable ? (e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(leg) } }) : undefined}
+      title={clickable ? 'Show this load’s deadhead + loaded path on the map' : undefined}
+    >
       <div className="min-w-0">
         <p className="font-medium text-gray-900 dark:text-slate-200 truncate inline-flex items-center gap-0.5">
           #{leg.load_number || leg.load_id}
@@ -788,6 +796,49 @@ export default function LaneFlowMap() {
   // brings the list back. Heat-spot selection wins while in the Heat view.
   const activeDetail = mapMode === 'heat' && selectedCell ? 'cell' : selectedLane ? 'lane' : null
 
+  // Extended per-load view: clicking a load fetches load_deadhead_geometry and
+  // draws its two-color path (red deadhead + loaded leg) focused on the map.
+  // Keyed to the leg_id so a stale RPC response can't overwrite a newer pick.
+  const [legDetail, setLegDetail] = useState({ legId: null, leg: null, geo: null, loading: false, error: false, prevMode: 'heat' })
+  const openLeg = useCallback(async (leg) => {
+    // Arcs only draw in the Lanes canvas; the focus path lives there. Remember
+    // the mode we came from so Back returns to Heat if that's where we were.
+    const prevMode = mapMode
+    setMapMode('lanes')
+    setLegDetail({ legId: leg.leg_id, leg, geo: null, loading: true, error: false, prevMode })
+    try {
+      const { data, error } = await supabase.rpc('load_deadhead_geometry', { p_leg_id: leg.leg_id })
+      if (error) throw error
+      const row = Array.isArray(data) && data.length ? data[0] : null
+      setLegDetail(s => (s.legId === leg.leg_id ? { ...s, geo: row, loading: false, error: !row } : s))
+    } catch (e) {
+      toast.error("Couldn't load this load's path", e)
+      setLegDetail(s => (s.legId === leg.leg_id ? { ...s, loading: false, error: true } : s))
+    }
+  }, [toast, mapMode])
+  function closeLeg() {
+    setMapMode(legDetail.prevMode || 'heat')
+    setLegDetail({ legId: null, leg: null, geo: null, loading: false, error: false, prevMode: 'heat' })
+  }
+  const extended = legDetail.legId != null
+
+  // The map focuses only once coords are in hand. Loaded leg reuses the arc
+  // $/mi color; pickup→delivery always draws, deadhead only when geocoded.
+  const legDetailRpm = legDetail.leg && legDetail.leg.leg_total_miles > 0
+    ? legDetail.leg.leg_revenue / legDetail.leg.leg_total_miles : null
+  const loadedColor = rpmScale ? rpmScale.color(legDetailRpm) : RPM_NULL_COLOR
+  const geo = legDetail.geo
+  const hasDeadheadOrigin = !!(geo && geo.deadhead_lat != null && geo.deadhead_lng != null)
+  const focus = geo && geo.pickup_lat != null && geo.delivery_lat != null ? {
+    deadhead: hasDeadheadOrigin ? [Number(geo.deadhead_lat), Number(geo.deadhead_lng)] : null,
+    pickup: [Number(geo.pickup_lat), Number(geo.pickup_lng)],
+    delivery: [Number(geo.delivery_lat), Number(geo.delivery_lng)],
+    loadedColor,
+    deadheadLabel: geo.deadhead_label,
+    pickupLabel: geo.pickup_label,
+    deliveryLabel: geo.delivery_label,
+  } : null
+
   function setPresetRange(p) {
     setPreset(p)
     if (p === 'week') setRange(thisWeek())
@@ -1027,6 +1078,7 @@ export default function LaneFlowMap() {
                     laneColorFor={laneColorFor || undefined}
                     typeColorFor={typeColorFor}
                     selectedPhases={selectedPhases}
+                    focus={focus}
                   />
                 </div>
                 <div className={`transition-opacity duration-300 motion-reduce:transition-none ${mapMode === 'lanes' ? 'opacity-0 pointer-events-none absolute inset-0' : 'opacity-100'}`} aria-hidden={mapMode === 'lanes'}>
@@ -1057,8 +1109,66 @@ export default function LaneFlowMap() {
 
         {/* Side panel */}
         <div className="space-y-4 min-w-0">
+          {/* Extended per-load view — takes over the side panel while a load's
+              deadhead/loaded path is focused on the map. */}
+          {extended && (
+            <div className={`${S.card} overflow-hidden`}>
+              <div className="flex items-start justify-between gap-2 px-4 py-3 border-b border-gray-100 dark:border-white/5">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">Load path</p>
+                  <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">
+                    #{legDetail.leg.load_number || legDetail.leg.load_id}
+                  </p>
+                </div>
+                <button onClick={closeLeg}
+                  className="shrink-0 text-[11px] font-medium text-orange-600 dark:text-orange-400 hover:underline"
+                  title="Close the load path and return to the map">← Back</button>
+              </div>
+
+              {legDetail.loading ? (
+                <div className="p-6 text-center text-sm text-gray-400 dark:text-slate-500 animate-pulse">Tracing this load’s path…</div>
+              ) : legDetail.error || !geo ? (
+                <div className="p-6 text-center text-sm text-gray-400 dark:text-slate-500">Couldn’t trace this load’s path.</div>
+              ) : (
+                <div className="text-xs">
+                  {/* The load itself (read-only — not a re-entry into itself) */}
+                  <ul className="divide-y divide-gray-50 dark:divide-white/[0.03]">
+                    <LegRow leg={legDetail.leg} dateCol={dateCol} rpmScale={rpmScale} showLane showPhase={selectedPhases.size > 1} />
+                  </ul>
+
+                  {/* Two-color path summary + legend */}
+                  <div className="px-4 py-3 border-t border-gray-100 dark:border-white/5 space-y-2">
+                    {/* Deadhead (red) */}
+                    <div className="flex items-start gap-2">
+                      <span className="mt-1 inline-block w-4 shrink-0 rounded-full" style={{ height: 3, background: '#ef4444' }} />
+                      <p className="text-gray-600 dark:text-slate-300 leading-snug">
+                        {hasDeadheadOrigin ? (
+                          <>
+                            <span className="font-semibold text-gray-900 dark:text-white">Deadhead:</span>{' '}
+                            {fmtNum(Number(geo.empty_miles))} empty mi — ran empty from {geo.deadhead_label}
+                            {geo.prev_load_number && <span className="text-gray-400 dark:text-slate-500"> (prev load #{geo.prev_load_number}{geo.prev_delivered ? `, delivered ${geo.prev_delivered}` : ''})</span>}
+                          </>
+                        ) : (
+                          <span className="text-gray-400 dark:text-slate-500 italic">Deadhead origin unknown — no prior load or its drop isn’t geocoded.</span>
+                        )}
+                      </p>
+                    </div>
+                    {/* Loaded (lane color) */}
+                    <div className="flex items-start gap-2">
+                      <span className="mt-1 inline-block w-4 shrink-0 rounded-full" style={{ height: 3, background: loadedColor }} />
+                      <p className="text-gray-600 dark:text-slate-300 leading-snug">
+                        <span className="font-semibold text-gray-900 dark:text-white">Loaded:</span>{' '}
+                        {fmtNum(Number(geo.loaded_miles))} mi · {geo.pickup_label} <span className="text-orange-500">→</span> {geo.delivery_label}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Best / worst loads by both revenue and $/mi */}
-          {allLoadMetrics && (
+          {!extended && allLoadMetrics && (
             <div className="space-y-3">
               {/* By Revenue row */}
               <div className="grid grid-cols-2 gap-3">
@@ -1112,7 +1222,7 @@ export default function LaneFlowMap() {
           )}
 
           {/* Leaderboard — hidden while a selection's detail card uses its slot */}
-          {!activeDetail && (
+          {!activeDetail && !extended && (
           <div className={`${S.card} overflow-hidden`}>
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-white/5">
               <p className="text-xs font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">Lane leaderboard</p>
@@ -1187,7 +1297,7 @@ export default function LaneFlowMap() {
           )}
 
           {/* Loads on the selected lane */}
-          {activeDetail === 'lane' && selectedLane && (
+          {!extended && activeDetail === 'lane' && selectedLane && (
             <div className={`${S.card} overflow-hidden`}>
               <div className="flex items-start justify-between gap-2 px-4 py-3 border-b border-gray-100 dark:border-white/5">
                 <div className="min-w-0">
@@ -1200,13 +1310,13 @@ export default function LaneFlowMap() {
                   title="Clear selection and show the lane leaderboard">← Leaderboard</button>
               </div>
               <ul className="divide-y divide-gray-50 dark:divide-white/[0.03] max-h-72 overflow-y-auto">
-                {selectedLane.legs.map(leg => <LegRow key={leg.leg_id} leg={leg} dateCol={dateCol} rpmScale={rpmScale} showPhase={selectedPhases.size > 1} canEdit={canEdit} onMilesSaved={reloadLanes} />)}
+                {selectedLane.legs.map(leg => <LegRow key={leg.leg_id} leg={leg} dateCol={dateCol} rpmScale={rpmScale} showPhase={selectedPhases.size > 1} canEdit={canEdit} onMilesSaved={reloadLanes} onOpen={openLeg} />)}
               </ul>
             </div>
           )}
 
           {/* Loads touching the pinned heat spot (heat view's lane click) */}
-          {activeDetail === 'cell' && selectedCell && (
+          {!extended && activeDetail === 'cell' && selectedCell && (
             <div className={`${S.card} overflow-hidden`}>
               <div className="flex items-start justify-between gap-2 px-4 py-3 border-b border-gray-100 dark:border-white/5">
                 <div className="min-w-0">
@@ -1219,7 +1329,7 @@ export default function LaneFlowMap() {
                   title="Clear selection and show the lane leaderboard">← Leaderboard</button>
               </div>
               <ul className="divide-y divide-gray-50 dark:divide-white/[0.03] max-h-72 overflow-y-auto">
-                {selectedCell.legs.map(leg => <LegRow key={leg.leg_id} leg={leg} dateCol={dateCol} rpmScale={rpmScale} showLane showPhase={selectedPhases.size > 1} canEdit={canEdit} onMilesSaved={reloadLanes} />)}
+                {selectedCell.legs.map(leg => <LegRow key={leg.leg_id} leg={leg} dateCol={dateCol} rpmScale={rpmScale} showLane showPhase={selectedPhases.size > 1} canEdit={canEdit} onMilesSaved={reloadLanes} onOpen={openLeg} />)}
               </ul>
             </div>
           )}

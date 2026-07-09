@@ -42,7 +42,10 @@
       "Bash(git --no-optional-locks status --porcelain=v1 --untracked-files=no)",
       "Bash(git config *)",
       "Bash(git --no-optional-locks log --oneline -3)",
-      "Bash(git --no-optional-locks log --oneline -1)"
+      "Bash(git --no-optional-locks log --oneline -1)",
+      "Skill(run)",
+      "Skill(run:*)",
+      "Bash(pkill -f vite)"
     ]
   }
 }
