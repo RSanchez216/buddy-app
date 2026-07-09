@@ -1383,28 +1383,28 @@ export default function LaneFlowMap() {
           {/* Leaderboard — hidden while a selection's detail card uses its slot */}
           {!activeDetail && !extended && (
           <div className={`${S.card} overflow-hidden`}>
+            {/* Row 1 — title + basis toggle only (original clean look). */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-white/5">
               <p className="text-xs font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">Lane leaderboard</p>
-              <div className="flex items-center gap-2">
-                {/* Combined-only chip — lanes containing a combine-group load. */}
-                <button type="button" onClick={() => setCombinedOnly(v => !v)}
-                  disabled={combinedLaneCount === 0 && !combinedOnly}
-                  title="Show only lanes with combined loads"
-                  className={`inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
-                    combinedOnly
-                      ? 'bg-orange-500 text-slate-900 border-orange-500'
-                      : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent'
-                  }`}>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5"><path d="M7 3v6a5 5 0 0 0 5 5h5m0 0-3-3m3 3-3 3" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                  Combined{combinedLaneCount > 0 && <span>{combinedLaneCount}</span>}
-                </button>
-                <DeadheadFilterMenu counts={deadheadCounts} active={deadheadFilter} onPick={setDeadheadFilter} />
-                <Pills value={sortKey} onChange={setSortFromPills} options={LEADERBOARD_SORTS.map(s => [s.key, s.label])} title="Revenue — total $ on the lane · $/mile — revenue ÷ miles · Loads — how many loads ran this origin→destination. Or click a column header to sort (toggles asc/desc). Tied lanes sorted by revenue." />
-              </div>
+              <Pills value={sortKey} onChange={setSortFromPills} options={LEADERBOARD_SORTS.map(s => [s.key, s.label])} title="Revenue — total $ on the lane · $/mile — revenue ÷ miles · Loads — how many loads ran this origin→destination. Or click a column header to sort (toggles asc/desc). Tied lanes sorted by revenue." />
             </div>
-            {/* Load-number search — filters to lanes whose loads match. */}
-            <div className="px-4 py-2 border-b border-gray-100 dark:border-white/5">
-              <div className="relative">
+            {/* Row 2 — deadhead + Combined filters and a narrow load-# search;
+                wraps cleanly so it never overflows the panel width. */}
+            <div className="flex items-center flex-wrap gap-2 px-4 py-2 border-b border-gray-100 dark:border-white/5">
+              <DeadheadFilterMenu counts={deadheadCounts} active={deadheadFilter} onPick={setDeadheadFilter} />
+              {/* Combined-only chip — lanes containing a combine-group load. */}
+              <button type="button" onClick={() => setCombinedOnly(v => !v)}
+                disabled={combinedLaneCount === 0 && !combinedOnly}
+                title="Show only lanes with combined loads"
+                className={`inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                  combinedOnly
+                    ? 'bg-orange-500 text-slate-900 border-orange-500'
+                    : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent'
+                }`}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5"><path d="M7 3v6a5 5 0 0 0 5 5h5m0 0-3-3m3 3-3 3" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                Combined{combinedLaneCount > 0 && <span>{combinedLaneCount}</span>}
+              </button>
+              <div className="relative w-52 max-w-full">
                 <input
                   type="text" value={loadSearch} onChange={e => setLoadSearch(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Escape') setLoadSearch('') }}
