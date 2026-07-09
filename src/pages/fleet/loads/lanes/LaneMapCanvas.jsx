@@ -26,6 +26,25 @@ function segPath(a, b) {
   return arcPath(a, b) || `M${a[0]},${a[1]} L${b[0]},${b[1]}`
 }
 
+// One continuous path bowing through an ordered list of projected points — used
+// for a combined trip's connected waypoint route (each hop a gentle arc, or a
+// straight line for near-coincident stops), so the whole run animates as one.
+function chainedArcPath(points) {
+  if (!points.length) return ''
+  let d = `M${points[0][0]},${points[0][1]}`
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1], b = points[i]
+    const dx = b[0] - a[0], dy = b[1] - a[1]
+    const dist = Math.hypot(dx, dy)
+    if (dist < 2) { d += ` L${b[0]},${b[1]}`; continue }
+    let px = -dy / dist, py = dx / dist
+    if (py > 0) { px = -px; py = -py }
+    const k = dist * 0.18
+    d += ` Q${(a[0] + b[0]) / 2 + px * k},${(a[1] + b[1]) / 2 + py * k} ${b[0]},${b[1]}`
+  }
+  return d
+}
+
 const DEADHEAD_COLOR = '#ef4444' // red-500 — reads on the light land + dark frame
 
 // laneColorFor (whole-lane → color) and typeColorFor (trailer type → color)
@@ -55,16 +74,16 @@ export default function LaneMapCanvas({ lanes, cities, colorFor, widthFor, selec
     return { pk, dv, dh }
   }, [focus])
 
-  // Project each lane in a combined group (all in the group's blended color).
+  // Project the combined group's stops (already in seq order) into a single
+  // connected route with numbered pins.
   const combineDrawn = useMemo(() => {
-    if (!combineFocus) return null
-    const arcs = []
-    for (const ln of combineFocus.lanes) {
-      const a = projection([ln.origin[1], ln.origin[0]])
-      const b = projection([ln.dest[1], ln.dest[0]])
-      if (a && b) arcs.push({ a, b, label: ln.label, isAnchor: ln.isAnchor })
+    if (!combineFocus?.stops?.length) return null
+    const pts = []
+    for (const s of combineFocus.stops) {
+      const p = projection([s.coord[1], s.coord[0]])
+      if (p) pts.push({ seq: s.seq, type: s.type, label: s.label, p })
     }
-    return arcs.length ? { arcs, color: combineFocus.color } : null
+    return pts.length ? { pts, color: combineFocus.color } : null
   }, [combineFocus])
 
 
@@ -203,29 +222,39 @@ export default function LaneMapCanvas({ lanes, cities, colorFor, widthFor, selec
           </g>
         )}
 
-        {/* Combined group — every lane in the group drawn together in the group's
-            blended-$/mi color, each with the selected-lane animation, so the two
-            legs of one trip read as a set. */}
-        {combineDrawn && (
-          <g>
-            {combineDrawn.arcs.map((arc, i) => {
-              const d = segPath(arc.a, arc.b)
-              return (
-                <g key={i}>
-                  <path d={d} fill="none" stroke={combineDrawn.color} strokeWidth={3.6} strokeLinecap="round"
-                    opacity="0.98" style={{ filter: `drop-shadow(0 0 6px ${combineDrawn.color})` }} />
-                  <path d={d} fill="none" strokeWidth={1.5} strokeLinecap="round"
-                    strokeDasharray="7 21" opacity="0.9" className="stroke-gray-900/60 dark:stroke-white"
-                    style={{ animation: 'laneFlow 1.1s linear infinite' }} />
-                </g>
-              )
-            })}
-            {combineDrawn.arcs.flatMap((arc, i) => [
-              <circle key={`o${i}`} cx={arc.a[0]} cy={arc.a[1]} r={3.5} fill={combineDrawn.color} stroke="#fff" strokeWidth="1.5" pointerEvents="none" />,
-              <circle key={`d${i}`} cx={arc.b[0]} cy={arc.b[1]} r={3.5} fill={combineDrawn.color} stroke="#fff" strokeWidth="1.5" pointerEvents="none" />,
-            ])}
-          </g>
-        )}
+        {/* Combined group — ONE continuous route through the stops in seq order
+            (a single multi-stop run, not parallel arcs), with the selected-lane
+            flowing animation and a numbered pin + PICKUP/DROP tag at each stop. */}
+        {combineDrawn && (() => {
+          const d = chainedArcPath(combineDrawn.pts.map(s => s.p))
+          return (
+            <g>
+              <path d={d} fill="none" stroke={combineDrawn.color} strokeWidth={3.6} strokeLinecap="round" strokeLinejoin="round"
+                opacity="0.98" style={{ filter: `drop-shadow(0 0 6px ${combineDrawn.color})` }} />
+              <path d={d} fill="none" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round"
+                strokeDasharray="7 21" opacity="0.9" className="stroke-gray-900/60 dark:stroke-white"
+                style={{ animation: 'laneFlow 1.1s linear infinite' }} />
+              {combineDrawn.pts.map((s, i) => {
+                const isPick = s.type === 'pickup'
+                return (
+                  <g key={i} pointerEvents="none">
+                    {/* city + PICKUP/DROP tag above the pin */}
+                    <text x={s.p[0]} y={s.p[1] - 16} textAnchor="middle" strokeWidth="3"
+                      className="fill-gray-700 dark:fill-slate-100 stroke-white dark:stroke-[#0a0a18] text-[11px] font-semibold"
+                      style={{ paintOrder: 'stroke' }}>{String(s.label).split(',')[0]}</text>
+                    <text x={s.p[0]} y={s.p[1] - 27} textAnchor="middle" strokeWidth="2.5"
+                      className={`${isPick ? 'fill-teal-700 dark:fill-teal-300' : 'fill-amber-700 dark:fill-amber-400'} stroke-white dark:stroke-[#0a0a18] text-[8px] font-bold tracking-wider`}
+                      style={{ paintOrder: 'stroke' }}>{isPick ? 'PICKUP' : 'DROP'}</text>
+                    {/* numbered pin */}
+                    <circle cx={s.p[0]} cy={s.p[1]} r={8} fill={combineDrawn.color} stroke="#fff" strokeWidth="2" />
+                    <text x={s.p[0]} y={s.p[1]} textAnchor="middle" dominantBaseline="central"
+                      className="fill-white text-[9px] font-bold">{s.seq}</text>
+                  </g>
+                )
+              })}
+            </g>
+          )
+        })()}
 
         {/* City dots + top-city labels */}
         {cityDots.dots.map(c => (
@@ -257,13 +286,12 @@ export default function LaneMapCanvas({ lanes, cities, colorFor, widthFor, selec
         </div>
       )}
 
-      {/* Combined-group legend — both lanes share the group's blended color. */}
+      {/* Combined-group legend — one route through the stops in order. */}
       {combineFocus && (
         <div className="absolute top-2 left-2 z-20 rounded-lg border border-gray-200 dark:border-white/10 bg-white/90 dark:bg-[#12132e]/90 backdrop-blur px-3 py-2 text-[11px] shadow-lg">
-          <p className="font-semibold text-gray-700 dark:text-slate-200 mb-1">Combined trip</p>
           <div className="flex items-center gap-1.5">
             <span className="inline-block w-4 rounded-full" style={{ height: 3, background: combineFocus.color }} />
-            <span className="text-gray-600 dark:text-slate-300">{combineFocus.lanes.length} lanes · blended $/mi</span>
+            <span className="text-gray-700 dark:text-slate-200 font-semibold">Combined trip · {combineFocus.stops.length} stops in order</span>
           </div>
         </div>
       )}
