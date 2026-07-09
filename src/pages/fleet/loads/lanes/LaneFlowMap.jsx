@@ -602,6 +602,105 @@ function WorstRpmCombineNote({ loadNumber }) {
   )
 }
 
+// "Mon D, YYYY" from a timestamptz (deadhead_note.updated_at is a real
+// timestamp, so new Date is correct — no date-only UTC-shift concern here).
+function fmtNoteDate(ts) {
+  if (!ts) return ''
+  try { return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) } catch { return '' }
+}
+
+// Manager review note on a deadhead LOAD PATH — records WHY the load ran empty.
+// Hydrates from deadhead_note(legId); Save/Clear via set_/clear_deadhead_note.
+// Rendered with key={legId} so switching legs remounts it — one leg's note can
+// never bleed into another. All feedback is inline/non-blocking (no alert).
+function DeadheadNote({ legId }) {
+  const toast = useToast()
+  const [saved, setSaved] = useState('')     // last-saved text (for the dirty check)
+  const [draft, setDraft] = useState('')
+  const [meta, setMeta] = useState(null)     // { updated_at, editor } when a note exists
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
+
+  function hydrate(row) {
+    setSaved(row?.note || '')
+    setDraft(row?.note || '')
+    setMeta(row && row.note ? { updated_at: row.updated_at, editor: row.editor } : null)
+  }
+
+  // Keyed by legId → this runs once on mount; `loading` starts true, so there's
+  // no synchronous setState in the effect body (only async, in the callbacks).
+  useEffect(() => {
+    let stale = false
+    supabase.rpc('deadhead_note', { p_leg: legId })
+      .then(({ data, error }) => {
+        if (stale) return
+        hydrate(!error && Array.isArray(data) && data.length ? data[0] : null)
+      })
+      .catch(() => {})
+      .finally(() => { if (!stale) setLoading(false) })
+    return () => { stale = true }
+  }, [legId])
+
+  const trimmed = draft.trim()
+  const dirty = trimmed !== saved.trim()
+  const canSave = dirty && trimmed.length > 0 && !busy && !loading
+
+  async function save() {
+    if (!canSave) return
+    setBusy(true)
+    const { data, error } = await supabase.rpc('set_deadhead_note', { p_leg: legId, p_note: trimmed })
+    setBusy(false)
+    if (error) { toast.error("Couldn't save the review note", error); return }
+    hydrate(Array.isArray(data) && data.length ? data[0] : null)
+  }
+  async function clear() {
+    setBusy(true)
+    const { error } = await supabase.rpc('clear_deadhead_note', { p_leg: legId })
+    setBusy(false)
+    if (error) { toast.error("Couldn't clear the review note", error); return }
+    hydrate(null)
+  }
+
+  return (
+    <div className="px-4 py-3 border-t border-gray-100 dark:border-white/5">
+      <div className="flex items-baseline gap-1.5 mb-1.5">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-slate-400">Review note</span>
+        <span className="text-[10px] text-gray-400 dark:text-slate-500">why the empty miles</span>
+        {dirty && (
+          <span className="ml-auto inline-flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />unsaved
+          </span>
+        )}
+      </div>
+      <textarea
+        rows={3}
+        value={draft}
+        onChange={e => setDraft(e.target.value)}
+        disabled={loading || busy}
+        placeholder="e.g. repositioned for a better backhaul — no reload out of the drop"
+        className="w-full text-xs rounded-md border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 px-2 py-1.5 text-gray-700 dark:text-slate-200 placeholder:text-gray-400 dark:placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-orange-500/40 resize-y disabled:opacity-60"
+      />
+      <div className="flex items-center gap-2 mt-1.5">
+        {meta && (
+          <span className="min-w-0 truncate text-[10px] text-gray-400 dark:text-slate-500">
+            Last edited{meta.editor ? ` by ${meta.editor}` : ''} · {fmtNoteDate(meta.updated_at)}
+          </span>
+        )}
+        <div className="ml-auto flex items-center gap-1.5">
+          {(saved || draft) && (
+            <button type="button" onClick={clear} disabled={busy || loading}
+              className="text-[11px] px-2 py-1 rounded-md text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-50">Clear</button>
+          )}
+          <button type="button" onClick={save} disabled={!canSave}
+            className="text-[11px] px-2.5 py-1 rounded-md bg-orange-500 text-white font-medium hover:brightness-105 disabled:opacity-50 disabled:cursor-not-allowed">
+            {busy ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function LaneFlowMap() {
   const toast = useToast()
   const { canEdit } = useAuth() // admin/manager — gates TONU review actions
@@ -1396,6 +1495,8 @@ export default function LaneFlowMap() {
                       </p>
                     </div>
                   </div>
+                  {/* Manager review note — keyed to the leg so state resets cleanly per load. */}
+                  <DeadheadNote key={legDetail.legId} legId={legDetail.legId} />
                 </div>
               )}
             </div>
