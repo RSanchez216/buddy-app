@@ -26,17 +26,6 @@ function segPath(a, b) {
   return arcPath(a, b) || `M${a[0]},${a[1]} L${b[0]},${b[1]}`
 }
 
-// Grow a projected bounding box to the map's aspect ratio (W/H), centered, so
-// focusing on a load's points pans/zooms without distorting the map or
-// changing the SVG's intrinsic height (h-auto follows the viewBox ratio).
-function fitAspect(minX, minY, maxX, maxY, aspect) {
-  const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2
-  let w = maxX - minX, h = maxY - minY
-  if (w / h < aspect) w = h * aspect
-  else h = w / aspect
-  return [cx - w / 2, cy - h / 2, w, h]
-}
-
 const DEADHEAD_COLOR = '#ef4444' // red-500 — reads on the light land + dark frame
 
 // laneColorFor (whole-lane → color) and typeColorFor (trailer type → color)
@@ -64,18 +53,6 @@ export default function LaneMapCanvas({ lanes, cities, colorFor, widthFor, selec
     return { pk, dv, dh }
   }, [focus])
 
-  // Zoom the viewBox to the load's points (deadhead included when present).
-  const focusViewBox = useMemo(() => {
-    if (!focusDrawn) return null
-    const pts = [focusDrawn.pk, focusDrawn.dv, focusDrawn.dh].filter(Boolean)
-    const xs = pts.map(p => p[0]), ys = pts.map(p => p[1])
-    let minX = Math.min(...xs), maxX = Math.max(...xs)
-    let minY = Math.min(...ys), maxY = Math.max(...ys)
-    const padX = (maxX - minX) * 0.22 + 70, padY = (maxY - minY) * 0.22 + 70
-    minX -= padX; maxX += padX; minY -= padY; maxY += padY
-    const [x, y, w, h] = fitAspect(minX, minY, maxX, maxY, W / H)
-    return `${x} ${y} ${w} ${h}`
-  }, [focusDrawn])
 
   // Project once per lane set; lanes that don't land on the AlbersUSA frame
   // are dropped here (defensive — all coords are US already).
@@ -121,7 +98,7 @@ export default function LaneMapCanvas({ lanes, cities, colorFor, widthFor, selec
       {/* Fixed aspect box + absolute-fill svg: the element size is locked to the
           map frame, so zooming the viewBox to a focused load path pans/zooms the
           CONTENT without ever resizing or clipping the map itself. */}
-      <svg viewBox={focusViewBox || `0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet"
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet"
         className="absolute inset-0 w-full h-full block select-none" role="img" aria-label="US map of freight lanes">
         {/* Land */}
         <path d={NATION_OUTLINE} className="fill-gray-100 dark:fill-white/[0.025]" />
@@ -176,14 +153,25 @@ export default function LaneMapCanvas({ lanes, cities, colorFor, widthFor, selec
             on-map length is the true geography, not scaled to empty_miles. */}
         {focusDrawn && (
           <g>
+            {/* Both segments get the normal selected-lane treatment — a glowing
+                solid arc + the flowing dashed overlay (identical motion). Only
+                the color differs: red = deadhead (empty), loaded color = loaded. */}
             {focusDrawn.dh && (
-              <path d={segPath(focusDrawn.dh, focusDrawn.pk)} fill="none" stroke={DEADHEAD_COLOR}
-                strokeWidth={3.2} strokeLinecap="round" strokeDasharray="7 5" opacity="0.95"
-                style={{ filter: `drop-shadow(0 0 5px ${DEADHEAD_COLOR})` }} />
+              <>
+                <path d={segPath(focusDrawn.dh, focusDrawn.pk)} fill="none" stroke={DEADHEAD_COLOR}
+                  strokeWidth={3.6} strokeLinecap="round" opacity="0.98"
+                  style={{ filter: `drop-shadow(0 0 6px ${DEADHEAD_COLOR})` }} />
+                <path d={segPath(focusDrawn.dh, focusDrawn.pk)} fill="none" strokeWidth={1.5} strokeLinecap="round"
+                  strokeDasharray="7 21" opacity="0.9" className="stroke-gray-900/60 dark:stroke-white"
+                  style={{ animation: 'laneFlow 1.1s linear infinite' }} />
+              </>
             )}
             <path d={segPath(focusDrawn.pk, focusDrawn.dv)} fill="none" stroke={focus.loadedColor}
-              strokeWidth={3.8} strokeLinecap="round" opacity="0.98"
-              style={{ filter: `drop-shadow(0 0 5px ${focus.loadedColor})` }} />
+              strokeWidth={3.6} strokeLinecap="round" opacity="0.98"
+              style={{ filter: `drop-shadow(0 0 6px ${focus.loadedColor})` }} />
+            <path d={segPath(focusDrawn.pk, focusDrawn.dv)} fill="none" strokeWidth={1.5} strokeLinecap="round"
+              strokeDasharray="7 21" opacity="0.9" className="stroke-gray-900/60 dark:stroke-white"
+              style={{ animation: 'laneFlow 1.1s linear infinite' }} />
             {[[focusDrawn.dh, focus.deadheadLabel, DEADHEAD_COLOR], [focusDrawn.pk, focus.pickupLabel, focus.loadedColor], [focusDrawn.dv, focus.deliveryLabel, focus.loadedColor]]
               .filter(([p]) => p)
               .map(([p, label, color], i) => (
