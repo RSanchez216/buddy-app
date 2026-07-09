@@ -164,7 +164,7 @@ export default function Layout() {
     today: ['/command-center', '/rig', '/fleet/profitability/boardroom', '/fleet/profitability/lanes', '/cash-flow/lifeline'].filter(r => accessibleRoutes.has(r)).length,
     money: ['/cash-flow/payment-calendar', '/financial-controls/debt-schedule', '/financial-controls/driver-purchases'].filter(r => accessibleRoutes.has(r)).length,
     profitability: ['/fleet/profitability', '/fleet/profitability/spotlight', '/fleet/profitability/contribution', '/fleet/profitability/idle', '/fleet/profitability/miles-performance'].filter(r => accessibleRoutes.has(r)).length,
-    fleet: ['/fleet/trucks', '/fleet/trailers', '/fleet/drivers', '/fleet/cost', '/fleet/loads/import', '/fleet/settlements/import', '/fleet/combined-loads'].filter(r => accessibleRoutes.has(r)).length,
+    fleet: ['/fleet/trucks', '/fleet/trailers', '/fleet/drivers', '/fleet/teams', '/fleet/cost', '/fleet/loads/import', '/fleet/settlements/import', '/fleet/combined-loads'].filter(r => accessibleRoutes.has(r)).length,
     payables: ['/dashboard', '/vendors', '/invoices', '/transactions', '/reports'].filter(r => accessibleRoutes.has(r)).length,
   }
 
@@ -223,6 +223,7 @@ export default function Layout() {
             <NavItem to="/fleet/trucks" label="Trucks" icon={Icons.truck} onClick={close} visible={accessibleRoutes.has('/fleet/trucks')} />
             <NavItem to="/fleet/trailers" label="Trailers" icon={Icons.trailer} onClick={close} visible={accessibleRoutes.has('/fleet/trailers')} />
             <NavItem to="/fleet/drivers" label="Drivers" icon={Icons.driver} onClick={close} visible={accessibleRoutes.has('/fleet/drivers')} />
+            <NavItem to="/fleet/teams" label="Teams" icon={Icons.users} onClick={close} visible={accessibleRoutes.has('/fleet/teams')} />
             <NavItem to="/fleet/cost" label="Equipment Cost" icon={Icons.cost} onClick={close} visible={accessibleRoutes.has('/fleet/cost')} />
             <NavItem to="/fleet/loads/import" label="Loads Import" icon={Icons.truck} onClick={close} visible={accessibleRoutes.has('/fleet/loads/import')} />
             <NavItem to="/fleet/settlements/import" label="Settlement Import" icon={Icons.payment} onClick={close} visible={accessibleRoutes.has('/fleet/settlements/import')} />

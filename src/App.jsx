@@ -75,6 +75,8 @@ const LoadsImport = lazy(() => import('./pages/fleet/loads/LoadsImport'))
 // Lazy — Drivers list (its Upload modal statically pulls SheetJS) ships as its
 // own chunk.
 const DriversList = lazy(() => import('./pages/fleet/DriversList'))
+// Lazy — Teams is a fleet data-entry surface; its own chunk off the main bundle.
+const Teams = lazy(() => import('./pages/fleet/teams/Teams'))
 // Lazy — Command Center is a standalone daily surface; its own chunk.
 const CommandCenter = lazy(() => import('./pages/command-center/CommandCenter'))
 // Lazy — The Rig carries the whole three.js stack; it must never weigh on
@@ -145,6 +147,15 @@ export default function App() {
                 </RequirePageAccess>
               } />
               <Route path="fleet/drivers/:id" element={<RequirePageAccess pageKey="fleet/drivers"><DriverDetail /></RequirePageAccess>} />
+              <Route path="fleet/teams" element={
+                <RequirePageAccess pageKey="teams">
+                  <ErrorBoundary label="Teams">
+                    <Suspense fallback={<div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500" /></div>}>
+                      <Teams />
+                    </Suspense>
+                  </ErrorBoundary>
+                </RequirePageAccess>
+              } />
               <Route path="fleet/cost" element={<RequirePageAccess pageKey="fleet/cost"><FleetCost /></RequirePageAccess>} />
               <Route path="fleet/loads/import" element={
                 <RequirePageAccess pageKey="fleet/loads/import">
