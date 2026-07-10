@@ -59,6 +59,9 @@ const Boardroom = lazy(() => import('./pages/fleet/loads/boardroom/Boardroom'))
 const IdleReview = lazy(() => import('./pages/fleet/loads/idle/IdleReview'))
 // Lazy — heavy report route (recharts + xlsx/jspdf on export).
 const MilesPerformance = lazy(() => import('./pages/fleet/loads/miles/MilesPerformance'))
+// Lazy — Dedicated Lanes shares the lane map's geo frame (US topojson), so its
+// map render stays out of the main bundle in its own chunk.
+const DedicatedLanes = lazy(() => import('./pages/fleet/loads/dedicated/DedicatedLanes'))
 // Lazy — the Settings hub consolidates 9 reference-data screens; keep it
 // out of the main bundle as a navigation hub.
 const CombinedLoads = lazy(() => import('./pages/fleet/combined-loads/CombinedLoads'))
@@ -183,6 +186,15 @@ export default function App() {
                   <ErrorBoundary label="Idle review">
                     <Suspense fallback={<div className="p-8 text-sm text-gray-400 dark:text-slate-500">Loading idle review…</div>}>
                       <IdleReview />
+                    </Suspense>
+                  </ErrorBoundary>
+                </RequirePageAccess>
+              } />
+              <Route path="fleet/profitability/dedicated-lanes" element={
+                <RequirePageAccess pageKey="dedicated-lanes">
+                  <ErrorBoundary label="Dedicated Lanes">
+                    <Suspense fallback={<div className="p-8 text-sm text-gray-400 dark:text-slate-500">Loading dedicated lanes…</div>}>
+                      <DedicatedLanes />
                     </Suspense>
                   </ErrorBoundary>
                 </RequirePageAccess>
