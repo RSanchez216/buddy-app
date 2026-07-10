@@ -868,6 +868,16 @@ function CompanyNetView({ from, to, basis, query }) {
   )
 }
 
+// Team-unit glyph (users) — marks a collapsed team row (shared equipment counted
+// once). Name already reads as the team.
+function TeamIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="w-3.5 h-3.5 shrink-0 text-gray-400 dark:text-slate-500" aria-label="Team">
+      <path d="M17 20h5v-2a3 3 0 0 0-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 0 1 5.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 0 1 9.288 0M15 7a3 3 0 1 1-6 0 3 3 0 0 1 6 0z" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 function CompanyNetRow({ row, rank, expanded, net, onToggle, loadsState, days }) {
   return (
     <>
@@ -875,7 +885,10 @@ function CompanyNetRow({ row, rank, expanded, net, onToggle, loadsState, days })
         <td className={`${S.td} font-mono text-xs text-gray-600 dark:text-slate-500`}>{rank}</td>
         <td className={S.td}>
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-medium text-gray-900 dark:text-slate-100">{row.driver_name || '—'}</span>
+            <span className="font-medium text-gray-900 dark:text-slate-100 inline-flex items-center gap-1.5">
+              {row.team_id && <TeamIcon />}
+              {row.driver_name || '—'}
+            </span>
             {row.driver_type && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-slate-700/40 text-gray-600 dark:text-slate-400 whitespace-nowrap">{row.driver_type}</span>}
             {row.flags.map((f, i) => (
               <span key={i} className={`text-[10px] px-1.5 py-0.5 rounded-full whitespace-nowrap ${NET_FLAG_TONE[f.tone]}`}>{f.label}</span>

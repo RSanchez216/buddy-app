@@ -4,6 +4,16 @@ import { S } from '../../../../lib/styles'
 import { fmtMoney, fmtNum, fmtRpm } from '../spotlight/spotlightShared'
 import { exportToExcel, exportToPDF } from './exportTopPerformers'
 
+// Team-unit glyph (users) — marks a collapsed team row. Name already reads as
+// the team; this just flags it as more than one driver.
+function TeamIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="w-3.5 h-3.5 shrink-0 text-gray-400 dark:text-slate-500" aria-label="Team">
+      <path d="M17 20h5v-2a3 3 0 0 0-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 0 1 5.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 0 1 9.288 0M15 7a3 3 0 1 1-6 0 3 3 0 0 1 6 0z" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 function Pills({ value, onChange, options, title }) {
   return (
     <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700 text-xs shrink-0" title={title}>
@@ -57,8 +67,9 @@ function DriverRow({ driver, rank }) {
     <tr className={`${S.tableRow} ${isMedaled ? 'bg-orange-50 dark:bg-orange-500/10' : ''}`}>
       <td className="px-4 py-3 flex items-center gap-3">
         <MedalBadge rank={rank} />
-        <span className={`text-sm truncate ${isMedaled ? 'font-semibold' : ''} text-gray-900 dark:text-slate-200`}>
-          {driver.driver_name}
+        <span className={`text-sm min-w-0 inline-flex items-center gap-1.5 ${isMedaled ? 'font-semibold' : ''} text-gray-900 dark:text-slate-200`}>
+          {driver.team_id && <TeamIcon />}
+          <span className="truncate">{driver.driver_name}</span>
         </span>
       </td>
       <td className="px-3 py-3 text-right">
