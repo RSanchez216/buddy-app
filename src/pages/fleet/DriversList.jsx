@@ -48,11 +48,18 @@ export default function DriversList() {
     const { data } = await supabase.from('drivers').select('*, photo_path').order('full_name')
     setRows(data || [])
 
-    // Team overlay — one row per driver currently on an active team.
+    // Team overlay — v_driver_current_team returns ONE ROW PER MEMBER (primary
+    // AND co), each with its own `partners`. Key the lookup by every row's
+    // driver_id: NO role filter and NO collapse-by-team_id, or a teammate (the
+    // co-driver) loses their badge. Both members must resolve independently.
     supabase.from('v_driver_current_team')
       .select('driver_id, team_id, team_name, role, partners, members')
       .then(({ data: teamRows }) => {
-        setTeamByDriver(new Map((teamRows || []).map(t => [t.driver_id, t])))
+        const m = new Map()
+        for (const t of teamRows || []) {
+          if (t?.driver_id) m.set(t.driver_id, t) // primary + co both land here
+        }
+        setTeamByDriver(m)
       })
 
     // Load signed URLs for drivers with photos (batch)
