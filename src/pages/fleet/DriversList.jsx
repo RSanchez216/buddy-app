@@ -37,6 +37,9 @@ export default function DriversList() {
   const [editItem, setEditItem] = useState(null)
   const [showUpload, setShowUpload] = useState(false)
   const [photoUrls, setPhotoUrls] = useState({})
+  // driver_id → v_driver_current_team row (team drivers only; solo drivers absent).
+  const [teamByDriver, setTeamByDriver] = useState(() => new Map())
+  const [teamFilter, setTeamFilter] = useState(false)
 
   useEffect(() => { load() }, [])
 
@@ -44,6 +47,13 @@ export default function DriversList() {
     setLoading(true)
     const { data } = await supabase.from('drivers').select('*, photo_path').order('full_name')
     setRows(data || [])
+
+    // Team overlay — one row per driver currently on an active team.
+    supabase.from('v_driver_current_team')
+      .select('driver_id, team_id, team_name, role, partners, members')
+      .then(({ data: teamRows }) => {
+        setTeamByDriver(new Map((teamRows || []).map(t => [t.driver_id, t])))
+      })
 
     // Load signed URLs for drivers with photos (batch)
     if (data?.length) {
@@ -119,6 +129,9 @@ export default function DriversList() {
     if (missingCompFilter) {
       result = result.filter(r => r.compensation_value == null)
     }
+    if (teamFilter) {
+      result = result.filter(r => teamByDriver.has(r.id))
+    }
 
     const dir = sortDir === 'desc' ? -1 : 1
     // Compensation sorts NUMERICALLY by compensation_value (never the raw
@@ -141,7 +154,13 @@ export default function DriversList() {
       if (va > vb) return  1 * dir
       return 0
     })
-  }, [rows, filter, statusFilter, photoFilter, missingCompFilter, sortField, sortDir])
+  }, [rows, filter, statusFilter, photoFilter, missingCompFilter, teamFilter, teamByDriver, sortField, sortDir])
+
+  // Team drivers within the current status base (drives the filter-chip count).
+  const teamCount = useMemo(() => {
+    const base = statusFilter === 'all' ? rows : rows.filter(r => r.current_status === statusFilter)
+    return base.filter(r => teamByDriver.has(r.id)).length
+  }, [rows, statusFilter, teamByDriver])
 
   function toggleSort(field) {
     if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
@@ -225,6 +244,19 @@ export default function DriversList() {
           {activeMissingComp > 0 && <span aria-hidden>⚠️</span>}
           Missing comp <span className="font-semibold ml-1">{missingCompCount}</span>
         </button>
+        {teamByDriver.size > 0 && (
+          <button
+            onClick={() => setTeamFilter(v => !v)}
+            title="Drivers currently running as a team"
+            className={`px-3 py-1.5 text-xs font-medium rounded-full border transition-colors inline-flex items-center gap-1 ${
+              teamFilter
+                ? 'bg-violet-50 dark:bg-violet-500/10 border-violet-300 dark:border-violet-500/40 text-violet-700 dark:text-violet-300'
+                : 'border-gray-200 dark:border-slate-700/50 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5'
+            }`}
+          >
+            <TeamIcon /> Teams <span className="font-semibold ml-1">{teamCount}</span>
+          </button>
+        )}
       </div>
 
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -272,11 +304,12 @@ export default function DriversList() {
                   <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>
                     <span className="inline-flex items-center gap-2">
                       <PhotoIndicator driver={r} photoUrl={photoUrls[r.id]} onUploadClick={() => openEdit(r)} />
-                      <span className="inline-flex items-center gap-1.5">
+                      <span className="inline-flex items-center gap-1.5 flex-wrap">
                         <Link to={`/fleet/drivers/${r.id}`} className="hover:text-orange-600 dark:hover:text-orange-400">
                           {r.full_name || '—'}
                         </Link>
                         {r.full_name && <CopyButton value={r.full_name} label="Copy name" />}
+                        {teamByDriver.has(r.id) && <TeamBadge team={teamByDriver.get(r.id)} />}
                       </span>
                     </span>
                   </td>
@@ -322,6 +355,29 @@ export default function DriversList() {
         onCommitted={() => load()}
       />
     </div>
+  )
+}
+
+// Team-unit glyph (users) — same icon used on the Teams page / idle team row.
+function TeamIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="w-3 h-3 shrink-0" aria-label="Team">
+      <path d="M17 20h5v-2a3 3 0 0 0-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 0 1 5.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 0 1 9.288 0M15 7a3 3 0 1 1-6 0 3 3 0 0 1 6 0z" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+// Subtle pill marking a driver who runs as a team, naming the teammate(s).
+function TeamBadge({ team }) {
+  const roleHint = team.role === 'primary' ? 'primary' : team.role === 'co' ? 'co-driver' : null
+  return (
+    <span
+      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium whitespace-nowrap bg-violet-50 dark:bg-violet-500/10 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-500/30"
+      title={`${team.team_name}${roleHint ? ` · ${roleHint}` : ''}`}
+    >
+      <TeamIcon />
+      {team.partners ? `Team · with ${team.partners}` : 'Team'}
+    </span>
   )
 }
 
