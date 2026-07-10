@@ -34,3 +34,6 @@ dist-ssr
 # Raw 3D source models (60MB+) — only the compressed tractor.glb / trailer-dryvan.glb ship
 public/models/freightliner_cascadia_2020.glb
 public/models/truck_trailer_free.glb
+
+# Dropbox atomic-write leftovers
+*.tmp.*
