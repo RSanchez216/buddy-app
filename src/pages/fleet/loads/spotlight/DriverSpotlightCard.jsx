@@ -10,12 +10,40 @@ import desert from '../../../../assets/spotlight-desert.svg'
 
 // Dark identity hero with desert backdrop, driver watermark, and headshot
 // Uses absolute positioning with z-index layers to match approved mock exactly
-function Hero({ entry, photoUrl, hs }) {
+// A single full-height hero portrait (photo → cover with bottom fade, else a
+// monogram tile). Shared by the solo hero and the two-up team banner.
+function HeroPortrait({ name, photoUrl, width = '160px' }) {
+  const h = nameHue(name)
+  const initialsGradient = `linear-gradient(135deg, hsl(${h} 62% 46%), hsl(${(h + 42) % 360} 68% 34%))`
+  if (photoUrl) {
+    return (
+      <img
+        src={photoUrl}
+        alt={name}
+        style={{
+          height: '100%', width: 'auto', maxWidth: width, objectFit: 'cover',
+          maskImage: 'linear-gradient(180deg, #000 80%, transparent)',
+          WebkitMaskImage: 'linear-gradient(180deg, #000 80%, transparent)',
+        }}
+      />
+    )
+  }
+  return (
+    <div style={{ height: '100%', width: '110px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '48px', fontWeight: 'bold', color: 'white', background: initialsGradient }}>
+      {monogram(name)}
+    </div>
+  )
+}
+
+function Hero({ entry, photoUrl, photoUrls, hs }) {
+  const isTeam = !!entry.teamId
+  const members = entry.members || []
   const truckLabel = entry.trucks.map(t => t.unit_number).filter(Boolean).join(', ')
   const trailerLabel = entry.trailers.map(t => t.unit_number).filter(Boolean).join(', ')
   const unitPlateDisplay = truckLabel.replace(/^#/, '') // Strip leading # from unit plate badge
   const h = nameHue(entry.name)
   const initialsGradient = `linear-gradient(135deg, hsl(${h} 62% 46%), hsl(${(h + 42) % 360} 68% 34%))`
+  const memberUrl = (m) => (m?.photo_path ? photoUrls?.[m.photo_path] : null) || null
 
   return (
     <div className="relative overflow-hidden rounded-t-3xl" style={{ height: '226px' }}>
@@ -58,7 +86,7 @@ function Hero({ entry, photoUrl, hs }) {
         }}
       >
         <p style={{ fontSize: '10.5px', letterSpacing: '0.22em', color: 'rgba(255,255,255,.55)', fontWeight: 700, marginLeft: '4px', margin: 0 }}>
-          DRIVER
+          {isTeam ? 'TEAM' : 'DRIVER'}
         </p>
         <p
           style={{
@@ -74,48 +102,39 @@ function Hero({ entry, photoUrl, hs }) {
         </p>
       </div>
 
-      {/* PHOTO — z-index 2, right side, full height with bottom fade */}
-      <div
-        className="absolute"
-        style={{
-          right: '22px',
-          bottom: 0,
-          height: '100%',
-          zIndex: 2,
-          width: 'auto',
-          maxWidth: '160px',
-        }}
-      >
-        {photoUrl ? (
-          <img
-            src={photoUrl}
-            alt={entry.name}
-            style={{
-              height: '100%',
-              width: 'auto',
-              objectFit: 'cover',
-              maskImage: 'linear-gradient(180deg, #000 80%, transparent)',
-              WebkitMaskImage: 'linear-gradient(180deg, #000 80%, transparent)',
-            }}
-          />
-        ) : (
-          <div
-            style={{
-              height: '100%',
-              width: '120px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: '56px',
-              fontWeight: 'bold',
-              color: 'white',
-              background: initialsGradient,
-            }}
-          >
-            {monogram(entry.name)}
+      {/* PHOTO — z-index 2, right side, full height with bottom fade.
+          Team: two portraits (primary front-right, co behind-left, overlapping). */}
+      {isTeam ? (
+        <div className="absolute" style={{ right: '14px', bottom: 0, height: '100%', zIndex: 2, display: 'flex', alignItems: 'flex-end' }}>
+          {/* co-driver behind, slightly shorter; primary overlaps in front */}
+          {members[1] && (
+            <div style={{ height: '86%', zIndex: 1, opacity: 0.92, marginRight: '-30px' }}>
+              <HeroPortrait name={members[1].full_name} photoUrl={memberUrl(members[1])} width="112px" />
+            </div>
+          )}
+          <div style={{ height: '100%', zIndex: 2 }}>
+            <HeroPortrait name={members[0]?.full_name || entry.name} photoUrl={memberUrl(members[0]) || photoUrl} width="132px" />
           </div>
-        )}
-      </div>
+        </div>
+      ) : (
+        <div className="absolute" style={{ right: '22px', bottom: 0, height: '100%', zIndex: 2, width: 'auto', maxWidth: '160px' }}>
+          {photoUrl ? (
+            <img
+              src={photoUrl}
+              alt={entry.name}
+              style={{
+                height: '100%', width: 'auto', objectFit: 'cover',
+                maskImage: 'linear-gradient(180deg, #000 80%, transparent)',
+                WebkitMaskImage: 'linear-gradient(180deg, #000 80%, transparent)',
+              }}
+            />
+          ) : (
+            <div style={{ height: '100%', width: '120px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '56px', fontWeight: 'bold', color: 'white', background: initialsGradient }}>
+              {monogram(entry.name)}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* DIAGONAL SLASH DIVIDER — z-index 3, flush at bottom */}
       <div
@@ -145,7 +164,7 @@ function Hero({ entry, photoUrl, hs }) {
           <h2
             style={{
               fontFamily: 'Anton, sans-serif',
-              fontSize: '34px',
+              fontSize: isTeam ? '30px' : '34px',
               textTransform: 'uppercase',
               lineHeight: 0.9,
               margin: 0,
@@ -153,6 +172,11 @@ function Hero({ entry, photoUrl, hs }) {
           >
             {entry.name}
           </h2>
+          {isTeam && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '2px 8px', borderRadius: '9999px', background: 'rgba(249,115,22,.9)', color: '#fff', fontSize: '10px', fontWeight: 800, letterSpacing: '0.08em', whiteSpace: 'nowrap' }}>
+              TEAM · {members.length}
+            </span>
+          )}
           {truckLabel && (
             <div
               style={{
@@ -208,9 +232,11 @@ function Hero({ entry, photoUrl, hs }) {
           }}
         >
           {entry.status && <DriverStatusPill status={entry.status} />}
-          {entry.driverType && <DriverTypePill type={entry.driverType} short />}
+          {isTeam
+            ? members.map(m => m.driver_type && <DriverTypePill key={m.driver_id} type={m.driver_type} short />)
+            : entry.driverType && <DriverTypePill type={entry.driverType} short />}
           <span>
-            Driver #{entry.internalId || '—'} · Unit {truckLabel || '—'} · {trailerLabel || 'no trailer'}
+            {isTeam ? 'Team' : 'Driver'} #{entry.internalId || '—'} · Unit {truckLabel || '—'} · {trailerLabel || 'no trailer'}
             {entry.carrier && ` · ${entry.carrier}`}
           </span>
         </div>
@@ -231,6 +257,48 @@ function Hero({ entry, photoUrl, hs }) {
         >
           <span className={`w-1.5 h-1.5 rounded-full ${hs.dot}`} /> {entry.health.label}
         </span>
+      </div>
+    </div>
+  )
+}
+
+// Small round member avatar (photo → initials) for the per-member strip.
+function MemberAvatar({ name, photoUrl }) {
+  if (photoUrl) {
+    return <img src={photoUrl} alt={name} className="w-9 h-9 rounded-xl object-cover ring-1 ring-black/5 dark:ring-white/10 shrink-0" />
+  }
+  const h = nameHue(name)
+  return (
+    <div className="w-9 h-9 rounded-xl flex items-center justify-center text-xs font-bold text-white shrink-0"
+      style={{ background: `linear-gradient(135deg, hsl(${h} 62% 46%), hsl(${(h + 42) % 360} 68% 34%))` }}>
+      {monogram(name)}
+    </div>
+  )
+}
+
+// Per-member strip under the team hero — one row per member (portrait,
+// name, primary/co pill, driver type). Where each individual stays visible.
+function TeamMemberStrip({ members, photoUrls }) {
+  if (!members?.length) return null
+  return (
+    <div className="px-6 pt-3 pb-1">
+      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500 mb-2">Team members ({members.length})</p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        {members.map(m => (
+          <div key={m.driver_id} className="flex items-center gap-2.5 rounded-xl px-2.5 py-2 bg-gray-50/80 dark:bg-white/[0.03] border border-gray-100 dark:border-white/[0.04]">
+            <MemberAvatar name={m.full_name} photoUrl={m.photo_path ? photoUrls?.[m.photo_path] : null} />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-gray-900 dark:text-slate-100 truncate">{m.full_name}</p>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <span className={`text-[9px] px-1.5 py-px rounded-full font-bold uppercase tracking-wide ${m.role === 'primary' ? 'bg-orange-100 dark:bg-orange-500/15 text-orange-700 dark:text-orange-400' : 'bg-gray-200 dark:bg-slate-600/40 text-gray-600 dark:text-slate-300'}`}>
+                  {m.role === 'primary' ? 'primary' : 'co'}
+                </span>
+                {m.driver_type && <DriverTypePill type={m.driver_type} short />}
+                {m.internal_id && <span className="text-[10px] font-mono text-gray-400 dark:text-slate-500">#{m.internal_id}</span>}
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   )
@@ -404,7 +472,7 @@ const ROADMAP = [
   { label: 'Insurance', desc: 'per-unit premiums' },
 ]
 
-function DriverSpotlightCard({ entry, lanes, trend, rangeDays, effDays, periodLabel, basis = 'delivery', focused, rank, total, sortLabel, activeWeekFrom, onWeekSelect, photoUrl }) {
+function DriverSpotlightCard({ entry, lanes, trend, rangeDays, effDays, periodLabel, basis = 'delivery', focused, rank, total, sortLabel, activeWeekFrom, onWeekSelect, photoUrl, photoUrls }) {
   const m = entry.metrics
   const hs = HEALTH_STYLES[entry.health.level]
   // Idle days only count days that have actually happened — a mid-week
@@ -434,7 +502,10 @@ function DriverSpotlightCard({ entry, lanes, trend, rangeDays, effDays, periodLa
       className={`flex flex-col rounded-3xl border bg-gradient-to-b from-white to-gray-50 dark:from-[#12132e] dark:to-[#0a0a18] border-gray-200 dark:border-white/10 shadow-xl dark:shadow-[0_40px_90px_-20px_rgba(0,0,0,0.85)] ${focused ? `ring-1 ${hs.ring}` : `h-[640px] overflow-hidden`}`}
     >
       {/* ── Dark identity hero ── */}
-      <Hero entry={entry} photoUrl={photoUrl} hs={hs} />
+      <Hero entry={entry} photoUrl={photoUrl} photoUrls={photoUrls} hs={hs} />
+
+      {/* ── Per-member strip (teams only) ── */}
+      {entry.teamId && <TeamMemberStrip members={entry.members} photoUrls={photoUrls} />}
 
       {/* ── Rank/sort label under hero ── */}
       {(rank || total) && (

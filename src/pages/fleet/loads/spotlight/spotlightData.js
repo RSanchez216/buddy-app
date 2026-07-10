@@ -29,7 +29,7 @@ export async function fetchDriverDeck({ from, to, basis = 'delivery' }) {
   // mid-week "This week" doesn't count future days as idle. Equipment cost
   // proration still uses the full window (it accrues regardless).
   const effDays = elapsedDays(from, to)
-  const [rollup, trailerRollup, driversRes, trucksRes, trailersRes, eqCostRes, purchasesRes, paymentsRes, payEstimateRes] = await Promise.all([
+  const [rollup, trailerRollup, driversRes, trucksRes, trailersRes, eqCostRes, purchasesRes, paymentsRes, payEstimateRes, teamsRes] = await Promise.all([
     supabase.rpc('load_profit_rollup', { p_dimension: 'driver', p_from: from, p_to: to, p_basis: basis }),
     supabase.rpc('load_profit_rollup', { p_dimension: 'trailer', p_from: from, p_to: to, p_basis: basis }),
     supabase.from('drivers').select('id, full_name, internal_id, current_status, driver_type, carrier, photo_path'),
@@ -41,6 +41,7 @@ export async function fetchDriverDeck({ from, to, basis = 'delivery' }) {
       .select('driver_purchase_id, period_start, period_end, expected_amount, actual_amount, reconciled')
       .lte('period_start', to).gte('period_end', from),
     supabase.rpc('driver_pay_estimate_rollup', { p_from: from, p_to: to, p_basis: basis }),
+    supabase.from('v_driver_current_team').select('driver_id, team_id, team_name, members'),
   ])
   if (rollup.error) throw rollup.error
   if (payEstimateRes.error) throw payEstimateRes.error
@@ -49,6 +50,14 @@ export async function fetchDriverDeck({ from, to, basis = 'delivery' }) {
   const trucks = trucksRes.data || []
   const trailers = trailersRes.data || []
   const driversById = new Map(drivers.map(d => [d.id, d]))
+  // Team overlay: driver_id → { team_id, team_name, members[] }. members is
+  // ordered primary-first; enrich each with driver_type (the view omits it) so
+  // the per-member strip and type pills read from one place.
+  const teamByDriver = new Map((teamsRes.data || []).map(t => [t.driver_id, t]))
+  const enrichMembers = (members) => (members || []).map(mem => ({
+    ...mem,
+    driver_type: driversById.get(mem.driver_id)?.driver_type || null,
+  }))
   const trucksByDriver = groupBy(trucks, 'driver_id')
   const trailersByDriver = groupBy(trailers, 'driver_id')
   const costByUnit = new Map((eqCostRes.data || []).map(r => [`${r.etype}:${r.id}`, r]))
@@ -80,6 +89,7 @@ export async function fetchDriverDeck({ from, to, basis = 'delivery' }) {
 
   function buildEntry({ driverId, rawName, row }) {
     const master = driverId ? driversById.get(driverId) : null
+    const team = driverId ? teamByDriver.get(driverId) : null
     const myTrucks = driverId ? (trucksByDriver.get(driverId) || []) : []
     const myTrailers = driverId ? (trailersByDriver.get(driverId) || []) : []
     const trailerType = myTrailers.map(t => t.trailer_type).find(Boolean) || null
@@ -132,7 +142,11 @@ export async function fetchDriverDeck({ from, to, basis = 'delivery' }) {
       id: driverId || `raw:${rawName}`,
       driverId,
       rawName: driverId ? null : rawName,
-      name: master?.full_name || row?.key_name || rawName,
+      // For a team the hero name is the team name; solo keeps the person's name.
+      name: team?.team_name || master?.full_name || row?.key_name || rawName,
+      teamId: team?.team_id || null,
+      teamName: team?.team_name || null,
+      members: team ? enrichMembers(team.members) : null,
       internalId: master?.internal_id || null,
       status: master?.current_status || null,
       driverType: master?.driver_type || null,
@@ -164,16 +178,31 @@ export async function fetchDriverDeck({ from, to, basis = 'delivery' }) {
 
   const entries = []
   const seenDriverIds = new Set()
+  const seenTeams = new Set() // one card per team — the co-driver never doubles up
   for (const row of rollup.data || []) {
     if (!row.key_id && !row.key_name) continue
+    const team = row.key_id ? teamByDriver.get(row.key_id) : null
+    if (team?.team_id && seenTeams.has(team.team_id)) continue
     if (row.key_id) seenDriverIds.add(row.key_id)
+    if (team?.team_id) seenTeams.add(team.team_id)
     entries.push(buildEntry({ driverId: row.key_id, rawName: row.key_name, row }))
   }
   // Active drivers with zero loads in the window don't appear in the rollup
   // at all — but they're exactly who "weakest first" should surface. Add
-  // them as zero-metric entries.
+  // them as zero-metric entries. A team collapses to ONE card anchored to its
+  // primary, so a co-driver never appears as its own card.
   for (const d of drivers) {
     if (d.current_status !== 'active' || seenDriverIds.has(d.id)) continue
+    const team = teamByDriver.get(d.id)
+    if (team?.team_id) {
+      if (seenTeams.has(team.team_id)) continue
+      seenTeams.add(team.team_id)
+      const primaryId = team.members?.[0]?.driver_id || d.id // members are primary-first
+      if (seenDriverIds.has(primaryId)) continue
+      seenDriverIds.add(primaryId)
+      entries.push(buildEntry({ driverId: primaryId, rawName: driversById.get(primaryId)?.full_name, row: null }))
+      continue
+    }
     entries.push(buildEntry({ driverId: d.id, rawName: d.full_name, row: null }))
   }
 

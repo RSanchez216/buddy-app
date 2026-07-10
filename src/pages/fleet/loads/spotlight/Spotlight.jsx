@@ -4,6 +4,7 @@ import { S } from '../../../../lib/styles'
 import { supabase } from '../../../../lib/supabase'
 import SpotlightDeck from './SpotlightDeck'
 import DriverSpotlightCard from './DriverSpotlightCard'
+import ErrorBoundary from '../../../../components/ErrorBoundary'
 import { fetchDriverDeck, fetchLanes, fetchTrendWeeks } from './spotlightData'
 import { SORTS, formatRange, shiftYmd, spanDays, thisMonth, thisWeek, ymd } from './spotlightShared'
 
@@ -68,9 +69,11 @@ export default function Spotlight({ dimension = 'driver' }) {
   // ── Batch signed URLs for driver photos ──
   useEffect(() => {
     if (!deck) return
-    const photoPaths = deck.entries
-      .map(e => e.photoPath)
-      .filter(Boolean)
+    // Primary photos + every team member's photo (private bucket → signed URLs).
+    const photoPaths = [...new Set(
+      deck.entries.flatMap(e => [e.photoPath, ...((e.members || []).map(m => m.photo_path))])
+        .filter(Boolean)
+    )]
     if (photoPaths.length === 0) return
 
     supabase.storage
@@ -240,22 +243,25 @@ export default function Spotlight({ dimension = 'driver' }) {
     const rank = focus >= 0 ? sorted.indexOf(entry) + 1 : null
     const total = focus >= 0 ? sorted.length : null
     return (
-      <Card
-        entry={entry}
-        lanes={detailMap[`${deckKey}|${entry.id}`]}
-        trend={trend}
-        rangeDays={rangeDays}
-        effDays={deck?.effDays ?? rangeDays}
-        periodLabel={formatRange(range.from, range.to)}
-        basis={basis}
-        focused={focused}
-        rank={rank}
-        total={total}
-        sortLabel={sortDef.label.toLowerCase()}
-        activeWeekFrom={range.from}
-        onWeekSelect={handleWeekSelect}
-        photoUrl={entry.photoPath ? signedUrls[entry.photoPath] : null}
-      />
+      <ErrorBoundary label="this spotlight card">
+        <Card
+          entry={entry}
+          lanes={detailMap[`${deckKey}|${entry.id}`]}
+          trend={trend}
+          rangeDays={rangeDays}
+          effDays={deck?.effDays ?? rangeDays}
+          periodLabel={formatRange(range.from, range.to)}
+          basis={basis}
+          focused={focused}
+          rank={rank}
+          total={total}
+          sortLabel={sortDef.label.toLowerCase()}
+          activeWeekFrom={range.from}
+          onWeekSelect={handleWeekSelect}
+          photoUrl={entry.photoPath ? signedUrls[entry.photoPath] : null}
+          photoUrls={signedUrls}
+        />
+      </ErrorBoundary>
     )
   }
 
