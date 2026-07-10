@@ -53,10 +53,10 @@ export default function DriversList() {
     // driver_id: NO role filter and NO collapse-by-team_id, or a teammate (the
     // co-driver) loses their badge. Both members must resolve independently.
     supabase.from('v_driver_current_team')
-      .select('driver_id, team_id, team_name, role, partners')
+      .select('driver_id, team_name, partners')
       .then(({ data: teamRows }) => {
         const teamByDriverId = new Map()
-        for (const r of teamRows ?? []) teamByDriverId.set(r.driver_id, r) // one entry per member
+        for (const r of teamRows ?? []) teamByDriverId.set(r.driver_id, r) // one entry per member — primary AND co
         setTeamByDriver(teamByDriverId)
       })
 
@@ -373,12 +373,13 @@ function TeamIcon() {
 }
 
 // Subtle pill marking a driver who runs as a team, naming the teammate(s).
+// Purely presence-driven — every member (primary AND co) that reaches this
+// component renders identically, using its OWN row's partners. No role logic.
 function TeamBadge({ team }) {
-  const roleHint = team.role === 'primary' ? 'primary' : team.role === 'co' ? 'co-driver' : null
   return (
     <span
       className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium whitespace-nowrap bg-violet-50 dark:bg-violet-500/10 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-500/30"
-      title={`${team.team_name}${roleHint ? ` · ${roleHint}` : ''}`}
+      title={team.team_name || 'Team'}
     >
       <TeamIcon />
       {team.partners ? `Team · with ${team.partners}` : 'Team'}
