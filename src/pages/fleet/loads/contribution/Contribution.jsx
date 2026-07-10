@@ -4,7 +4,7 @@ import { useToast } from '../../../../contexts/ToastContext'
 import { S } from '../../../../lib/styles'
 import { supabase } from '../../../../lib/supabase'
 import ErrorBoundary from '../../../../components/ErrorBoundary'
-import { fetchContribution, prorateUnitCost, estimateDriverPay } from './contributionData'
+import { fetchContribution, prorateUnitCost, estimateDriverPay, fetchTeamByDriver } from './contributionData'
 import { fmtMoney, fmtNum, formatRange, shiftYmd, spanDays, thisMonth, thisWeek } from '../spotlight/spotlightShared'
 
 // Profit Contribution — the fleet ranked by what each unit actually leaves
@@ -192,6 +192,10 @@ export default function Contribution() {
   const [dataState, setDataState] = useState({ key: null, data: null })
   const [driverPayState, setDriverPayState] = useState({ key: null, data: null })
   const [expandState, setExpandState] = useState({ key: null, id: null })
+  // Current-team overlay (driver_id → {team_id, team_name}) — the driver-pay
+  // rollup keys on the primary and labels with that person's name; this lets
+  // the Est. Driver Pay row read the TEAM name. Fetched once, period-agnostic.
+  const [teamMap, setTeamMap] = useState(null)
 
   useEffect(() => {
     let stale = false
@@ -228,6 +232,14 @@ export default function Contribution() {
     fetchDriverPay()
     return () => { stale = true }
   }, [driverPayKey, range.from, range.to, basis])
+
+  useEffect(() => {
+    let stale = false
+    fetchTeamByDriver()
+      .then(m => { if (!stale) setTeamMap(m) })
+      .catch(() => { if (!stale) setTeamMap(new Map()) })
+    return () => { stale = true }
+  }, [])
 
   const loading = dataState.key !== dataKey
   const data = loading ? null : dataState.data
@@ -293,7 +305,17 @@ export default function Contribution() {
   }, [filtered])
 
   // Driver pay totals
-  const driverPayData = driverPayState.key === driverPayKey ? driverPayState.data : null
+  const driverPayRaw = driverPayState.key === driverPayKey ? driverPayState.data : null
+  // Overlay the team name onto team rows (the rollup collapses a team to its
+  // primary and labels it with the primary's personal name). Numbers unchanged.
+  const driverPayData = useMemo(() => {
+    if (!driverPayRaw) return null
+    if (!teamMap || teamMap.size === 0) return driverPayRaw
+    return driverPayRaw.map(d => {
+      const t = teamMap.get(d.driver_id)
+      return t ? { ...d, driver_name: t.team_name, team_id: t.team_id } : d
+    })
+  }, [driverPayRaw, teamMap])
   const driverPayTotals = useMemo(() => {
     if (!driverPayData) return null
     const t = { loads: 0, linehaul: 0, estDriverPay: 0, estCompanyContribution: 0 }
@@ -567,7 +589,10 @@ export default function Contribution() {
                     <tr key={d.driver_id} className="border-b border-gray-100 dark:border-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.02]">
                       <td className={`${S.td} font-mono text-gray-400 dark:text-slate-500 text-xs`}>{i + 1}</td>
                       <td className={`${S.td} font-medium`}>
-                        <div className="text-gray-900 dark:text-slate-200">{d.driver_name}</div>
+                        <div className="text-gray-900 dark:text-slate-200 inline-flex items-center gap-1.5">
+                          {d.team_id && <TeamIcon />}
+                          {d.driver_name}
+                        </div>
                         <div className="flex items-center gap-2 mt-0.5">
                           {d.driver_type && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-slate-700/40 text-gray-600 dark:text-slate-400">{d.driver_type}</span>}
                           {d.has_contract && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400">Contract rules TBD</span>}
@@ -641,7 +666,10 @@ function FragmentRow({ row, rank, negative, expanded, onToggle, days, dimension 
         <td className={`${S.td} font-mono text-xs text-gray-600 dark:text-slate-500`}>{rank}</td>
         <td className={S.td}>
           <div className="flex items-center gap-2">
-            <span className={`font-medium ${negative ? 'text-rose-700 dark:text-rose-300' : 'text-gray-900 dark:text-slate-100'}`}>{row.name || '—'}</span>
+            <span className={`font-medium inline-flex items-center gap-1.5 ${negative ? 'text-rose-700 dark:text-rose-300' : 'text-gray-900 dark:text-slate-100'}`}>
+              {row.team_id && <TeamIcon />}
+              {row.name || '—'}
+            </span>
             {row.ownershipStage === 'driver_owned' && (
               <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-500/15 text-blue-700 dark:text-blue-400 font-semibold whitespace-nowrap" title="Owner-operator: contribution is gross of driver settlement">
                 owner-op

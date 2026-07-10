@@ -12,7 +12,7 @@
 import { supabase } from '../../../../lib/supabase'
 import { elapsedDays, shiftYmd, spanDays } from '../spotlight/spotlightShared'
 import { aggregateLanes, fetchLaneLegs, pickPayers } from '../lanes/laneData'
-import { fetchContribution } from '../contribution/contributionData'
+import { fetchContribution, fetchTeamByDriver } from '../contribution/contributionData'
 
 // ── Fetch legs with truck_id for ownership join ───────────────────────────
 async function fetchLegsForPulse({ from, to, basis = 'delivery' }) {
@@ -251,7 +251,7 @@ export async function fetchBoardroom({ from, to, basis = 'delivery' }) {
   const rpc = (dimension, f, t) =>
     supabase.rpc('load_profit_rollup', { p_dimension: dimension, p_from: f, p_to: t, p_basis: basis })
 
-  const [driver, driverPrior, dispatcher, customer, trailer, trailersRes, legs, legsForPulse, ownershipMap, contributionRes] = await Promise.all([
+  const [driver, driverPrior, dispatcher, customer, trailer, trailersRes, legs, legsForPulse, ownershipMap, contributionRes, teamByDriver] = await Promise.all([
     rpc('driver', from, to),
     rpc('driver', priorFrom, priorTo),
     rpc('dispatcher', from, to),
@@ -262,10 +262,17 @@ export async function fetchBoardroom({ from, to, basis = 'delivery' }) {
     fetchLegsForPulse({ from, to, basis }).catch(() => null),
     fetchOwnershipMap().catch(() => new Map()),
     fetchContribution({ dimension: 'truck', from, to, basis }).catch(() => null),
+    fetchTeamByDriver().catch(() => new Map()),
   ])
   if (driver.error) throw driver.error
 
-  const driverRows = driver.data || []
+  // The driver rollup keys on a team's PRIMARY and labels it with that person's
+  // name; overlay the team name so the driver board reads "Arguijo / Estrada".
+  const withTeamName = (rows) => (rows || []).map(r => {
+    const t = r.key_id ? teamByDriver.get(r.key_id) : null
+    return t ? { ...r, key_name: t.team_name, team_id: t.team_id } : r
+  })
+  const driverRows = withTeamName(driver.data)
   const pulse = { cur: aggregate(driverRows), prior: aggregate(driverPrior.data || []) }
 
   // Also calculate ownership-split pulse for the hero

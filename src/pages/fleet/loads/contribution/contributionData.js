@@ -49,6 +49,23 @@ export function estimateDriverPay({ comp_type, comp_value, revenue, miles, perio
   return { pay: 0, missing: true }
 }
 
+// Current-team overlay: driver_id → { team_id, team_name }. The team rollups
+// (load_profit_rollup / driver_pay_estimate_rollup) key on the PRIMARY driver
+// and label with that person's personal name; this map lets the leaderboard
+// show the TEAM name instead (the numbers already reflect the collapsed team).
+// Exported so the Boardroom and the Est. Driver Pay tab reuse the same source.
+export async function fetchTeamByDriver() {
+  const { data } = await supabase.from('v_driver_current_team').select('driver_id, team_id, team_name')
+  return teamMapFrom(data)
+}
+function teamMapFrom(rows) {
+  const m = new Map()
+  for (const r of rows || []) {
+    if (r.driver_id && r.team_id) m.set(r.driver_id, { team_id: r.team_id, team_name: r.team_name })
+  }
+  return m
+}
+
 // "#M100" / "M-100" / "m100" all collapse to "M100" so driver_purchases.
 // truck_number (entered free-form) can match trucks.unit_number.
 const normUnit = (s) => String(s || '').replace(/[^a-z0-9]/gi, '').toUpperCase()
@@ -95,7 +112,7 @@ function finishRow(base, { effDays }) {
   }
 }
 
-function buildDriverRows({ rollupRows, drivers, trucks, trailers, costByUnit, purchases, paymentsByPurchase, days, effDays }) {
+function buildDriverRows({ rollupRows, drivers, trucks, trailers, costByUnit, purchases, paymentsByPurchase, days, effDays, teamByDriver }) {
   const driversById = new Map(drivers.map(d => [d.id, d]))
   const trucksByDriver = groupBy(trucks, 'driver_id')
   const trailersByDriver = groupBy(trailers, 'driver_id')
@@ -103,6 +120,7 @@ function buildDriverRows({ rollupRows, drivers, trucks, trailers, costByUnit, pu
 
   function build(driverId, rawName, row) {
     const master = driverId ? driversById.get(driverId) : null
+    const team = driverId ? teamByDriver.get(driverId) : null
     const myTrucks = driverId ? (trucksByDriver.get(driverId) || []) : []
     const myTrailers = driverId ? (trailersByDriver.get(driverId) || []) : []
 
@@ -133,7 +151,10 @@ function buildDriverRows({ rollupRows, drivers, trucks, trailers, costByUnit, pu
 
     return finishRow({
       id: driverId || `raw:${rawName}`,
-      name: master?.full_name || row?.key_name || rawName,
+      // Team-aware label: the team name wins over the primary's personal name
+      // (which is what master.full_name / the rollup's key_name both carry).
+      name: team?.team_name || master?.full_name || row?.key_name || rawName,
+      team_id: team?.team_id || null,
       sub: myTrucks.map(t => t.unit_number).filter(Boolean).join(' · ') || null,
       unmatched: !driverId,
       status: master && master.current_status !== 'active' ? master.current_status : null,
@@ -150,21 +171,30 @@ function buildDriverRows({ rollupRows, drivers, trucks, trailers, costByUnit, pu
 
   const rows = []
   const seen = new Set()
+  const seenTeams = new Set()
   for (const r of rollupRows) {
     if (!r.key_id && !r.key_name) continue
-    if (r.key_id) seen.add(r.key_id)
+    if (r.key_id) {
+      seen.add(r.key_id)
+      const t = teamByDriver.get(r.key_id)
+      if (t?.team_id) seenTeams.add(t.team_id)
+    }
     rows.push(build(r.key_id, r.key_name, r))
   }
   // Active drivers with zero loads don't appear in the rollup, but their
   // equipment cost still accrues — they belong on this leaderboard most of all.
+  // Skip a co-driver whose team already has a row (the rollup attributes the
+  // team's loads to the primary), so a team never doubles up.
   for (const d of drivers) {
     if (d.current_status !== 'active' || seen.has(d.id)) continue
+    const t = teamByDriver.get(d.id)
+    if (t?.team_id && seenTeams.has(t.team_id)) continue
     rows.push(build(d.id, d.full_name, null))
   }
   return rows
 }
 
-function buildTruckRows({ rollupRows, drivers, trucks, eqCost, costByUnit, purchases, paymentsByPurchase, days, effDays }) {
+function buildTruckRows({ rollupRows, drivers, trucks, eqCost, costByUnit, purchases, paymentsByPurchase, days, effDays, teamByDriver }) {
   const trucksById = new Map(trucks.map(t => [t.id, t]))
   const driversById = new Map(drivers.map(d => [d.id, d]))
   const trucksByDriver = groupBy(trucks, 'driver_id')
@@ -197,6 +227,7 @@ function buildTruckRows({ rollupRows, drivers, trucks, eqCost, costByUnit, purch
     const cost = truckId ? costByUnit.get(`truck:${truckId}`) : null
     const monthly = cost?.monthly_cost != null ? Number(cost.monthly_cost) : null
     const driver = master?.driver_id ? driversById.get(master.driver_id) : null
+    const driverTeam = driver ? teamByDriver.get(driver.id) : null
     const pur = (truckId && purchaseByTruck.get(truckId)) || null
     const flags = []
     if (cost?.is_total_loss) flags.push('total loss')
@@ -204,7 +235,7 @@ function buildTruckRows({ rollupRows, drivers, trucks, eqCost, costByUnit, purch
     return finishRow({
       id: truckId || `raw:${rawName}`,
       name: master?.unit_number || row?.key_name || rawName,
-      sub: driver?.full_name || null,
+      sub: driverTeam?.team_name || driver?.full_name || null,
       unmatched: !truckId,
       status: flags[0] || null,
       ownershipStage: cost?.ownership_stage || 'unknown',
@@ -246,7 +277,7 @@ function buildTruckRows({ rollupRows, drivers, trucks, eqCost, costByUnit, purch
 export async function fetchContribution({ dimension, from, to, basis = 'delivery' }) {
   const days = spanDays(from, to)
   const effDays = elapsedDays(from, to)
-  const [rollup, driversRes, trucksRes, trailersRes, eqCostRes, purchasesRes, paymentsRes] = await Promise.all([
+  const [rollup, driversRes, trucksRes, trailersRes, eqCostRes, purchasesRes, paymentsRes, teamsRes] = await Promise.all([
     supabase.rpc('load_profit_rollup', { p_dimension: dimension, p_from: from, p_to: to, p_basis: basis }),
     supabase.from('drivers').select('id, full_name, internal_id, current_status, carrier'),
     supabase.from('trucks').select('id, unit_number, driver_id, carrier'),
@@ -256,6 +287,7 @@ export async function fetchContribution({ dimension, from, to, basis = 'delivery
     supabase.from('driver_purchase_payments')
       .select('driver_purchase_id, expected_amount')
       .lte('period_start', to).gte('period_end', from),
+    supabase.from('v_driver_current_team').select('driver_id, team_id, team_name'),
   ])
   if (rollup.error) throw rollup.error
 
@@ -268,6 +300,7 @@ export async function fetchContribution({ dimension, from, to, basis = 'delivery
     costByUnit: new Map((eqCostRes.data || []).map(r => [`${r.etype}:${r.id}`, r])),
     purchases: purchasesRes.data || [],
     paymentsByPurchase: groupBy(paymentsRes.data, 'driver_purchase_id'),
+    teamByDriver: teamMapFrom(teamsRes.data),
     days,
     effDays,
   }
