@@ -39,6 +39,7 @@ const Icons = {
   merge:     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>,
   gear:      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>,
   command:   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 3v2m0 14v2m9-9h-2M5 12H3m13.95 4.95l-1.414-1.414M8.464 8.464L7.05 7.05m9.9 0l-1.414 1.414M8.464 15.536L7.05 16.95M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>,
+  warehouse: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 21V9.5L12 4l9 5.5V21M3 21h18M7 21v-8h10v8M7 17h10" /></svg>,
 }
 
 // ── Nav item ───────────────────────────────────────────────────────────────
@@ -163,7 +164,7 @@ export default function Layout() {
   const visibleCounts = {
     today: ['/command-center', '/rig', '/fleet/profitability/boardroom', '/fleet/profitability/lanes', '/cash-flow/lifeline'].filter(r => accessibleRoutes.has(r)).length,
     money: ['/cash-flow/payment-calendar', '/financial-controls/debt-schedule', '/financial-controls/driver-purchases'].filter(r => accessibleRoutes.has(r)).length,
-    profitability: ['/fleet/profitability', '/fleet/profitability/spotlight', '/fleet/profitability/contribution', '/fleet/profitability/idle', '/fleet/profitability/miles-performance'].filter(r => accessibleRoutes.has(r)).length,
+    profitability: ['/fleet/profitability', '/fleet/profitability/spotlight', '/fleet/profitability/contribution', '/fleet/profitability/idle', '/fleet/profitability/dedicated-lanes', '/fleet/profitability/miles-performance'].filter(r => accessibleRoutes.has(r)).length,
     fleet: ['/fleet/trucks', '/fleet/trailers', '/fleet/drivers', '/fleet/teams', '/fleet/cost', '/fleet/loads/import', '/fleet/settlements/import', '/fleet/combined-loads'].filter(r => accessibleRoutes.has(r)).length,
     payables: ['/dashboard', '/vendors', '/invoices', '/transactions', '/reports'].filter(r => accessibleRoutes.has(r)).length,
   }
@@ -214,6 +215,7 @@ export default function Layout() {
             <NavItem to="/fleet/profitability" label="Profitability" icon={Icons.cost} end onClick={close} visible={accessibleRoutes.has('/fleet/profitability')} />
             <NavItem to="/fleet/profitability/spotlight" label="Driver Spotlight" icon={Icons.driver} onClick={close} visible={accessibleRoutes.has('/fleet/profitability/spotlight')} />
             <NavItem to="/fleet/profitability/contribution" label="Contribution" icon={Icons.report} onClick={close} visible={accessibleRoutes.has('/fleet/profitability/contribution')} />
+            <NavItem to="/fleet/profitability/dedicated-lanes" label="Dedicated Lanes" icon={Icons.warehouse} onClick={close} visible={accessibleRoutes.has('/fleet/profitability/dedicated-lanes')} />
             <NavItem to="/fleet/profitability/idle" label="Idle review" icon={Icons.cost} onClick={close} visible={accessibleRoutes.has('/fleet/profitability/idle')} />
             <NavItem to="/fleet/profitability/miles-performance" label="Miles & Performance" icon={Icons.map} onClick={close} visible={accessibleRoutes.has('/fleet/profitability/miles-performance')} />
           </NavSection>
