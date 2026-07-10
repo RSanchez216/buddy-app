@@ -1,4 +1,4 @@
-import { LANE_STATUS } from '../../../../data/dedicatedLanesMock'
+import { LANE_STATUS } from './dedicatedData'
 
 // Shared presentation components for the Dedicated Lanes page. Non-component
 // helpers (day grading, date formatting) live in dedicatedFormat.js.
@@ -7,13 +7,16 @@ const STATUS_PILL = {
   profitable: 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/20',
   watch: 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-500/20',
   underwater: 'bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400 border-red-200 dark:border-red-500/20',
+  inactive: 'bg-gray-100 dark:bg-slate-700/40 text-gray-500 dark:text-slate-400 border-gray-200 dark:border-slate-600/40',
 }
 
-export function StatusPill({ status }) {
+// Lane P&L status pill, optionally with the days-in-status tail (e.g. "· 6d").
+export function StatusPill({ status, days }) {
+  const meta = LANE_STATUS[status] || LANE_STATUS.inactive
   return (
-    <span className={`inline-flex items-center gap-1 text-[10px] font-extrabold uppercase tracking-wide rounded-full border px-2 py-0.5 ${STATUS_PILL[status]}`}>
-      <span className="w-1.5 h-1.5 rounded-full" style={{ background: LANE_STATUS[status].hex }} />
-      {LANE_STATUS[status].label}
+    <span className={`inline-flex items-center gap-1 text-[10px] font-extrabold uppercase tracking-wide rounded-full border px-2 py-0.5 ${STATUS_PILL[status] || STATUS_PILL.inactive}`}>
+      <span className="w-1.5 h-1.5 rounded-full" style={{ background: meta.hex }} />
+      {meta.label}{days != null ? ` · ${days}d` : ''}
     </span>
   )
 }
