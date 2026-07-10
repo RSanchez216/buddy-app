@@ -53,13 +53,11 @@ export default function DriversList() {
     // driver_id: NO role filter and NO collapse-by-team_id, or a teammate (the
     // co-driver) loses their badge. Both members must resolve independently.
     supabase.from('v_driver_current_team')
-      .select('driver_id, team_id, team_name, role, partners, members')
+      .select('driver_id, team_id, team_name, role, partners')
       .then(({ data: teamRows }) => {
-        const m = new Map()
-        for (const t of teamRows || []) {
-          if (t?.driver_id) m.set(t.driver_id, t) // primary + co both land here
-        }
-        setTeamByDriver(m)
+        const teamByDriverId = new Map()
+        for (const r of teamRows ?? []) teamByDriverId.set(r.driver_id, r) // one entry per member
+        setTeamByDriver(teamByDriverId)
       })
 
     // Load signed URLs for drivers with photos (batch)
