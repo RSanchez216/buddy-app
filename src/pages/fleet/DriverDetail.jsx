@@ -4,9 +4,10 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { S } from '../../lib/styles'
 import Select from '../../components/Select'
-import { DRIVER_STATUSES, DRIVER_STATUS_LABELS, terminationFields, todayLocalYmd, fmtDate, fmtCompensation } from './fleetUtils'
+import { DRIVER_STATUSES, DRIVER_STATUS_LABELS, terminationFields, todayLocalYmd, fmtDate, fmtCompensation, monogram, nameHue } from './fleetUtils'
 import DriverFormModal from './DriverFormModal'
 import DriverProfileHeader from './DriverProfileHeader'
+import ErrorBoundary from '../../components/ErrorBoundary'
 
 export default function DriverDetail() {
   const { canEdit, user } = useAuth()
@@ -16,6 +17,9 @@ export default function DriverDetail() {
   const [trailers, setTrailers] = useState([])
   const [history, setHistory] = useState([])
   const [assignments, setAssignments] = useState([])
+  const [teamCurrent, setTeamCurrent] = useState(null) // v_driver_current_team row (or null)
+  const [teamHistory, setTeamHistory] = useState([])   // driver_team_history rows (newest first)
+  const [teamAvatars, setTeamAvatars] = useState({})   // photo_path → signed URL
   const [loading, setLoading] = useState(true)
   const [showEdit, setShowEdit] = useState(false)
 
@@ -26,7 +30,7 @@ export default function DriverDetail() {
     const { data } = await supabase.from('drivers').select('*').eq('id', id).maybeSingle()
     setRow(data || null)
 
-    const [tRes, trRes, hRes, aRes] = await Promise.all([
+    const [tRes, trRes, hRes, aRes, teamRes, teamHistRes] = await Promise.all([
       supabase.from('trucks').select('id, unit_number, vin, ownership_stage').eq('driver_id', id).order('unit_number'),
       supabase.from('trailers').select('id, unit_number, vin, ownership_stage, trailer_type').eq('driver_id', id).order('unit_number'),
       supabase.from('driver_status_history')
@@ -45,11 +49,29 @@ export default function DriverDetail() {
         `)
         .eq('driver_id', id)
         .order('start_date', { ascending: false }),
+      // Current team (0/1 row) + full membership history (newest first).
+      supabase.from('v_driver_current_team')
+        .select('team_id, team_name, role, effective_start, partners, members')
+        .eq('driver_id', id).maybeSingle(),
+      supabase.rpc('driver_team_history', { p_driver: id }),
     ])
     setTrucks(tRes.data || [])
     setTrailers(trRes.data || [])
     setHistory(hRes.data || [])
     setAssignments(aRes.data || [])
+    setTeamCurrent(teamRes.data || null)
+    setTeamHistory(teamHistRes.data || [])
+
+    // Sign the current teammates' avatars (private bucket — never getPublicUrl).
+    const memberPaths = (teamRes.data?.members || []).map(m => m.photo_path).filter(Boolean)
+    if (memberPaths.length) {
+      const { data: urls } = await supabase.storage.from('driver-avatars').createSignedUrls(memberPaths, 3600)
+      const map = {}
+      ;(urls || []).forEach(u => { if (u?.signedUrl) map[u.path] = u.signedUrl })
+      setTeamAvatars(map)
+    } else {
+      setTeamAvatars({})
+    }
     setLoading(false)
   }
 
@@ -84,6 +106,10 @@ export default function DriverDetail() {
         )}
       </div>
       <DriverProfileHeader driver={row} />
+
+      <ErrorBoundary label="the team section">
+        <TeamSection driverId={id} current={teamCurrent} history={teamHistory} avatars={teamAvatars} />
+      </ErrorBoundary>
 
       <Section title="Driver Info">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2 text-sm">
@@ -366,6 +392,106 @@ function StatusQuickChange({ driver, userId, onSaved }) {
         </>
       )}
     </div>
+  )
+}
+
+// Team-unit glyph (users) — same icon used on the Teams page / spotlight.
+function TeamIcon({ className = 'w-4 h-4' }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className={`${className} shrink-0`} aria-label="Team">
+      <path d="M17 20h5v-2a3 3 0 0 0-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 0 1 5.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 0 1 9.288 0M15 7a3 3 0 1 1-6 0 3 3 0 0 1 6 0z" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function RolePill({ role }) {
+  const primary = role === 'primary'
+  return (
+    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wide ${primary ? 'bg-orange-100 dark:bg-orange-500/15 text-orange-700 dark:text-orange-400' : 'bg-gray-200 dark:bg-slate-600/40 text-gray-600 dark:text-slate-300'}`}>
+      {primary ? 'primary' : 'co'}
+    </span>
+  )
+}
+
+function PartnerAvatar({ name, url, size = 'w-9 h-9' }) {
+  if (url) return <img src={url} alt={name} className={`${size} rounded-xl object-cover ring-1 ring-black/5 dark:ring-white/10 shrink-0`} />
+  const h = nameHue(name || '')
+  return (
+    <div className={`${size} rounded-xl flex items-center justify-center text-xs font-bold text-white shrink-0`}
+      style={{ background: `linear-gradient(135deg, hsl(${h} 62% 46%), hsl(${(h + 42) % 360} 68% 34%))` }}>
+      {monogram(name || '')}
+    </div>
+  )
+}
+
+// Team card + membership timeline. Renders nothing for solo drivers (no current
+// team AND no history). Current stint prefers the live view (has member avatars);
+// falls back to the is_current history row (partner names only) if the view is
+// absent. Timeline shows only when there's more than the current stint.
+function TeamSection({ driverId, current, history, avatars }) {
+  const currentStint = current || history.find(h => h.is_current) || null
+  const onTeam = !!currentStint
+  if (!onTeam && (!history || history.length === 0)) return null
+
+  const partners = (current?.members || []).filter(m => m.driver_id !== driverId)
+  const showTimeline = history.length > (onTeam ? 1 : 0)
+
+  return (
+    <Section title="Team">
+      {onTeam && (
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2 flex-wrap">
+            <TeamIcon className="w-5 h-5 text-gray-500 dark:text-slate-400" />
+            <Link to="/fleet/teams" className="text-base font-bold text-gray-900 dark:text-white hover:text-orange-600 dark:hover:text-orange-400">
+              {currentStint.team_name}
+            </Link>
+            <RolePill role={currentStint.role} />
+            {currentStint.effective_start && (
+              <span className="text-xs text-gray-500 dark:text-slate-400">since {fmtDate(currentStint.effective_start)}</span>
+            )}
+          </div>
+          {partners.length > 0 ? (
+            <div className="flex items-center gap-3 flex-wrap">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500">Partner{partners.length > 1 ? 's' : ''}</span>
+              {partners.map(p => (
+                <Link key={p.driver_id} to={`/fleet/drivers/${p.driver_id}`} className="flex items-center gap-2 hover:opacity-80">
+                  <PartnerAvatar name={p.full_name} url={p.photo_path ? avatars[p.photo_path] : null} />
+                  <span className="text-sm font-medium text-gray-800 dark:text-slate-200">{p.full_name}</span>
+                </Link>
+              ))}
+            </div>
+          ) : currentStint.partners ? (
+            <span className="text-sm text-gray-600 dark:text-slate-400">with {currentStint.partners}</span>
+          ) : null}
+        </div>
+      )}
+
+      {showTimeline && (
+        <div className={`${onTeam ? 'mt-4 pt-4 border-t border-gray-100 dark:border-white/5' : ''} space-y-2.5`}>
+          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500">Membership history</p>
+          {history.map((s, i) => (
+            <div key={`${s.team_id}-${s.effective_start}-${i}`} className="flex items-start gap-2.5">
+              <TeamIcon className="w-4 h-4 mt-0.5 text-gray-400 dark:text-slate-500" />
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-semibold text-gray-800 dark:text-slate-200">{s.team_name}</span>
+                  <RolePill role={s.role} />
+                  {s.is_current && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">
+                      Current
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
+                  {s.effective_end ? `${fmtDate(s.effective_start)} – ${fmtDate(s.effective_end)}` : `since ${fmtDate(s.effective_start)}`}
+                  {s.partners && ` · with ${s.partners}`}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Section>
   )
 }
 
