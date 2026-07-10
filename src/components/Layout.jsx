@@ -215,8 +215,8 @@ export default function Layout() {
             <NavItem to="/fleet/profitability" label="Profitability" icon={Icons.cost} end onClick={close} visible={accessibleRoutes.has('/fleet/profitability')} />
             <NavItem to="/fleet/profitability/spotlight" label="Driver Spotlight" icon={Icons.driver} onClick={close} visible={accessibleRoutes.has('/fleet/profitability/spotlight')} />
             <NavItem to="/fleet/profitability/contribution" label="Contribution" icon={Icons.report} onClick={close} visible={accessibleRoutes.has('/fleet/profitability/contribution')} />
-            <NavItem to="/fleet/profitability/idle" label="Idle review" icon={Icons.cost} onClick={close} visible={accessibleRoutes.has('/fleet/profitability/idle')} />
             <NavItem to="/fleet/profitability/dedicated-lanes" label="Dedicated Lanes" icon={Icons.warehouse} onClick={close} visible={accessibleRoutes.has('/fleet/profitability/dedicated-lanes')} />
+            <NavItem to="/fleet/profitability/idle" label="Idle review" icon={Icons.cost} onClick={close} visible={accessibleRoutes.has('/fleet/profitability/idle')} />
             <NavItem to="/fleet/profitability/miles-performance" label="Miles & Performance" icon={Icons.map} onClick={close} visible={accessibleRoutes.has('/fleet/profitability/miles-performance')} />
           </NavSection>
 
