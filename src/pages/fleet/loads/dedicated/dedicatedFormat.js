@@ -1,4 +1,4 @@
-import { daysBucket } from '../../../../data/dedicatedLanesMock'
+import { daysBucket } from './dedicatedData'
 
 // Non-component helpers for the Dedicated Lanes page (kept out of the .jsx
 // component files so fast refresh stays intact).
