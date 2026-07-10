@@ -83,7 +83,8 @@ function aggregate(loads, keyField, nameField) {
   for (const l of loads) {
     const key = l[keyField] ?? '—'
     let g = map.get(key)
-    if (!g) { g = { key, name: (nameField ? l[nameField] : l[keyField]) || '—', loads: 0, loaded: 0, empty: 0, gross: 0, drivers: new Set() }; map.set(key, g) }
+    if (!g) { g = { key, name: (nameField ? l[nameField] : l[keyField]) || '—', isTeam: false, loads: 0, loaded: 0, empty: 0, gross: 0, drivers: new Set() }; map.set(key, g) }
+    if (l.team_id) g.isTeam = true
     g.loads++
     g.loaded += Number(l.loaded_mi) || 0
     g.empty += Number(l.empty_mi) || 0
@@ -118,7 +119,9 @@ function sortRows(rows, sort) {
 }
 
 const TABS = [
-  { key: 'driver', label: 'By Driver', keyField: 'driver_id', nameField: 'driver_name', head: 'Driver', showDrivers: false },
+  // By Driver groups by performance unit (team or solo driver), not the raw
+  // driver — a team shows as one combined line, no zero-mile co-driver row.
+  { key: 'driver', label: 'By Driver', keyField: 'unit_id', nameField: 'unit_name', head: 'Driver / Team', showDrivers: false },
   { key: 'dispatcher', label: 'By Dispatcher', keyField: 'dispatcher_id', nameField: 'dispatcher_name', head: 'Dispatcher', showDrivers: true },
   { key: 'region', label: 'By Region', keyField: 'region', nameField: null, head: 'Region', showDrivers: true },
 ]
@@ -298,7 +301,12 @@ export default function MilesPerformance() {
                   return (
                     <Fragment key={r.key}>
                       <tr onClick={() => toggleRow(r.key)} className={`${S.tableRow} cursor-pointer`}>
-                        <td className="px-3 py-2 font-medium text-gray-900 dark:text-slate-200">{r.name}</td>
+                        <td className="px-3 py-2 font-medium text-gray-900 dark:text-slate-200">
+                          <span className="inline-flex items-center gap-1.5">
+                            {tab === 'driver' && r.isTeam && <TeamIcon />}
+                            {r.name}
+                          </span>
+                        </td>
                         <td className="px-2 py-2 text-right font-mono text-gray-600 dark:text-slate-400">{r.loads}</td>
                         <td className="px-2 py-2 text-right font-mono text-gray-600 dark:text-slate-400">{fmtNum(r.loaded)}</td>
                         <td className="px-2 py-2 text-right font-mono text-gray-600 dark:text-slate-400">{fmtNum(r.empty)}</td>
@@ -328,7 +336,10 @@ export default function MilesPerformance() {
                                   const dh = lo + em > 0 ? em / (lo + em) : null
                                   return (
                                     <tr key={l.leg_id} className="border-t border-gray-100 dark:border-white/5">
-                                      <td className="py-1 font-mono text-gray-700 dark:text-slate-300">{l.load_number}</td>
+                                      <td className="py-1 font-mono text-gray-700 dark:text-slate-300">
+                                        {l.load_number}
+                                        {tab === 'driver' && r.isTeam && l.driver_name && <span className="ml-1.5 font-sans text-[10px] text-gray-400 dark:text-slate-500">· {l.driver_name}</span>}
+                                      </td>
                                       <td className="py-1 text-gray-500 dark:text-slate-400">{l.origin} → {l.destination}</td>
                                       <td className="py-1 text-right font-mono text-gray-600 dark:text-slate-400">{fmtNum(lo)}</td>
                                       <td className="py-1 text-right font-mono text-gray-600 dark:text-slate-400">{fmtNum(em)}</td>
@@ -387,7 +398,7 @@ export default function MilesPerformance() {
     const loadRows = loads.map(l => {
       const lo = Number(l.loaded_mi) || 0, em = Number(l.empty_mi) || 0
       return {
-        Load: l.load_number, Driver: l.driver_name, Dispatcher: l.dispatcher_name, Region: l.region,
+        Load: l.load_number, Unit: l.unit_name, Driver: l.driver_name, Dispatcher: l.dispatcher_name, Region: l.region,
         Origin: l.origin, Destination: l.destination, Loaded_mi: Math.round(lo), Empty_mi: Math.round(em),
         Deadhead_pct: lo + em > 0 ? +((em / (lo + em)) * 100).toFixed(1) : '', Gross: Math.round(Number(l.gross) || 0),
         RPM_loaded: l.rpm_loaded == null ? '' : +Number(l.rpm_loaded).toFixed(2), Delivery: l.delivery_date,
@@ -433,6 +444,15 @@ export default function MilesPerformance() {
     autoTable(pdf, { head: [cols], body, startY: y, styles: { fontSize: 8 }, headStyles: { fillColor: [234, 88, 12] } })
     pdf.save(`MilesPerformance_${tab}_${range.from}_to_${range.to}.pdf`)
   }
+}
+
+// Team-unit glyph (users) — marks a By-Driver row that is a team, not a solo.
+function TeamIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="w-3.5 h-3.5 shrink-0 text-gray-400 dark:text-slate-500" aria-label="Team">
+      <path d="M17 20h5v-2a3 3 0 0 0-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 0 1 5.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 0 1 9.288 0M15 7a3 3 0 1 1-6 0 3 3 0 0 1 6 0z" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
 }
 
 // Sortable header cell.
