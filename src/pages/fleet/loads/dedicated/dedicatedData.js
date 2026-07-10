@@ -14,13 +14,8 @@ export const HOME_YARD_HEX = '#6b7280'
 // Home Yard is a display-only marker for the true-idle bucket — not a lane.
 export const HOME_YARD = { city: 'Aurora', state: 'IL', lat: 41.7606, lng: -88.3201 }
 
-export const TRAILER_TYPE_COLORS = {
-  'Dry Van': '#06b6d4',
-  'Flatbed': '#ef4444',
-  'Reefer': '#10b981',
-  'Step Deck': '#f59e0b',
-  'Unassigned': '#6b7280',
-}
+// Single source of truth for trailer-type colors (Conestoga = rose, not gray).
+export { TRAILER_TYPE_COLORS } from '../spotlight/spotlightShared'
 export const TRAILER_TYPES = ['Dry Van', 'Reefer', 'Flatbed', 'Step Deck']
 
 // Days-parked grading: < 4d fresh · 4–9d watch · ≥ 10d aging.

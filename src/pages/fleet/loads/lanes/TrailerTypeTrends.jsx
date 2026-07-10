@@ -4,23 +4,14 @@ import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { supabase } from '../../../../lib/supabase'
 import { S } from '../../../../lib/styles'
-import { fmtMoney, fmtRpm, fmtNum } from '../spotlight/spotlightShared'
+import { fmtMoney, fmtRpm, fmtNum, trailerTypeColor } from '../spotlight/spotlightShared'
 
 // Trailer Type Trends — period-over-period metrics by equipment type for recruiting
 // Data source: lane_trailer_type_trends RPC (returns rows with period_start, trailer_type, gross, rpm, legs, etc.)
 
-const TRAILER_COLORS = {
-  'Dry Van': '#06b6d4',      // cyan
-  'Step Deck': '#f59e0b',    // amber
-  'Flatbed': '#ef4444',      // red
-  'Reefer': '#10b981',       // emerald
-  'Power Only': '#8b5cf6',   // violet
-  'Amazon': '#6366f1',       // indigo — matches the Lane Map trailer-type color
-  'Unassigned': '#6b7280',   // gray
-}
-
-// Get or generate color for a trailer type
-const getTrailerColor = (type) => TRAILER_COLORS[type] || '#6b7280'
+// Trailer-type color comes from the shared single-source map (Conestoga = rose,
+// distinct from the gray Unassigned).
+const getTrailerColor = trailerTypeColor
 
 // Format period label from period_start date (no UTC conversion)
 const formatPeriodLabel = (dateStr, granularity) => {
