@@ -15,35 +15,15 @@ import NewLaneModal from './NewLaneModal'
 // an active load is "on the road" (no cost); only a dropped/parked surplus
 // trailer accrues idle cost = days × daily rate.
 
-// Count-up for the KPI band: eases to the target on mount. Reduced-motion users
-// get the final number immediately.
-function useCountUp(rawTarget, duration = 700) {
-  const target = Number(rawTarget) || 0 // numeric fields arrive as strings from JSON
-  const [value, setValue] = useState(() =>
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches ? target : 0
-  )
-  useEffect(() => {
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { setValue(target); return }
-    let raf
-    const t0 = performance.now()
-    const tick = now => {
-      const p = Math.min(1, (now - t0) / duration)
-      setValue(target * (1 - Math.pow(1 - p, 3)))
-      if (p < 1) raf = requestAnimationFrame(tick)
-    }
-    raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
-  }, [target, duration])
-  return value
-}
-
+// KPI card. Renders the value straight from the payload — the number must equal
+// overview.* (and match the subtitle, which already reads it directly). Numeric
+// fields arrive as strings from JSON, so coerce before formatting.
 function Kpi({ label, value, format, sub, accent }) {
-  const v = useCountUp(value)
   return (
     <div className={`${S.card} p-4 relative overflow-hidden`}>
       <span className={`absolute inset-x-0 top-0 h-0.5 ${accent || 'bg-transparent'}`} />
       <div className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500">{label}</div>
-      <div className="text-[22px] font-extrabold tabular-nums mt-1.5 text-gray-900 dark:text-white leading-none">{format(v)}</div>
+      <div className="text-[22px] font-extrabold tabular-nums mt-1.5 text-gray-900 dark:text-white leading-none">{format(Number(value) || 0)}</div>
       <div className="text-[11px] text-gray-400 dark:text-slate-500 mt-1.5">{sub}</div>
     </div>
   )
