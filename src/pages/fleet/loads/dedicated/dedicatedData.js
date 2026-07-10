@@ -64,7 +64,7 @@ export async function createFacility({ name, city, state, lat, lng }) {
   return data.id
 }
 
-export async function createDedicatedLane({ name, customer, originFacilityId, destinationFacilityId, underwaterThreshold }) {
+export async function createDedicatedLane({ name, customer, originFacilityId, destinationFacilityId, underwaterThreshold, rate }) {
   const { data, error } = await supabase
     .from('dedicated_lanes')
     .insert({
@@ -72,6 +72,8 @@ export async function createDedicatedLane({ name, customer, originFacilityId, de
       origin_facility_id: originFacilityId,
       destination_facility_id: destinationFacilityId,
       underwater_threshold: Number(underwaterThreshold) || 0,
+      // Flat per-load rate — null (unset) stays distinct from a real $0 rate.
+      rate: rate == null || rate === '' ? null : Number(rate),
     })
     .select('id').single()
   if (error) throw error

@@ -55,6 +55,7 @@ export default function NewLaneModal({ open, onClose, onCreated }) {
   const toast = useToast()
   const [name, setName] = useState('')
   const [customer, setCustomer] = useState('')
+  const [rate, setRate] = useState('')
   const [threshold, setThreshold] = useState('0')
   const [origin, setOrigin] = useState(emptyFacility)
   const [destination, setDestination] = useState(emptyFacility)
@@ -67,7 +68,7 @@ export default function NewLaneModal({ open, onClose, onCreated }) {
   useEffect(() => {
     if (!open) return
     // reset + load the unassigned pool
-    setName(''); setCustomer(''); setThreshold('0'); setOrigin(emptyFacility()); setDestination(emptyFacility())
+    setName(''); setCustomer(''); setRate(''); setThreshold('0'); setOrigin(emptyFacility()); setDestination(emptyFacility())
     setAssigned([]); setQuery('')
     fetchUnassignedTrailers().then(setUnassigned).catch(e => { console.error(e); setUnassigned([]) })
   }, [open])
@@ -99,7 +100,7 @@ export default function NewLaneModal({ open, onClose, onCreated }) {
     try {
       const originId = await createFacility({ name: origin.name, city: origin.city, state: origin.state, lat: Number(origin.lat), lng: Number(origin.lng) })
       const destId = await createFacility({ name: destination.name, city: destination.city, state: destination.state, lat: Number(destination.lat), lng: Number(destination.lng) })
-      const laneId = await createDedicatedLane({ name: name.trim(), customer, originFacilityId: originId, destinationFacilityId: destId, underwaterThreshold: threshold })
+      const laneId = await createDedicatedLane({ name: name.trim(), customer, originFacilityId: originId, destinationFacilityId: destId, underwaterThreshold: threshold, rate })
       await assignTrailersToLane(laneId, assigned)
       toast.success(`Dedicated lane “${name.trim()}” created${assigned.length ? ` · ${assigned.length} trailer${assigned.length === 1 ? '' : 's'} assigned` : ''}.`)
       onCreated?.()
@@ -121,6 +122,14 @@ export default function NewLaneModal({ open, onClose, onCreated }) {
           <input className={S.input} placeholder="e.g. Del Campo Produce" value={customer} onChange={e => setCustomer(e.target.value)} />
         </div>
         <div>
+          <label className={S.label}>Rate (per load) <span className="text-gray-400 font-normal">(optional)</span></label>
+          <div className="relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-slate-500 text-sm pointer-events-none">$</span>
+            <input className={`${S.input} pl-6`} placeholder="e.g. 950" inputMode="decimal" value={rate} onChange={e => setRate(e.target.value)} />
+          </div>
+          <p className={FLD_HELP}>flat rate this lane pays per load</p>
+        </div>
+        <div>
           <label className={S.label}>Underwater threshold</label>
           <input className={S.input} placeholder="0" inputMode="decimal" value={threshold} onChange={e => setThreshold(e.target.value)} />
           <p className={FLD_HELP}>net · MTD below this flags the lane red (default 0)</p>
@@ -135,7 +144,7 @@ export default function NewLaneModal({ open, onClose, onCreated }) {
             <div className="flex flex-wrap gap-1.5 mb-2">
               {assigned.map(id => (
                 <span key={id} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-orange-50 dark:bg-orange-500/10 border border-orange-200 dark:border-orange-500/30 text-orange-700 dark:text-orange-400 text-xs font-bold tabular-nums">
-                  #{byId.get(id)?.unit_number || id.slice(0, 6)}
+                  {byId.get(id)?.unit_number || `#${id.slice(0, 6)}`}
                   <button type="button" onClick={() => setAssigned(a => a.filter(x => x !== id))} className="hover:text-orange-900 dark:hover:text-orange-200" aria-label="Remove">✕</button>
                 </span>
               ))}
@@ -147,7 +156,7 @@ export default function NewLaneModal({ open, onClose, onCreated }) {
               {suggestions.map(t => (
                 <button key={t.id} type="button" onClick={() => { setAssigned(a => [...a, t.id]); setQuery('') }}
                   className="px-2 py-1 rounded-lg border border-gray-300 dark:border-slate-700 text-xs font-bold tabular-nums text-gray-600 dark:text-slate-300 hover:border-orange-300 dark:hover:border-orange-500/40 hover:text-orange-600 dark:hover:text-orange-400 transition-colors">
-                  + #{t.unit_number}{t.trailer_type ? ` · ${t.trailer_type}` : ''}
+                  + {t.unit_number}{t.trailer_type ? ` · ${t.trailer_type}` : ''}
                 </button>
               ))}
             </div>
