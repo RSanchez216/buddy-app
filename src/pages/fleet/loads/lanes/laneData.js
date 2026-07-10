@@ -5,6 +5,7 @@
 // but off the map, and coverage stats reflect actual geocoding success.
 
 import { supabase } from '../../../../lib/supabase'
+import { TRAILER_TYPE_COLORS } from '../spotlight/spotlightShared'
 
 // Load statuses to exclude from best/worst ranking (e.g., TONU, cancellations).
 // Match is case-sensitive on the load's status value. Add more as needed.
@@ -142,6 +143,9 @@ export function makeTypeColorMap(types) {
   const m = new Map()
   const known = [...new Set(types)].filter(t => t && t !== UNKNOWN_TYPE && t !== AMAZON_TYPE).sort((a, b) => a.localeCompare(b))
   known.forEach((t, i) => m.set(t, TYPE_PALETTE[i % TYPE_PALETTE.length]))
+  // Conestoga is pinned to the shared rose so it matches every other surface
+  // (and never reads as the gray Unknown). Other types keep the rotating palette.
+  if (m.has('Conestoga')) m.set('Conestoga', TRAILER_TYPE_COLORS.Conestoga)
   m.set(AMAZON_TYPE, AMAZON_TYPE_COLOR)
   m.set(UNKNOWN_TYPE, UNKNOWN_TYPE_COLOR)
   return m

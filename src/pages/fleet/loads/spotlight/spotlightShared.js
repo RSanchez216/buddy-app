@@ -123,6 +123,22 @@ export function fmtRpm(n) {
   return n == null ? '—' : `$${Number(n).toFixed(2)}`
 }
 
+// ── Shared trailer-type → color (single source of truth) ────────────────────
+// Feeds every fixed-map surface (Trailer Type Trends legend/dots, Dedicated
+// Lanes chips). Conestoga is rose so it never collides with the gray Unassigned.
+// The Lane Flow Map uses its own rotating palette but pins Conestoga to this hex.
+export const TRAILER_TYPE_COLORS = {
+  'Dry Van': '#06b6d4',   // cyan
+  'Reefer': '#10b981',    // emerald
+  'Flatbed': '#ef4444',   // red
+  'Step Deck': '#f59e0b', // amber
+  'Conestoga': '#ec4899', // rose — distinct from Unassigned gray
+  'Power Only': '#8b5cf6',// violet
+  'Amazon': '#6366f1',    // indigo (own-trailer bucket)
+  'Unassigned': '#6b7280',// gray
+}
+export const trailerTypeColor = (t) => TRAILER_TYPE_COLORS[t] || '#6b7280'
+
 // ── Avatar (no photo field on drivers yet) ──────────────────────────────
 // Deterministic monogram: same driver always gets the same gradient. When a
 // photo_url column lands, the card swaps in the image and this is the
