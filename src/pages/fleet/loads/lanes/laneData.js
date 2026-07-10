@@ -5,7 +5,7 @@
 // but off the map, and coverage stats reflect actual geocoding success.
 
 import { supabase } from '../../../../lib/supabase'
-import { TRAILER_TYPE_COLORS } from '../spotlight/spotlightShared'
+import { trailerTypeColor } from '../spotlight/spotlightShared'
 
 // Load statuses to exclude from best/worst ranking (e.g., TONU, cancellations).
 // Match is case-sensitive on the load's status value. Add more as needed.
@@ -131,23 +131,19 @@ export function resolveLegTypes(legs) {
   }))
 }
 
-// Categorical palette for trailer types — assigned to the sorted type list
-// so the same type keeps its color across chips, badges, arcs, and legends.
-// Unknown is always gray.
-const TYPE_PALETTE = ['#38bdf8', '#fb923c', '#2dd4bf', '#c084fc', '#f472b6', '#facc15', '#4ade80', '#fb7185']
-export const UNKNOWN_TYPE_COLOR = '#64748b'
-// Amazon gets a fixed, distinct color (indigo — outside the rotating palette and
-// clearly not the gray Unknown) so the own-trailer bucket reads at a glance.
-export const AMAZON_TYPE_COLOR = '#6366f1'
+// Trailer-type → color for the Lane Map chips + "Color: type" arcs. Reads the
+// one shared palette (spotlightShared) so every type matches the Trailer Type
+// Trends chart exactly — no separate Lane Map palette. Amazon keeps its indigo;
+// the synthetic Unknown bucket (and any unmatched type) falls through to the
+// shared slate fallback (#475569).
 export function makeTypeColorMap(types) {
   const m = new Map()
-  const known = [...new Set(types)].filter(t => t && t !== UNKNOWN_TYPE && t !== AMAZON_TYPE).sort((a, b) => a.localeCompare(b))
-  known.forEach((t, i) => m.set(t, TYPE_PALETTE[i % TYPE_PALETTE.length]))
-  // Conestoga is pinned to the shared rose so it matches every other surface
-  // (and never reads as the gray Unknown). Other types keep the rotating palette.
-  if (m.has('Conestoga')) m.set('Conestoga', TRAILER_TYPE_COLORS.Conestoga)
-  m.set(AMAZON_TYPE, AMAZON_TYPE_COLOR)
-  m.set(UNKNOWN_TYPE, UNKNOWN_TYPE_COLOR)
+  for (const t of new Set(types)) {
+    if (t) m.set(t, trailerTypeColor(t))
+  }
+  // Guarantee the two synthetic buckets resolve even when absent from `types`.
+  m.set(AMAZON_TYPE, trailerTypeColor(AMAZON_TYPE))
+  m.set(UNKNOWN_TYPE, trailerTypeColor(UNKNOWN_TYPE))
   return m
 }
 

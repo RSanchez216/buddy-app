@@ -124,20 +124,22 @@ export function fmtRpm(n) {
 }
 
 // ── Shared trailer-type → color (single source of truth) ────────────────────
-// Feeds every fixed-map surface (Trailer Type Trends legend/dots, Dedicated
-// Lanes chips). Conestoga is rose so it never collides with the gray Unassigned.
-// The Lane Flow Map uses its own rotating palette but pins Conestoga to this hex.
+// THE one palette every surface reads: Trailer Type Trends (bars/legend/dots),
+// the Lane Flow Map chips + arc coloring, and the Dedicated Lanes chips. No
+// surface keeps its own copy. Unknown / unassigned / any unmatched type falls
+// through to the shared slate below — keep these in sync and nothing drifts.
+export const TRAILER_TYPE_FALLBACK = '#475569' // slate — unknown/unassigned/unmatched
 export const TRAILER_TYPE_COLORS = {
   'Dry Van': '#06b6d4',   // cyan
   'Reefer': '#10b981',    // emerald
   'Flatbed': '#ef4444',   // red
   'Step Deck': '#f59e0b', // amber
-  'Conestoga': '#ec4899', // rose — distinct from Unassigned gray
+  'Conestoga': '#ec4899', // rose — distinct from the slate Unassigned
   'Power Only': '#8b5cf6',// violet
   'Amazon': '#6366f1',    // indigo (own-trailer bucket)
-  'Unassigned': '#6b7280',// gray
+  'Unassigned': TRAILER_TYPE_FALLBACK, // slate
 }
-export const trailerTypeColor = (t) => TRAILER_TYPE_COLORS[t] || '#6b7280'
+export const trailerTypeColor = (t) => TRAILER_TYPE_COLORS[t] || TRAILER_TYPE_FALLBACK
 
 // ── Avatar (no photo field on drivers yet) ──────────────────────────────
 // Deterministic monogram: same driver always gets the same gradient. When a
