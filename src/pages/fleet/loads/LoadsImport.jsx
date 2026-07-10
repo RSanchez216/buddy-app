@@ -22,6 +22,47 @@ function fmtVal(v) {
   return String(v)
 }
 
+// Drop false MISSING TRAILER flags using equipment-assignment history: a driver
+// who had a trailer assigned during the load's dates isn't really missing one.
+// Batches every flagged candidate into ONE drivers_trailer_coverage() call
+// (the same server-side rule the post-import "Missing Trailers" section uses,
+// so the two surfaces agree) and clears the reason on any covered row. Mutates
+// the plan in place; fails OPEN (keeps flags) if the RPC errors — never blocks
+// import. Rows with an unresolved driver or no dates keep the flag (unverifiable).
+async function dropCoveredMissingTrailer(plan) {
+  const candByKey = new Map()
+  const checks = []
+  for (const p of plan) {
+    if (!(p.header?.review_reasons || []).includes('Missing trailer')) continue
+    // The driver on the first trailer-less leg — needs a resolved UUID to check.
+    const leg = p.legs.find(l =>
+      (l.parsed?.trailer_raw == null || String(l.parsed.trailer_raw).trim() === '') && l.resolved?.driver?.id
+    )
+    const driverId = leg?.resolved?.driver?.id
+    const pickup = p.header?.pickup_date || null
+    const delivery = p.header?.delivery_date || null
+    if (!driverId || (!pickup && !delivery)) continue // unverifiable → keep flag
+    checks.push({
+      key: p.load_number,
+      driver_id: driverId,
+      from_date: pickup || delivery, // if one date is missing, use the other for both
+      to_date: delivery || pickup,
+    })
+    candByKey.set(p.load_number, p)
+  }
+  if (!checks.length) return
+
+  const { data, error } = await supabase.rpc('drivers_trailer_coverage', { p_checks: checks })
+  if (error) { console.error('drivers_trailer_coverage failed — keeping flags', error); return }
+  for (const row of data || []) {
+    if (row.covered !== true) continue
+    const p = candByKey.get(row.key)
+    if (!p) continue
+    p.header.review_reasons = (p.header.review_reasons || []).filter(r => r !== 'Missing trailer')
+    p.header.needs_review = p.header.review_reasons.length > 0
+  }
+}
+
 // Expected-optional TMS columns. `key` matches the parser's resolved `cols`
 // map so "missing" agrees exactly with what populates the field. Warning only —
 // never blocks the import (required columns keep their hard-error behavior).
@@ -253,6 +294,13 @@ export default function LoadsImport() {
         },
         existing: { loads: existingLoads, legs: existingLegs },
       })
+
+      // Reconcile MISSING TRAILER flags with assignment history before staging,
+      // so the corrected flags survive the stage → reload round-trip and match
+      // the post-import "Missing Trailers" section. Advisory only — never
+      // affects whether a row imports.
+      await dropCoveredMissingTrailer(built)
+      builtCounts.needs_review = built.filter(p => p.header?.needs_review).length
 
       // Stash the missing/present optional columns on the batch counts (jsonb,
       // no schema change) so the warning survives the stage → reload round-trip.
