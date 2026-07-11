@@ -46,6 +46,7 @@ export default function RecordPaymentModal({
   onClose,
   purchase,                  // raw driver_purchases row
   existingPayment,           // optional — if set, edit that row
+  preselectPeriodId = null,  // optional — new mode: preselect this period (from clicking an empty history row)
   onRecorded,                // (info) => void
   reconcilerMap = {},        // { user_id → display name } for audit display
 }) {
@@ -156,10 +157,13 @@ export default function RecordPaymentModal({
       // where actual_amount = 0). This is the natural "next payment to
       // record" target. If everything's paid (contract caught up),
       // fall back to the most recent paid period for the rare
-      // reversal/correction case.
+      // reversal/correction case. A caller-supplied preselectPeriodId
+      // (clicking an empty history row) overrides both — it targets that
+      // exact period so recording/skipping applies to the clicked week.
+      const preselected = preselectPeriodId ? all.find(p => p.id === preselectPeriodId) : null
       const earliestUnpaid = all.find(p => Number(p.actual_amount || 0) === 0)
       const fallbackPaid = [...all].reverse().find(p => Number(p.actual_amount || 0) !== 0)
-      const picked = earliestUnpaid || fallbackPaid
+      const picked = preselected || earliestUnpaid || fallbackPaid
       if (picked) {
         setPickedPeriodId(picked.id)
         setAmount(String(picked.expected_amount || ''))
@@ -189,7 +193,7 @@ export default function RecordPaymentModal({
       setSkipReason('')
     })()
     return () => { cancelled = true }
-  }, [open, purchase, isEdit, existingPayment])
+  }, [open, purchase, isEdit, existingPayment, preselectPeriodId])
 
   // When the user switches the selected existing period, autofill amount
   // with that period's expected (unless they've already typed something).

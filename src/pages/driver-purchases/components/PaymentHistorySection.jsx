@@ -24,6 +24,13 @@ const METHOD_LABEL = {
   other:   'Other',
 }
 
+// A row is "recorded" when a real payment was entered, it's been reconciled,
+// or it's an agreed skip. Empty rows (missed or upcoming — no amount, not
+// reconciled, not skipped) route to Record instead of Edit, so recording an
+// empty period never overlaps with the Edit form.
+const isRecorded = (p) =>
+  Number(p.actual_amount) > 0 || p.reconciled === true || p.skipped === true
+
 // Variance traffic-lights: green ≥ 0, amber for small shorts, red for >$100 short.
 function varianceClass(v) {
   const n = Number(v || 0)
@@ -103,6 +110,10 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
   const [editRow, setEditRow] = useState(null)
+  // New-mode preselection: set when an empty history row is clicked, so the
+  // Record modal opens targeted at that exact period. null for the header
+  // "+ Record payment" button (normal default selection).
+  const [preselectPeriodId, setPreselectPeriodId] = useState(null)
   const [trackingStart, setTrackingStart] = useState(purchase?.payment_tracking_start_date || null)
   const [showTrackingEdit, setShowTrackingEdit] = useState(false)
   const [trackingDraft, setTrackingDraft] = useState('')
@@ -197,11 +208,21 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
     }
   }, [openSignal])
 
-  function openNew() { setEditRow(null); setShowModal(true) }
-  function openEdit(row) { if (!canEdit) return; setEditRow(row); setShowModal(true) }
-  function onModalClose() { setShowModal(false); setEditRow(null) }
+  function openNew() { setEditRow(null); setPreselectPeriodId(null); setShowModal(true) }
+  // State-aware row click: a recorded row (paid / reconciled / skipped) opens
+  // Edit; an empty row (missed or upcoming) opens Record preselected to that
+  // period — the two forms no longer overlap on empty rows.
+  function onRowClick(row) {
+    if (!canEdit) return
+    if (isRecorded(row)) {
+      setEditRow(row); setPreselectPeriodId(null); setShowModal(true)
+    } else {
+      setEditRow(null); setPreselectPeriodId(row.id); setShowModal(true)
+    }
+  }
+  function onModalClose() { setShowModal(false); setEditRow(null); setPreselectPeriodId(null) }
   function onRecorded(info) {
-    setShowModal(false); setEditRow(null)
+    setShowModal(false); setEditRow(null); setPreselectPeriodId(null)
     load()
     onChange?.()
     // Skip flow gets its own undo toast — distinct shape from the
@@ -699,11 +720,11 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
                 return (
                   <tr
                     key={p.id}
-                    onClick={() => openEdit(p)}
+                    onClick={() => onRowClick(p)}
                     className={`border-b border-gray-50 dark:border-white/[0.03] ${rowTint(status)} ${
                       canEdit ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-white/[0.02]' : ''
                     }`}
-                    title={canEdit ? 'Click to edit' : undefined}
+                    title={canEdit ? (isRecorded(p) ? 'Click to edit' : 'Click to record payment') : undefined}
                   >
                     <td className={`py-1.5 pr-3 whitespace-nowrap text-xs ${muted ? 'text-gray-400 dark:text-slate-600' : 'text-gray-700 dark:text-slate-300'}`}>
                       {fmtDate(p.period_start)} – {fmtDate(p.period_end)}
@@ -822,6 +843,7 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
         onClose={onModalClose}
         purchase={purchase}
         existingPayment={editRow}
+        preselectPeriodId={preselectPeriodId}
         onRecorded={onRecorded}
         reconcilerMap={reconcilerMap}
       />
