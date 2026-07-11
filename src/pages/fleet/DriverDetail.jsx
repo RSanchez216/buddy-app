@@ -27,6 +27,7 @@ export default function DriverDetail() {
   const [teamCurrent, setTeamCurrent] = useState(null) // v_driver_current_team row (or null)
   const [teamHistory, setTeamHistory] = useState([])   // driver_team_history rows (newest first)
   const [teamAvatars, setTeamAvatars] = useState({})   // photo_path → signed URL
+  const [activity, setActivity] = useState(null)       // driver_activity_snapshot row (idle days + last load)
   const [loading, setLoading] = useState(true)
   const [showEdit, setShowEdit] = useState(false)
 
@@ -37,7 +38,7 @@ export default function DriverDetail() {
     const { data } = await supabase.from('drivers').select('*').eq('id', id).maybeSingle()
     setRow(data || null)
 
-    const [hRes, aRes, teamRes, teamHistRes, tInvRes, trInvRes] = await Promise.all([
+    const [hRes, aRes, teamRes, teamHistRes, tInvRes, trInvRes, actRes] = await Promise.all([
       supabase.from('driver_status_history')
         .select('*, creator:users!driver_status_history_created_by_fkey(full_name, email)')
         .eq('driver_id', id)
@@ -64,6 +65,8 @@ export default function DriverDetail() {
       // be assigned to another driver or currently unassigned).
       supabase.from('trucks').select('unit_number'),
       supabase.from('trailers').select('unit_number'),
+      // Activity snapshot — idle days + last completed load (team-aware).
+      supabase.rpc('driver_activity_snapshot', { p_driver_id: id }),
     ])
     setTruckInv(tInvRes.data || [])
     setTrailerInv(trInvRes.data || [])
@@ -71,6 +74,7 @@ export default function DriverDetail() {
     setAssignments(aRes.data || [])
     setTeamCurrent(teamRes.data || null)
     setTeamHistory(teamHistRes.data || [])
+    setActivity(actRes.data?.[0] || null)
 
     // Sign the current teammates' avatars (private bucket — never getPublicUrl).
     const memberPaths = (teamRes.data?.members || []).map(m => m.photo_path).filter(Boolean)
@@ -126,6 +130,19 @@ export default function DriverDetail() {
   const openTruck = latestOpen(truckHistory)
   const openTrailer = latestOpen(trailerHistory)
 
+  // Activity readout: Active pill when the driver (or teammate) is running; else
+  // "Idle · N day(s)" with a last-load line; else muted "No completed loads".
+  const idleDays = activity?.days_idle
+  const showLastLoad = !activity?.currently_running && idleDays != null
+  const activityValue = activity?.currently_running
+    ? <ActivePill />
+    : idleDays != null
+      ? <span className="text-gray-700 dark:text-slate-300">Idle · {idleDays} day{idleDays === 1 ? '' : 's'}</span>
+      : <span className="text-gray-400 dark:text-slate-500">No completed loads</span>
+  const lastLoadValue = showLastLoad
+    ? <span className="text-gray-700 dark:text-slate-300">{activity.last_origin} → {activity.last_destination} · delivered {fmtDate(activity.last_delivery_date)}</span>
+    : null
+
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between">
@@ -157,12 +174,12 @@ export default function DriverDetail() {
           <InfoRow label="Truck Assignment (raw)" value={row.truck_assignment_raw} mono />
           <InfoRow label="Trailer Assignment (raw)" value={row.trailer_assignment_raw} mono />
           <InfoRow label="Compensation" value={row.compensation_raw || fmtCompensation(row)} />
-          <InfoRow label="Onboarded" value={fmtDate(row.onboarded_at)} />
+          <InfoRow label="Activity" value={activityValue} />
+          {showLastLoad && <InfoRow label="Last load" value={lastLoadValue} />}
           <InfoRow label="Status" value={DRIVER_STATUS_LABELS[row.current_status] || row.current_status} />
           {row.terminated_at && <InfoRow label="Terminated" value={fmtDate(row.terminated_at)} />}
           {row.termination_reason && <InfoRow label="Termination Reason" value={row.termination_reason} />}
           <InfoRow label="Referred By" value={row.referred_by} />
-          <InfoRow label="Missing OP" value={row.missing_op} />
           <InfoRow label="Temporary License" value={row.temporary_license ? 'Yes' : 'No'} />
           <InfoRow label="Last Seen in Upload" value={row.last_seen_in_upload_at ? new Date(row.last_seen_in_upload_at).toLocaleString('en-US') : '—'} />
         </div>
@@ -265,6 +282,16 @@ function CurrentPill() {
   )
 }
 
+// Green "Active" indicator — driver (or teammate) has a load in transit now.
+function ActivePill() {
+  return (
+    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">
+      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+      Active
+    </span>
+  )
+}
+
 // One line in the Current-equipment card: type label, unit link, VIN,
 // ownership/trailer-type, `since {start}`, and a Current pill. Renders a muted
 // "No {type} assigned" placeholder when there's no open assignment for the type.
@@ -294,7 +321,7 @@ function CurrentEquipmentLine({ typeLabel, typeName, assignment }) {
   )
 }
 
-// Collapsible history group (open by default) for one equipment type. Rows are
+// Collapsible history group (collapsed by default) for one equipment type. Rows are
 // newest-first with the open assignment first; columns Unit | Start | End |
 // status. A count badge sits in the summary. Empty → muted placeholder.
 function EquipmentHistoryGroup({ title, type, rows }) {
@@ -306,7 +333,7 @@ function EquipmentHistoryGroup({ title, type, rows }) {
     return (b.start_date || '').localeCompare(a.start_date || '')
   })
   return (
-    <details open className="group rounded-xl border border-gray-100 dark:border-white/5 overflow-hidden">
+    <details className="group rounded-xl border border-gray-100 dark:border-white/5 overflow-hidden">
       <summary className="flex items-center gap-2 cursor-pointer select-none px-4 py-2.5 bg-gray-50/60 dark:bg-white/[0.02] text-sm font-semibold text-gray-700 dark:text-slate-300">
         <svg className="w-3.5 h-3.5 shrink-0 text-gray-400 dark:text-slate-500 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
         {title}
