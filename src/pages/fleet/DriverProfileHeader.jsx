@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
-import { DriverTypePill, DriverStatusPill } from './fleetUtils'
+import { DriverTypePill, DriverStatusPill, fmtDate } from './fleetUtils'
 import { nameHue, monogram, fmtMoney, fmtRpm, fmtNum } from './loads/spotlight/spotlightShared'
 
-// Driver profile header with photo, name, status, and quick stats
-export default function DriverProfileHeader({ driver }) {
+// Driver profile header with photo, name, status, quick stats, and load activity.
+// `activity` is a driver_activity_snapshot row (or null): { currently_running,
+// days_idle, last_origin, last_destination, last_delivery_date, … }.
+export default function DriverProfileHeader({ driver, activity }) {
   const [photoUrl, setPhotoUrl] = useState(null)
   const [metrics, setMetrics] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -145,24 +148,35 @@ export default function DriverProfileHeader({ driver }) {
 
         {/* Identity block */}
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap' }}>
-            <h2 className="text-slate-900 dark:text-slate-100" style={{ fontSize: '24px', fontWeight: '700', letterSpacing: '-0.01em', margin: 0 }}>
-              {driver?.full_name}
-            </h2>
-            {driver?.internal_id && (
-              <span
-                className="dark:bg-slate-800 dark:text-slate-300"
-                style={{
-                  fontFamily: 'monospace',
-                  fontSize: '13px',
-                  color: '#94a3b8',
-                  background: '#f1f5f9',
-                  padding: '2px 8px',
-                  borderRadius: '6px',
-                }}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap', minWidth: 0 }}>
+              <h2 className="text-slate-900 dark:text-slate-100" style={{ fontSize: '24px', fontWeight: '700', letterSpacing: '-0.01em', margin: 0 }}>
+                {driver?.full_name}
+              </h2>
+              {driver?.internal_id && (
+                <span
+                  className="dark:bg-slate-800 dark:text-slate-300"
+                  style={{
+                    fontFamily: 'monospace',
+                    fontSize: '13px',
+                    color: '#94a3b8',
+                    background: '#f1f5f9',
+                    padding: '2px 8px',
+                    borderRadius: '6px',
+                  }}
+                >
+                  {driver.internal_id}
+                </span>
+              )}
+            </div>
+            {driver?.id && (
+              <Link
+                to={`/fleet/profitability/spotlight?driver=${driver.id}`}
+                className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold text-orange-700 dark:text-orange-300 bg-white/70 dark:bg-white/5 border border-orange-300/70 dark:border-orange-500/30 hover:bg-orange-50 dark:hover:bg-orange-500/10 transition-colors"
               >
-                {driver.internal_id}
-              </span>
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><circle cx="12" cy="12" r="8" strokeWidth={1.8} /><circle cx="12" cy="12" r="2.5" strokeWidth={1.8} /></svg>
+                View in Spotlight
+              </Link>
             )}
           </div>
 
@@ -175,6 +189,8 @@ export default function DriverProfileHeader({ driver }) {
             Driver #{driver?.internal_id || '—'} · Unit {truckLabel} · {trailerLabel}
             {driver?.carrier && ` · ${driver.carrier}`}
           </p>
+
+          <ActivityCallout activity={activity} />
         </div>
 
         {/* Quick stats */}
@@ -199,6 +215,37 @@ export default function DriverProfileHeader({ driver }) {
       </div>
     </div>
   )
+}
+
+// Load-activity callout — distinct from the employment-status pill. Running is
+// the good, understated state ("On the road"); idle is highlighted amber so a
+// sitting driver reads at a glance, with the last completed load beside it.
+function ActivityCallout({ activity }) {
+  if (activity?.currently_running) {
+    return (
+      <div className="mt-2.5 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/25">
+        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+        On the road
+      </div>
+    )
+  }
+  if (activity?.days_idle != null) {
+    const d = activity.days_idle
+    return (
+      <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 rounded-lg bg-amber-100/70 dark:bg-amber-500/10 border border-amber-300/70 dark:border-amber-500/30 border-l-4 border-l-amber-500 dark:border-l-amber-400">
+        <span className="inline-flex items-center gap-1.5 text-sm font-bold text-amber-800 dark:text-amber-300">
+          <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><circle cx="12" cy="12" r="9" strokeWidth={1.8} /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 7v5l3 2" /></svg>
+          {d} day{d === 1 ? '' : 's'} idle
+        </span>
+        {activity.last_origin && activity.last_destination && (
+          <span className="text-xs text-amber-700/90 dark:text-amber-200/80">
+            <span className="font-semibold">Last load:</span> {activity.last_origin} → {activity.last_destination} · delivered {fmtDate(activity.last_delivery_date)}
+          </span>
+        )}
+      </div>
+    )
+  }
+  return <p className="mt-2.5 text-xs italic text-slate-400 dark:text-slate-500">No completed loads</p>
 }
 
 function StatCell({ label, value, highlight }) {

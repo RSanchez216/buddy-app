@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useToast } from '../../../../contexts/ToastContext'
 import { S } from '../../../../lib/styles'
 import { supabase } from '../../../../lib/supabase'
@@ -27,6 +28,7 @@ const PRESET_LABEL = { week: 'This week', month: 'This month', custom: 'Custom' 
 export default function Spotlight({ dimension = 'driver' }) {
   const config = DIMENSION_CONFIGS[dimension]
   const toast = useToast()
+  const [searchParams] = useSearchParams()
 
   const [preset, setPreset] = useState('week')
   const [range, setRange] = useState(thisWeek)
@@ -100,7 +102,10 @@ export default function Spotlight({ dimension = 'driver' }) {
   // and the entry is updated when the driver is found in the new deck. If the
   // driver isn't in the new period's deck (no loads), we keep their entry and
   // render them with an empty state — they never snap to a different driver.
-  const [focusedDriverId, setFocusedDriverId] = useState(null)
+  // A `?driver=<id>` deep link (e.g. "View in Spotlight" from a driver profile)
+  // seeds the initial focus; the existing focus machinery then centers that
+  // card once the deck loads (all active drivers are in the deck).
+  const [focusedDriverId, setFocusedDriverId] = useState(() => searchParams.get('driver') || null)
   const [focusedEntry, setFocusedEntry] = useState(null)
 
   // Calculate focus index by finding the focused driver in the sorted array.

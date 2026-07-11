@@ -130,19 +130,6 @@ export default function DriverDetail() {
   const openTruck = latestOpen(truckHistory)
   const openTrailer = latestOpen(trailerHistory)
 
-  // Activity readout: Active pill when the driver (or teammate) is running; else
-  // "Idle · N day(s)" with a last-load line; else muted "No completed loads".
-  const idleDays = activity?.days_idle
-  const showLastLoad = !activity?.currently_running && idleDays != null
-  const activityValue = activity?.currently_running
-    ? <ActivePill />
-    : idleDays != null
-      ? <span className="text-gray-700 dark:text-slate-300">Idle · {idleDays} day{idleDays === 1 ? '' : 's'}</span>
-      : <span className="text-gray-400 dark:text-slate-500">No completed loads</span>
-  const lastLoadValue = showLastLoad
-    ? <span className="text-gray-700 dark:text-slate-300">{activity.last_origin} → {activity.last_destination} · delivered {fmtDate(activity.last_delivery_date)}</span>
-    : null
-
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between">
@@ -157,7 +144,7 @@ export default function DriverDetail() {
           </div>
         )}
       </div>
-      <DriverProfileHeader driver={row} />
+      <DriverProfileHeader driver={row} activity={activity} />
 
       <ErrorBoundary label="the team section">
         <TeamSection driverId={id} current={teamCurrent} history={teamHistory} avatars={teamAvatars} />
@@ -174,8 +161,6 @@ export default function DriverDetail() {
           <InfoRow label="Truck Assignment (raw)" value={row.truck_assignment_raw} mono />
           <InfoRow label="Trailer Assignment (raw)" value={row.trailer_assignment_raw} mono />
           <InfoRow label="Compensation" value={row.compensation_raw || fmtCompensation(row)} />
-          <InfoRow label="Activity" value={activityValue} />
-          {showLastLoad && <InfoRow label="Last load" value={lastLoadValue} />}
           <InfoRow label="Status" value={DRIVER_STATUS_LABELS[row.current_status] || row.current_status} />
           {row.terminated_at && <InfoRow label="Terminated" value={fmtDate(row.terminated_at)} />}
           {row.termination_reason && <InfoRow label="Termination Reason" value={row.termination_reason} />}
@@ -278,16 +263,6 @@ function CurrentPill() {
   return (
     <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">
       Current
-    </span>
-  )
-}
-
-// Green "Active" indicator — driver (or teammate) has a load in transit now.
-function ActivePill() {
-  return (
-    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">
-      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-      Active
     </span>
   )
 }
