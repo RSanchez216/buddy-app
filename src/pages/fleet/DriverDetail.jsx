@@ -9,12 +9,21 @@ import DriverFormModal from './DriverFormModal'
 import DriverProfileHeader from './DriverProfileHeader'
 import ErrorBoundary from '../../components/ErrorBoundary'
 
+// Canonical unit-number normalization — mirrors the importer / DB canonical key
+// lower(btrim(regexp_replace(x,'^#+',''))): strip leading '#'(s) → collapse
+// internal whitespace → trim → lowercase. Used to test whether a raw driver
+// assignment string names a unit that actually exists in inventory.
+const normUnit = (s) =>
+  String(s ?? '').replace(/^#+/, '').replace(/\s+/g, ' ').trim().toLowerCase()
+
 export default function DriverDetail() {
   const { canEdit, user } = useAuth()
   const { id } = useParams()
   const [row, setRow] = useState(null)
   const [trucks, setTrucks] = useState([])
   const [trailers, setTrailers] = useState([])
+  const [truckInv, setTruckInv] = useState([])     // full truck inventory (unit_number only) — for the "in inventory?" check
+  const [trailerInv, setTrailerInv] = useState([]) // full trailer inventory (unit_number only)
   const [history, setHistory] = useState([])
   const [assignments, setAssignments] = useState([])
   const [teamCurrent, setTeamCurrent] = useState(null) // v_driver_current_team row (or null)
@@ -30,7 +39,7 @@ export default function DriverDetail() {
     const { data } = await supabase.from('drivers').select('*').eq('id', id).maybeSingle()
     setRow(data || null)
 
-    const [tRes, trRes, hRes, aRes, teamRes, teamHistRes] = await Promise.all([
+    const [tRes, trRes, hRes, aRes, teamRes, teamHistRes, tInvRes, trInvRes] = await Promise.all([
       supabase.from('trucks').select('id, unit_number, vin, ownership_stage').eq('driver_id', id).order('unit_number'),
       supabase.from('trailers').select('id, unit_number, vin, ownership_stage, trailer_type').eq('driver_id', id).order('unit_number'),
       supabase.from('driver_status_history')
@@ -54,9 +63,16 @@ export default function DriverDetail() {
         .select('team_id, team_name, role, effective_start, partners, members')
         .eq('driver_id', id).maybeSingle(),
       supabase.rpc('driver_team_history', { p_driver: id }),
+      // Full inventory unit numbers — used only to test whether the driver's raw
+      // assignment string names a unit that exists somewhere in inventory (it may
+      // be assigned to another driver or currently unassigned).
+      supabase.from('trucks').select('unit_number'),
+      supabase.from('trailers').select('unit_number'),
     ])
     setTrucks(tRes.data || [])
     setTrailers(trRes.data || [])
+    setTruckInv(tInvRes.data || [])
+    setTrailerInv(trInvRes.data || [])
     setHistory(hRes.data || [])
     setAssignments(aRes.data || [])
     setTeamCurrent(teamRes.data || null)
@@ -87,9 +103,24 @@ export default function DriverDetail() {
     )
   }
 
-  // Surface mismatch when the raw assignment string is set but no inventory row matches.
-  const truckMismatch = !!row.truck_assignment_raw && !trucks.some(t => (t.unit_number || '').trim() === row.truck_assignment_raw.trim())
-  const trailerMismatch = !!row.trailer_assignment_raw && !trailers.some(t => (t.unit_number || '').trim() === row.trailer_assignment_raw.trim())
+  // Surface the "no matching unit in inventory" banner only when the raw
+  // assignment string is genuinely absent from inventory. Computed on every
+  // render from the current inventory arrays (never memoized on a stale key), so
+  // adding a unit to inventory clears the banner automatically. Normalization
+  // mirrors the importer / DB canonical key — both sides carry a leading '#'.
+  const truckInInventory = !!row.truck_assignment_raw &&
+    truckInv.some(t => normUnit(t.unit_number) === normUnit(row.truck_assignment_raw))
+  const trailerInInventory = !!row.trailer_assignment_raw &&
+    trailerInv.some(t => normUnit(t.unit_number) === normUnit(row.trailer_assignment_raw))
+
+  // Secondary guard: if the driver's current OPEN equipment assignment already
+  // resolves to an inventory unit, the raw string is authoritative-superseded
+  // (it may name a prior unit) — never warn for that equipment type.
+  const truckAssignResolved = assignments.some(a => a.equipment_type === 'truck' && a.end_date == null && a.truck?.id)
+  const trailerAssignResolved = assignments.some(a => a.equipment_type === 'trailer' && a.end_date == null && a.trailer?.id)
+
+  const truckMismatch = !!row.truck_assignment_raw && !truckInInventory && !truckAssignResolved
+  const trailerMismatch = !!row.trailer_assignment_raw && !trailerInInventory && !trailerAssignResolved
 
   return (
     <div className="space-y-6">
