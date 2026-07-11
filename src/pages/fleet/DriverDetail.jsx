@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { S } from '../../lib/styles'
 import Select from '../../components/Select'
-import { DRIVER_STATUSES, DRIVER_STATUS_LABELS, terminationFields, todayLocalYmd, fmtDate, fmtCompensation, monogram, nameHue } from './fleetUtils'
+import { DRIVER_STATUSES, DRIVER_STATUS_LABELS, terminationFields, todayLocalYmd, fmtDate, fmtCompensation, monogram, nameHue, STAGE_LABELS } from './fleetUtils'
 import DriverFormModal from './DriverFormModal'
 import DriverProfileHeader from './DriverProfileHeader'
 import ErrorBoundary from '../../components/ErrorBoundary'
@@ -20,8 +20,6 @@ export default function DriverDetail() {
   const { canEdit, user } = useAuth()
   const { id } = useParams()
   const [row, setRow] = useState(null)
-  const [trucks, setTrucks] = useState([])
-  const [trailers, setTrailers] = useState([])
   const [truckInv, setTruckInv] = useState([])     // full truck inventory (unit_number only) — for the "in inventory?" check
   const [trailerInv, setTrailerInv] = useState([]) // full trailer inventory (unit_number only)
   const [history, setHistory] = useState([])
@@ -39,9 +37,7 @@ export default function DriverDetail() {
     const { data } = await supabase.from('drivers').select('*').eq('id', id).maybeSingle()
     setRow(data || null)
 
-    const [tRes, trRes, hRes, aRes, teamRes, teamHistRes, tInvRes, trInvRes] = await Promise.all([
-      supabase.from('trucks').select('id, unit_number, vin, ownership_stage').eq('driver_id', id).order('unit_number'),
-      supabase.from('trailers').select('id, unit_number, vin, ownership_stage, trailer_type').eq('driver_id', id).order('unit_number'),
+    const [hRes, aRes, teamRes, teamHistRes, tInvRes, trInvRes] = await Promise.all([
       supabase.from('driver_status_history')
         .select('*, creator:users!driver_status_history_created_by_fkey(full_name, email)')
         .eq('driver_id', id)
@@ -53,8 +49,8 @@ export default function DriverDetail() {
       supabase.from('equipment_assignments')
         .select(`
           id, equipment_type, start_date, end_date, source, equipment_name_raw, tms_equipment_id,
-          truck:trucks(id, unit_number),
-          trailer:trailers(id, unit_number)
+          truck:trucks(id, unit_number, vin, ownership_stage),
+          trailer:trailers(id, unit_number, vin, trailer_type)
         `)
         .eq('driver_id', id)
         .order('start_date', { ascending: false }),
@@ -69,8 +65,6 @@ export default function DriverDetail() {
       supabase.from('trucks').select('unit_number'),
       supabase.from('trailers').select('unit_number'),
     ])
-    setTrucks(tRes.data || [])
-    setTrailers(trRes.data || [])
     setTruckInv(tInvRes.data || [])
     setTrailerInv(trInvRes.data || [])
     setHistory(hRes.data || [])
@@ -122,6 +116,16 @@ export default function DriverDetail() {
   const truckMismatch = !!row.truck_assignment_raw && !truckInInventory && !truckAssignResolved
   const trailerMismatch = !!row.trailer_assignment_raw && !trailerInInventory && !trailerAssignResolved
 
+  // Equipment section data — split assignment history by type (already newest
+  // first from the query) and pick each type's current open row (latest start).
+  const truckHistory = assignments.filter(a => a.equipment_type === 'truck')
+  const trailerHistory = assignments.filter(a => a.equipment_type === 'trailer')
+  const latestOpen = (rows) => rows
+    .filter(a => a.end_date == null)
+    .sort((a, b) => (b.start_date || '').localeCompare(a.start_date || ''))[0] || null
+  const openTruck = latestOpen(truckHistory)
+  const openTrailer = latestOpen(trailerHistory)
+
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between">
@@ -170,11 +174,9 @@ export default function DriverDetail() {
         )}
       </Section>
 
-      <Section title="Current Equipment Assignments">
-        {trucks.length === 0 && trailers.length === 0 && !truckMismatch && !trailerMismatch ? (
-          <p className="text-sm text-gray-400 dark:text-slate-500 italic">No equipment assigned.</p>
-        ) : (
-          <div className="space-y-3">
+      <Section title="Equipment">
+        {(truckMismatch || trailerMismatch) && (
+          <div className="space-y-3 mb-4">
             {truckMismatch && (
               <div className="px-3 py-2 rounded-xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 text-sm text-amber-800 dark:text-amber-300">
                 ⚠️ Truck assignment string "{row.truck_assignment_raw}" present but no matching truck in inventory.
@@ -185,115 +187,19 @@ export default function DriverDetail() {
                 ⚠️ Trailer assignment string "{row.trailer_assignment_raw}" present but no matching trailer in inventory.
               </div>
             )}
-            {trucks.length > 0 && (
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500 mb-2">Trucks</p>
-                <ul className="space-y-1.5">
-                  {trucks.map(t => (
-                    <li key={t.id} className="flex items-center gap-3 text-sm">
-                      <Link to={`/fleet/trucks/${t.id}`} className="font-mono text-orange-600 hover:underline">{t.unit_number || t.id.slice(0, 8)}</Link>
-                      <span className="font-mono text-xs text-gray-500 dark:text-slate-400">{t.vin}</span>
-                      <span className="text-xs text-gray-500 dark:text-slate-400">· {t.ownership_stage}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {trailers.length > 0 && (
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500 mb-2">Trailers</p>
-                <ul className="space-y-1.5">
-                  {trailers.map(t => (
-                    <li key={t.id} className="flex items-center gap-3 text-sm">
-                      <Link to={`/fleet/trailers/${t.id}`} className="font-mono text-orange-600 hover:underline">{t.unit_number || t.id.slice(0, 8)}</Link>
-                      <span className="font-mono text-xs text-gray-500 dark:text-slate-400">{t.vin}</span>
-                      <span className="text-xs text-gray-500 dark:text-slate-400">· {t.trailer_type || t.ownership_stage}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
           </div>
         )}
-      </Section>
 
-      <Section title="Equipment Assignment History">
-        {assignments.length === 0 ? (
-          <p className="text-sm text-gray-400 dark:text-slate-500 italic">
-            No assignment history yet. Upload the TMS Truck or Trailer Assignments export
-            from the {' '}<Link to="/fleet/trucks" className="text-orange-600 hover:underline">Trucks</Link>{' '}/
-            {' '}<Link to="/fleet/trailers" className="text-orange-600 hover:underline">Trailers</Link>{' '}
-            list to populate this.
-          </p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className={S.tableHead}>
-                <tr>
-                  <th className={S.th}>Type</th>
-                  <th className={S.th}>Unit</th>
-                  <th className={S.th}>Start</th>
-                  <th className={S.th}>End</th>
-                  <th className={S.th}></th>
-                </tr>
-              </thead>
-              <tbody>
-                {assignments.map(a => {
-                  const isCurrent = a.end_date == null
-                  const unitMatched = a.equipment_type === 'truck' ? a.truck : a.trailer
-                  const unitLabel = unitMatched?.unit_number || a.equipment_name_raw || '—'
-                  const unitDisplay = unitMatched?.id
-                    ? (
-                      <Link
-                        to={`/fleet/${a.equipment_type === 'truck' ? 'trucks' : 'trailers'}/${unitMatched.id}`}
-                        className="font-mono text-orange-600 hover:underline"
-                      >
-                        {unitLabel}
-                      </Link>
-                    )
-                    : (
-                      <span className="font-mono text-gray-600 dark:text-slate-400" title={`Unit no longer in BUDDY (TMS Equipment ID ${a.tms_equipment_id ?? 'unknown'})`}>
-                        {unitLabel}
-                      </span>
-                    )
-                  return (
-                    <tr key={a.id} className={S.tableRow}>
-                      <td className={`${S.td} text-xs uppercase tracking-wide text-gray-500 dark:text-slate-400`}>{a.equipment_type}</td>
-                      <td className={S.td}>{unitDisplay}</td>
-                      <td className={`${S.td} whitespace-nowrap text-gray-600 dark:text-slate-400`}>
-                        {fmtDate(a.start_date)}
-                        {a.source && a.source !== 'tms_upload' && (
-                          <span
-                            className="ml-2 inline-block px-1.5 py-0.5 rounded-full text-[9px] uppercase tracking-wide bg-gray-100 dark:bg-slate-700/40 text-gray-500 dark:text-slate-400"
-                            title={
-                              a.source === 'reconciled' ? 'Synthesized during the assignments source-of-truth backfill — start date is approximate.'
-                              : a.source === 'manual'   ? 'Created from a manual driver change on the unit edit form.'
-                              : a.source === 'trucks_import' || a.source === 'trailers_import'
-                                ? 'Created from the trucks/trailers Excel import when the unit named a driver but had no open assignment.'
-                                : `Source: ${a.source}`
-                            }
-                          >
-                            {a.source.replace(/_/g, ' ')}
-                          </span>
-                        )}
-                      </td>
-                      <td className={`${S.td} whitespace-nowrap text-gray-600 dark:text-slate-400`}>
-                        {a.end_date ? fmtDate(a.end_date) : <span className="italic text-emerald-600 dark:text-emerald-400">Open</span>}
-                      </td>
-                      <td className={`${S.td} whitespace-nowrap`}>
-                        {isCurrent && (
-                          <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">
-                            Current
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <div className="rounded-xl border border-gray-100 dark:border-white/5 bg-gray-50/60 dark:bg-white/[0.02] p-4 space-y-2.5">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500">Current equipment</p>
+          <CurrentEquipmentLine typeLabel="Truck" typeName="truck" assignment={openTruck} />
+          <CurrentEquipmentLine typeLabel="Trailer" typeName="trailer" assignment={openTrailer} />
+        </div>
+
+        <div className="mt-4 space-y-3">
+          <EquipmentHistoryGroup title="Truck history" type="truck" rows={truckHistory} />
+          <EquipmentHistoryGroup title="Trailer history" type="trailer" rows={trailerHistory} />
+        </div>
       </Section>
 
       <Section title="Status History">
@@ -336,6 +242,113 @@ export default function DriverDetail() {
         onSaved={() => { setShowEdit(false); load() }}
       />
     </div>
+  )
+}
+
+// Resolve the display unit + details for an equipment_assignments row. Prefers
+// the joined inventory row; falls back to the raw string (no VIN/detail) when
+// the unit is no longer in BUDDY. Unit numbers already carry a leading '#'.
+function resolveAssignmentUnit(a) {
+  const inv = a.equipment_type === 'truck' ? a.truck : a.trailer
+  const unit = inv?.unit_number || a.equipment_name_raw || '—'
+  const detail = a.equipment_type === 'truck'
+    ? (inv?.ownership_stage ? (STAGE_LABELS[inv.ownership_stage] || inv.ownership_stage) : null)
+    : (inv?.trailer_type || null)
+  return { id: inv?.id || null, unit, vin: inv?.vin || null, detail }
+}
+
+function CurrentPill() {
+  return (
+    <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">
+      Current
+    </span>
+  )
+}
+
+// One line in the Current-equipment card: type label, unit link, VIN,
+// ownership/trailer-type, `since {start}`, and a Current pill. Renders a muted
+// "No {type} assigned" placeholder when there's no open assignment for the type.
+function CurrentEquipmentLine({ typeLabel, typeName, assignment }) {
+  const dot = <span className="text-gray-300 dark:text-slate-600">·</span>
+  if (!assignment) {
+    return (
+      <div className="flex items-center gap-2 text-sm">
+        <span className="w-16 shrink-0 text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500">{typeLabel}</span>
+        <span className="text-sm text-gray-400 dark:text-slate-500 italic">No {typeName} assigned</span>
+      </div>
+    )
+  }
+  const { id, unit, vin, detail } = resolveAssignmentUnit(assignment)
+  const path = typeName === 'truck' ? 'trucks' : 'trailers'
+  return (
+    <div className="flex items-center gap-2 flex-wrap text-sm">
+      <span className="w-16 shrink-0 text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500">{typeLabel}</span>
+      {id
+        ? <Link to={`/fleet/${path}/${id}`} className="font-mono text-orange-600 hover:underline">{unit}</Link>
+        : <span className="font-mono text-gray-600 dark:text-slate-400" title={`Unit no longer in BUDDY (TMS Equipment ID ${assignment.tms_equipment_id ?? 'unknown'})`}>{unit}</span>}
+      {vin && <>{dot}<span className="font-mono text-xs text-gray-500 dark:text-slate-400">{vin}</span></>}
+      {detail && <>{dot}<span className="text-xs text-gray-500 dark:text-slate-400">{detail}</span></>}
+      {dot}<span className="text-xs text-gray-500 dark:text-slate-400">since {fmtDate(assignment.start_date)}</span>
+      <CurrentPill />
+    </div>
+  )
+}
+
+// Collapsible history group (open by default) for one equipment type. Rows are
+// newest-first with the open assignment first; columns Unit | Start | End |
+// status. A count badge sits in the summary. Empty → muted placeholder.
+function EquipmentHistoryGroup({ title, type, rows }) {
+  const path = type === 'truck' ? 'trucks' : 'trailers'
+  const sorted = [...rows].sort((a, b) => {
+    const ao = a.end_date == null ? 1 : 0
+    const bo = b.end_date == null ? 1 : 0
+    if (ao !== bo) return bo - ao
+    return (b.start_date || '').localeCompare(a.start_date || '')
+  })
+  return (
+    <details open className="group rounded-xl border border-gray-100 dark:border-white/5 overflow-hidden">
+      <summary className="flex items-center gap-2 cursor-pointer select-none px-4 py-2.5 bg-gray-50/60 dark:bg-white/[0.02] text-sm font-semibold text-gray-700 dark:text-slate-300">
+        <svg className="w-3.5 h-3.5 shrink-0 text-gray-400 dark:text-slate-500 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+        {title}
+        <span className="inline-flex items-center justify-center min-w-[1.25rem] px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-gray-200 dark:bg-slate-700/50 text-gray-600 dark:text-slate-300">{rows.length}</span>
+      </summary>
+      {sorted.length === 0 ? (
+        <p className="px-4 py-3 text-sm text-gray-400 dark:text-slate-500 italic">No {type} history</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className={S.tableHead}>
+              <tr>
+                <th className={S.th}>Unit</th>
+                <th className={S.th}>Start</th>
+                <th className={S.th}>End</th>
+                <th className={S.th}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map(a => {
+                const { id, unit } = resolveAssignmentUnit(a)
+                const open = a.end_date == null
+                return (
+                  <tr key={a.id} className={S.tableRow}>
+                    <td className={S.td}>
+                      {id
+                        ? <Link to={`/fleet/${path}/${id}`} className="font-mono text-orange-600 hover:underline">{unit}</Link>
+                        : <span className="font-mono text-gray-600 dark:text-slate-400" title={`Unit no longer in BUDDY (TMS Equipment ID ${a.tms_equipment_id ?? 'unknown'})`}>{unit}</span>}
+                    </td>
+                    <td className={`${S.td} whitespace-nowrap text-gray-600 dark:text-slate-400`}>{fmtDate(a.start_date)}</td>
+                    <td className={`${S.td} whitespace-nowrap text-gray-600 dark:text-slate-400`}>
+                      {open ? <span className="italic text-emerald-600 dark:text-emerald-400">Open</span> : fmtDate(a.end_date)}
+                    </td>
+                    <td className={`${S.td} whitespace-nowrap`}>{open && <CurrentPill />}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </details>
   )
 }
 
