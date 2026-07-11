@@ -29,7 +29,7 @@ export async function fetchDriverDeck({ from, to, basis = 'delivery' }) {
   // mid-week "This week" doesn't count future days as idle. Equipment cost
   // proration still uses the full window (it accrues regardless).
   const effDays = elapsedDays(from, to)
-  const [rollup, trailerRollup, driversRes, trucksRes, trailersRes, eqCostRes, purchasesRes, paymentsRes, payEstimateRes, teamsRes] = await Promise.all([
+  const [rollup, trailerRollup, driversRes, trucksRes, trailersRes, eqCostRes, purchasesRes, paymentsRes, payEstimateRes, teamsRes, contribInputsRes] = await Promise.all([
     supabase.rpc('load_profit_rollup', { p_dimension: 'driver', p_from: from, p_to: to, p_basis: basis }),
     supabase.rpc('load_profit_rollup', { p_dimension: 'trailer', p_from: from, p_to: to, p_basis: basis }),
     supabase.from('drivers').select('id, full_name, internal_id, current_status, driver_type, carrier, photo_path'),
@@ -42,6 +42,7 @@ export async function fetchDriverDeck({ from, to, basis = 'delivery' }) {
       .lte('period_start', to).gte('period_end', from),
     supabase.rpc('driver_pay_estimate_rollup', { p_from: from, p_to: to, p_basis: basis }),
     supabase.from('v_driver_current_team').select('driver_id, team_id, team_name, members'),
+    supabase.rpc('driver_contribution_inputs', { p_from: from, p_to: to, p_basis: basis }),
   ])
   if (rollup.error) throw rollup.error
   if (payEstimateRes.error) throw payEstimateRes.error
@@ -64,6 +65,10 @@ export async function fetchDriverDeck({ from, to, basis = 'delivery' }) {
   const purchasesByDriver = groupBy(purchasesRes.data, 'driver_id')
   const paymentsByPurchase = groupBy(paymentsRes.data, 'driver_purchase_id')
   const payEstimateByDriver = new Map((payEstimateRes.data || []).map(r => [r.driver_id, r]))
+  // Team-aware unit pay, keyed by the row's driver_id (a team collapses to the
+  // primary's id). Overrides the per-driver pay estimate so a per-mile/flat team
+  // shows both drivers' pay; solo/owner-op are unchanged.
+  const unitPayByDriver = new Map((contribInputsRes.error ? [] : (contribInputsRes.data || [])).map(r => [r.driver_id, r]))
 
   // Like-for-like benchmark: $/mile per trailer type, from the same period's
   // per-trailer rollup joined to trailers.trailer_type. Realized legs only —
@@ -135,8 +140,11 @@ export async function fetchDriverDeck({ from, to, basis = 'delivery' }) {
     const benchmarkRpm = trailerType && byType.has(trailerType) ? byType.get(trailerType).rpm : fleetRpm
     const benchmarkScope = trailerType && byType.has(trailerType) ? trailerType : 'fleet'
 
-    // Estimated driver compensation — from driver_pay_estimate_rollup
+    // Estimated driver compensation — from driver_pay_estimate_rollup, with the
+    // pay/earn overridden by the team-aware unit total when this driver's unit
+    // is in driver_contribution_inputs (a team pays both drivers).
     const payEstimate = driverId ? payEstimateByDriver.get(driverId) : null
+    const unitPay = driverId ? unitPayByDriver.get(driverId) : null
 
     return {
       id: driverId || `raw:${rawName}`,
@@ -163,13 +171,18 @@ export async function fetchDriverDeck({ from, to, basis = 'delivery' }) {
       health: healthSignal({ ...metrics, benchmarkRpm }, effDays),
       payEstimate: payEstimate ? {
         loads: payEstimate.loads,
-        estDriverPay: Number(payEstimate.est_driver_pay) || 0,
-        estCompanyContribution: Number(payEstimate.est_company_contribution) || 0,
+        // Team-aware unit total when available, else the per-driver estimate.
+        estDriverPay: unitPay ? (Number(unitPay.est_unit_driver_pay) || 0) : (Number(payEstimate.est_driver_pay) || 0),
+        estCompanyContribution: unitPay ? (Number(unitPay.est_unit_company_earn) || 0) : (Number(payEstimate.est_company_contribution) || 0),
         hasMissingComp: payEstimate.has_missing_comp || false,
         hasContract: payEstimate.has_contract || false,
         compType: payEstimate.comp_type || null,
         compValue: payEstimate.comp_value != null ? Number(payEstimate.comp_value) : null,
         compUniform: payEstimate.comp_uniform || false,
+        // A team is one shared pool — its per-comp caption ("rate × miles") would
+        // reflect only the primary, so mark it and let the caption fall back to
+        // just the two values.
+        isTeam: !!(unitPay && unitPay.team_id),
         linehaulRevenue: payEstimate.linehaul_revenue != null ? Number(payEstimate.linehaul_revenue) : 0,
         totalMiles: payEstimate.total_miles != null ? Number(payEstimate.total_miles) : 0,
       } : null,

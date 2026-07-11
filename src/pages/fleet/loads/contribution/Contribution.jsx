@@ -4,8 +4,12 @@ import { useToast } from '../../../../contexts/ToastContext'
 import { S } from '../../../../lib/styles'
 import { supabase } from '../../../../lib/supabase'
 import ErrorBoundary from '../../../../components/ErrorBoundary'
-import { fetchContribution, prorateUnitCost, estimateDriverPay, fetchTeamByDriver } from './contributionData'
+import { fetchContribution, prorateUnitCost, fetchTeamByDriver } from './contributionData'
 import { fmtMoney, fmtNum, formatRange, shiftYmd, spanDays, thisMonth, thisWeek } from '../spotlight/spotlightShared'
+
+// A driver/unit has a usable comp rate iff its comp_type is one of these; else
+// pay is unknown (est_unit_driver_pay = 0) and the row is flagged "needs rate".
+const KNOWN_COMP = new Set(['rate_pct', 'rate_per_mile', 'service_charge_pct', 'flat_rate'])
 
 // Profit Contribution — the fleet ranked by what each unit actually leaves
 // behind after its equipment carrying cost and truck-purchase deduction.
@@ -210,26 +214,34 @@ export default function Contribution() {
     return () => { stale = true }
   }, [dataKey, dimension, range.from, range.to, basis, toast])
 
-  // Fetch driver pay estimates (parallel to equipment data, always driver-keyed)
+  // Fetch driver pay estimates (parallel to equipment data, always driver-keyed).
+  // The pay-rollup collapses a team to its primary row; overlay the team-aware
+  // unit pay (driver_contribution_inputs.est_unit_*) onto it by that primary's
+  // driver_id so a per-mile/flat team shows both drivers' pay. Solo/owner-op
+  // rows get their own value back (a no-op). No double-count — the rollup has no
+  // separate co-driver row.
   useEffect(() => {
     let stale = false
-    const fetchDriverPay = async () => {
-      try {
-        const { data, error } = await supabase.rpc('driver_pay_estimate_rollup', {
-          p_from: range.from,
-          p_to: range.to,
-          p_basis: basis,
-        })
-        if (error) throw error
-        if (!stale) setDriverPayState({ key: driverPayKey, data: data || [] })
-      } catch (err) {
-        if (!stale) {
-          console.error('Failed to load driver pay data:', err)
-          setDriverPayState({ key: driverPayKey, data: [] })
-        }
+    Promise.all([
+      supabase.rpc('driver_pay_estimate_rollup', { p_from: range.from, p_to: range.to, p_basis: basis }),
+      supabase.rpc('driver_contribution_inputs', { p_from: range.from, p_to: range.to, p_basis: basis }),
+    ]).then(([rollup, ci]) => {
+      if (stale) return
+      if (rollup.error) throw rollup.error
+      const unit = new Map((ci.error ? [] : (ci.data || [])).map(r => [r.driver_id, r]))
+      const rows = (rollup.data || []).map(d => {
+        const u = unit.get(d.driver_id)
+        return u
+          ? { ...d, est_driver_pay: Number(u.est_unit_driver_pay) || 0, est_company_contribution: Number(u.est_unit_company_earn) || 0 }
+          : d
+      })
+      setDriverPayState({ key: driverPayKey, data: rows })
+    }).catch(err => {
+      if (!stale) {
+        console.error('Failed to load driver pay data:', err)
+        setDriverPayState({ key: driverPayKey, data: [] })
       }
-    }
-    fetchDriverPay()
+    })
     return () => { stale = true }
   }, [driverPayKey, range.from, range.to, basis])
 
@@ -722,6 +734,9 @@ const NET_FLAG_TONE = {
 }
 
 function payBasisText(d) {
+  // A team's pay is the fanned-out unit total; the primary's single-comp formula
+  // would undercount, so show a unit caption instead of "rate × miles".
+  if (d.team_id) return 'team pay · both drivers (unit total)'
   const v = Number(d.comp_value)
   if (d.comp_type === 'rate_per_mile') return `rate_per_mile $${v.toFixed(2)} × ${fmtNum(d.miles)} mi`
   if (d.comp_type === 'rate_pct') return `${v}% of revenue`
@@ -766,7 +781,11 @@ function CompanyNetView({ from, to, basis, query }) {
       const trailerCost = trailerOwned ? 0 : prorateUnitCost({ monthly: d.trailer_monthly, weekly: d.trailer_weekly, permile: d.trailer_permile }, { days, miles: d.miles })
       const equipment = truckCost + trailerCost
       const revenue = Number(d.revenue) || 0
-      const { pay, missing } = estimateDriverPay({ comp_type: d.comp_type, comp_value: d.comp_value, revenue, miles: d.miles, periodDays: days })
+      // Team-aware precomputed pay: per-mile/flat teams already fanned out to
+      // both drivers, percentage/owner-op collapsed to one pool. Replaces the
+      // old client-side revenue×comp% / miles×rate off the primary's single comp.
+      const pay = Number(d.est_unit_driver_pay) || 0
+      const missing = !KNOWN_COMP.has(d.comp_type)
       const companyNet = revenue - equipment - pay
       const netPct = revenue > 0 ? companyNet / revenue : null
 

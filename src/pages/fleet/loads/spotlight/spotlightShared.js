@@ -72,11 +72,13 @@ export function fmtDateShort(dateStr, baseYear) {
 // Format compensation formula captions for Spotlight comp block.
 // Returns { driverCaption, companyCaption } or { driverCaption: null, companyCaption: null } if not uniform.
 export function getCompFormulaLabels(payEstimate) {
-  if (!payEstimate || !payEstimate.compUniform) {
+  // A team's pay is the fanned-out unit total; a "rate × miles" caption from the
+  // primary's single comp would mislead, so show just the two values.
+  if (!payEstimate || !payEstimate.compUniform || payEstimate.isTeam) {
     return { driverCaption: null, companyCaption: null }
   }
 
-  const { compType, compValue, linehaulRevenue, totalMiles, estDriverPay, estCompanyContribution } = payEstimate
+  const { compType, compValue, linehaulRevenue, totalMiles, estDriverPay } = payEstimate
   if (!compType || compValue == null) {
     return { driverCaption: null, companyCaption: null }
   }
@@ -85,7 +87,6 @@ export function getCompFormulaLabels(payEstimate) {
   const miles = totalMiles != null ? Number(totalMiles) : 0
   const v = Number(compValue)
   const driverPay = Number(estDriverPay) || 0
-  const companyEarn = Number(estCompanyContribution) || 0
 
   // Format helpers
   const fmtRate = (n) => {
