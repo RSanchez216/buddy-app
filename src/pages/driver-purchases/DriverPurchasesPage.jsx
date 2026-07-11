@@ -2,9 +2,11 @@ import { useEffect, useMemo, useReducer, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
+import { useToast } from '../../contexts/ToastContext'
 import { S } from '../../lib/styles'
 import { logEvent } from './utils/events'
 import { fmtDate, fmtMoney } from './utils/format'
+import { exportPurchasesXlsx } from './utils/exportPurchasesXlsx'
 import KpiCards from './components/KpiCards'
 import WarningPanels from './components/WarningPanels'
 import PurchasesTable from './components/PurchasesTable'
@@ -20,6 +22,7 @@ const SORT_DEFAULT_DIR = {
   current_balance:   'desc',
   periods_behind:    'desc',
   last_charged_date: 'desc',
+  last_update_at:    'desc',
   linked:            'desc',
 }
 
@@ -50,9 +53,9 @@ function compareByKey(a, b, key, dir) {
   if (key === 'payment_amount' || key === 'current_balance' || key === 'periods_behind') {
     return (Number(a[key] || 0) - Number(b[key] || 0)) * flip
   }
-  if (key === 'last_charged_date') {
-    const av = a.last_charged_date
-    const bv = b.last_charged_date
+  if (key === 'last_charged_date' || key === 'last_update_at') {
+    const av = a[key]
+    const bv = b[key]
     if (!av && !bv) return 0
     if (!av) return 1   // NULLS LAST regardless of dir
     if (!bv) return -1
@@ -74,11 +77,13 @@ const FILTERS = [
 export default function DriverPurchasesPage() {
   const navigate = useNavigate()
   const { profile, user } = useAuth()
+  const toast = useToast()
   const canEdit = profile?.role === 'admin' || profile?.role === 'manager'
 
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [showNew, setShowNew] = useState(false)
+  const [exporting, setExporting] = useState(false)
 
   // Inline-reconcile bookkeeping: a single undo toast at the page level
   // (records OR reconciles, depending on which target was clicked) and
@@ -438,6 +443,21 @@ export default function DriverPurchasesPage() {
       .sort((a, b) => b.amount_behind - a.amount_behind)
   }, [rows])
 
+  // Export the currently-visible set (active tab + search, all rows — the
+  // list isn't paginated, so `visible` is the whole filtered result).
+  async function handleExport() {
+    if (exporting) return
+    setExporting(true)
+    try {
+      await exportPurchasesXlsx(visible)
+    } catch (e) {
+      console.error('Driver purchases export failed:', e)
+      toast.error("Couldn't export to Excel", e)
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <div className="space-y-5">
       {/* Header */}
@@ -503,16 +523,29 @@ export default function DriverPurchasesPage() {
                 )
               })}
             </div>
-            <div className="relative">
-              <input
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                placeholder="Search driver, unit, or VIN…"
-                className={`${S.input} pl-8 w-72`}
-              />
-              <svg className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <input
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="Search driver, unit, or VIN…"
+                  className={`${S.input} pl-8 w-72`}
+                />
+                <svg className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+              </div>
+              <button
+                onClick={handleExport}
+                disabled={exporting || visible.length === 0}
+                title={visible.length === 0 ? 'Nothing to export' : `Export ${visible.length} row${visible.length === 1 ? '' : 's'} to Excel`}
+                className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-xl border border-gray-200 dark:border-white/10 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+              >
+                <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3" />
+                </svg>
+                {exporting ? 'Exporting…' : 'Export to Excel'}
+              </button>
             </div>
           </div>
 

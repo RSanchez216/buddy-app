@@ -139,12 +139,13 @@ export default function PurchasesTable({
               <SortableTh label="Behind"         columnKey="periods_behind"     sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
               <th className={S.th} aria-label="Quick action" />
               <SortableTh label="Last charged"   columnKey="last_charged_date"  sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+              <SortableTh label="Last update"    columnKey="last_update_at"     sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
               <SortableTh label="Linked"         columnKey="linked"             sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td colSpan={8} className="px-4 py-12 text-center text-sm text-gray-400 dark:text-slate-600">
+              <td colSpan={9} className="px-4 py-12 text-center text-sm text-gray-400 dark:text-slate-600">
                 No driver purchases yet. Phase 2 will import historical records from ClickUp.
               </td>
             </tr>
@@ -166,6 +167,7 @@ export default function PurchasesTable({
             <SortableTh label="Behind"         columnKey="periods_behind"     sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
             <th className={S.th} aria-label="Quick action" />
             <SortableTh label="Last charged"   columnKey="last_charged_date"  sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+            <SortableTh label="Last update"    columnKey="last_update_at"     sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
             <SortableTh label="Linked"         columnKey="linked"             sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
           </tr>
         </thead>
@@ -253,7 +255,7 @@ export default function PurchasesTable({
                   onOpenContract={() => { setOpenMenuRow(null); navigate(`/financial-controls/driver-purchases/${r.id}`) }}
                 />
               </td>
-              <td className={S.td}>
+              <td className={`${S.td} whitespace-nowrap`}>
                 {r.last_charged_date ? (
                   <span
                     className={`text-xs ${lastChargedToneClass(r.days_since_last_payment, r.payment_frequency) || 'text-gray-500 dark:text-slate-500'}`}
@@ -265,7 +267,19 @@ export default function PurchasesTable({
                   <span className="text-xs text-gray-400 dark:text-slate-600" title="No payments recorded yet">—</span>
                 )}
               </td>
-              <td className={S.td}>
+              <td className={`${S.td} whitespace-nowrap`}>
+                {r.last_update_at ? (
+                  <div className="text-xs leading-tight">
+                    <div className="text-gray-700 dark:text-slate-300">{fmtAbsDate(r.last_update_at)}</div>
+                    {r.last_update_by && (
+                      <div className="text-gray-400 dark:text-slate-500">{r.last_update_by}</div>
+                    )}
+                  </div>
+                ) : (
+                  <span className="text-xs text-gray-400 dark:text-slate-600" title="No activity recorded yet">—</span>
+                )}
+              </td>
+              <td className={`${S.td} whitespace-nowrap`}>
                 {r.underlying_loan_id ? (
                   <div className="text-xs">
                     <div className="text-gray-700 dark:text-slate-300">{r.underlying_lender_name || '—'}</div>
