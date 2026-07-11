@@ -223,9 +223,9 @@ export default function PurchasesTable({
                       {label ? (
                         <span
                           className={`text-xs ${behindToneClass(n)}`}
-                          title={`${dollars.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })} owed across ${n} ${n === 1 ? 'period' : 'periods'}`}
+                          title={`${dollars.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })} owed across ${n} ${n === 1 ? 'period' : 'periods'} (excludes skipped weeks)`}
                         >
-                          {label}
+                          {label} · {fmtMoney(dollars)}
                         </span>
                       ) : skipped === 0 ? (
                         <span className="text-xs text-gray-400 dark:text-slate-600">—</span>

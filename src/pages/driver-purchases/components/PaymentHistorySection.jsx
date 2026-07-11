@@ -31,6 +31,32 @@ const METHOD_LABEL = {
 const isRecorded = (p) =>
   Number(p.actual_amount) > 0 || p.reconciled === true || p.skipped === true
 
+// Clear per-row status tag. Skipped / pre-tracking are labeled in the Source
+// column, so this only renders for paid (reconciled or recorded-unconfirmed),
+// missed, upcoming, and reversal rows.
+const STATUS_TAG = {
+  reconciled:             { label: 'Paid',     tone: 'emerald' },
+  'recorded-unconfirmed': { label: 'Paid',     tone: 'emerald' },
+  missed:                 { label: 'Missed',   tone: 'red' },
+  upcoming:               { label: 'Upcoming', tone: 'gray' },
+  reversal:               { label: 'Reversal', tone: 'blue' },
+}
+const TAG_TONE = {
+  emerald: 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/20',
+  red:     'bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400 border-red-200 dark:border-red-500/20',
+  gray:    'bg-gray-100 dark:bg-slate-700/40 text-gray-500 dark:text-slate-400 border-gray-200 dark:border-slate-600/30',
+  blue:    'bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-500/20',
+}
+function StatusTag({ status }) {
+  const meta = STATUS_TAG[status]
+  if (!meta) return null
+  return (
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold border shrink-0 ${TAG_TONE[meta.tone]}`}>
+      {meta.label}
+    </span>
+  )
+}
+
 // Variance traffic-lights: green ≥ 0, amber for small shorts, red for >$100 short.
 function varianceClass(v) {
   const n = Number(v || 0)
@@ -39,22 +65,37 @@ function varianceClass(v) {
   return 'text-red-600 dark:text-red-400'
 }
 
+// Overdue-beyond-grace test for an unpaid period. Grace mirrors the list's
+// behind logic: 7 days for weekly/biweekly, 35 for monthly. Compares the
+// period_end date-string against a computed cutoff (today − grace), both as
+// yyyy-mm-dd strings, so there's no new Date('yyyy-mm-dd') parsing / TZ shift.
+function isOverdueBeyondGrace(periodEnd, frequency) {
+  if (!periodEnd) return false
+  const graceDays = frequency === 'monthly' ? 35 : 7
+  const c = new Date()
+  c.setHours(0, 0, 0, 0)
+  c.setDate(c.getDate() - graceDays)
+  const cutoff = `${c.getFullYear()}-${String(c.getMonth() + 1).padStart(2, '0')}-${String(c.getDate()).padStart(2, '0')}`
+  return periodEnd < cutoff
+}
+
 // Returns one of: 'reversal' | 'reconciled' | 'recorded-unconfirmed' |
-// 'skipped' | 'pre-tracking' | 'missed' | 'expected'.
+// 'skipped' | 'pre-tracking' | 'missed' | 'upcoming'.
 // Priority: actual data wins over skipped/pre-tracking (the either-or
 // invariant prevents skipped + actual>0 at the DB level, but defending
 // here keeps the UI sane against any drift). Then skipped wins over
 // pre-tracking/missed because a deliberate skip is an explicit override.
-function rowStatus(p, trackingStart) {
+// An unpaid period only counts as 'missed' once it's overdue beyond grace;
+// future weeks and the current in-grace week are 'upcoming' (no red).
+function rowStatus(p, trackingStart, frequency) {
   const actual = Number(p.actual_amount || 0)
   if (actual < 0) return 'reversal'
   if (actual > 0) return p.reconciled ? 'reconciled' : 'recorded-unconfirmed'
   // actual === 0 from here on
   if (p.skipped) return 'skipped'
   if (trackingStart && p.period_end && p.period_end < trackingStart) return 'pre-tracking'
-  const ended = p.period_end && new Date(p.period_end + 'T00:00:00') < new Date()
-  if (ended && Number(p.expected_amount || 0) > 0) return 'missed'
-  return 'expected'
+  if (Number(p.expected_amount || 0) > 0 && isOverdueBeyondGrace(p.period_end, frequency)) return 'missed'
+  return 'upcoming'
 }
 
 // Relative "Xd ago" label for a reconciled timestamp. Matches the
@@ -95,10 +136,10 @@ function rowTint(status) {
     case 'pre-tracking':         return 'bg-gray-50/60 dark:bg-white/[0.015]'
     case 'recorded-unconfirmed': return 'bg-amber-50/40 dark:bg-amber-500/[0.04]'
     case 'reconciled':           return 'bg-emerald-50/30 dark:bg-emerald-500/[0.04]'
-    // Indigo for skipped — neutral, deliberate, not alarming or
-    // celebratory. Visually distinct from reversal (also blue) by
-    // hue + the SKIPPED source pill that replaces "Generated".
-    case 'skipped':              return 'bg-indigo-50/40 dark:bg-indigo-500/[0.04]'
+    // Neutral gray for skipped — a deliberate, non-alarming, non-payment
+    // state. Kept muted (like pre-tracking) so it never reads as missed.
+    case 'skipped':              return 'bg-gray-50/60 dark:bg-white/[0.015]'
+    // 'upcoming' (future / current in-grace week) gets no tint.
     default:                     return ''
   }
 }
@@ -704,13 +745,17 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
             </thead>
             <tbody>
               {rows.map(p => {
-                const status = rowStatus(p, trackingStart)
+                const status = rowStatus(p, trackingStart, purchase?.payment_frequency)
                 // pre-tracking + skipped share the muted styling: their
                 // amounts/variance don't read as actionable data, and the
                 // Reconciled column doesn't apply (skipped is an explicit
                 // non-payment; reconciling something with no payment is
                 // meaningless).
                 const muted = status === 'pre-tracking' || status === 'skipped'
+                // Variance is meaningless (and must not read as a shortfall)
+                // for skipped, pre-tracking, and not-yet-overdue upcoming
+                // weeks — show '—' instead of a red −$expected.
+                const varMuted = muted || status === 'upcoming'
                 const amountClass = muted
                   ? 'text-gray-400 dark:text-slate-600'
                   : 'text-gray-700 dark:text-slate-300'
@@ -736,9 +781,9 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
                       {fmtMoney(p.actual_amount)}
                     </td>
                     <td className={`py-1.5 px-3 text-right font-mono text-xs font-semibold ${
-                      muted ? 'text-gray-400 dark:text-slate-600' : varianceClass(p.variance)
+                      varMuted ? 'text-gray-400 dark:text-slate-600' : varianceClass(p.variance)
                     }`}>
-                      {muted ? '—' : (Number(p.variance) >= 0 ? '+' : '') + fmtMoney(p.variance)}
+                      {varMuted ? '—' : (Number(p.variance) >= 0 ? '+' : '') + fmtMoney(p.variance)}
                     </td>
                     <td className={`py-1.5 px-3 text-xs ${muted ? 'text-gray-400 dark:text-slate-600' : 'text-gray-500 dark:text-slate-400'}`}>
                       {METHOD_LABEL[p.payment_method] || p.payment_method || '—'}
@@ -750,14 +795,14 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
                             type="button"
                             onClick={e => { e.stopPropagation(); setUnskipTarget(p) }}
                             title={p.skip_reason ? `Skipped: ${p.skip_reason} · Click to unskip` : 'Click to unskip'}
-                            className="inline-flex items-center px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/20 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 font-semibold transition-colors"
+                            className="inline-flex items-center px-1.5 py-0.5 rounded bg-gray-100 dark:bg-slate-700/40 text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-600/30 hover:bg-gray-200 dark:hover:bg-slate-700/60 font-semibold transition-colors"
                           >
                             Skipped
                           </button>
                         ) : (
                           <span
                             title={p.skip_reason ? `Skipped: ${p.skip_reason}` : 'Skipped'}
-                            className="inline-flex items-center px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/20 font-semibold"
+                            className="inline-flex items-center px-1.5 py-0.5 rounded bg-gray-100 dark:bg-slate-700/40 text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-600/30 font-semibold"
                           >
                             Skipped
                           </span>
@@ -822,13 +867,22 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
                             : <span className="text-gray-300 dark:text-slate-600">—</span>
                       })()}
                     </td>
-                    <td className={`py-1.5 pl-3 text-xs ${muted ? 'text-gray-400 dark:text-slate-600' : 'text-gray-500 dark:text-slate-400'} max-w-[14rem] truncate`}
+                    <td className="py-1.5 pl-3 text-xs max-w-[16rem]"
                         title={status === 'skipped' ? (p.skip_reason || 'Skipped') : (p.reason || '')}>
-                      {status === 'skipped'
-                        ? <span className="italic text-indigo-700/80 dark:text-indigo-400/80">{p.skip_reason || 'Skipped'}</span>
-                        : p.reason || (status === 'missed'
-                          ? <span className="italic text-red-600/80 dark:text-red-400/80">Missed</span>
-                          : '—')}
+                      {/* Skipped/pre-tracking already carry their status word in
+                          the Source column — here they show just the reason so
+                          the word isn't duplicated. Paid/Missed/Upcoming get a
+                          clear status tag (their only status label). */}
+                      {status === 'skipped' ? (
+                        <span className="italic text-gray-500 dark:text-slate-500 block truncate">{p.skip_reason || '—'}</span>
+                      ) : status === 'pre-tracking' ? (
+                        <span className="text-gray-400 dark:text-slate-600">—</span>
+                      ) : (
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <StatusTag status={status} />
+                          {p.reason && <span className="truncate text-gray-500 dark:text-slate-400">{p.reason}</span>}
+                        </div>
+                      )}
                     </td>
                   </tr>
                 )
