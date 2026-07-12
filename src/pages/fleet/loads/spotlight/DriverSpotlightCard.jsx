@@ -1,7 +1,42 @@
-import { memo, useMemo } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { DriverStatusPill, DriverTypePill, trailerTypePillClasses } from '../../fleetUtils'
 import { fmtMoney, fmtMoney2, fmtNum, fmtRpm, fmtDateShort, getCompFormulaLabels, monogram, nameHue, HEALTH_STYLES, parseYmd } from './spotlightShared'
+import { supabase } from '../../../../lib/supabase'
+import { useDriverContracts } from '../../../../hooks/useDriverContracts'
+import BehindOnPurchaseChip from '../../../driver-purchases/components/BehindChip'
 import desert from '../../../../assets/spotlight-desert.svg'
+
+// Cross-surface links + live status for the focused driver: profile, contract,
+// idle, and behind-on-purchase. Guarded — a driver with no contract shows no
+// purchase link/behind chip; an unmatched (raw-name) entry shows nothing.
+function DriverLinksBar({ driverId }) {
+  const { hasContract, isBehind, totalPastDue, purchasesHref, contractHref } = useDriverContracts(driverId)
+  const [activity, setActivity] = useState(null)
+  useEffect(() => {
+    if (!driverId) return
+    let cancelled = false
+    supabase.rpc('driver_activity_snapshot', { p_driver_id: driverId })
+      .then(({ data }) => { if (!cancelled) setActivity(data?.[0] || null) })
+    return () => { cancelled = true }
+  }, [driverId])
+  if (!driverId) return null
+
+  const idle = activity && !activity.currently_running && activity.days_idle != null
+  const linkCls = 'inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-orange-700 dark:text-orange-300 bg-orange-50/70 dark:bg-orange-500/10 border border-orange-200/70 dark:border-orange-500/25 hover:bg-orange-100 dark:hover:bg-orange-500/20 transition-colors'
+  return (
+    <div className="px-6 pt-3 flex flex-wrap items-center gap-2">
+      <Link to={`/fleet/drivers/${driverId}`} className={linkCls}>View profile</Link>
+      {hasContract && <Link to={purchasesHref} className={linkCls}>Driver Purchases</Link>}
+      {idle && (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-medium text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/25">
+          {activity.days_idle} day{activity.days_idle === 1 ? '' : 's'} idle
+        </span>
+      )}
+      {isBehind && <BehindOnPurchaseChip href={contractHref} totalPastDue={totalPastDue} />}
+    </div>
+  )
+}
 
 // One driver's full dossier — the big card at the front of the deck.
 // Everything on it is live BUDDY data except the "Unlocking next" section,
@@ -513,6 +548,9 @@ function DriverSpotlightCard({ entry, lanes, trend, rangeDays, effDays, periodLa
           <p className="text-[10px] font-mono text-gray-500 dark:text-slate-400">{rank} / {total} · {sortLabel}</p>
         </div>
       )}
+
+      {/* ── Cross-surface links + live status ── */}
+      <DriverLinksBar driverId={entry.driverId} />
 
       {/* ── Date range emphasis ── */}
       <div className="px-6 pt-4 pb-2">

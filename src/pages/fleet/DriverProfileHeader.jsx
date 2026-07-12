@@ -4,6 +4,8 @@ import { supabase } from '../../lib/supabase'
 import { DriverTypePill, DriverStatusPill, fmtDate } from './fleetUtils'
 import { nameHue, monogram, fmtMoney, fmtRpm, fmtNum } from './loads/spotlight/spotlightShared'
 import PossiblyHomeChip from './PossiblyHomeChip'
+import { useDriverContracts } from '../../hooks/useDriverContracts'
+import BehindOnPurchaseChip from '../driver-purchases/components/BehindChip'
 
 // Driver profile header with photo, name, status, quick stats, and load activity.
 // `activity` is a driver_activity_snapshot row (or null): { currently_running,
@@ -26,6 +28,9 @@ export default function DriverProfileHeader({ driver, activity }) {
     return () => { cancelled = true }
   }, [driver?.id, idle])
   const currentHome = idle && homeInfo?.driverId === driver?.id ? homeInfo : null
+
+  // Driver-purchase contracts + behind status, for the cross-surface links.
+  const { hasContract, isBehind, totalPastDue, purchasesHref, contractHref } = useDriverContracts(driver?.id)
 
   // Load photo signed URL and 7-day metrics
   useEffect(() => {
@@ -185,13 +190,24 @@ export default function DriverProfileHeader({ driver, activity }) {
               )}
             </div>
             {driver?.id && (
-              <Link
-                to={`/fleet/profitability/spotlight?driver=${driver.id}`}
-                className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold text-orange-700 dark:text-orange-300 bg-white/70 dark:bg-white/5 border border-orange-300/70 dark:border-orange-500/30 hover:bg-orange-50 dark:hover:bg-orange-500/10 transition-colors"
-              >
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><circle cx="12" cy="12" r="8" strokeWidth={1.8} /><circle cx="12" cy="12" r="2.5" strokeWidth={1.8} /></svg>
-                View in Spotlight
-              </Link>
+              <div className="shrink-0 flex items-center gap-2">
+                <Link
+                  to={`/fleet/profitability/spotlight?driver=${driver.id}`}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold text-orange-700 dark:text-orange-300 bg-white/70 dark:bg-white/5 border border-orange-300/70 dark:border-orange-500/30 hover:bg-orange-50 dark:hover:bg-orange-500/10 transition-colors"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><circle cx="12" cy="12" r="8" strokeWidth={1.8} /><circle cx="12" cy="12" r="2.5" strokeWidth={1.8} /></svg>
+                  View in Spotlight
+                </Link>
+                {hasContract && (
+                  <Link
+                    to={purchasesHref}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold text-cyan-700 dark:text-cyan-300 bg-white/70 dark:bg-white/5 border border-cyan-300/70 dark:border-cyan-500/30 hover:bg-cyan-50 dark:hover:bg-cyan-500/10 transition-colors"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.6} d="M9 7h6m-6 4h6m-6 4h4M5 4h14a1 1 0 011 1v14a1 1 0 01-1 1H5a1 1 0 01-1-1V5a1 1 0 011-1z" /></svg>
+                    Driver Purchases
+                  </Link>
+                )}
+              </div>
             )}
           </div>
 
@@ -206,6 +222,11 @@ export default function DriverProfileHeader({ driver, activity }) {
           </p>
 
           <ActivityCallout activity={activity} homeInfo={currentHome} />
+          {isBehind && (
+            <div className="mt-2">
+              <BehindOnPurchaseChip href={contractHref} totalPastDue={totalPastDue} />
+            </div>
+          )}
         </div>
 
         {/* Quick stats */}

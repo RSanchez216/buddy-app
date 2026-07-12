@@ -6,6 +6,7 @@ import { S } from '../../../../lib/styles'
 import CopyButton from '../../../../components/CopyButton'
 import { fmtMoney } from '../spotlight/spotlightShared'
 import PossiblyHomeChip from '../../PossiblyHomeChip'
+import BehindOnPurchaseChip from '../../../driver-purchases/components/BehindChip'
 
 // Idle review — trucks, trailers, and drivers earning $0 while still costing
 // money (3+ days since last load activity). Tag a reason, watch the duration,
@@ -291,12 +292,14 @@ export default function IdleReview() {
   // team rows resolve to their primary member's driver_id. The idle list is
   // small, so a per-driver driver_possibly_home() call is fine.
   const [homeBySubject, setHomeBySubject] = useState({}) // 'type:id' → possibly-home row
+  // 'type:id' → { totalPastDue, contractHref } for idle drivers behind on a purchase
+  const [behindBySubject, setBehindBySubject] = useState({})
   useEffect(() => {
     if (!rows) return
     let cancelled = false
     ;(async () => {
       const driverRows = rows.filter(r => r.subject_type === 'driver' || r.subject_type === 'team')
-      if (driverRows.length === 0) { if (!cancelled) setHomeBySubject({}); return }
+      if (driverRows.length === 0) { if (!cancelled) { setHomeBySubject({}); setBehindBySubject({}) } return }
       // Resolve team subjects → current primary member's driver_id.
       const teamIds = driverRows.filter(r => r.subject_type === 'team').map(r => r.subject_id)
       const primaryByTeam = {}
@@ -321,13 +324,30 @@ export default function IdleReview() {
         const { data } = await supabase.rpc('driver_possibly_home', { p_driver_id: did })
         return [did, data?.[0] || null]
       }))
+      // Behind-on-purchase per driver — one query for all idle driver_ids.
+      const behindStatuses = new Set(['falling_behind', 'holding'])
+      const { data: contracts } = await supabase
+        .from('v_driver_purchase_summary')
+        .select('id, driver_id, past_due_status, amount_behind')
+        .in('driver_id', uniqueDriverIds)
+      const behindByDriver = {}
+      ;(contracts || []).forEach(c => {
+        const agg = behindByDriver[c.driver_id] || (behindByDriver[c.driver_id] = { total: 0, behind: false, contractId: null })
+        agg.total += Number(c.amount_behind) || 0
+        if (behindStatuses.has(c.past_due_status)) { agg.behind = true; if (!agg.contractId) agg.contractId = c.id }
+      })
+
       if (cancelled) return
       const homeByDriver = Object.fromEntries(homeEntries)
       const bySubject = {}
+      const behindBySubj = {}
       for (const [subjKey, did] of Object.entries(subjToDriver)) {
         if (homeByDriver[did]) bySubject[subjKey] = homeByDriver[did]
+        const b = behindByDriver[did]
+        if (b?.behind) behindBySubj[subjKey] = { totalPastDue: b.total, contractHref: `/financial-controls/driver-purchases/${b.contractId}` }
       }
       setHomeBySubject(bySubject)
+      setBehindBySubject(behindBySubj)
     })()
     return () => { cancelled = true }
   }, [rows])
@@ -478,7 +498,7 @@ export default function IdleReview() {
         <div className={`${S.card} p-12 text-center text-sm text-gray-500 dark:text-slate-500 animate-pulse`}>Finding idle subjects…</div>
       ) : (
         <>
-          <IdleSection title="Drivers" kind="driver" rows={viewGroups.driver} reasons={DRIVER_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} homeBySubject={homeBySubject} />
+          <IdleSection title="Drivers" kind="driver" rows={viewGroups.driver} reasons={DRIVER_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} homeBySubject={homeBySubject} behindBySubject={behindBySubject} />
           <IdleSection title="Trucks" kind="unit" rows={viewGroups.truck} reasons={UNIT_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} />
           <IdleSection title="Trailers" kind="unit" rows={viewGroups.trailer} reasons={UNIT_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} />
         </>
@@ -505,7 +525,7 @@ function SummaryCard({ label, count, sub, loading, tip }) {
   )
 }
 
-function IdleSection({ title, kind, rows, reasons, resolvedView, reviewFilter, financeFilter, onSetReason, onResolve, onReopen, homeBySubject = {} }) {
+function IdleSection({ title, kind, rows, reasons, resolvedView, reviewFilter, financeFilter, onSetReason, onResolve, onReopen, homeBySubject = {}, behindBySubject = {} }) {
   const columns = kind === 'unit' ? UNIT_COLUMNS : DRIVER_COLUMNS
 
   const [sort, setSort] = useState({ key: 'days', dir: 'desc' })
@@ -608,7 +628,7 @@ function IdleSection({ title, kind, rows, reasons, resolvedView, reviewFilter, f
               </thead>
               <tbody>
                 {visible.map(r => (
-                  <IdleRow key={`${r.subject_type}:${r.subject_id}`} row={r} kind={kind} reasons={reasons} resolvedView={resolvedView} onSetReason={onSetReason} onResolve={onResolve} onReopen={onReopen} homeInfo={homeBySubject[`${r.subject_type}:${r.subject_id}`]} />
+                  <IdleRow key={`${r.subject_type}:${r.subject_id}`} row={r} kind={kind} reasons={reasons} resolvedView={resolvedView} onSetReason={onSetReason} onResolve={onResolve} onReopen={onReopen} homeInfo={homeBySubject[`${r.subject_type}:${r.subject_id}`]} behindInfo={behindBySubject[`${r.subject_type}:${r.subject_id}`]} />
                 ))}
               </tbody>
             </table>
@@ -707,7 +727,7 @@ const TEAM_ICON = (
   </svg>
 )
 
-function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onReopen, homeInfo }) {
+function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onReopen, homeInfo, behindInfo }) {
   const sev = severity(row)
 
   const daysCls = (row.days_idle ?? 0) >= 14 ? 'text-red-600 dark:text-red-400 font-semibold' : 'text-gray-700 dark:text-slate-300'
@@ -817,7 +837,12 @@ function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onR
         </span>
         {isTeam && row.team_name && <div className="text-[10px] text-gray-400 dark:text-slate-500 mt-0.5">{row.team_name}</div>}
         <LastLoadLine row={row} />
-        {homeInfo?.possibly_home && <div className="mt-1"><PossiblyHomeChip info={homeInfo} /></div>}
+        {(homeInfo?.possibly_home || behindInfo) && (
+          <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+            {homeInfo?.possibly_home && <PossiblyHomeChip info={homeInfo} />}
+            {behindInfo && <BehindOnPurchaseChip href={behindInfo.contractHref} totalPastDue={behindInfo.totalPastDue} compact />}
+          </div>
+        )}
       </td>
       <td className={`${S.td} text-right font-mono align-top ${daysCls}`}>{fmtDays(row.days_idle)}</td>
       <td className={`${S.td} align-top`}><HoldingCell row={row} /></td>

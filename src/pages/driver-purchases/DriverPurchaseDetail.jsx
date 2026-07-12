@@ -293,6 +293,12 @@ export default function DriverPurchaseDetail() {
             {summary.entity_name || 'No entity'} · {purchaseTypeLabel(summary.purchase_type)}
             {summary.driver_internal_id && <span className="ml-2 font-mono text-xs">#{summary.driver_internal_id}</span>}
           </p>
+          {summary.driver_id && (
+            <div className="mt-1.5 flex items-center gap-3 text-xs">
+              <Link to={`/fleet/drivers/${summary.driver_id}`} className="text-orange-600 dark:text-orange-400 hover:underline">View profile</Link>
+              <Link to={`/fleet/profitability/spotlight?driver=${summary.driver_id}`} className="text-orange-600 dark:text-orange-400 hover:underline">Spotlight</Link>
+            </div>
+          )}
           {/* Past-due status — the dollar past-due persists until those exact
               weeks are paid; the chip only flags active (falling behind) vs a
               stable historical gap (holding). */}

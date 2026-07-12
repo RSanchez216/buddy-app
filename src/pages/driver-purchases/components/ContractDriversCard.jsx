@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../contexts/AuthContext'
 import { S } from '../../../lib/styles'
@@ -185,7 +186,9 @@ function DriverRow({ row, canEdit, busy, onRemove }) {
       <Avatar name={row.full_name} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-medium text-gray-900 dark:text-slate-200 truncate">{row.full_name}</span>
+          <Link to={`/fleet/drivers/${row.driver_id}`} className="text-sm font-medium text-gray-900 dark:text-slate-200 truncate hover:text-orange-600 dark:hover:text-orange-400 hover:underline">
+            {row.full_name}
+          </Link>
           {row.internal_id && <span className="font-mono text-xs text-gray-500 dark:text-slate-500">#{row.internal_id}</span>}
           {row.is_purchaser && current && (
             <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">

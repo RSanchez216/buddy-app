@@ -40,6 +40,8 @@ export default function DriversList() {
   // driver_id → v_driver_current_team row (team drivers only; solo drivers absent).
   const [teamByDriver, setTeamByDriver] = useState(() => new Map())
   const [teamFilter, setTeamFilter] = useState(false)
+  // driver_id → { count, href } for drivers who have a driver-purchase contract.
+  const [purchaseByDriver, setPurchaseByDriver] = useState(() => new Map())
 
   useEffect(() => { load() }, [])
 
@@ -58,6 +60,25 @@ export default function DriversList() {
         const teamByDriverId = new Map()
         for (const r of teamRows ?? []) teamByDriverId.set(r.driver_id, r) // one entry per member — primary AND co
         setTeamByDriver(teamByDriverId)
+      })
+
+    // Lease-to-purchase overlay — which drivers have a driver-purchase contract.
+    // Single contract → link straight to it; multiple → the list searched to them.
+    supabase.from('v_driver_purchase_summary')
+      .select('id, driver_id, driver_name')
+      .then(({ data: dpRows }) => {
+        const byDriver = new Map()
+        for (const r of dpRows ?? []) {
+          const cur = byDriver.get(r.driver_id) || { count: 0, firstId: r.id, name: r.driver_name }
+          cur.count += 1
+          byDriver.set(r.driver_id, cur)
+        }
+        for (const v of byDriver.values()) {
+          v.href = v.count === 1
+            ? `/financial-controls/driver-purchases/${v.firstId}`
+            : `/financial-controls/driver-purchases?q=${encodeURIComponent(v.name || '')}`
+        }
+        setPurchaseByDriver(byDriver)
       })
 
     // Load signed URLs for drivers with photos (batch)
@@ -315,6 +336,16 @@ export default function DriversList() {
                         </Link>
                         {r.full_name && <CopyButton value={r.full_name} label="Copy name" />}
                         {teamByDriver.has(r.id) && <TeamBadge team={teamByDriver.get(r.id)} />}
+                        {purchaseByDriver.has(r.id) && (
+                          <Link
+                            to={purchaseByDriver.get(r.id).href}
+                            onClick={e => e.stopPropagation()}
+                            title="Has a driver-purchase contract"
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/20 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 transition-colors whitespace-nowrap"
+                          >
+                            Lease to purchase
+                          </Link>
+                        )}
                       </span>
                     </span>
                   </td>
