@@ -485,18 +485,27 @@ export default function RecordPaymentModal({
     // Audit event. Distinct event_type for edits so the activity feed
     // and audit query can tell record-from-scratch from edit-after-the-fact.
     if (isEdit) {
+      // Describe the actual diff so the activity feed says what changed
+      // (e.g. "added note") instead of a vague "Edited payment".
+      const methodLabel = (v) => PAYMENT_METHODS.find(m => m.v === v)?.l || v || '—'
+      const changes = []
       const prevAmt = Number(previousState?.actual_amount || 0)
       const newAmt = Number(signedAmount)
-      const fields = []
-      if (prevAmt !== newAmt) fields.push(`actual ${fmtMoney(prevAmt)} → ${fmtMoney(newAmt)}`)
-      if ((previousState?.payment_method || '') !== (paymentMethod || '')) {
-        fields.push(`method ${previousState?.payment_method || '—'} → ${paymentMethod || '—'}`)
-      }
-      if (!!previousState?.reconciled !== true) fields.push('reconciled true')
+      if (prevAmt !== newAmt) changes.push(`amount ${fmtMoney(prevAmt)} → ${fmtMoney(newAmt)}`)
+      if ((previousState?.payment_method || '') !== (paymentMethod || '')) changes.push(`method → ${methodLabel(paymentMethod)}`)
+      const prevRef = (previousState?.reference_number || '').trim()
+      const newRef = referenceNumber.trim()
+      if (prevRef !== newRef) changes.push(newRef ? `reference set to ${newRef}` : 'reference cleared')
+      const prevReason = (previousState?.reason || '').trim()
+      const newReason = reason.trim()
+      if (prevReason !== newReason) changes.push(!prevReason ? 'added note' : newReason ? 'updated note' : 'removed note')
+      if (!!previousState?.reconciled !== !!reconciledOnSave) changes.push(reconciledOnSave ? 'marked reconciled' : 'marked unreconciled')
+      if (existingPayment.skipped) changes.push('unmarked skipped') // payload always un-skips on a recorded edit
+      if (prevAmt >= 0 && isReversal) changes.push('marked as reversal')
       await logEvent(
         purchase.id,
         'payment_edited',
-        `Edited payment for ${fmtDate(periodStart)} – ${fmtDate(periodEnd)}${fields.length ? ': ' + fields.join(', ') : ''}`,
+        `Edited payment for ${fmtDate(periodStart)} – ${fmtDate(periodEnd)}${changes.length ? ': ' + changes.join(', ') : ''}`,
         { payment_id: row?.id, before: previousState, after: payload },
         user?.id,
       )

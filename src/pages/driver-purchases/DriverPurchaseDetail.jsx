@@ -367,7 +367,7 @@ export default function DriverPurchaseDetail() {
           </div>
 
           {/* Drivers on this contract — purchaser + assigned + manual */}
-          <ContractDriversCard purchaseId={id} canEdit={canEdit} />
+          <ContractDriversCard purchaseId={id} canEdit={canEdit} purchaseDate={summary.purchase_date} />
 
           {/* Contract terms */}
           <div className={`${S.card} p-5 space-y-4`}>
