@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react'
+import { Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider } from './contexts/AuthContext'
 import { ThemeProvider } from './contexts/ThemeContext'
@@ -6,6 +6,8 @@ import { ToastProvider } from './contexts/ToastContext'
 import ProtectedRoute from './components/ProtectedRoute'
 import RequirePageAccess from './components/RequirePageAccess'
 import ErrorBoundary from './components/ErrorBoundary'
+import UpdateBanner from './components/UpdateBanner'
+import { lazyWithReload } from './lib/chunkReload'
 import Layout from './components/Layout'
 import Login from './pages/Login'
 import NoAccess from './pages/NoAccess'
@@ -50,41 +52,41 @@ import SmartLanding from './pages/SmartLanding'
 
 // Lazy — the lane map carries its own geo data (US outline + city
 // coordinates), so it loads as a separate chunk only when visited.
-const LaneFlowMap = lazy(() => import('./pages/fleet/loads/lanes/LaneFlowMap'))
+const LaneFlowMap = lazyWithReload(() => import('./pages/fleet/loads/lanes/LaneFlowMap'))
 // Lazy — the Boardroom pulls several rollups plus the lane and contribution
 // data layers at once; keep it out of the main bundle.
-const Boardroom = lazy(() => import('./pages/fleet/loads/boardroom/Boardroom'))
+const Boardroom = lazyWithReload(() => import('./pages/fleet/loads/boardroom/Boardroom'))
 // Lazy — Idle Review is a destination review screen, not a daily-driver list;
 // split it into its own chunk off the main bundle.
-const IdleReview = lazy(() => import('./pages/fleet/loads/idle/IdleReview'))
+const IdleReview = lazyWithReload(() => import('./pages/fleet/loads/idle/IdleReview'))
 // Lazy — heavy report route (recharts + xlsx/jspdf on export).
-const MilesPerformance = lazy(() => import('./pages/fleet/loads/miles/MilesPerformance'))
+const MilesPerformance = lazyWithReload(() => import('./pages/fleet/loads/miles/MilesPerformance'))
 // Lazy — Dedicated Lanes shares the lane map's geo frame (US topojson), so its
 // map render stays out of the main bundle in its own chunk.
-const DedicatedLanes = lazy(() => import('./pages/fleet/loads/dedicated/DedicatedLanes'))
+const DedicatedLanes = lazyWithReload(() => import('./pages/fleet/loads/dedicated/DedicatedLanes'))
 // Lazy — the Settings hub consolidates 9 reference-data screens; keep it
 // out of the main bundle as a navigation hub.
-const CombinedLoads = lazy(() => import('./pages/fleet/combined-loads/CombinedLoads'))
-const SettingsHub = lazy(() => import('./pages/settings/SettingsHub'))
+const CombinedLoads = lazyWithReload(() => import('./pages/fleet/combined-loads/CombinedLoads'))
+const SettingsHub = lazyWithReload(() => import('./pages/settings/SettingsHub'))
 // Lazy — Lifeline is a destination screen (chart engine + animations), not a
 // daily-driver list; keep the main bundle lean.
-const Lifeline = lazy(() => import('./pages/cash-flow/lifeline/Lifeline'))
+const Lifeline = lazyWithReload(() => import('./pages/cash-flow/lifeline/Lifeline'))
 // Lazy — Debt Schedule pulls SheetJS on export (dynamic import) and is its own
 // destination; split it into its own chunk off the main bundle.
-const DebtSchedule = lazy(() => import('./pages/financial-controls/DebtSchedule'))
+const DebtSchedule = lazyWithReload(() => import('./pages/financial-controls/DebtSchedule'))
 // Lazy — the Loads importer statically pulls SheetJS (xlsx) to parse workbooks;
 // splitting it keeps that heavy lib out of the main bundle.
-const LoadsImport = lazy(() => import('./pages/fleet/loads/LoadsImport'))
+const LoadsImport = lazyWithReload(() => import('./pages/fleet/loads/LoadsImport'))
 // Lazy — Drivers list (its Upload modal statically pulls SheetJS) ships as its
 // own chunk.
-const DriversList = lazy(() => import('./pages/fleet/DriversList'))
+const DriversList = lazyWithReload(() => import('./pages/fleet/DriversList'))
 // Lazy — Teams is a fleet data-entry surface; its own chunk off the main bundle.
-const Teams = lazy(() => import('./pages/fleet/teams/Teams'))
+const Teams = lazyWithReload(() => import('./pages/fleet/teams/Teams'))
 // Lazy — Command Center is a standalone daily surface; its own chunk.
-const CommandCenter = lazy(() => import('./pages/command-center/CommandCenter'))
+const CommandCenter = lazyWithReload(() => import('./pages/command-center/CommandCenter'))
 // Lazy — The Rig carries the whole three.js stack; it must never weigh on
 // any other route. Standalone preview, direct URL only (no nav entry yet).
-const RigPage = lazy(() => import('./pages/rig/RigPage'))
+const RigPage = lazyWithReload(() => import('./pages/rig/RigPage'))
 
 export default function App() {
   return (
@@ -92,6 +94,7 @@ export default function App() {
       <ThemeProvider>
         <AuthProvider>
           <ToastProvider>
+          <ErrorBoundary label="the app">
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/auth/set-password" element={<SetPassword />} />
@@ -269,6 +272,8 @@ export default function App() {
             </Route>
             <Route path="*" element={<Navigate to="/fleet/profitability/lanes" replace />} />
           </Routes>
+          </ErrorBoundary>
+          <UpdateBanner />
           </ToastProvider>
         </AuthProvider>
       </ThemeProvider>
