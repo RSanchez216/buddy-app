@@ -46,6 +46,7 @@ export async function exportPurchasesXlsx(rows = []) {
     'Current balance':    num(r.current_balance),
     'Periods behind':     num(r.periods_behind) ?? 0,
     'Amount behind':      num(r.amount_behind) ?? 0,
+    'Owner idle (days)':  r.owner_running ? 0 : num(r.owner_days_idle),
     'Last charged':       fmtDateCell(r.last_charged_date),
     'Last update':        fmtDateCell(r.last_update_at),
     'Last update by':     r.last_update_by || '',

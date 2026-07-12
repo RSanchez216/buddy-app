@@ -52,6 +52,37 @@ function behindToneClass(periods) {
   return 'text-gray-400 dark:text-slate-600'
 }
 
+// Owner-idle emphasis: a few days reads neutral/amber, long idle (≥14d) goes
+// red so a behind + long-idle owner jumps out.
+function ownerIdleToneClass(days) {
+  const d = Number(days)
+  if (!Number.isFinite(d) || d <= 0) return 'text-gray-500 dark:text-slate-400'
+  if (d >= 14) return 'text-red-600 dark:text-red-400 font-semibold'
+  if (d >= 7) return 'text-amber-700 dark:text-amber-400 font-medium'
+  return 'text-amber-600 dark:text-amber-400'
+}
+
+// Owner (purchaser) work status — running = the good state ("On road"); else
+// days since last delivery with escalating emphasis; null = no completed loads.
+function OwnerIdleCell({ running, daysIdle }) {
+  if (running) {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400" title="Owner currently has a load in transit">
+        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> On road
+      </span>
+    )
+  }
+  if (daysIdle == null) {
+    return <span className="text-xs text-gray-400 dark:text-slate-600" title="Owner has no completed loads">—</span>
+  }
+  const d = Number(daysIdle)
+  return (
+    <span className={`text-xs ${ownerIdleToneClass(d)}`} title="Days since the owner's last delivery">
+      {d} {d === 1 ? 'day' : 'days'}
+    </span>
+  )
+}
+
 // Passive overdue signal — amber when slightly past the expected cadence,
 // red when clearly past. Thresholds picked to give one cadence cycle of
 // grace before going red (per the spec).
@@ -138,6 +169,7 @@ export default function PurchasesTable({
               <SortableTh label="Payment"        columnKey="payment_amount"     sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
               <SortableTh label="Balance"        columnKey="current_balance"    sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
               <SortableTh label="Behind"         columnKey="periods_behind"     sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+              <SortableTh label="Owner idle"     columnKey="owner_days_idle"    sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
               <th className={S.th} aria-label="Quick action" />
               <SortableTh label="Last charged"   columnKey="last_charged_date"  sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
               <SortableTh label="Last update"    columnKey="last_update_at"     sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
@@ -146,7 +178,7 @@ export default function PurchasesTable({
           </thead>
           <tbody>
             <tr>
-              <td colSpan={9} className="px-4 py-12 text-center text-sm text-gray-400 dark:text-slate-600">
+              <td colSpan={10} className="px-4 py-12 text-center text-sm text-gray-400 dark:text-slate-600">
                 No driver purchases yet. Phase 2 will import historical records from ClickUp.
               </td>
             </tr>
@@ -166,6 +198,7 @@ export default function PurchasesTable({
             <SortableTh label="Payment"        columnKey="payment_amount"     sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
             <SortableTh label="Balance"        columnKey="current_balance"    sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
             <SortableTh label="Behind"         columnKey="periods_behind"     sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+            <SortableTh label="Owner idle"     columnKey="owner_days_idle"    sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
             <th className={S.th} aria-label="Quick action" />
             <SortableTh label="Last charged"   columnKey="last_charged_date"  sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
             <SortableTh label="Last update"    columnKey="last_update_at"     sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
@@ -245,6 +278,9 @@ export default function PurchasesTable({
                     </div>
                   )
                 })()}
+              </td>
+              <td className={`${S.td} whitespace-nowrap`}>
+                <OwnerIdleCell running={r.owner_running} daysIdle={r.owner_days_idle} />
               </td>
               <td className={S.td} onClick={e => e.stopPropagation()}>
                 <QuickActionCell

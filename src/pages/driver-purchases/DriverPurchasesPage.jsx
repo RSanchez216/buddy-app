@@ -21,6 +21,7 @@ const SORT_DEFAULT_DIR = {
   payment_amount:    'asc',
   current_balance:   'desc',
   periods_behind:    'desc',
+  owner_days_idle:   'desc',
   last_charged_date: 'desc',
   last_update_at:    'desc',
   linked:            'desc',
@@ -52,6 +53,16 @@ function compareByKey(a, b, key, dir) {
   }
   if (key === 'payment_amount' || key === 'current_balance' || key === 'periods_behind') {
     return (Number(a[key] || 0) - Number(b[key] || 0)) * flip
+  }
+  if (key === 'owner_days_idle') {
+    // Running/active owners count as 0 (least idle); no-completed-loads (null)
+    // sort last regardless of direction. Descending surfaces the most-idle.
+    const av = a.owner_running ? 0 : (a.owner_days_idle == null ? null : Number(a.owner_days_idle))
+    const bv = b.owner_running ? 0 : (b.owner_days_idle == null ? null : Number(b.owner_days_idle))
+    if (av == null && bv == null) return 0
+    if (av == null) return 1   // NULLS LAST
+    if (bv == null) return -1
+    return (av - bv) * flip
   }
   if (key === 'last_charged_date' || key === 'last_update_at') {
     const av = a[key]
