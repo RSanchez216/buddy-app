@@ -8,11 +8,6 @@ import { formatEventType } from '../utils/events'
 import { fmtDateTime, fmtRelative } from '../utils/format'
 import { useToast } from '../../../contexts/ToastContext'
 
-// How many activity items to show before the "Show all" toggle. The feed can
-// grow without bound, so the collapsed default keeps the right column from
-// stretching past the left. Single constant — trivial to retune.
-const COLLAPSED_COUNT = 5
-
 const EVENT_DOT = {
   created:           'bg-emerald-500',
   updated:           'bg-blue-500',
@@ -35,8 +30,9 @@ const EVENT_DOT = {
 }
 
 // Combined activity feed: rich-text comments + system events, queried
-// from v_driver_purchase_activity. Composer pinned at the top, list
-// scrolls inside the parent's sticky viewport.
+// from v_driver_purchase_activity. The panel fills the right column's height
+// (matched to the left column via the parent grid); the composer is pinned at
+// the top and the full feed scrolls internally.
 export default function ActivityFeed({ purchaseId, focusCommentId }) {
   const { profile, user } = useAuth()
   const isAdmin = profile?.role === 'admin'
@@ -44,9 +40,6 @@ export default function ActivityFeed({ purchaseId, focusCommentId }) {
 
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
-  // Display-only collapse — the feed still fetches every item; we just render
-  // the latest COLLAPSED_COUNT until the user expands.
-  const [expanded, setExpanded] = useState(false)
   // Bridge for child CommentItem's onToast({ kind, text }) callback —
   // forwards into the global toast system.
   function emitToast(t) {
@@ -93,33 +86,25 @@ export default function ActivityFeed({ purchaseId, focusCommentId }) {
     return () => { supabase.removeChannel(ch) }
   }, [purchaseId, load])
 
-  // A deep-linked comment below the collapsed cut-off must still render so it
-  // can be scrolled to — force the list open in that case (derived, so no
-  // set-state-in-effect). The user's toggle otherwise controls expansion.
-  const focusBeyondCutoff = !!focusCommentId &&
-    items.findIndex(it => it.activity_type === 'comment' && it.id === focusCommentId) >= COLLAPSED_COUNT
-  const showAll = expanded || focusBeyondCutoff
-
-  // After load, scroll to the focused comment. Depends on showAll so it re-runs
-  // once the forced-open list has rendered the target.
+  // After load, if a focusCommentId is in the URL, scroll to it. The full feed
+  // is always rendered (in the internal scroll area), so the target is present.
   useEffect(() => {
     if (!focusCommentId || loading) return
     const el = document.querySelector(`[data-comment-id="${focusCommentId}"]`)
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }
-  }, [focusCommentId, loading, items, showAll])
+  }, [focusCommentId, loading, items])
 
   return (
-    <div className="flex flex-col gap-3 min-w-0">
-      {/* Composer is its own card and stays sticky at the top of the
-          activity column as the page scrolls. The feed below is just a
-          list of items — no enclosing card — so the column visually
-          ends at the last item instead of stretching as one tall box.
-          The sticky scroll context is <main> (which has overflow-auto);
-          the global header sits outside main and doesn't overlap, so
-          top-2 just adds a small breathing room. */}
-      <div className="sticky top-2 z-10">
+    // At lg+ the parent <aside> is a stretched grid cell; this panel fills it
+    // absolutely (lg:absolute lg:inset-0) so its own — potentially very long —
+    // content doesn't grow the grid row past the left column. The composer is
+    // pinned at the top; the events list is the only part that scrolls. Below
+    // lg the panel flows normally (single column, page scroll).
+    <div className="flex flex-col gap-3 min-w-0 lg:absolute lg:inset-0">
+      {/* Header + composer — pinned at the top of the panel. */}
+      <div className="shrink-0">
         <div className={`${S.card} p-3 space-y-2`}>
           <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500">Activity</p>
           <CommentComposer purchaseId={purchaseId} onSubmitted={load} />
@@ -131,38 +116,28 @@ export default function ActivityFeed({ purchaseId, focusCommentId }) {
       ) : items.length === 0 ? (
         <p className="text-xs text-gray-400 dark:text-slate-600 italic py-2 px-2">No activity yet</p>
       ) : (
-        <>
-          {/* Bounded scroll only when expanded — the collapsed 5-item state
-              needs no scroll and keeps the column balanced with the left. */}
-          <div className={showAll ? 'max-h-[480px] overflow-y-auto pr-1' : ''}>
-            <ul className="space-y-2">
-              {(showAll ? items : items.slice(0, COLLAPSED_COUNT)).map(it =>
-                it.activity_type === 'comment' ? (
-                  <li key={`c-${it.id}`} className={`${S.card} p-3`}>
-                    <CommentItem
-                      row={it}
-                      currentUserId={user?.id}
-                      isAdmin={isAdmin}
-                      highlight={focusCommentId === it.id}
-                      onToast={emitToast}
-                    />
-                  </li>
-                ) : (
-                  <EventRow key={`e-${it.id}`} row={it} />
-                ),
-              )}
-            </ul>
-          </div>
-
-          {items.length > COLLAPSED_COUNT && (
-            <button
-              onClick={() => setExpanded(v => !v)}
-              className="self-start text-xs font-semibold text-orange-600 dark:text-orange-400 hover:underline px-2 py-1"
-            >
-              {showAll ? 'Show less' : `Show all (${items.length})`}
-            </button>
-          )}
-        </>
+        // Fills the remaining height and scrolls internally when the feed is
+        // longer than the column; shows everything (with bottom space) when
+        // it's shorter. min-h-0 lets the flex child actually shrink to scroll.
+        <div className="flex-1 min-h-0 overflow-y-auto pr-1">
+          <ul className="space-y-2">
+            {items.map(it =>
+              it.activity_type === 'comment' ? (
+                <li key={`c-${it.id}`} className={`${S.card} p-3`}>
+                  <CommentItem
+                    row={it}
+                    currentUserId={user?.id}
+                    isAdmin={isAdmin}
+                    highlight={focusCommentId === it.id}
+                    onToast={emitToast}
+                  />
+                </li>
+              ) : (
+                <EventRow key={`e-${it.id}`} row={it} />
+              ),
+            )}
+          </ul>
+        </div>
       )}
 
     </div>

@@ -320,13 +320,13 @@ export default function DriverPurchaseDetail() {
         )}
       </div>
 
-      {/* Two-column body: main content (left) + sticky activity feed (right).
+      {/* Two-column body: main content (left) + activity feed (right).
           Collapses to single column below lg (1024px). */}
-      {/* Bumped right column min to 320px (per spec) and align-items: start
-          so the right column ends at its content. Otherwise CSS Grid's
-          default `stretch` alignment makes the activity column match the
-          left column's height — that's the empty-white-box problem. */}
-      <div className="grid gap-6 items-start lg:grid-cols-[minmax(0,1.6fr)_minmax(320px,1fr)]">
+      {/* items-stretch (grid default) makes the right column match the left
+          column's height; the ActivityFeed fills that height and scrolls its
+          feed internally, so the panel ends where the left column does instead
+          of leaving a big empty gap. */}
+      <div className="grid gap-6 items-stretch lg:grid-cols-[minmax(0,1.6fr)_minmax(320px,1fr)]">
         {/* ── Left column ─────────────────────────────────────────────── */}
         <div className="space-y-5 min-w-0">
           {/* Cross-reference card (conditional) */}
@@ -446,13 +446,11 @@ export default function DriverPurchaseDetail() {
           />
         </div>
 
-        {/* ── Right column: activity feed.
-            Column itself flows with page height — only the composer
-            inside the feed is sticky (top:3.5rem, just below the
-            12-tall global header). Lets the right column visually
-            match the left column's height instead of stretching as
-            one tall empty box. */}
-        <aside className="min-w-0">
+        {/* ── Right column: activity feed. At lg+ this cell is stretched to
+            the left column's height (grid items-stretch); lg:relative anchors
+            the ActivityFeed, which fills it absolutely and scrolls its own
+            feed — so a long history fills the column without ballooning it. */}
+        <aside className="min-w-0 lg:relative">
           <ActivityFeed purchaseId={id} focusCommentId={focusCommentId} />
         </aside>
       </div>
