@@ -567,6 +567,13 @@ function IdleSection({ title, kind, rows, reasons, resolvedView, reviewFilter, f
 
   const visible = expanded ? sorted : sorted.slice(0, CAP)
 
+  // Section totals — summed over the WHOLE filtered set (respects the tab /
+  // financing / reason filters), not just the collapsed-visible rows.
+  const totals = useMemo(() => ({
+    loss: filtered.reduce((s, r) => s + (Number(r.holding_prorated) || 0), 0),
+    monthly: filtered.reduce((s, r) => s + (Number(r.monthly_cost) || 0), 0),
+  }), [filtered])
+
   // Under an active Financing filter, a section with no matching rows collapses
   // entirely (header included) — e.g. Drivers under "Vendor lease". The default
   // "None idle" placeholder stays for the unfiltered/review-filtered views.
@@ -631,6 +638,23 @@ function IdleSection({ title, kind, rows, reasons, resolvedView, reviewFilter, f
                   <IdleRow key={`${r.subject_type}:${r.subject_id}`} row={r} kind={kind} reasons={reasons} resolvedView={resolvedView} onSetReason={onSetReason} onResolve={onResolve} onReopen={onReopen} homeInfo={homeBySubject[`${r.subject_type}:${r.subject_id}`]} behindInfo={behindBySubject[`${r.subject_type}:${r.subject_id}`]} />
                 ))}
               </tbody>
+              <tfoot>
+                <tr className="border-t-2 border-gray-200 dark:border-white/10 bg-gray-50/70 dark:bg-white/[0.02]">
+                  <td colSpan={columns.length + 1} className="px-4 py-2.5">
+                    <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400">Total loss</span>
+                      <span className="text-gray-300 dark:text-slate-600">·</span>
+                      <span className="font-mono text-sm font-bold text-red-600 dark:text-red-400" title="Cost of sitting so far across the filtered rows in this section">{money0(totals.loss)}</span>
+                      {totals.monthly > 0 && (
+                        <>
+                          <span className="text-gray-300 dark:text-slate-600">·</span>
+                          <span className="font-mono text-[11px] text-gray-500 dark:text-slate-400" title="Ongoing monthly carrying run-rate">{money0(totals.monthly)}/mo carrying</span>
+                        </>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              </tfoot>
             </table>
           </div>
           {sorted.length > CAP && (
