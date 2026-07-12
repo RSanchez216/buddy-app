@@ -8,6 +8,11 @@ import { formatEventType } from '../utils/events'
 import { fmtDateTime, fmtRelative } from '../utils/format'
 import { useToast } from '../../../contexts/ToastContext'
 
+// How many activity items to show before the "Show all" toggle. The feed can
+// grow without bound, so the collapsed default keeps the right column from
+// stretching past the left. Single constant — trivial to retune.
+const COLLAPSED_COUNT = 5
+
 const EVENT_DOT = {
   created:           'bg-emerald-500',
   updated:           'bg-blue-500',
@@ -39,6 +44,9 @@ export default function ActivityFeed({ purchaseId, focusCommentId }) {
 
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
+  // Display-only collapse — the feed still fetches every item; we just render
+  // the latest COLLAPSED_COUNT until the user expands.
+  const [expanded, setExpanded] = useState(false)
   // Bridge for child CommentItem's onToast({ kind, text }) callback —
   // forwards into the global toast system.
   function emitToast(t) {
@@ -85,14 +93,22 @@ export default function ActivityFeed({ purchaseId, focusCommentId }) {
     return () => { supabase.removeChannel(ch) }
   }, [purchaseId, load])
 
-  // After load, if a focusCommentId is in the URL, scroll to it.
+  // A deep-linked comment below the collapsed cut-off must still render so it
+  // can be scrolled to — force the list open in that case (derived, so no
+  // set-state-in-effect). The user's toggle otherwise controls expansion.
+  const focusBeyondCutoff = !!focusCommentId &&
+    items.findIndex(it => it.activity_type === 'comment' && it.id === focusCommentId) >= COLLAPSED_COUNT
+  const showAll = expanded || focusBeyondCutoff
+
+  // After load, scroll to the focused comment. Depends on showAll so it re-runs
+  // once the forced-open list has rendered the target.
   useEffect(() => {
     if (!focusCommentId || loading) return
     const el = document.querySelector(`[data-comment-id="${focusCommentId}"]`)
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }
-  }, [focusCommentId, loading, items.length])
+  }, [focusCommentId, loading, items, showAll])
 
   return (
     <div className="flex flex-col gap-3 min-w-0">
@@ -115,23 +131,38 @@ export default function ActivityFeed({ purchaseId, focusCommentId }) {
       ) : items.length === 0 ? (
         <p className="text-xs text-gray-400 dark:text-slate-600 italic py-2 px-2">No activity yet</p>
       ) : (
-        <ul className="space-y-2">
-          {items.map(it =>
-            it.activity_type === 'comment' ? (
-              <li key={`c-${it.id}`} className={`${S.card} p-3`}>
-                <CommentItem
-                  row={it}
-                  currentUserId={user?.id}
-                  isAdmin={isAdmin}
-                  highlight={focusCommentId === it.id}
-                  onToast={emitToast}
-                />
-              </li>
-            ) : (
-              <EventRow key={`e-${it.id}`} row={it} />
-            ),
+        <>
+          {/* Bounded scroll only when expanded — the collapsed 5-item state
+              needs no scroll and keeps the column balanced with the left. */}
+          <div className={showAll ? 'max-h-[480px] overflow-y-auto pr-1' : ''}>
+            <ul className="space-y-2">
+              {(showAll ? items : items.slice(0, COLLAPSED_COUNT)).map(it =>
+                it.activity_type === 'comment' ? (
+                  <li key={`c-${it.id}`} className={`${S.card} p-3`}>
+                    <CommentItem
+                      row={it}
+                      currentUserId={user?.id}
+                      isAdmin={isAdmin}
+                      highlight={focusCommentId === it.id}
+                      onToast={emitToast}
+                    />
+                  </li>
+                ) : (
+                  <EventRow key={`e-${it.id}`} row={it} />
+                ),
+              )}
+            </ul>
+          </div>
+
+          {items.length > COLLAPSED_COUNT && (
+            <button
+              onClick={() => setExpanded(v => !v)}
+              className="self-start text-xs font-semibold text-orange-600 dark:text-orange-400 hover:underline px-2 py-1"
+            >
+              {showAll ? 'Show less' : `Show all (${items.length})`}
+            </button>
           )}
-        </ul>
+        </>
       )}
 
     </div>
