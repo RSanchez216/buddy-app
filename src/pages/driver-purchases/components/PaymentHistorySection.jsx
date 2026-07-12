@@ -7,30 +7,20 @@ import RecordPaymentModal from './RecordPaymentModal'
 import DriverPicker from './DriverPicker'
 import { logEvent } from '../utils/events'
 import { fmtMoney, fmtDate } from '../utils/format'
+import { deriveAssignedDriver, driverInitials } from '../utils/collectedFrom'
 import { useToast } from '../../../contexts/ToastContext'
-
-function driverInitials(name) {
-  const parts = String(name || '').trim().split(/\s+/)
-  return (((parts[0] || '')[0] || '') + ((parts[1] || '')[0] || '')).toUpperCase() || '?'
-}
 
 // Resolve who a week's deduction was collected from:
 //   1. collected_from_driver_id override wins.
-//   2. else the assigned driver whose drove-window overlaps the period —
-//      preferring one whose window covers period_start.
+//   2. else the assigned driver whose drove-window overlaps the period.
 //   3. else null (unassigned).
 // Skipped rows are handled by the caller (rendered as '—').
 function resolveCollectedFrom(p, contractDrivers, nameById) {
   if (p.collected_from_driver_id) {
     return { driverId: p.collected_from_driver_id, name: nameById[p.collected_from_driver_id] || 'Driver', override: true }
   }
-  const assigned = contractDrivers.filter(d => d.is_assigned && d.drove_start)
-  const overlaps = assigned.filter(d =>
-    d.drove_start <= p.period_end && (d.drove_end == null || d.drove_end >= p.period_start))
-  if (overlaps.length === 0) return null
-  const covering = overlaps.find(d =>
-    d.drove_start <= p.period_start && (d.drove_end == null || d.drove_end >= p.period_start))
-  const chosen = covering || overlaps[0]
+  const chosen = deriveAssignedDriver(contractDrivers, p.period_start, p.period_end)
+  if (!chosen) return null
   return { driverId: chosen.driver_id, name: chosen.full_name, override: false }
 }
 
@@ -742,7 +732,9 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
 
   const trackingDateLabel = useMemo(() => trackingStart ? fmtDate(trackingStart) : '—', [trackingStart])
 
-  // Write a manual collected-from override on the target payment row.
+  // Write a manual collected-from override on the target payment row, then
+  // update local state optimistically so the cell reflects it immediately —
+  // no full reload (the previous load() left the cell stale until refresh).
   async function saveCollectedFrom(driverId, driverRow) {
     if (!setDriverTarget || !driverId) return
     setSavingCollectedFrom(true)
@@ -753,8 +745,9 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
       .eq('id', p.id)
     setSavingCollectedFrom(false)
     if (error) { toast.error("Couldn't set driver", error); return }
-    // Keep the picked driver's name available for immediate render.
+    // Keep the picked driver's name available, then patch the row in place.
     if (driverRow?.full_name) setDriverNameById(m => ({ ...m, [driverId]: driverRow.full_name }))
+    setRows(rs => rs.map(r => r.id === p.id ? { ...r, collected_from_driver_id: driverId } : r))
     toast.success('Collected-from driver set')
     await logEvent(
       purchase.id,
@@ -764,7 +757,7 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
       user?.id,
     )
     setSetDriverTarget(null)
-    load(); onChange?.()
+    onChange?.()
   }
 
   return (
@@ -1007,6 +1000,8 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
         preselectPeriodId={preselectPeriodId}
         onRecorded={onRecorded}
         reconcilerMap={reconcilerMap}
+        contractDrivers={contractDrivers}
+        driverNameById={driverNameById}
       />
 
       {/* Collected-from driver picker — manual override for one week's row. */}

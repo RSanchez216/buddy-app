@@ -7,7 +7,7 @@ import NewDriverModal from './NewDriverModal'
 // Controlled — parent stores driver_id and the resolved driver row.
 export default function DriverPicker({ value, driver, onChange, placeholder = 'Search driver…', excludeIds = [] }) {
   const [query, setQuery] = useState('')
-  const [results, setResults] = useState([])
+  const [rawResults, setRawResults] = useState([])
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [showCreate, setShowCreate] = useState(false)
@@ -22,24 +22,31 @@ export default function DriverPicker({ value, driver, onChange, placeholder = 'S
     return () => document.removeEventListener('mousedown', onClick)
   }, [])
 
-  // Debounced search
+  // Debounced search — depends ONLY on query + open (both stable). excludeIds
+  // is intentionally NOT a dependency: it's a caller-supplied array whose
+  // identity changes every render, which previously re-fired this effect (and
+  // its setState) on every render → the continuous flicker. Filtering happens
+  // below in render instead.
   useEffect(() => {
     if (!open) return
     const handle = setTimeout(async () => {
       setLoading(true)
       const q = query.trim()
-      let req = supabase.from('drivers').select('id, full_name, internal_id, phone').limit(10)
+      let req = supabase.from('drivers').select('id, full_name, internal_id, phone').limit(20)
       if (q) {
         req = req.or(`full_name.ilike.%${q}%,internal_id.eq.${q}`)
       }
       req = req.order('full_name')
       const { data } = await req
-      // Drop drivers already listed on the contract — you can't add a dup.
-      setResults((data || []).filter(d => !excludeIds.includes(d.id)))
+      setRawResults(data || [])
       setLoading(false)
     }, 250)
     return () => clearTimeout(handle)
-  }, [query, open, excludeIds])
+  }, [query, open])
+
+  // Drop already-listed drivers — a plain derived filter (no state, no effect),
+  // so it can't loop. Cheap for a ≤20-row list.
+  const results = rawResults.filter(d => !excludeIds.includes(d.id))
 
   function pick(d) {
     onChange?.(d.id, d)
@@ -78,26 +85,31 @@ export default function DriverPicker({ value, driver, onChange, placeholder = 'S
         />
       )}
 
+      {/* In-flow (not absolute) so an enclosing modal's overflow can't clip it.
+          Results scroll in their own tall area; "+ Create new driver" is pinned
+          below it and always visible without scrolling the popup. */}
       {open && !value && (
-        <div className="absolute z-30 left-0 right-0 mt-1 rounded-xl bg-white dark:bg-[#0d0d1f] border border-gray-200 dark:border-white/10 shadow-xl max-h-72 overflow-y-auto">
-          {loading ? (
-            <div className="px-3 py-3 text-xs text-gray-400 dark:text-slate-500">Searching…</div>
-          ) : results.length === 0 ? (
-            <div className="px-3 py-3 text-xs text-gray-400 dark:text-slate-500">
-              {query ? 'No drivers match' : 'Type to search'}
-            </div>
-          ) : results.map(r => (
-            <button
-              key={r.id}
-              onClick={() => pick(r)}
-              className="w-full text-left px-3 py-2 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors"
-            >
-              <div className="text-sm font-medium text-gray-900 dark:text-slate-200 truncate">{r.full_name}</div>
-              <div className="text-xs text-gray-500 dark:text-slate-400 font-mono">
-                {r.internal_id ? `#${r.internal_id}` : ''}{r.internal_id && r.phone ? ' · ' : ''}{r.phone || ''}
+        <div className="mt-1 rounded-xl bg-white dark:bg-[#0d0d1f] border border-gray-200 dark:border-white/10 shadow-xl overflow-hidden">
+          <div className="max-h-64 overflow-y-auto">
+            {loading ? (
+              <div className="px-3 py-3 text-xs text-gray-400 dark:text-slate-500">Searching…</div>
+            ) : results.length === 0 ? (
+              <div className="px-3 py-3 text-xs text-gray-400 dark:text-slate-500">
+                {query ? 'No drivers match' : 'Type to search'}
               </div>
-            </button>
-          ))}
+            ) : results.map(r => (
+              <button
+                key={r.id}
+                onClick={() => pick(r)}
+                className="w-full text-left px-3 py-2 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors"
+              >
+                <div className="text-sm font-medium text-gray-900 dark:text-slate-200 truncate">{r.full_name}</div>
+                <div className="text-xs text-gray-500 dark:text-slate-400 font-mono">
+                  {r.internal_id ? `#${r.internal_id}` : ''}{r.internal_id && r.phone ? ' · ' : ''}{r.phone || ''}
+                </div>
+              </button>
+            ))}
+          </div>
 
           <button
             onClick={() => { setOpen(false); setShowCreate(true) }}

@@ -4,8 +4,10 @@ import { useAuth } from '../../../contexts/AuthContext'
 import { S } from '../../../lib/styles'
 import Modal from '../../../components/Modal'
 import Select from '../../../components/Select'
+import DriverPicker from './DriverPicker'
 import { logEvent } from '../utils/events'
 import { fmtMoney, fmtDate } from '../utils/format'
+import { deriveAssignedDriver } from '../utils/collectedFrom'
 import { useToast } from '../../../contexts/ToastContext'
 
 const PAYMENT_METHODS = [
@@ -49,10 +51,21 @@ export default function RecordPaymentModal({
   preselectPeriodId = null,  // optional — new mode: preselect this period (from clicking an empty history row)
   onRecorded,                // (info) => void
   reconcilerMap = {},        // { user_id → display name } for audit display
+  contractDrivers = [],      // get_contract_drivers rows — for the Collected-from field
+  driverNameById = {},       // driver_id → name (covers override ids outside the contract set)
 }) {
   const toast = useToast()
   const { user } = useAuth()
   const isEdit = !!existingPayment
+
+  // Build the DriverPicker's display row for a driver id — prefers the
+  // contract-driver row (has internal_id), falls back to the name map.
+  function displayDriverObj(id) {
+    if (!id) return null
+    const cd = contractDrivers.find(d => d.driver_id === id)
+    if (cd) return { id, full_name: cd.full_name, internal_id: cd.internal_id }
+    return { id, full_name: driverNameById[id] || 'Driver' }
+  }
 
   const [periods, setPeriods] = useState([])      // unreconciled / open periods
   // 'existing' (apply to a generated period), 'custom' (insert a new
@@ -82,6 +95,12 @@ export default function RecordPaymentModal({
   // logic stops firing so we don't silently overwrite their override
   // when they tweak Amount Received or toggle the reversal flag.
   const [reconciledUserTouched, setReconciledUserTouched] = useState(false)
+  // Collected-from: the driver a week's deduction posts under. Pre-filled with
+  // the override (if any) else the assignment-derived driver; once the user
+  // picks/clears it manually (touched), it stops auto-tracking the period.
+  const [collectedFromId, setCollectedFromId] = useState(null)
+  const [collectedFromDriver, setCollectedFromDriver] = useState(null)
+  const [collectedFromTouched, setCollectedFromTouched] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
@@ -128,6 +147,17 @@ export default function RecordPaymentModal({
         id: p.id, period_start: p.period_start, period_end: p.period_end,
         expected_amount: p.expected_amount, actual_amount: p.actual_amount,
       }])
+      // Collected-from: existing override wins, else the derived driver.
+      {
+        const derived = deriveAssignedDriver(contractDrivers, p.period_start, p.period_end)
+        const id = p.collected_from_driver_id || derived?.driver_id || null
+        setCollectedFromId(id)
+        setCollectedFromDriver(
+          !id ? null
+          : p.collected_from_driver_id ? displayDriverObj(id)
+          : { id, full_name: derived.full_name, internal_id: derived.internal_id })
+        setCollectedFromTouched(false)
+      }
       return
     }
 
@@ -141,7 +171,7 @@ export default function RecordPaymentModal({
       // (~4 years of weekly periods) so long contracts don't get cut off.
       let q = supabase
         .from('driver_purchase_payments')
-        .select('id, period_start, period_end, expected_amount, actual_amount, payment_source, period_type')
+        .select('id, period_start, period_end, expected_amount, actual_amount, payment_source, period_type, collected_from_driver_id')
         .eq('driver_purchase_id', purchase.id)
       if (purchase.payment_tracking_start_date) {
         q = q.gte('period_end', purchase.payment_tracking_start_date)
@@ -191,6 +221,7 @@ export default function RecordPaymentModal({
       setReconciledUserTouched(false)
       setSkipped(false)
       setSkipReason('')
+      setCollectedFromTouched(false)
     })()
     return () => { cancelled = true }
   }, [open, purchase, isEdit, existingPayment, preselectPeriodId])
@@ -202,6 +233,27 @@ export default function RecordPaymentModal({
     const p = periods.find(x => x.id === pickedPeriodId)
     if (p) setAmount(String(p.expected_amount || ''))
   }, [pickedPeriodId, mode, periods, isEdit])
+
+  // New mode: keep the Collected-from pre-fill tracking the selected period
+  // (override on that period wins, else the derived driver) until the user
+  // picks/clears it manually.
+  useEffect(() => {
+    if (isEdit || !open || collectedFromTouched) return
+    let ps, pe, overrideId = null
+    if (mode === 'custom') { ps = customStart; pe = customEnd }
+    else {
+      const pk = periods.find(x => x.id === pickedPeriodId)
+      ps = pk?.period_start; pe = pk?.period_end; overrideId = pk?.collected_from_driver_id || null
+    }
+    const derived = deriveAssignedDriver(contractDrivers, ps, pe)
+    const id = overrideId || derived?.driver_id || null
+    setCollectedFromId(id)
+    setCollectedFromDriver(
+      !id ? null
+      : overrideId ? displayDriverObj(id)
+      : { id, full_name: derived.full_name, internal_id: derived.internal_id })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, mode, pickedPeriodId, customStart, customEnd, periods, isEdit, collectedFromTouched, contractDrivers])
 
   // Smart-default for "Mark as reconciled": keep the checkbox in sync
   // with the entered amount until the user takes manual control. Any
@@ -321,11 +373,24 @@ export default function RecordPaymentModal({
     const reconciledFields = reconciledOnSave
       ? { reconciled: true, reconciled_at: nowIso, reconciled_by: user?.id || null }
       : { reconciled: false, reconciled_at: null, reconciled_by: null }
+
+    // Collected-from override: persist only when the picked driver differs from
+    // the assignment-derived one — matching the derived driver (or clearing)
+    // stores null so the row keeps falling back to the assignment automatically.
+    const cfPeriod = isEdit
+      ? { s: existingPayment.period_start, e: existingPayment.period_end }
+      : mode === 'existing'
+        ? (() => { const pk = periods.find(x => x.id === pickedPeriodId); return { s: pk?.period_start, e: pk?.period_end } })()
+        : { s: customStart, e: customEnd }
+    const derivedCfId = deriveAssignedDriver(contractDrivers, cfPeriod.s, cfPeriod.e)?.driver_id || null
+    const collectedFromToSave = collectedFromId && collectedFromId !== derivedCfId ? collectedFromId : null
+
     const payload = {
       actual_amount: signedAmount,
       payment_method: paymentMethod || null,
       reference_number: referenceNumber.trim() || null,
       reason: reason.trim() || null,
+      collected_from_driver_id: collectedFromToSave,
       ...reconciledFields,
       // Recording a payment clears any prior skip state on the row.
       // skipped + actual_amount>0 is the forbidden combination; nuking
@@ -643,6 +708,19 @@ export default function RecordPaymentModal({
                 <label className={S.label}>Reference #</label>
                 <input className={S.input} value={referenceNumber} onChange={e => setReferenceNumber(e.target.value)} placeholder="optional" />
               </div>
+            </div>
+
+            <div>
+              <label className={S.label}>Collected from</label>
+              <DriverPicker
+                value={collectedFromId}
+                driver={collectedFromDriver}
+                onChange={(id, row) => { setCollectedFromId(id); setCollectedFromDriver(row); setCollectedFromTouched(true) }}
+                placeholder="Search driver…"
+              />
+              <p className="mt-1 text-[11px] text-gray-400 dark:text-slate-500">
+                Who the deduction posts under. Defaults to the assigned driver for this week; clear to fall back to it.
+              </p>
             </div>
 
             <div>
