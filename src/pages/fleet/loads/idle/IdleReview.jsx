@@ -4,7 +4,6 @@ import { Link } from 'react-router-dom'
 import { supabase } from '../../../../lib/supabase'
 import { S } from '../../../../lib/styles'
 import CopyButton from '../../../../components/CopyButton'
-import { fmtMoney } from '../spotlight/spotlightShared'
 import PossiblyHomeChip from '../../PossiblyHomeChip'
 import BehindOnPurchaseChip from '../../../driver-purchases/components/BehindChip'
 
@@ -269,6 +268,7 @@ function FinanceBadge({ row }) {
 export default function IdleReview() {
   const [rows, setRows] = useState(null)
   const [error, setError] = useState(null)
+  const [pageSummary, setPageSummary] = useState(null) // idle_page_summary — top cards
   const [view, setView] = useState('active') // 'active' | 'resolved'
   const [reviewFilter, setReviewFilter] = useState('all') // 'all' | 'reviewed' | 'needs' | 'pending' — separate axis
   const [financeFilter, setFinanceFilter] = useState('all') // 'all' | 'lease' | 'loan' | 'owned' — orthogonal axis (trucks/trailers)
@@ -284,6 +284,10 @@ export default function IdleReview() {
       setError(e.message || String(e))
       setRows([])
     }
+    // Top-card money summary (equipment carrying cost + driver revenue foregone).
+    supabase.rpc('idle_page_summary')
+      .then(({ data }) => { if (data) setPageSummary(data) })
+      .catch(() => {})
   }
 
   useEffect(() => { load() }, [])
@@ -365,9 +369,6 @@ export default function IdleReview() {
     }
     return g
   }
-  // Cards + bubble count ACTIVE only (unaffected by the review filter), so
-  // resolving a case lowers them.
-  const activeGroups = useMemo(() => groupOf(activeRows), [activeRows])
   // The tables honor the Reviewed/Needs-review filter on top of Active/Resolved.
   // "Reviewed" = has a last_reviewed_at. Client-side, instant, no refetch.
   const viewGroups = useMemo(() => {
@@ -401,7 +402,6 @@ export default function IdleReview() {
     }
   }, [view, activeRows, resolvedRows])
 
-  const sumCost = (list) => list.reduce((s, r) => s + (Number(r.monthly_cost) || 0), 0)
 
   // One call writes BOTH reason and note (the RPC overwrites both), so callers
   // pass the field they're editing plus the row's CURRENT value for the other.
@@ -455,17 +455,12 @@ export default function IdleReview() {
         </p>
       </div>
 
-      {/* Summary cards — active only */}
+      {/* Cost-of-idle summary cards — equipment carrying cost (cash spent) and
+          driver revenue foregone (opportunity) kept separate, never summed. */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <SummaryCard
-          label="Idle trucks"
-          count={activeGroups.truck.length}
-          sub={`${fmtMoney(sumCost(activeGroups.truck))}/mo carrying`}
-          loading={loading}
-          tip="A subject is idle when it's been 3+ days since its last load activity (latest pickup or delivery, booked loads included). The $/mo is the monthly carrying run-rate of currently-idle equipment — not accrued loss. Equipment idle is judged by its assigned driver's activity (truck-on-load data is incomplete), so routing through the driver is the reliable signal."
-        />
-        <SummaryCard label="Idle trailers" count={activeGroups.trailer.length} sub={`${fmtMoney(sumCost(activeGroups.trailer))}/mo carrying`} loading={loading} />
-        <SummaryCard label="Idle drivers" count={activeGroups.driver.length} sub="not moving freight" loading={loading} />
+        <EquipIdleCard label="Idle trucks" count={pageSummary?.idle_trucks} lost={pageSummary?.trucks_lost} monthly={pageSummary?.trucks_monthly} loading={!pageSummary} />
+        <EquipIdleCard label="Idle trailers" count={pageSummary?.idle_trailers} lost={pageSummary?.trailers_lost} monthly={pageSummary?.trailers_monthly} loading={!pageSummary} />
+        <DriverIdleCard ps={pageSummary} loading={!pageSummary} />
       </div>
 
       {/* Filters: Active/Resolved (which spell) + Reviewed/Needs (review state). */}
@@ -507,20 +502,54 @@ export default function IdleReview() {
   )
 }
 
-function SummaryCard({ label, count, sub, loading, tip }) {
+function InfoDot({ tip }) {
+  return (
+    <span
+      className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border border-gray-300 dark:border-slate-600 text-[9px] text-gray-500 dark:text-slate-400 cursor-help align-middle shrink-0"
+      title={tip}
+    >?</span>
+  )
+}
+
+// Equipment idle card: count + carrying cost lost so far (red) + monthly
+// run-rate (muted). "Lost" is cash already spent; kept separate from driver
+// revenue foregone.
+function EquipIdleCard({ label, count, lost, monthly, loading }) {
   return (
     <div className={`${S.card} px-4 py-3`}>
-      <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-gray-600 dark:text-slate-500">
-        {label}
-        {tip && (
-          <span
-            className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border border-gray-300 dark:border-slate-600 text-[9px] text-gray-500 dark:text-slate-400 cursor-help"
-            title={tip}
-          >?</span>
-        )}
+      <div className="text-[10px] font-semibold uppercase tracking-widest text-gray-600 dark:text-slate-500">{label}</div>
+      <div className="mt-0.5 text-2xl font-mono font-bold text-gray-900 dark:text-white">{loading ? '…' : (count ?? 0)}</div>
+      <div className="mt-1 flex items-center gap-1.5">
+        <span className="font-mono text-sm font-bold text-red-600 dark:text-red-400">{loading ? '…' : `${money0(lost)} lost so far`}</span>
+        <InfoDot tip="Carrying cost already spent on these idle units — each counted since it last moved (units are idle different lengths of time)." />
       </div>
-      <div className="mt-0.5 text-2xl font-mono font-bold text-gray-900 dark:text-white">{loading ? '…' : count}</div>
-      <div className="text-[11px] text-gray-500 dark:text-slate-500">{sub}</div>
+      <div className="text-[11px] text-gray-500 dark:text-slate-400">carrying cost, since each last moved</div>
+      <div className="mt-1 flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-slate-400">
+        <span>{loading ? '' : `~${money0(monthly)}/mo while idle`}</span>
+        {!loading && <InfoDot tip="What these idle units cost per month at their current rate if they keep sitting." />}
+      </div>
+    </div>
+  )
+}
+
+// Driver idle card: count + estimated revenue foregone (opportunity, red) +
+// weekly earning power sitting (muted) + a behind-on-purchase flag (amber).
+function DriverIdleCard({ ps, loading }) {
+  return (
+    <div className={`${S.card} px-4 py-3`}>
+      <div className="text-[10px] font-semibold uppercase tracking-widest text-gray-600 dark:text-slate-500">Idle drivers</div>
+      <div className="mt-0.5 text-2xl font-mono font-bold text-gray-900 dark:text-white">{loading ? '…' : (ps?.idle_drivers ?? 0)}</div>
+      <div className="mt-1 flex items-center gap-1.5">
+        <span className="font-mono text-sm font-bold text-red-600 dark:text-red-400">{loading ? '…' : `~${money0(ps.drivers_revenue_foregone)} revenue foregone`}</span>
+        <InfoDot tip="Estimated revenue not earned while these drivers sit — each driver's typical daily revenue × days idle. An estimate, not a booked loss." />
+      </div>
+      <div className="text-[11px] text-gray-500 dark:text-slate-400">est. — daily earning rate × days idle</div>
+      <div className="mt-1 text-[11px] text-gray-500 dark:text-slate-400">{loading ? '' : `~${money0(ps.drivers_weekly_earning)}/wk of earning power sitting`}</div>
+      {!loading && Number(ps?.drivers_behind_count) > 0 && (
+        <div className="mt-1.5 text-[11px] font-semibold text-amber-700 dark:text-amber-400">
+          {ps.drivers_behind_count} also behind on purchase · {money0(ps.drivers_behind_amt)}
+        </div>
+      )}
     </div>
   )
 }
