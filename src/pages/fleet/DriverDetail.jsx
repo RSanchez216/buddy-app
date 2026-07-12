@@ -130,6 +130,12 @@ export default function DriverDetail() {
   const openTruck = latestOpen(truckHistory)
   const openTrailer = latestOpen(trailerHistory)
 
+  // Home address (display-only, maintained by the periodic import): prefer the
+  // clean full address (trimming a trailing ", USA"), else city/state/zip.
+  const homeAddress = row.home_full_address
+    ? row.home_full_address.replace(/,?\s*USA\s*$/i, '')
+    : ([row.home_city, row.home_state].filter(Boolean).join(', ') + (row.home_zip ? ` ${row.home_zip}` : '')).trim() || null
+
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between">
@@ -156,6 +162,7 @@ export default function DriverDetail() {
           <InfoRow label="Full Name" value={row.full_name} />
           <InfoRow label="Phone" value={row.phone} />
           <InfoRow label="Email" value={row.email} />
+          <InfoRow label="Home Address" value={homeAddress} />
           <InfoRow label="Driver Type" value={row.driver_type} />
           <InfoRow label="Carrier" value={row.carrier} />
           <InfoRow label="Truck Assignment (raw)" value={row.truck_assignment_raw} mono />
