@@ -19,6 +19,9 @@ const TYPE_OPTIONS = {
     { v: 'other',    l: 'Other' },
   ],
   contract: [
+    // "No label" is first so it's the default upload type — documents are no
+    // longer auto-classified as Signed contract; the user labels them after.
+    { v: 'unlabeled',       l: 'No label' },
     { v: 'signed_contract', l: 'Signed contract' },
     { v: 'bill_of_sale',    l: 'Bill of sale' },
     { v: 'title',           l: 'Title' },
@@ -26,6 +29,17 @@ const TYPE_OPTIONS = {
     { v: 'payment_confirmation',  l: 'Payment confirmation' },
     { v: 'other',                 l: 'Other' },
   ],
+}
+
+// Type-badge styling. Unlabeled reads amber ("needs attention") so unclassified
+// files stand out and prompt the user; real types keep the neutral gray chip.
+function typeChipClass(type, editable) {
+  if (type === 'unlabeled') {
+    return `bg-amber-100 dark:bg-amber-500/15 text-amber-800 dark:text-amber-300 border border-amber-300/60 dark:border-amber-500/30${
+      editable ? ' hover:bg-amber-200 dark:hover:bg-amber-500/25' : ''}`
+  }
+  return `bg-gray-100 dark:bg-slate-700/40 text-gray-600 dark:text-slate-400${
+    editable ? ' hover:bg-gray-200 dark:hover:bg-slate-700/60' : ''}`
 }
 
 // Reusable docs section. Pass kind='driver' for driver-level docs (keyed
@@ -305,7 +319,7 @@ export default function DocumentsSection({ kind, ownerId, purchaseId, canEdit, t
                       <button
                         onClick={() => setEditingTypeFor(editingTypeFor === d.id ? null : d.id)}
                         title="Click to change type"
-                        className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-slate-700/40 hover:bg-gray-200 dark:hover:bg-slate-700/60 text-gray-600 dark:text-slate-400 font-semibold uppercase transition-colors"
+                        className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-semibold uppercase transition-colors ${typeChipClass(d.document_type, true)}`}
                       >
                         {labelFor(d.document_type, kind)}
                         <svg className="w-2.5 h-2.5 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
@@ -340,7 +354,7 @@ export default function DocumentsSection({ kind, ownerId, purchaseId, canEdit, t
                       )}
                     </div>
                   ) : (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-slate-700/40 text-gray-600 dark:text-slate-400 font-semibold uppercase">
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold uppercase ${typeChipClass(d.document_type, false)}`}>
                       {labelFor(d.document_type, kind)}
                     </span>
                   )}
