@@ -4,9 +4,35 @@ import { useAuth } from '../../../contexts/AuthContext'
 import { S } from '../../../lib/styles'
 import Modal from '../../../components/Modal'
 import RecordPaymentModal from './RecordPaymentModal'
+import DriverPicker from './DriverPicker'
 import { logEvent } from '../utils/events'
 import { fmtMoney, fmtDate } from '../utils/format'
 import { useToast } from '../../../contexts/ToastContext'
+
+function driverInitials(name) {
+  const parts = String(name || '').trim().split(/\s+/)
+  return (((parts[0] || '')[0] || '') + ((parts[1] || '')[0] || '')).toUpperCase() || '?'
+}
+
+// Resolve who a week's deduction was collected from:
+//   1. collected_from_driver_id override wins.
+//   2. else the assigned driver whose drove-window overlaps the period —
+//      preferring one whose window covers period_start.
+//   3. else null (unassigned).
+// Skipped rows are handled by the caller (rendered as '—').
+function resolveCollectedFrom(p, contractDrivers, nameById) {
+  if (p.collected_from_driver_id) {
+    return { driverId: p.collected_from_driver_id, name: nameById[p.collected_from_driver_id] || 'Driver', override: true }
+  }
+  const assigned = contractDrivers.filter(d => d.is_assigned && d.drove_start)
+  const overlaps = assigned.filter(d =>
+    d.drove_start <= p.period_end && (d.drove_end == null || d.drove_end >= p.period_start))
+  if (overlaps.length === 0) return null
+  const covering = overlaps.find(d =>
+    d.drove_start <= p.period_start && (d.drove_end == null || d.drove_end >= p.period_start))
+  const chosen = covering || overlaps[0]
+  return { driverId: chosen.driver_id, name: chosen.full_name, override: false }
+}
 
 const SOURCE_LABEL = {
   generated:      'Generated',
@@ -200,6 +226,13 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
   // tooltip on every reconciled cell can say "by {name}" without doing
   // one query per row.
   const [reconcilerMap, setReconcilerMap] = useState({})
+  // Contract drivers (get_contract_drivers) + driver_id→name map, for the
+  // "Collected from" column. setDriverTarget holds the payment row whose
+  // collected-from override is being set via the picker modal.
+  const [contractDrivers, setContractDrivers] = useState([])
+  const [driverNameById, setDriverNameById] = useState({})
+  const [setDriverTarget, setSetDriverTarget] = useState(null)
+  const [savingCollectedFrom, setSavingCollectedFrom] = useState(false)
 
   // Keep local tracking state in sync if the underlying purchase row
   // changes (e.g. after the parent reloads on save).
@@ -233,6 +266,23 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
     } else {
       setReconcilerMap({})
     }
+
+    // Contract drivers (for the Collected-from column) + a driver_id→name map.
+    // The map covers the contract drivers plus any collected-from override id
+    // that points to a driver outside the contract set.
+    const { data: cd } = await supabase.rpc('get_contract_drivers', { p_dp_id: purchase.id })
+    const drivers = cd || []
+    setContractDrivers(drivers)
+    const nameMap = {}
+    drivers.forEach(d => { nameMap[d.driver_id] = d.full_name })
+    const overrideIds = Array.from(new Set(
+      list.map(r => r.collected_from_driver_id).filter(id => id && !nameMap[id])))
+    if (overrideIds.length) {
+      const { data: extra } = await supabase.from('drivers').select('id, full_name').in('id', overrideIds)
+      ;(extra || []).forEach(d => { nameMap[d.id] = d.full_name })
+    }
+    setDriverNameById(nameMap)
+
     setLoading(false)
   }, [purchase])
 
@@ -692,6 +742,31 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
 
   const trackingDateLabel = useMemo(() => trackingStart ? fmtDate(trackingStart) : '—', [trackingStart])
 
+  // Write a manual collected-from override on the target payment row.
+  async function saveCollectedFrom(driverId, driverRow) {
+    if (!setDriverTarget || !driverId) return
+    setSavingCollectedFrom(true)
+    const p = setDriverTarget
+    const { error } = await supabase
+      .from('driver_purchase_payments')
+      .update({ collected_from_driver_id: driverId, updated_at: new Date().toISOString() })
+      .eq('id', p.id)
+    setSavingCollectedFrom(false)
+    if (error) { toast.error("Couldn't set driver", error); return }
+    // Keep the picked driver's name available for immediate render.
+    if (driverRow?.full_name) setDriverNameById(m => ({ ...m, [driverId]: driverRow.full_name }))
+    toast.success('Collected-from driver set')
+    await logEvent(
+      purchase.id,
+      'updated',
+      `Set collected-from driver for ${fmtDate(p.period_start)} – ${fmtDate(p.period_end)}`,
+      { payment_id: p.id, collected_from_driver_id: driverId },
+      user?.id,
+    )
+    setSetDriverTarget(null)
+    load(); onChange?.()
+  }
+
   return (
     <div className={`${S.card} p-5 space-y-3`}>
       <div className="flex items-start justify-between gap-2">
@@ -737,6 +812,7 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
                 <th className="text-right py-2 px-3">Expected</th>
                 <th className="text-right py-2 px-3">Actual</th>
                 <th className="text-right py-2 px-3">Variance</th>
+                <th className="text-left py-2 px-3">Collected from</th>
                 <th className="text-left py-2 px-3">Method</th>
                 <th className="text-left py-2 px-3">Source</th>
                 <th className="text-center py-2 px-3">Reconciled</th>
@@ -784,6 +860,37 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
                       varMuted ? 'text-gray-400 dark:text-slate-600' : varianceClass(p.variance)
                     }`}>
                       {varMuted ? '—' : (Number(p.variance) >= 0 ? '+' : '') + fmtMoney(p.variance)}
+                    </td>
+                    <td className="py-1.5 px-3 text-xs whitespace-nowrap" onClick={e => e.stopPropagation()}>
+                      {status === 'skipped' ? (
+                        <span className="text-gray-300 dark:text-slate-600">—</span>
+                      ) : (() => {
+                        const c = resolveCollectedFrom(p, contractDrivers, driverNameById)
+                        if (c) {
+                          return (
+                            <span className="inline-flex items-center gap-1.5 min-w-0" title={c.override ? 'Manually set' : 'Assigned driver for this week'}>
+                              <span className="w-5 h-5 shrink-0 rounded-full flex items-center justify-center text-[9px] font-bold text-gray-600 dark:text-slate-300 bg-gray-100 dark:bg-slate-700/50 border border-gray-200 dark:border-slate-600/40">
+                                {driverInitials(c.name)}
+                              </span>
+                              <span className="truncate text-gray-700 dark:text-slate-300">{c.name}</span>
+                            </span>
+                          )
+                        }
+                        return (
+                          <span className="inline-flex items-center gap-2">
+                            <span className="italic text-gray-400 dark:text-slate-600">unassigned</span>
+                            {canEdit && (
+                              <button
+                                type="button"
+                                onClick={() => setSetDriverTarget(p)}
+                                className="text-[11px] font-medium text-cyan-600 dark:text-cyan-400 hover:underline"
+                              >
+                                set driver
+                              </button>
+                            )}
+                          </span>
+                        )
+                      })()}
                     </td>
                     <td className={`py-1.5 px-3 text-xs ${muted ? 'text-gray-400 dark:text-slate-600' : 'text-gray-500 dark:text-slate-400'}`}>
                       {METHOD_LABEL[p.payment_method] || p.payment_method || '—'}
@@ -901,6 +1008,21 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
         onRecorded={onRecorded}
         reconcilerMap={reconcilerMap}
       />
+
+      {/* Collected-from driver picker — manual override for one week's row. */}
+      <Modal open={!!setDriverTarget} onClose={() => !savingCollectedFrom && setSetDriverTarget(null)} title="Collected from" size="sm">
+        {setDriverTarget && (
+          <div className={S.modalBody}>
+            <p className="text-xs text-gray-500 dark:text-slate-500">
+              Who was the deduction for {fmtDate(setDriverTarget.period_start)} – {fmtDate(setDriverTarget.period_end)} collected from? This sets a manual override on this week only.
+            </p>
+            <DriverPicker value={null} driver={null} onChange={(id, row) => saveCollectedFrom(id, row)} placeholder="Search driver…" />
+            <div className={S.modalFooter}>
+              <button onClick={() => setSetDriverTarget(null)} disabled={savingCollectedFrom} className={S.btnCancel}>Cancel</button>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       {/* "Tracking since" date editor */}
       <Modal open={showTrackingEdit} onClose={() => !savingTracking && setShowTrackingEdit(false)} title="Tracking start date" size="sm">

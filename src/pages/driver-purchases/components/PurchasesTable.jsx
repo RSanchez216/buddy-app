@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { S } from '../../../lib/styles'
 import StatusPill from './StatusPill'
+import { PastDueChip } from './PastDueStatus'
 
 function fmtMoney(n) {
   if (n == null) return '—'
@@ -221,12 +222,15 @@ export default function PurchasesTable({
                   return (
                     <div className="flex flex-col gap-0.5 items-start">
                       {label ? (
-                        <span
-                          className={`text-xs ${behindToneClass(n)}`}
-                          title={`${dollars.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })} owed across ${n} ${n === 1 ? 'period' : 'periods'} (excludes skipped weeks)`}
-                        >
-                          {label} · {fmtMoney(dollars)}
-                        </span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span
+                            className={`text-xs ${behindToneClass(n)}`}
+                            title={`${dollars.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })} owed across ${n} ${n === 1 ? 'period' : 'periods'} (excludes skipped weeks)`}
+                          >
+                            {label} · {fmtMoney(dollars)}
+                          </span>
+                          <PastDueChip status={r.past_due_status} />
+                        </div>
                       ) : skipped === 0 ? (
                         <span className="text-xs text-gray-400 dark:text-slate-600">—</span>
                       ) : null}

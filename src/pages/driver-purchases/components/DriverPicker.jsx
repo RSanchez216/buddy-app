@@ -5,7 +5,7 @@ import NewDriverModal from './NewDriverModal'
 
 // Search-as-you-type driver picker with inline "+ Create new driver".
 // Controlled — parent stores driver_id and the resolved driver row.
-export default function DriverPicker({ value, driver, onChange, placeholder = 'Search driver…' }) {
+export default function DriverPicker({ value, driver, onChange, placeholder = 'Search driver…', excludeIds = [] }) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState([])
   const [open, setOpen] = useState(false)
@@ -34,11 +34,12 @@ export default function DriverPicker({ value, driver, onChange, placeholder = 'S
       }
       req = req.order('full_name')
       const { data } = await req
-      setResults(data || [])
+      // Drop drivers already listed on the contract — you can't add a dup.
+      setResults((data || []).filter(d => !excludeIds.includes(d.id)))
       setLoading(false)
     }, 250)
     return () => clearTimeout(handle)
-  }, [query, open])
+  }, [query, open, excludeIds])
 
   function pick(d) {
     onChange?.(d.id, d)

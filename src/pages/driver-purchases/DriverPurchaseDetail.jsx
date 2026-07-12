@@ -7,6 +7,8 @@ import StatusPill from './components/StatusPill'
 import UnderlyingLoanCard from './components/UnderlyingLoanCard'
 import DocumentsSection from './components/DocumentsSection'
 import ActivityFeed from './components/ActivityFeed'
+import ContractDriversCard from './components/ContractDriversCard'
+import { PastDueSummary } from './components/PastDueStatus'
 import PaymentHistorySection from './components/PaymentHistorySection'
 import NotesField from '../../components/NotesField'
 import EditDriverModal from './components/EditDriverModal'
@@ -288,6 +290,12 @@ export default function DriverPurchaseDetail() {
             {summary.entity_name || 'No entity'} · {purchaseTypeLabel(summary.purchase_type)}
             {summary.driver_internal_id && <span className="ml-2 font-mono text-xs">#{summary.driver_internal_id}</span>}
           </p>
+          {/* Past-due status — the dollar past-due persists until those exact
+              weeks are paid; the chip only flags active (falling behind) vs a
+              stable historical gap (holding). */}
+          <div className="mt-1.5">
+            <PastDueSummary summary={summary} />
+          </div>
         </div>
 
         {canEdit && (
@@ -357,6 +365,9 @@ export default function DriverPurchaseDetail() {
               </div>
             )}
           </div>
+
+          {/* Drivers on this contract — purchaser + assigned + manual */}
+          <ContractDriversCard purchaseId={id} canEdit={canEdit} />
 
           {/* Contract terms */}
           <div className={`${S.card} p-5 space-y-4`}>
