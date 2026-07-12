@@ -5,6 +5,7 @@ import { supabase } from '../../../../lib/supabase'
 import { S } from '../../../../lib/styles'
 import CopyButton from '../../../../components/CopyButton'
 import { fmtMoney } from '../spotlight/spotlightShared'
+import PossiblyHomeChip from '../../PossiblyHomeChip'
 
 // Idle review — trucks, trailers, and drivers earning $0 while still costing
 // money (3+ days since last load activity). Tag a reason, watch the duration,
@@ -286,6 +287,51 @@ export default function IdleReview() {
 
   useEffect(() => { load() }, [])
 
+  // "Possibly home" per idle driver/team row. Driver rows key off subject_id;
+  // team rows resolve to their primary member's driver_id. The idle list is
+  // small, so a per-driver driver_possibly_home() call is fine.
+  const [homeBySubject, setHomeBySubject] = useState({}) // 'type:id' → possibly-home row
+  useEffect(() => {
+    if (!rows) return
+    let cancelled = false
+    ;(async () => {
+      const driverRows = rows.filter(r => r.subject_type === 'driver' || r.subject_type === 'team')
+      if (driverRows.length === 0) { if (!cancelled) setHomeBySubject({}); return }
+      // Resolve team subjects → current primary member's driver_id.
+      const teamIds = driverRows.filter(r => r.subject_type === 'team').map(r => r.subject_id)
+      const primaryByTeam = {}
+      if (teamIds.length) {
+        const { data: members } = await supabase
+          .from('driver_team_members')
+          .select('team_id, driver_id, role, effective_end')
+          .in('team_id', teamIds)
+          .is('effective_end', null)
+        ;(members || []).forEach(m => {
+          if (!primaryByTeam[m.team_id] || m.role === 'primary') primaryByTeam[m.team_id] = m.driver_id
+        })
+      }
+      // Map each subject → driver_id, then batch the home checks by driver_id.
+      const subjToDriver = {}
+      driverRows.forEach(r => {
+        const did = r.subject_type === 'team' ? primaryByTeam[r.subject_id] : r.subject_id
+        if (did) subjToDriver[`${r.subject_type}:${r.subject_id}`] = did
+      })
+      const uniqueDriverIds = [...new Set(Object.values(subjToDriver))]
+      const homeEntries = await Promise.all(uniqueDriverIds.map(async did => {
+        const { data } = await supabase.rpc('driver_possibly_home', { p_driver_id: did })
+        return [did, data?.[0] || null]
+      }))
+      if (cancelled) return
+      const homeByDriver = Object.fromEntries(homeEntries)
+      const bySubject = {}
+      for (const [subjKey, did] of Object.entries(subjToDriver)) {
+        if (homeByDriver[did]) bySubject[subjKey] = homeByDriver[did]
+      }
+      setHomeBySubject(bySubject)
+    })()
+    return () => { cancelled = true }
+  }, [rows])
+
   const activeRows = useMemo(() => (rows || []).filter(r => !r.resolved), [rows])
   const resolvedRows = useMemo(() => (rows || []).filter(r => r.resolved), [rows])
 
@@ -434,7 +480,7 @@ export default function IdleReview() {
         <>
           <IdleSection title="Trucks" kind="unit" rows={viewGroups.truck} reasons={UNIT_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} />
           <IdleSection title="Trailers" kind="unit" rows={viewGroups.trailer} reasons={UNIT_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} />
-          <IdleSection title="Drivers" kind="driver" rows={viewGroups.driver} reasons={DRIVER_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} />
+          <IdleSection title="Drivers" kind="driver" rows={viewGroups.driver} reasons={DRIVER_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} homeBySubject={homeBySubject} />
         </>
       )}
     </div>
@@ -459,7 +505,7 @@ function SummaryCard({ label, count, sub, loading, tip }) {
   )
 }
 
-function IdleSection({ title, kind, rows, reasons, resolvedView, reviewFilter, financeFilter, onSetReason, onResolve, onReopen }) {
+function IdleSection({ title, kind, rows, reasons, resolvedView, reviewFilter, financeFilter, onSetReason, onResolve, onReopen, homeBySubject = {} }) {
   const columns = kind === 'unit' ? UNIT_COLUMNS : DRIVER_COLUMNS
 
   const [sort, setSort] = useState({ key: 'days', dir: 'desc' })
@@ -562,7 +608,7 @@ function IdleSection({ title, kind, rows, reasons, resolvedView, reviewFilter, f
               </thead>
               <tbody>
                 {visible.map(r => (
-                  <IdleRow key={`${r.subject_type}:${r.subject_id}`} row={r} kind={kind} reasons={reasons} resolvedView={resolvedView} onSetReason={onSetReason} onResolve={onResolve} onReopen={onReopen} />
+                  <IdleRow key={`${r.subject_type}:${r.subject_id}`} row={r} kind={kind} reasons={reasons} resolvedView={resolvedView} onSetReason={onSetReason} onResolve={onResolve} onReopen={onReopen} homeInfo={homeBySubject[`${r.subject_type}:${r.subject_id}`]} />
                 ))}
               </tbody>
             </table>
@@ -661,7 +707,7 @@ const TEAM_ICON = (
   </svg>
 )
 
-function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onReopen }) {
+function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onReopen, homeInfo }) {
   const sev = severity(row)
 
   const daysCls = (row.days_idle ?? 0) >= 14 ? 'text-red-600 dark:text-red-400 font-semibold' : 'text-gray-700 dark:text-slate-300'
@@ -771,6 +817,7 @@ function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onR
         </span>
         {isTeam && row.team_name && <div className="text-[10px] text-gray-400 dark:text-slate-500 mt-0.5">{row.team_name}</div>}
         <LastLoadLine row={row} />
+        {homeInfo?.possibly_home && <div className="mt-1"><PossiblyHomeChip info={homeInfo} /></div>}
       </td>
       <td className={`${S.td} text-right font-mono align-top ${daysCls}`}>{fmtDays(row.days_idle)}</td>
       <td className={`${S.td} align-top`}><HoldingCell row={row} /></td>

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { DriverTypePill, DriverStatusPill, fmtDate } from './fleetUtils'
 import { nameHue, monogram, fmtMoney, fmtRpm, fmtNum } from './loads/spotlight/spotlightShared'
+import PossiblyHomeChip from './PossiblyHomeChip'
 
 // Driver profile header with photo, name, status, quick stats, and load activity.
 // `activity` is a driver_activity_snapshot row (or null): { currently_running,
@@ -11,6 +12,20 @@ export default function DriverProfileHeader({ driver, activity }) {
   const [photoUrl, setPhotoUrl] = useState(null)
   const [metrics, setMetrics] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [homeInfo, setHomeInfo] = useState(null) // { driverId, ...driver_possibly_home row }
+
+  // When the driver is idle (not running), check whether their last delivery
+  // was near home so the hero can show a "Possibly home" chip. Tag the result
+  // with driverId so a stale fetch never renders against a different driver.
+  const idle = !!activity && !activity.currently_running && activity.days_idle != null
+  useEffect(() => {
+    if (!driver?.id || !idle) return
+    let cancelled = false
+    supabase.rpc('driver_possibly_home', { p_driver_id: driver.id })
+      .then(({ data }) => { if (!cancelled) setHomeInfo({ driverId: driver.id, ...(data?.[0] || {}) }) })
+    return () => { cancelled = true }
+  }, [driver?.id, idle])
+  const currentHome = idle && homeInfo?.driverId === driver?.id ? homeInfo : null
 
   // Load photo signed URL and 7-day metrics
   useEffect(() => {
@@ -190,7 +205,7 @@ export default function DriverProfileHeader({ driver, activity }) {
             {driver?.carrier && ` · ${driver.carrier}`}
           </p>
 
-          <ActivityCallout activity={activity} />
+          <ActivityCallout activity={activity} homeInfo={currentHome} />
         </div>
 
         {/* Quick stats */}
@@ -220,7 +235,7 @@ export default function DriverProfileHeader({ driver, activity }) {
 // Load-activity callout — distinct from the employment-status pill. Running is
 // the good, understated state ("On the road"); idle is highlighted amber so a
 // sitting driver reads at a glance, with the last completed load beside it.
-function ActivityCallout({ activity }) {
+function ActivityCallout({ activity, homeInfo }) {
   if (activity?.currently_running) {
     return (
       <div className="mt-2.5 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/25">
@@ -242,6 +257,7 @@ function ActivityCallout({ activity }) {
             <span className="font-semibold">Last load:</span> {activity.last_origin} → {activity.last_destination} · delivered {fmtDate(activity.last_delivery_date)}
           </span>
         )}
+        {homeInfo?.possibly_home && <PossiblyHomeChip info={homeInfo} />}
       </div>
     )
   }
