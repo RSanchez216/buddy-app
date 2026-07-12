@@ -279,15 +279,36 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
   useEffect(() => { load() }, [load])
 
   // External opener — DriverPurchaseDetail's header "+ Record payment"
-  // bumps openSignal to trigger the new-payment modal from here. Skip
-  // the initial 0 so the modal doesn't open on mount.
-  const lastSignalRef = useRef(0)
+  // bumps openSignal to trigger the new-payment modal from here. Seed the ref
+  // with the CURRENT signal (not 0) so only a genuine *subsequent* bump fires
+  // openNew — a remount with a still-nonzero signal must not re-open Record
+  // (that was the "Edit save opens Record" bug).
+  const lastSignalRef = useRef(openSignal)
   useEffect(() => {
     if (openSignal && openSignal !== lastSignalRef.current) {
       lastSignalRef.current = openSignal
       openNew()
     }
   }, [openSignal])
+
+  // Targeted refresh of a single payment row after a save — refetch just that
+  // row and merge it in (update in place, or add if newly inserted), so we
+  // avoid the heavy full-section reload. Also resolves a new collected-from
+  // override name if it points outside the current map.
+  async function refreshRow(paymentId) {
+    if (!paymentId) return
+    const { data } = await supabase
+      .from('driver_purchase_payments').select('*').eq('id', paymentId).maybeSingle()
+    if (!data) return
+    setRows(rs => rs.some(r => r.id === data.id)
+      ? rs.map(r => r.id === data.id ? data : r)
+      : [...rs, data].sort((a, b) => (b.period_end || '').localeCompare(a.period_end || '')))
+    const cf = data.collected_from_driver_id
+    if (cf && !driverNameById[cf]) {
+      const { data: d } = await supabase.from('drivers').select('id, full_name').eq('id', cf).maybeSingle()
+      if (d) setDriverNameById(m => ({ ...m, [d.id]: d.full_name }))
+    }
+  }
 
   function openNew() { setEditRow(null); setPreselectPeriodId(null); setShowModal(true) }
   // State-aware row click: a recorded row (paid / reconciled / skipped) opens
@@ -304,7 +325,9 @@ export default function PaymentHistorySection({ purchase, canEdit, onChange, ope
   function onModalClose() { setShowModal(false); setEditRow(null); setPreselectPeriodId(null) }
   function onRecorded(info) {
     setShowModal(false); setEditRow(null); setPreselectPeriodId(null)
-    load()
+    // Targeted row refresh (not a full reload) keeps the save snappy and the
+    // section mounted — no follow-on modal can be triggered by a remount.
+    if (info?.paymentId) refreshRow(info.paymentId)
     onChange?.()
     // Skip flow gets its own undo toast — distinct shape from the
     // record toast because the revert path needs to restore the

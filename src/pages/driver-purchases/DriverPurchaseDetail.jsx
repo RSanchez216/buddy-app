@@ -69,8 +69,11 @@ export default function DriverPurchaseDetail() {
   // new-payment mode on each tick. Avoids lifting the modal up here.
   const [recordPaymentSignal, setRecordPaymentSignal] = useState(0)
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  // silent=true refreshes the data in place without flipping the full-page
+  // spinner — used after a payment save so the child sections (esp. Payment
+  // history and its modals) stay mounted instead of unmounting/remounting.
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true)
     const [sumRes, pRes] = await Promise.all([
       supabase.from('v_driver_purchase_summary').select('*').eq('id', id).maybeSingle(),
       supabase.from('driver_purchases').select('*').eq('id', id).maybeSingle(),
@@ -91,7 +94,7 @@ export default function DriverPurchaseDetail() {
     setPurchase(purchaseRow)
     setDriver(drvRes.data || null)
     setEquipment(eqRes.data || null)
-    setLoading(false)
+    if (!silent) setLoading(false)
   }, [id])
 
   useEffect(() => { load() }, [load])
@@ -471,7 +474,7 @@ export default function DriverPurchaseDetail() {
       <PaymentHistorySection
         purchase={purchase}
         canEdit={canEdit}
-        onChange={load}
+        onChange={() => load({ silent: true })}
         openSignal={recordPaymentSignal}
       />
 
