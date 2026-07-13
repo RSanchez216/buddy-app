@@ -9,6 +9,20 @@ import { LANE_STATUS, HOME_YARD_HEX } from './dedicatedData'
 // bucket) — NOT a lane, draws no routes. Selecting a lane isolates it.
 
 const ENTER_STAGGER_MS = 70
+// BUDDY orange — ring/ping accent for the neutral Home Yard (not a P&L status).
+const HOME_RING_HEX = '#F97316'
+
+// Radar ping — a short one-shot sonar burst emitted on select. Two overlapping
+// pulses (second offset ~250ms via .p2), each expanding to 1.7× while fading.
+// Mounted only while selected, so it replays whenever the selection changes.
+function RadarPing({ cx, cy, r, color }) {
+  return (
+    <g pointerEvents="none" aria-hidden="true">
+      <circle className="dl-ping" cx={cx} cy={cy} r={r} fill="none" stroke={color} strokeWidth="2.5" />
+      <circle className="dl-ping p2" cx={cx} cy={cy} r={r} fill="none" stroke={color} strokeWidth="2.5" />
+    </g>
+  )
+}
 
 // Quadratic arc between two projected points, lifted perpendicular to the chord.
 function arcPath(a, b) {
@@ -30,7 +44,7 @@ const STATUS_SEVERITY = { underwater: 3, watch: 2, profitable: 1, inactive: 0 }
 
 // A single facility marker. `fac` is a deduped facility: one physical yard that
 // may be the endpoint of several lanes (trailers/aging summed across them).
-function FacilityMarker({ fac, color, sel, showLabel, onSelect, delay }) {
+function FacilityMarker({ fac, color, sel, showLabel, onSelect, delay, pingKey }) {
   const { p, trailers, aging, role, f } = fac
   const r = markerR(trailers)
   const roleUpper = role.toUpperCase()
@@ -39,7 +53,12 @@ function FacilityMarker({ fac, color, sel, showLabel, onSelect, delay }) {
       role="button" tabIndex={0} aria-label={`${f.name || `${f.city}, ${f.state}`} — ${role}, ${trailers} trailers`}
       onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect() } }}>
       <circle cx={p[0]} cy={p[1]} r={r + 11} fill={color} opacity={sel ? 0.16 : 0.06} className="transition-opacity duration-300" />
-      {sel && <circle className="dl-ring" cx={p[0]} cy={p[1]} r={r + 6} fill="none" stroke={color} strokeWidth="1.8" strokeDasharray="6 5" />}
+      {sel && (
+        <>
+          <circle className="dl-ring" cx={p[0]} cy={p[1]} r={r + 6} fill="none" stroke={color} strokeWidth="1.8" strokeDasharray="5 4" />
+          <RadarPing key={pingKey} cx={p[0]} cy={p[1]} r={r + 6} color={color} />
+        </>
+      )}
       <g className="dl-pin-core">
         <circle cx={p[0]} cy={p[1]} r={r} fill={color} stroke="#fff" strokeWidth="2.5" className="dark:stroke-[#0d0d1f]"
           style={sel ? { filter: `drop-shadow(0 0 8px ${color})` } : undefined} />
@@ -124,13 +143,16 @@ export default function DedicatedMap({ lanes, homeYard, selectedId, onSelect }) 
       <style>{`
         @keyframes dlPinPop { 0% { opacity: 0; transform: scale(0); } 70% { transform: scale(1.12); } 100% { opacity: 1; transform: scale(1); } }
         @keyframes dlArcFlow { to { stroke-dashoffset: -40; } }
-        @keyframes dlRingSpin { to { transform: rotate(360deg); } }
+        @keyframes dlPing { from { transform: scale(1); opacity: .5; } to { transform: scale(1.7); opacity: 0; } }
         .dl-pin { cursor: pointer; animation: dlPinPop .5s cubic-bezier(.22,1.4,.36,1) both; transform-box: fill-box; transform-origin: center; outline: none; }
         .dl-pin:focus-visible .dl-pin-core { transform: scale(1.12); }
         .dl-pin-core { transition: transform .25s cubic-bezier(.22,1.4,.36,1); transform-box: fill-box; transform-origin: center; }
         .dl-pin:hover .dl-pin-core, .dl-pin.sel .dl-pin-core { transform: scale(1.12); }
-        .dl-ring { animation: dlRingSpin 14s linear infinite; transform-box: fill-box; transform-origin: center; }
-        @media (prefers-reduced-motion: reduce) { .dl-pin, .dl-ring { animation: none; } .dl-arc-dash { animation: none !important; } }
+        /* Persistent selected ring — static, appears in place (no fly-in). */
+        /* Radar ping — one-shot burst of 2 pulses, expands from marker center. */
+        .dl-ping { transform-box: fill-box; transform-origin: center; opacity: 0; animation: dlPing .5s ease-out forwards; pointer-events: none; }
+        .dl-ping.p2 { animation-delay: .25s; }
+        @media (prefers-reduced-motion: reduce) { .dl-pin { animation: none; } .dl-ping { display: none; } .dl-arc-dash { animation: none !important; } }
       `}</style>
       <svg viewBox={`0 0 ${MAP_W} ${MAP_H}`} preserveAspectRatio="xMidYMid meet"
         className="absolute inset-0 w-full h-full block select-none" role="img" aria-label="US map of dedicated lane routes">
@@ -161,8 +183,11 @@ export default function DedicatedMap({ lanes, homeYard, selectedId, onSelect }) 
             role="button" tabIndex={0} aria-label={`Home Yard, ${homeYard.city}, ${homeYard.state} — ${homeYard.count} trailers, true idle`}
             onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(selectedId === 'home' ? null : 'home') } }}>
             {selectedId === 'home' && (
-              <rect className="dl-ring" x={home.p[0] - home.r - 7} y={home.p[1] - home.r - 7} width={(home.r + 7) * 2} height={(home.r + 7) * 2}
-                fill="none" stroke={HOME_YARD_HEX} strokeWidth="1.6" strokeDasharray="5 4" transform={`rotate(45 ${home.p[0]} ${home.p[1]})`} />
+              <>
+                <rect className="dl-ring" x={home.p[0] - home.r - 7} y={home.p[1] - home.r - 7} width={(home.r + 7) * 2} height={(home.r + 7) * 2}
+                  fill="none" stroke={HOME_RING_HEX} strokeWidth="1.6" strokeDasharray="5 4" transform={`rotate(45 ${home.p[0]} ${home.p[1]})`} />
+                <RadarPing cx={home.p[0]} cy={home.p[1]} r={home.r + 7} color={HOME_RING_HEX} />
+              </>
             )}
             <g className="dl-pin-core">
               <rect x={home.p[0] - home.r} y={home.p[1] - home.r} width={home.r * 2} height={home.r * 2} rx="4"
@@ -190,7 +215,7 @@ export default function DedicatedMap({ lanes, homeYard, selectedId, onSelect }) 
             <g key={`fac-${fac.id}`} opacity={dim ? 0.3 : 1}
               onMouseEnter={() => setHoverId(fac.laneIds.size === 1 ? [...fac.laneIds][0] : null)} onMouseLeave={() => setHoverId(null)}>
               <FacilityMarker fac={fac} color={color} sel={sel} showLabel={show} onSelect={handle}
-                delay={`${(i + 1) * ENTER_STAGGER_MS}ms`} />
+                delay={`${(i + 1) * ENTER_STAGGER_MS}ms`} pingKey={selectedId} />
             </g>
           )
         })}
