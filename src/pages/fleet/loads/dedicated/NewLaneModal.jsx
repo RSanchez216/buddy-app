@@ -10,7 +10,7 @@ import { facilityGeo, fetchUnassignedTrailers, createFacility, createDedicatedLa
 
 const FLD_HELP = 'text-[11px] text-gray-400 dark:text-slate-500 mt-1'
 const FLD_ERR = 'text-[11px] text-red-600 dark:text-red-400 mt-1'
-const emptyFacility = () => ({ name: '', address: '', city: '', state: '', lat: '', lng: '' })
+const emptyFacility = () => ({ name: '', address: '', city: '', state: '', zip: '', lat: '', lng: '' })
 
 // Required to save: name, address, city, state. Lat/lng stay optional (resolved or manual).
 function facilityErrors(f) {
@@ -41,7 +41,7 @@ function FacilityFields({ label, f, onChange, onResolve, resolving, errors, show
           <input className={errInput(showErr('address'))} placeholder="e.g. 400 Aberdeen Loop" value={f.address} onChange={e => onChange({ ...f, address: e.target.value })} onBlur={() => onBlur('address')} />
           {showErr('address') && <p className={FLD_ERR}>{errors.address}</p>}
         </div>
-        <div>
+        <div className="sm:col-span-2">
           <label className={S.label}>City</label>
           <input className={errInput(showErr('city'))} placeholder="e.g. Panama City" value={f.city} onChange={e => onChange({ ...f, city: e.target.value })} onBlur={() => onBlur('city')} />
           {showErr('city') && <p className={FLD_ERR}>{errors.city}</p>}
@@ -50,6 +50,10 @@ function FacilityFields({ label, f, onChange, onResolve, resolving, errors, show
           <label className={S.label}>State</label>
           <input className={errInput(showErr('state'))} placeholder="TX" maxLength={2} value={f.state} onChange={e => onChange({ ...f, state: e.target.value.toUpperCase() })} onBlur={() => onBlur('state')} />
           {showErr('state') && <p className={FLD_ERR}>{errors.state}</p>}
+        </div>
+        <div>
+          <label className={S.label}>ZIP <span className="text-gray-400 font-normal">(optional)</span></label>
+          <input className={S.input} placeholder="e.g. 32405" inputMode="numeric" maxLength={10} value={f.zip} onChange={e => onChange({ ...f, zip: e.target.value })} />
         </div>
         <div>
           <label className={S.label}>Latitude <span className="text-gray-400 font-normal">(optional)</span></label>
@@ -131,8 +135,8 @@ export default function NewLaneModal({ open, onClose, onCreated }) {
     if (!canSave) { setAttempted(true); return } // reveal inline errors, no blocking dialog
     setSaving(true)
     try {
-      const originId = await createFacility({ name: origin.name, address: origin.address, city: origin.city, state: origin.state, lat: pinOrNull(origin.lat), lng: pinOrNull(origin.lng) })
-      const destId = await createFacility({ name: destination.name, address: destination.address, city: destination.city, state: destination.state, lat: pinOrNull(destination.lat), lng: pinOrNull(destination.lng) })
+      const originId = await createFacility({ name: origin.name, address: origin.address, city: origin.city, state: origin.state, zip: origin.zip, lat: pinOrNull(origin.lat), lng: pinOrNull(origin.lng) })
+      const destId = await createFacility({ name: destination.name, address: destination.address, city: destination.city, state: destination.state, zip: destination.zip, lat: pinOrNull(destination.lat), lng: pinOrNull(destination.lng) })
       const laneId = await createDedicatedLane({ name: name.trim(), customer, originFacilityId: originId, destinationFacilityId: destId, underwaterThreshold: threshold, rate })
       await assignTrailersToLane(laneId, assigned)
       toast.success(`Dedicated lane “${name.trim()}” created${assigned.length ? ` · ${assigned.length} trailer${assigned.length === 1 ? '' : 's'} assigned` : ''}.`)
