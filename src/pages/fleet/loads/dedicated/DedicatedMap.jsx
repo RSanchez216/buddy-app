@@ -12,9 +12,10 @@ const ENTER_STAGGER_MS = 70
 // BUDDY orange — ring/ping accent for the neutral Home Yard (not a P&L status).
 const HOME_RING_HEX = '#F97316'
 
-// Radar ping — a short one-shot sonar burst emitted on select. Two overlapping
-// pulses (second offset ~250ms via .p2), each expanding to 1.7× while fading.
-// Mounted only while selected, so it replays whenever the selection changes.
+// Radar ping — a continuous sonar that pulses while the marker is selected. Two
+// rings offset by half the cycle (.p2) so a new pulse starts as the prior fades,
+// each expanding to 1.7× while fading out. Mounted only while selected, so the
+// loop stops (element removed) on deselect and restarts on selection change.
 function RadarPing({ cx, cy, r, color }) {
   return (
     <g pointerEvents="none" aria-hidden="true">
@@ -149,9 +150,10 @@ export default function DedicatedMap({ lanes, homeYard, selectedId, onSelect }) 
         .dl-pin-core { transition: transform .25s cubic-bezier(.22,1.4,.36,1); transform-box: fill-box; transform-origin: center; }
         .dl-pin:hover .dl-pin-core, .dl-pin.sel .dl-pin-core { transform: scale(1.12); }
         /* Persistent selected ring — static, appears in place (no fly-in). */
-        /* Radar ping — one-shot burst of 2 pulses, expands from marker center. */
-        .dl-ping { transform-box: fill-box; transform-origin: center; opacity: 0; animation: dlPing .5s ease-out forwards; pointer-events: none; }
-        .dl-ping.p2 { animation-delay: .25s; }
+        /* Radar ping — loops while selected (element unmounts on deselect, so it
+           stops). Two rings offset by half the 2s cycle for a continuous sonar. */
+        .dl-ping { transform-box: fill-box; transform-origin: center; opacity: 0; animation: dlPing 2s ease-out infinite; pointer-events: none; }
+        .dl-ping.p2 { animation-delay: 1s; }
         @media (prefers-reduced-motion: reduce) { .dl-pin { animation: none; } .dl-ping { display: none; } .dl-arc-dash { animation: none !important; } }
       `}</style>
       <svg viewBox={`0 0 ${MAP_W} ${MAP_H}`} preserveAspectRatio="xMidYMid meet"
