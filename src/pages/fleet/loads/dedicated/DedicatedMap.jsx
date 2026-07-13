@@ -24,21 +24,26 @@ function agingAt(lane, position) {
   return (lane.trailers || []).filter(t => t.position === position && t.aging).length
 }
 
-// A single facility marker (origin/destination endpoint of a lane).
-function FacilityMarker({ f, color, sel, aging, showLabel, onSelect, laneName, position }) {
-  const p = projection([Number(f.lng), Number(f.lat)])
-  if (!p) return null
-  const r = markerR(f.trailers)
+// Worst P&L status wins when one facility is shared by several lanes, so a
+// problem lane's yard still flags red even if another lane using it is fine.
+const STATUS_SEVERITY = { underwater: 3, watch: 2, profitable: 1, inactive: 0 }
+
+// A single facility marker. `fac` is a deduped facility: one physical yard that
+// may be the endpoint of several lanes (trailers/aging summed across them).
+function FacilityMarker({ fac, color, sel, showLabel, onSelect, delay }) {
+  const { p, trailers, aging, role, f } = fac
+  const r = markerR(trailers)
+  const roleUpper = role.toUpperCase()
   return (
-    <g className={`dl-pin ${sel ? 'sel' : ''}`} onClick={onSelect}
-      role="button" tabIndex={0} aria-label={`${laneName} ${position} — ${f.name || `${f.city}, ${f.state}`}, ${f.trailers} trailers`}
+    <g className={`dl-pin ${sel ? 'sel' : ''}`} onClick={onSelect} style={delay ? { animationDelay: delay } : undefined}
+      role="button" tabIndex={0} aria-label={`${f.name || `${f.city}, ${f.state}`} — ${role}, ${trailers} trailers`}
       onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect() } }}>
       <circle cx={p[0]} cy={p[1]} r={r + 11} fill={color} opacity={sel ? 0.16 : 0.06} className="transition-opacity duration-300" />
       {sel && <circle className="dl-ring" cx={p[0]} cy={p[1]} r={r + 6} fill="none" stroke={color} strokeWidth="1.8" strokeDasharray="6 5" />}
       <g className="dl-pin-core">
         <circle cx={p[0]} cy={p[1]} r={r} fill={color} stroke="#fff" strokeWidth="2.5" className="dark:stroke-[#0d0d1f]"
           style={sel ? { filter: `drop-shadow(0 0 8px ${color})` } : undefined} />
-        <text x={p[0]} y={p[1] + 4.5} textAnchor="middle" className="fill-white font-bold" fontSize="13">{f.trailers || 0}</text>
+        <text x={p[0]} y={p[1] + 4.5} textAnchor="middle" className="fill-white font-bold" fontSize="13">{trailers || 0}</text>
         {aging > 0 && (
           <g pointerEvents="none">
             <circle cx={p[0] + r * 0.78} cy={p[1] - r * 0.78} r="6.5" fill="#ef4444" stroke="#fff" strokeWidth="1.5" className="dark:stroke-[#0d0d1f]" />
@@ -52,7 +57,9 @@ function FacilityMarker({ f, color, sel, aging, showLabel, onSelect, laneName, p
             {f.name || `${f.city}, ${f.state}`}
           </text>
           <text x={p[0]} y={p[1] - r - 7} textAnchor="middle" className="fill-slate-600 dark:fill-slate-300 font-medium" fontSize="10">
-            {position} · {f.city}, {f.state}
+            {/* Role word emphasized so ORIGIN / DESTINATION reads at a glance. */}
+            <tspan className="font-semibold" fontSize="11">{roleUpper}</tspan>
+            <tspan> · {f.city}, {f.state}</tspan>
           </text>
         </>
       )}
@@ -70,6 +77,33 @@ export default function DedicatedMap({ lanes, homeYard, selectedId, onSelect }) 
       if (!o || !d) return null
       return { lane, o, d, color: (LANE_STATUS[lane.status] || LANE_STATUS.inactive).hex }
     }).filter(Boolean), [lanes])
+
+  // Dedupe facilities across all lanes so each physical yard renders once, even
+  // when it's the shared origin/destination of several lanes. Trailer counts and
+  // aging badges sum across the lanes that use it; color = worst lane status.
+  const facilities = useMemo(() => {
+    const byId = new Map()
+    routes.forEach(({ lane }) => {
+      const status = lane.status
+      ;[['origin', lane.origin], ['destination', lane.destination]].forEach(([role, f]) => {
+        const id = f.id ?? `${f.lat},${f.lng}`
+        let acc = byId.get(id)
+        if (!acc) {
+          const p = projection([Number(f.lng), Number(f.lat)])
+          if (!p) return
+          acc = { id, f, p, trailers: 0, aging: 0, roles: new Set(), laneIds: new Set(), status: 'inactive' }
+          byId.set(id, acc)
+        }
+        acc.trailers += Number(f.trailers) || 0
+        acc.aging += agingAt(lane, role)
+        acc.roles.add(role)
+        acc.laneIds.add(lane.lane_id)
+        if ((STATUS_SEVERITY[status] ?? 0) > (STATUS_SEVERITY[acc.status] ?? 0)) acc.status = status
+      })
+    })
+    // Neutral label when a facility is origin for one lane but destination for another.
+    return [...byId.values()].map(a => ({ ...a, role: a.roles.size > 1 ? 'origin / destination' : [...a.roles][0] }))
+  }, [routes])
 
   const home = useMemo(() => {
     const p = projection([Number(homeYard.lng), Number(homeYard.lat)])
@@ -139,19 +173,21 @@ export default function DedicatedMap({ lanes, homeYard, selectedId, onSelect }) 
           </g>
         )}
 
-        {/* Facility markers — origin + destination per lane. Labels always on for
-            the selected lane; on overview only when nothing is selected. */}
-        {routes.map(({ lane, color }, i) => {
-          const sel = selectedId === lane.lane_id
-          const show = sel || !anySelected
+        {/* Facility markers — one per unique yard (deduped across lanes). Labels
+            always on for the selected lane's endpoints; on overview when nothing
+            is selected. Selecting/hovering a lane still isolates its two yards. */}
+        {facilities.map((fac, i) => {
+          const sel = laneSelected && fac.laneIds.has(selectedId)
+          const dim = selectedId === 'home' ? true : (laneSelected && !fac.laneIds.has(selectedId))
+          const show = !anySelected || sel
+          const color = (LANE_STATUS[fac.status] || LANE_STATUS.inactive).hex
+          // Click toggles: deselect if already showing this yard's lane, else pick one of its lanes.
+          const handle = () => onSelect(sel ? null : [...fac.laneIds][0])
           return (
-            <g key={`ends-${lane.lane_id}`} style={{ animationDelay: `${(i + 1) * ENTER_STAGGER_MS}ms` }}
-              opacity={dimLane(lane.lane_id) ? 0.3 : 1}
-              onMouseEnter={() => setHoverId(lane.lane_id)} onMouseLeave={() => setHoverId(null)}>
-              <FacilityMarker f={lane.origin} color={color} sel={sel} aging={agingAt(lane, 'origin')} showLabel={show}
-                laneName={lane.name} position="origin" onSelect={() => onSelect(sel ? null : lane.lane_id)} />
-              <FacilityMarker f={lane.destination} color={color} sel={sel} aging={agingAt(lane, 'destination')} showLabel={show}
-                laneName={lane.name} position="destination" onSelect={() => onSelect(sel ? null : lane.lane_id)} />
+            <g key={`fac-${fac.id}`} opacity={dim ? 0.3 : 1}
+              onMouseEnter={() => setHoverId(fac.laneIds.size === 1 ? [...fac.laneIds][0] : null)} onMouseLeave={() => setHoverId(null)}>
+              <FacilityMarker fac={fac} color={color} sel={sel} showLabel={show} onSelect={handle}
+                delay={`${(i + 1) * ENTER_STAGGER_MS}ms`} />
             </g>
           )
         })}

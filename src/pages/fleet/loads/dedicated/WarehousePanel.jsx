@@ -55,6 +55,18 @@ function TrailerBay({ t, index }) {
   )
 }
 
+// Labeled endpoint for the lane header: ORIGIN/DESTINATION caption, facility
+// name, then city/state. Name wraps rather than blowing out the panel width.
+function Endpoint({ role, facility }) {
+  return (
+    <div className="min-w-0 flex-1">
+      <div className="text-[10px] font-extrabold uppercase tracking-wide text-gray-400 dark:text-slate-500">{role}</div>
+      <div className="text-[13px] font-bold text-gray-900 dark:text-white leading-snug break-words">{facility?.name || `${facility?.city}, ${facility?.state}`}</div>
+      <div className="text-[11px] text-gray-500 dark:text-slate-400">{facility?.city}, {facility?.state}</div>
+    </div>
+  )
+}
+
 function BayGroup({ title, facility, trailers, startIndex }) {
   if (!trailers.length) return null
   return (
@@ -149,9 +161,12 @@ export default function WarehousePanel({ lane, homeYard, onBack }) {
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h3 className="text-[16px] font-extrabold text-gray-900 dark:text-white truncate">{lane.name}</h3>
-            <p className="text-xs text-gray-500 dark:text-slate-500 mt-1 flex items-center gap-1.5 flex-wrap">
-              <span>{lane.origin.city}, {lane.origin.state} → {lane.destination.city}, {lane.destination.state}</span>
-              <span className="text-gray-300 dark:text-slate-700">·</span>
+            <div className="flex items-start gap-3 mt-2">
+              <Endpoint role="Origin" facility={lane.origin} />
+              <div className="shrink-0 pt-4 text-gray-300 dark:text-slate-600 text-base leading-none" aria-hidden="true">→</div>
+              <Endpoint role="Destination" facility={lane.destination} />
+            </div>
+            <p className="text-xs text-gray-500 dark:text-slate-500 mt-2 flex items-center gap-1.5 flex-wrap">
               <span>{lane.customer || 'no customer linked'}</span>
               <StatusPill status={lane.status} days={lane.days_in_status} />
             </p>
