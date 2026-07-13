@@ -2,13 +2,17 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { S } from '../../../../lib/styles'
 import { useAuth } from '../../../../contexts/AuthContext'
+import { useToast } from '../../../../contexts/ToastContext'
 import { fmtMoney } from '../spotlight/spotlightShared'
 import { DedicatedKeyframes } from './dedicatedUi'
-import { fetchDedicatedLanes, HOME_YARD } from './dedicatedData'
+import { fetchDedicatedLanes, fetchLaneManagement, stagedByLane, addPlannedTrailer, deletePlannedTrailer, HOME_YARD } from './dedicatedData'
 import DedicatedMap from './DedicatedMap'
 import WarehousePanel from './WarehousePanel'
 import LanesTable from './LanesTable'
 import NewLaneModal from './NewLaneModal'
+import RecordEventModal from './RecordEventModal'
+
+const EMPTY_MGMT = { events: [], planned: [], required: [], trailers: [], drivers: [] }
 
 // Dedicated Lanes — staged-trailer facilities, idle exposure, lane P&L. Every
 // number flows from get_dedicated_lanes() (see dedicatedData.js). A trailer on
@@ -71,30 +75,57 @@ const TABS = [
 
 export default function DedicatedLanes() {
   const { canEdit } = useAuth()
+  const toast = useToast()
   const [tab, setTab] = useState('map')
   const [selectedId, setSelectedId] = useState(null)
   const [modalOpen, setModalOpen] = useState(false)
   const [editLane, setEditLane] = useState(null) // lane object when editing; null = create
+  const [eventDefaults, setEventDefaults] = useState(null) // null = closed; object = Record-event open
   const [data, setData] = useState(null)
+  const [mgmt, setMgmt] = useState(EMPTY_MGMT)
   const [error, setError] = useState('')
 
   const load = useCallback(async () => {
-    try { setData(await fetchDedicatedLanes()); setError('') }
-    catch (e) { console.error('[DedicatedLanes] load failed', e); setError(e.message || 'Failed to load'); setData({ overview: {}, idle_split: {}, lanes: [] }) }
+    try {
+      const [d, m] = await Promise.all([fetchDedicatedLanes(), fetchLaneManagement()])
+      setData(d); setMgmt(m); setError('')
+    } catch (e) {
+      console.error('[DedicatedLanes] load failed', e)
+      setError(e.message || 'Failed to load'); setData({ overview: {}, idle_split: {}, lanes: [] }); setMgmt(EMPTY_MGMT)
+    }
   }, [])
   useEffect(() => { load() }, [load])
 
   const loading = data === null
   const overview = data?.overview || {}
   const split = data?.idle_split || {}
-  const lanes = data?.lanes || []
   const homeYard = { ...HOME_YARD, count: split.true_idle_unassigned || 0 }
-  const selected = selectedId === 'home' ? 'home' : lanes.find(l => l.lane_id === selectedId) || null
   const laneCount = overview.lane_count || 0
+
+  // Merge the management surface (required target + staged count) onto each lane.
+  const requiredMap = new Map((mgmt.required || []).map(r => [r.id, r.required_trailers]))
+  const stagedMap = stagedByLane(mgmt.events)
+  const trailerMap = new Map((mgmt.trailers || []).map(t => [t.id, t.unit_number]))
+  const driverMap = new Map((mgmt.drivers || []).map(d => [d.id, d.full_name]))
+  const lanes = (data?.lanes || []).map(l => ({
+    ...l,
+    required_trailers: requiredMap.get(l.lane_id) ?? null,
+    staged_count: (stagedMap.get(l.lane_id) || []).length,
+  }))
+  const selected = selectedId === 'home' ? 'home' : lanes.find(l => l.lane_id === selectedId) || null
 
   const onCreated = () => { setModalOpen(false); setEditLane(null); load() }
   const openCreate = () => { setEditLane(null); setModalOpen(true) }
   const openEdit = (l) => { setEditLane(l); setModalOpen(true) }
+  const onEventSaved = () => { setEventDefaults(null); load() }
+  const addPlanned = async (payload) => {
+    try { await addPlannedTrailer({ laneId: selectedId, ...payload }); load() }
+    catch (e) { console.error(e); toast.error("Couldn't add planned trailer", e.message) }
+  }
+  const removePlanned = async (id) => {
+    try { await deletePlannedTrailer(id); load() }
+    catch (e) { console.error(e); toast.error("Couldn't remove planned trailer", e.message) }
+  }
 
   return (
     <div className="max-w-[1400px] mx-auto space-y-4">
@@ -194,7 +225,14 @@ export default function DedicatedLanes() {
                     </div>
                   </div>
                   <div className={`${S.card} overflow-hidden min-h-[380px]`}>
-                    <WarehousePanel lane={selected} homeYard={homeYard} onBack={() => setSelectedId(null)} onEdit={canEdit ? openEdit : undefined} />
+                    <WarehousePanel lane={selected} homeYard={homeYard} onBack={() => setSelectedId(null)}
+                      onEdit={canEdit ? openEdit : undefined} canEdit={canEdit}
+                      events={mgmt.events.filter(e => e.dedicated_lane_id === selectedId)}
+                      planned={mgmt.planned.filter(p => p.dedicated_lane_id === selectedId)}
+                      staged={stagedMap.get(selectedId) || []}
+                      trailerMap={trailerMap} driverMap={driverMap}
+                      onRecordEvent={canEdit ? setEventDefaults : undefined}
+                      onAddPlanned={addPlanned} onDeletePlanned={removePlanned} />
                   </div>
                 </div>
               ) : (
@@ -208,6 +246,8 @@ export default function DedicatedLanes() {
       )}
 
       <NewLaneModal open={modalOpen} onClose={() => { setModalOpen(false); setEditLane(null) }} onCreated={onCreated} lane={editLane} lanes={lanes} />
+      <RecordEventModal open={!!eventDefaults} onClose={() => setEventDefaults(null)} onSaved={onEventSaved}
+        lane={selectedId === 'home' ? null : selected} trailers={mgmt.trailers} drivers={mgmt.drivers} defaults={eventDefaults || {}} />
     </div>
   )
 }

@@ -97,6 +97,7 @@ export default function NewLaneModal({ open, onClose, onCreated, lane = null, la
   const [customer, setCustomer] = useState('')
   const [rate, setRate] = useState('')
   const [threshold, setThreshold] = useState('0')
+  const [requiredTrailers, setRequiredTrailers] = useState('')
   const [active, setActive] = useState(true)
   const [origin, setOrigin] = useState(emptyFacility)
   const [destination, setDestination] = useState(emptyFacility)
@@ -116,11 +117,12 @@ export default function NewLaneModal({ open, onClose, onCreated, lane = null, la
       setName(lane.name || ''); setCustomer(lane.customer || '')
       setRate(lane.rate == null ? '' : String(lane.rate))
       setThreshold(lane.underwater_threshold == null ? '0' : String(lane.underwater_threshold))
+      setRequiredTrailers(lane.required_trailers == null ? '' : String(lane.required_trailers))
       setActive(lane.active !== false)
       setOrigin(facilityFrom(lane.origin)); setDestination(facilityFrom(lane.destination))
     } else {
       // Create — blank form + load the unassigned trailer pool.
-      setName(''); setCustomer(''); setRate(''); setThreshold('0'); setActive(true)
+      setName(''); setCustomer(''); setRate(''); setThreshold('0'); setRequiredTrailers(''); setActive(true)
       setOrigin(emptyFacility()); setDestination(emptyFacility())
       fetchUnassignedTrailers().then(setUnassigned).catch(e => { console.error(e); setUnassigned([]) })
     }
@@ -171,13 +173,13 @@ export default function NewLaneModal({ open, onClose, onCreated, lane = null, la
         // Fix the facility records in place (WHERE id), then the lane fields.
         await updateFacility(origin.id, { name: origin.name, address: origin.address, city: origin.city, state: origin.state, lat: pinOrNull(origin.lat), lng: pinOrNull(origin.lng) })
         await updateFacility(destination.id, { name: destination.name, address: destination.address, city: destination.city, state: destination.state, lat: pinOrNull(destination.lat), lng: pinOrNull(destination.lng) })
-        await updateDedicatedLane(lane.lane_id, { name, customer, rate, underwaterThreshold: threshold, active })
+        await updateDedicatedLane(lane.lane_id, { name, customer, rate, underwaterThreshold: threshold, active, requiredTrailers })
         toast.success(`Dedicated lane “${name.trim()}” updated.`)
       } else {
         // Find-or-create by identity so we don't mint duplicate facility rows.
         const originId = await findOrCreateFacility({ name: origin.name, address: origin.address, city: origin.city, state: origin.state, zip: origin.zip, lat: pinOrNull(origin.lat), lng: pinOrNull(origin.lng) })
         const destId = await findOrCreateFacility({ name: destination.name, address: destination.address, city: destination.city, state: destination.state, zip: destination.zip, lat: pinOrNull(destination.lat), lng: pinOrNull(destination.lng) })
-        const laneId = await createDedicatedLane({ name: name.trim(), customer, originFacilityId: originId, destinationFacilityId: destId, underwaterThreshold: threshold, rate })
+        const laneId = await createDedicatedLane({ name: name.trim(), customer, originFacilityId: originId, destinationFacilityId: destId, underwaterThreshold: threshold, rate, requiredTrailers })
         await assignTrailersToLane(laneId, assigned)
         toast.success(`Dedicated lane “${name.trim()}” created${assigned.length ? ` · ${assigned.length} trailer${assigned.length === 1 ? '' : 's'} assigned` : ''}.`)
       }
@@ -212,6 +214,11 @@ export default function NewLaneModal({ open, onClose, onCreated, lane = null, la
           <label className={S.label}>Underwater threshold</label>
           <input className={S.input} placeholder="0" inputMode="decimal" value={threshold} onChange={e => setThreshold(e.target.value)} />
           <p className={FLD_HELP}>net · MTD below this flags the lane red (default 0)</p>
+        </div>
+        <div>
+          <label className={S.label}>Trailers required <span className="text-gray-400 font-normal">(broker target · optional)</span></label>
+          <input className={S.input} placeholder="e.g. 6" inputMode="numeric" value={requiredTrailers} onChange={e => setRequiredTrailers(e.target.value.replace(/[^\d]/g, ''))} />
+          <p className={FLD_HELP}>onboarding progress target — never gates activation (lane is active from the first drop)</p>
         </div>
         {isEdit && (
           <div>

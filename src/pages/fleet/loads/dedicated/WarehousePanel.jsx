@@ -1,15 +1,16 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { TRAILER_TYPE_COLORS, daysBucket } from './dedicatedData'
 import { fmtMoney } from '../spotlight/spotlightShared'
 import { StatusPill } from './dedicatedUi'
-import { fmtDay, DAYS_TEXT } from './dedicatedFormat'
+import { fmtDay, fmtDateTime, DAYS_TEXT } from './dedicatedFormat'
 
 // The lane's yard — trailer cards grouped by facility (Origin bays / Destination
 // bays) using each trailer's position. On-road trailers (working, no cost) and
 // any off-lane/unknown are listed separately. Aging (≥10d) and missing-rate
 // trailers are flagged, not hidden.
 
-function TrailerBay({ t, index }) {
+function TrailerBay({ t, index, onHook }) {
   const bucket = daysBucket(t.idle_days)
   return (
     <div
@@ -51,6 +52,12 @@ function TrailerBay({ t, index }) {
           <dd className="font-semibold text-gray-700 dark:text-slate-300">{t.last_driver || '—'}</dd>
         </div>
       </dl>
+      {onHook && (
+        <button onClick={onHook}
+          className="mt-2.5 w-full inline-flex items-center justify-center gap-1 text-[11px] font-semibold text-orange-600 dark:text-orange-400 border border-orange-200 dark:border-orange-500/30 rounded-lg py-1.5 hover:bg-orange-50 dark:hover:bg-orange-500/10 transition-colors">
+          Hook / depart
+        </button>
+      )}
     </div>
   )
 }
@@ -69,7 +76,7 @@ function Endpoint({ role, facility }) {
   )
 }
 
-function BayGroup({ title, facility, trailers, startIndex }) {
+function BayGroup({ title, facility, trailers, startIndex, onHook }) {
   if (!trailers.length) return null
   return (
     <div>
@@ -80,8 +87,102 @@ function BayGroup({ title, facility, trailers, startIndex }) {
         </span>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-        {trailers.map((t, i) => <TrailerBay key={t.trailer_id || t.unit} t={t} index={startIndex + i} />)}
+        {trailers.map((t, i) => (
+          <TrailerBay key={t.trailer_id || t.unit} t={t} index={startIndex + i}
+            onHook={onHook && t.trailer_id ? () => onHook({ pickedTrailerId: t.trailer_id, facilityId: facility?.id }) : undefined} />
+        ))}
       </div>
+    </div>
+  )
+}
+
+// Onboarding progress — staged of broker target. Lane is active from the first
+// drop; the target only drives this progress display, never gates activation.
+function OnboardingCard({ stagedCount, required, planned, trailerMap, canEdit, onAddPlanned, onDeletePlanned, onOnboard }) {
+  const pct = required > 0 ? Math.min(100, Math.round((stagedCount / required) * 100)) : 0
+  return (
+    <div className="rounded-xl border border-gray-200 dark:border-white/10 p-3.5 space-y-3">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-[11px] font-extrabold uppercase tracking-wide text-gray-500 dark:text-slate-400">Onboarding</span>
+        <span className="text-[13px] font-extrabold tabular-nums text-gray-900 dark:text-white">
+          {required ? `${stagedCount} of ${required} staged` : `${stagedCount} staged`}
+        </span>
+      </div>
+      {canEdit && onOnboard && (
+        <button onClick={onOnboard}
+          className="w-full inline-flex items-center justify-center gap-1 text-[11px] font-semibold text-gray-600 dark:text-slate-300 border border-dashed border-gray-300 dark:border-slate-700 rounded-lg py-1.5 hover:border-orange-300 dark:hover:border-orange-500/40 hover:text-orange-600 dark:hover:text-orange-400 transition-colors">
+          ＋ Record onboarding drop <span className="font-normal text-gray-400">(starting location)</span>
+        </button>
+      )}
+      {required > 0 && (
+        <div className="h-1.5 rounded-full overflow-hidden bg-gray-100 dark:bg-white/[0.06]" role="img" aria-label={`${stagedCount} of ${required} staged`}>
+          <span className="block h-full bg-orange-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
+        </div>
+      )}
+      {(planned.length > 0 || canEdit) && (
+        <div className="space-y-1.5">
+          {planned.map(p => {
+            const label = p.trailer_label || (p.trailer_id ? `#${trailerMap.get(p.trailer_id) || '—'}` : 'unnamed')
+            const done = !!p.fulfilled_event_id
+            return (
+              <div key={p.id} className="flex items-center gap-2 text-[12px]">
+                <span className={`inline-flex items-center gap-1 font-semibold ${done ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-500 dark:text-slate-400'}`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${done ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-slate-600'}`} />
+                  {label}
+                </span>
+                <span className="text-[10px] uppercase tracking-wide text-gray-400 dark:text-slate-500">{done ? 'staged' : 'pending'}</span>
+                {canEdit && (
+                  <button onClick={() => onDeletePlanned(p.id)} className="ml-auto text-gray-300 dark:text-slate-600 hover:text-red-500 dark:hover:text-red-400 transition-colors" aria-label="Remove planned trailer">✕</button>
+                )}
+              </div>
+            )
+          })}
+          {canEdit && <AddPlanned onAdd={onAddPlanned} />}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AddPlanned({ onAdd }) {
+  const [label, setLabel] = useState('')
+  const add = () => { const v = label.trim(); if (!v) return; onAdd({ trailerLabel: v }); setLabel('') }
+  return (
+    <div className="flex items-center gap-2 pt-1">
+      <input value={label} onChange={e => setLabel(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') add() }}
+        placeholder="add planned trailer (unit # or label)"
+        className="flex-1 px-2.5 py-1.5 text-[12px] bg-white dark:bg-slate-800/80 border border-gray-300 dark:border-slate-700/40 rounded-lg text-gray-900 dark:text-slate-100 placeholder-gray-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-orange-500/30" />
+      <button onClick={add} disabled={!label.trim()}
+        className="text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-gray-300 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-40">Add</button>
+    </div>
+  )
+}
+
+// Drop / hook audit trail, newest first.
+function HistoryList({ events, trailerMap, driverMap }) {
+  return (
+    <div>
+      <div className="text-[11px] font-extrabold uppercase tracking-wide text-gray-500 dark:text-slate-400 px-1 mb-2">Drop / hook history · {events.length}</div>
+      {events.length === 0 ? (
+        <p className="text-[12px] text-gray-400 dark:text-slate-500 px-1">No yard events recorded yet.</p>
+      ) : (
+        <ol className="space-y-1.5">
+          {events.map(e => (
+            <li key={e.id} className="rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-white/[0.03] px-3 py-2 text-[12px]">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-semibold text-gray-700 dark:text-slate-300 tabular-nums">{fmtDateTime(e.occurred_at)}</span>
+                {e.is_initial && <span className="text-[9px] font-extrabold tracking-wide px-1.5 py-0.5 rounded-md bg-cyan-50 dark:bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border border-cyan-200 dark:border-cyan-500/30">INITIAL</span>}
+              </div>
+              <div className="flex items-center gap-x-3 gap-y-1 flex-wrap mt-1 text-gray-600 dark:text-slate-400">
+                {e.dropped_trailer_id && <span className="text-orange-600 dark:text-orange-400 font-semibold">▼ drop #{trailerMap.get(e.dropped_trailer_id) || '—'}</span>}
+                {e.picked_trailer_id && <span className="text-cyan-600 dark:text-cyan-400 font-semibold">▲ hook #{trailerMap.get(e.picked_trailer_id) || '—'}</span>}
+                {e.driver_id && <span>· {driverMap.get(e.driver_id) || 'driver'}</span>}
+              </div>
+              {e.notes && <div className="mt-1 text-gray-500 dark:text-slate-500 italic">{e.notes}</div>}
+            </li>
+          ))}
+        </ol>
+      )}
     </div>
   )
 }
@@ -135,7 +236,9 @@ function HomeYardCard({ homeYard, onBack }) {
   )
 }
 
-export default function WarehousePanel({ lane, homeYard, onBack, onEdit }) {
+export default function WarehousePanel({ lane, homeYard, onBack, onEdit, canEdit,
+  events = [], planned = [], staged = [], trailerMap = new Map(), driverMap = new Map(),
+  onRecordEvent, onAddPlanned, onDeletePlanned }) {
   if (lane === 'home') return <HomeYardCard homeYard={homeYard} onBack={onBack} />
 
   if (!lane) {
@@ -174,6 +277,12 @@ export default function WarehousePanel({ lane, homeYard, onBack, onEdit }) {
             </p>
           </div>
           <div className="flex items-center gap-3 shrink-0">
+            {canEdit && onRecordEvent && (
+              <button onClick={() => onRecordEvent({ facilityId: lane.origin?.id })} className="inline-flex items-center gap-1 text-xs font-semibold text-white bg-orange-500 hover:bg-orange-400 rounded-lg px-2.5 py-1.5 transition-colors shadow-sm shadow-orange-500/20">
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
+                Record event
+              </button>
+            )}
             {onEdit && (
               <button onClick={() => onEdit(lane)} className="inline-flex items-center gap-1 text-xs font-semibold text-orange-600 dark:text-orange-400 hover:text-orange-500 transition-colors">
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
@@ -202,16 +311,22 @@ export default function WarehousePanel({ lane, homeYard, onBack, onEdit }) {
       </div>
 
       <div className="p-3.5 dl-asphalt space-y-4">
+        <OnboardingCard stagedCount={staged.length} required={lane.required_trailers} planned={planned}
+          trailerMap={trailerMap} canEdit={canEdit} onAddPlanned={onAddPlanned} onDeletePlanned={onDeletePlanned}
+          onOnboard={onRecordEvent ? () => onRecordEvent({ isInitial: true, facilityId: lane.origin?.id }) : undefined} />
+
         {originT.length === 0 && destT.length === 0 && onRoad.length === 0 && offLane.length === 0 ? (
-          <p className="py-8 text-center text-sm text-gray-400 dark:text-slate-500">No trailers on this lane.</p>
+          <p className="py-6 text-center text-sm text-gray-400 dark:text-slate-500">No trailers on this lane yet.</p>
         ) : (
           <>
-            <BayGroup title="Origin bays" facility={lane.origin} trailers={originT} startIndex={0} />
-            <BayGroup title="Destination bays" facility={lane.destination} trailers={destT} startIndex={originT.length} />
+            <BayGroup title="Origin bays" facility={lane.origin} trailers={originT} startIndex={0} onHook={canEdit ? onRecordEvent : undefined} />
+            <BayGroup title="Destination bays" facility={lane.destination} trailers={destT} startIndex={originT.length} onHook={canEdit ? onRecordEvent : undefined} />
             <SimpleList title="On the road (working · no cost)" trailers={onRoad} tone="border-emerald-200 dark:border-emerald-500/25 bg-emerald-50/60 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" />
             <SimpleList title="Off-lane" trailers={offLane} tone="border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-white/[0.03] text-gray-500 dark:text-slate-400" />
           </>
         )}
+
+        <HistoryList events={events} trailerMap={trailerMap} driverMap={driverMap} />
       </div>
     </div>
   )

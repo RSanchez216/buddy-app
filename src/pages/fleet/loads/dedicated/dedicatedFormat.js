@@ -14,6 +14,15 @@ export function daysClass(days) {
   return DAYS_TEXT[daysBucket(days)]
 }
 
+// timestamptz → "MM/DD/YYYY · 3:42 PM" (local). Used by the drop/hook history.
+export function fmtDateTime(iso) {
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return '—'
+  const date = d.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })
+  const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+  return `${date} · ${time}`
+}
+
 // 'YYYY-MM-DD' → "Jul 6" — built from Y-M-D parts so there's no UTC-midnight
 // day-early shift (same guard as the Lane Flow Map's stop dates).
 export function fmtDay(iso) {

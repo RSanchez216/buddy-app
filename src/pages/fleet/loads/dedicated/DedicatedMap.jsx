@@ -11,6 +11,10 @@ import { LANE_STATUS, HOME_YARD_HEX } from './dedicatedData'
 const ENTER_STAGGER_MS = 70
 // BUDDY orange — ring/ping accent for the neutral Home Yard (not a P&L status).
 const HOME_RING_HEX = '#F97316'
+// Facility identity key (name+address+city+state, normalized) — shared by the
+// map dedupe and the selected-lane onboarding chip.
+const norm = (s) => (s || '').trim().toLowerCase()
+const facilityKey = (f) => `${norm(f.name)}|${norm(f.address)}|${norm(f.city)}|${norm(f.state)}`
 
 // Radar ping — a continuous sonar that pulses while the marker is selected. Two
 // rings offset by half the cycle (.p2) so a new pulse starts as the prior fades,
@@ -45,10 +49,11 @@ const STATUS_SEVERITY = { underwater: 3, watch: 2, profitable: 1, inactive: 0 }
 
 // A single facility marker. `fac` is a deduped facility: one physical yard that
 // may be the endpoint of several lanes (trailers/aging summed across them).
-function FacilityMarker({ fac, color, sel, showLabel, onSelect, delay, pingKey }) {
+function FacilityMarker({ fac, color, sel, showLabel, onSelect, delay, pingKey, chip }) {
   const { p, trailers, aging, role, f } = fac
   const r = markerR(trailers)
   const roleUpper = role.toUpperCase()
+  const chipW = chip ? chip.length * 6.1 + 14 : 0
   return (
     <g className={`dl-pin ${sel ? 'sel' : ''}`} onClick={onSelect} style={delay ? { animationDelay: delay } : undefined}
       role="button" tabIndex={0} aria-label={`${f.name || `${f.city}, ${f.state}`} — ${role}, ${trailers} trailers`}
@@ -71,6 +76,13 @@ function FacilityMarker({ fac, color, sel, showLabel, onSelect, delay, pingKey }
           </g>
         )}
       </g>
+      {/* Onboarding chip (selected lane's origin) — staged of broker target. */}
+      {chip && (
+        <g pointerEvents="none">
+          <rect x={p[0] - chipW / 2} y={p[1] + r + 4} width={chipW} height="16" rx="8" fill={color} stroke="#fff" strokeWidth="1.5" className="dark:stroke-[#0d0d1f]" />
+          <text x={p[0]} y={p[1] + r + 15.5} textAnchor="middle" className="fill-white font-bold" fontSize="9.5">{chip}</text>
+        </g>
+      )}
       {showLabel && (
         <>
           <text x={p[0]} y={p[1] - r - 18} textAnchor="middle" className="fill-slate-700 dark:fill-slate-200 font-bold" fontSize="11">
@@ -104,12 +116,11 @@ export default function DedicatedMap({ lanes, homeYard, selectedId, onSelect }) 
   // share an identity collapse to one marker. Trailer counts and aging badges
   // sum across the lanes that use it; color = worst lane status.
   const facilities = useMemo(() => {
-    const norm = (s) => (s || '').trim().toLowerCase()
     const byId = new Map()
     routes.forEach(({ lane }) => {
       const status = lane.status
       ;[['origin', lane.origin], ['destination', lane.destination]].forEach(([role, f]) => {
-        const id = `${norm(f.name)}|${norm(f.address)}|${norm(f.city)}|${norm(f.state)}`
+        const id = facilityKey(f)
         let acc = byId.get(id)
         if (!acc) {
           const p = projection([Number(f.lng), Number(f.lat)])
@@ -136,6 +147,9 @@ export default function DedicatedMap({ lanes, homeYard, selectedId, onSelect }) 
   const anySelected = selectedId != null
   // A specific lane selected → isolate it (hide/dim everything else).
   const laneSelected = anySelected && selectedId !== 'home'
+  // Selected lane's origin identity → drives the onboarding chip on that marker.
+  const selLane = laneSelected ? (lanes || []).find(l => l.lane_id === selectedId) : null
+  const selOriginKey = selLane?.origin ? facilityKey(selLane.origin) : null
   const dimLane = id => (laneSelected && selectedId !== id && hoverId !== id) || (selectedId === 'home')
   const dimHome = laneSelected
 
@@ -213,11 +227,15 @@ export default function DedicatedMap({ lanes, homeYard, selectedId, onSelect }) 
           const color = (LANE_STATUS[fac.status] || LANE_STATUS.inactive).hex
           // Click toggles: deselect if already showing this yard's lane, else pick one of its lanes.
           const handle = () => onSelect(sel ? null : [...fac.laneIds][0])
+          // Onboarding chip on the selected lane's origin marker: staged / target.
+          const chip = selOriginKey && fac.id === selOriginKey
+            ? (selLane.required_trailers ? `${selLane.staged_count || 0}/${selLane.required_trailers} staged` : `${selLane.staged_count || 0} staged`)
+            : null
           return (
             <g key={`fac-${fac.id}`} opacity={dim ? 0.3 : 1}
               onMouseEnter={() => setHoverId(fac.laneIds.size === 1 ? [...fac.laneIds][0] : null)} onMouseLeave={() => setHoverId(null)}>
               <FacilityMarker fac={fac} color={color} sel={sel} showLabel={show} onSelect={handle}
-                delay={`${(i + 1) * ENTER_STAGGER_MS}ms`} pingKey={selectedId} />
+                delay={`${(i + 1) * ENTER_STAGGER_MS}ms`} pingKey={selectedId} chip={chip} />
             </g>
           )
         })}

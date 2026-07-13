@@ -55,6 +55,111 @@ export async function fetchUnassignedTrailers() {
   return data || []
 }
 
+// ── Yard events / onboarding / planned (management surface) ──────────────────
+// All trailers / drivers — options for the Record-event selects.
+export async function fetchTrailerOptions() {
+  const { data, error } = await supabase.from('trailers').select('id, unit_number, trailer_type').order('unit_number')
+  if (error) throw error
+  return data || []
+}
+export async function fetchDriverOptions() {
+  const { data, error } = await supabase.from('drivers').select('id, full_name').order('full_name')
+  if (error) throw error
+  return data || []
+}
+
+// Raw drop/hook events across all lanes (newest first). Trailer/driver labels
+// are resolved client-side from the option maps to avoid FK-embed coupling.
+export async function fetchLaneEvents() {
+  const { data, error } = await supabase
+    .from('dedicated_lane_trailer_events')
+    .select('id, dedicated_lane_id, facility_id, dropped_trailer_id, picked_trailer_id, driver_id, is_initial, occurred_at, location_text, notes')
+    .order('occurred_at', { ascending: false })
+  if (error) throw error
+  return data || []
+}
+export async function fetchLanePlanned() {
+  const { data, error } = await supabase
+    .from('dedicated_lane_planned_trailers')
+    .select('id, dedicated_lane_id, trailer_id, trailer_label, slot_index, fulfilled_event_id')
+    .order('slot_index', { ascending: true, nullsFirst: false })
+  if (error) throw error
+  return data || []
+}
+export async function fetchLanesRequired() {
+  const { data, error } = await supabase.from('dedicated_lanes').select('id, required_trailers')
+  if (error) throw error
+  return data || []
+}
+
+// One round-trip for the whole management surface (events + planned + required
+// + option lists), loaded alongside get_dedicated_lanes().
+export async function fetchLaneManagement() {
+  const [events, planned, required, trailers, drivers] = await Promise.all([
+    fetchLaneEvents(), fetchLanePlanned(), fetchLanesRequired(), fetchTrailerOptions(), fetchDriverOptions(),
+  ])
+  return { events, planned, required, trailers, drivers }
+}
+
+// Staged = distinct trailers whose latest event on a lane is a drop with no
+// later pickup. `events` must be sorted newest-first (fetchLaneEvents does).
+export function stagedByLane(events) {
+  const perLane = new Map() // laneId -> Map(trailerId -> 'drop' | 'pick')  (first seen = latest)
+  for (const e of events || []) {
+    if (!perLane.has(e.dedicated_lane_id)) perLane.set(e.dedicated_lane_id, new Map())
+    const m = perLane.get(e.dedicated_lane_id)
+    if (e.dropped_trailer_id && !m.has(e.dropped_trailer_id)) m.set(e.dropped_trailer_id, 'drop')
+    if (e.picked_trailer_id && !m.has(e.picked_trailer_id)) m.set(e.picked_trailer_id, 'pick')
+  }
+  const out = new Map()
+  for (const [laneId, m] of perLane) {
+    out.set(laneId, [...m.entries()].filter(([, role]) => role === 'drop').map(([tid]) => tid))
+  }
+  return out
+}
+
+// Record a yard event, park the dropped trailer at the lane, and fulfill any
+// matching planned-trailer slot. At least one of dropped/picked must be set.
+export async function recordLaneEvent({ laneId, facilityId, droppedTrailerId, pickedTrailerId, driverId, isInitial, occurredAt, locationText, notes }) {
+  const { data, error } = await supabase
+    .from('dedicated_lane_trailer_events')
+    .insert({
+      dedicated_lane_id: laneId,
+      facility_id: facilityId || null,
+      dropped_trailer_id: droppedTrailerId || null,
+      picked_trailer_id: pickedTrailerId || null,
+      driver_id: driverId || null,
+      is_initial: !!isInitial,
+      occurred_at: occurredAt,
+      location_text: locationText || null,
+      notes: notes?.trim() || null,
+    })
+    .select('id').single()
+  if (error) throw error
+  const eventId = data.id
+  if (droppedTrailerId) {
+    // The dropped trailer now sits at this lane.
+    const { error: e2 } = await supabase.from('trailers').update({ dedicated_lane_id: laneId }).eq('id', droppedTrailerId)
+    if (e2) throw e2
+    // Fulfill an open planned slot for this exact trailer, if one exists.
+    const { error: e3 } = await supabase.from('dedicated_lane_planned_trailers')
+      .update({ fulfilled_event_id: eventId })
+      .eq('dedicated_lane_id', laneId).eq('trailer_id', droppedTrailerId).is('fulfilled_event_id', null)
+    if (e3) throw e3
+  }
+  return eventId
+}
+
+export async function addPlannedTrailer({ laneId, trailerId, trailerLabel, slotIndex }) {
+  const { error } = await supabase.from('dedicated_lane_planned_trailers')
+    .insert({ dedicated_lane_id: laneId, trailer_id: trailerId || null, trailer_label: trailerLabel?.trim() || null, slot_index: slotIndex ?? null })
+  if (error) throw error
+}
+export async function deletePlannedTrailer(id) {
+  const { error } = await supabase.from('dedicated_lane_planned_trailers').delete().eq('id', id)
+  if (error) throw error
+}
+
 export async function createFacility({ name, address, city, state, zip, lat, lng }) {
   const { data, error } = await supabase
     .from('facilities')
@@ -96,7 +201,9 @@ export async function updateFacility(id, { name, address, city, state, lat, lng 
   if (error) throw error
 }
 
-export async function createDedicatedLane({ name, customer, originFacilityId, destinationFacilityId, underwaterThreshold, rate }) {
+const intOrNull = (v) => (v == null || v === '' || !Number.isFinite(Number(v)) ? null : Math.trunc(Number(v)))
+
+export async function createDedicatedLane({ name, customer, originFacilityId, destinationFacilityId, underwaterThreshold, rate, requiredTrailers }) {
   const { data, error } = await supabase
     .from('dedicated_lanes')
     .insert({
@@ -106,13 +213,14 @@ export async function createDedicatedLane({ name, customer, originFacilityId, de
       underwater_threshold: Number(underwaterThreshold) || 0,
       // Flat per-load rate — null (unset) stays distinct from a real $0 rate.
       rate: rate == null || rate === '' ? null : Number(rate),
+      required_trailers: intOrNull(requiredTrailers),
     })
     .select('id').single()
   if (error) throw error
   return data.id
 }
 
-export async function updateDedicatedLane(id, { name, customer, rate, underwaterThreshold, active }) {
+export async function updateDedicatedLane(id, { name, customer, rate, underwaterThreshold, active, requiredTrailers }) {
   const { error } = await supabase
     .from('dedicated_lanes')
     .update({
@@ -122,6 +230,7 @@ export async function updateDedicatedLane(id, { name, customer, rate, underwater
       rate: rate == null || rate === '' ? null : Number(rate),
       underwater_threshold: Number(underwaterThreshold) || 0,
       active: !!active,
+      required_trailers: intOrNull(requiredTrailers),
     })
     .eq('id', id)
   if (error) throw error
