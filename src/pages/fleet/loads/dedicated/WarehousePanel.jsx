@@ -3,7 +3,8 @@ import { Link } from 'react-router-dom'
 import { TRAILER_TYPE_COLORS, daysBucket } from './dedicatedData'
 import { fmtMoney } from '../spotlight/spotlightShared'
 import { StatusPill } from './dedicatedUi'
-import { fmtDay, fmtDateTime, DAYS_TEXT } from './dedicatedFormat'
+import { fmtDay, fmtDateTime, formatTelegramMessage, DAYS_TEXT } from './dedicatedFormat'
+import TelegramSettings from './TelegramSettings'
 
 // The lane's yard — trailer cards grouped by facility (Origin bays / Destination
 // bays) using each trailer's position. On-road trailers (working, no cost) and
@@ -158,8 +159,25 @@ function AddPlanned({ onAdd }) {
   )
 }
 
-// Drop / hook audit trail, newest first.
-function HistoryList({ events, trailerMap, driverMap }) {
+// Copy-to-clipboard button with a brief "Copied" state. Plain text only.
+function CopyTelegramButton({ text, className = '' }) {
+  const [copied, setCopied] = useState(false)
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1600) }
+    catch (e) { console.error('[copy] clipboard blocked', e) }
+  }
+  return (
+    <button onClick={copy}
+      className={`inline-flex items-center gap-1 text-[11px] font-semibold rounded-lg border px-2 py-1 transition-colors ${copied
+        ? 'border-emerald-300 dark:border-emerald-500/40 text-emerald-600 dark:text-emerald-400'
+        : 'border-gray-300 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5'} ${className}`}>
+      {copied ? 'Copied' : 'Copy for Telegram'}
+    </button>
+  )
+}
+
+// Drop / hook audit trail, newest first. Each row carries a Telegram copy action.
+function HistoryList({ events, trailerMap, driverMap, truckMap, recipients }) {
   return (
     <div>
       <div className="text-[11px] font-extrabold uppercase tracking-wide text-gray-500 dark:text-slate-400 px-1 mb-2">Drop / hook history · {events.length}</div>
@@ -167,20 +185,32 @@ function HistoryList({ events, trailerMap, driverMap }) {
         <p className="text-[12px] text-gray-400 dark:text-slate-500 px-1">No yard events recorded yet.</p>
       ) : (
         <ol className="space-y-1.5">
-          {events.map(e => (
-            <li key={e.id} className="rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-white/[0.03] px-3 py-2 text-[12px]">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-semibold text-gray-700 dark:text-slate-300 tabular-nums">{fmtDateTime(e.occurred_at)}</span>
-                {e.is_initial && <span className="text-[9px] font-extrabold tracking-wide px-1.5 py-0.5 rounded-md bg-cyan-50 dark:bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border border-cyan-200 dark:border-cyan-500/30">INITIAL</span>}
-              </div>
-              <div className="flex items-center gap-x-3 gap-y-1 flex-wrap mt-1 text-gray-600 dark:text-slate-400">
-                {e.dropped_trailer_id && <span className="text-orange-600 dark:text-orange-400 font-semibold">▼ drop #{trailerMap.get(e.dropped_trailer_id) || '—'}</span>}
-                {e.picked_trailer_id && <span className="text-cyan-600 dark:text-cyan-400 font-semibold">▲ hook #{trailerMap.get(e.picked_trailer_id) || '—'}</span>}
-                {e.driver_id && <span>· {driverMap.get(e.driver_id) || 'driver'}</span>}
-              </div>
-              {e.notes && <div className="mt-1 text-gray-500 dark:text-slate-500 italic">{e.notes}</div>}
-            </li>
-          ))}
+          {events.map(e => {
+            const msg = formatTelegramMessage({
+              truckUnit: truckMap.get(e.driver_id),
+              driverName: driverMap.get(e.driver_id),
+              droppedUnit: e.dropped_trailer_id ? trailerMap.get(e.dropped_trailer_id) : null,
+              pickedUnit: e.picked_trailer_id ? trailerMap.get(e.picked_trailer_id) : null,
+              locationText: e.location_text,
+              occurredAt: e.occurred_at,
+              recipients,
+            })
+            return (
+              <li key={e.id} className="rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-white/[0.03] px-3 py-2 text-[12px]">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-semibold text-gray-700 dark:text-slate-300 tabular-nums">{fmtDateTime(e.occurred_at)}</span>
+                  {e.is_initial && <span className="text-[9px] font-extrabold tracking-wide px-1.5 py-0.5 rounded-md bg-cyan-50 dark:bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border border-cyan-200 dark:border-cyan-500/30">INITIAL</span>}
+                  <CopyTelegramButton text={msg} className="ml-auto" />
+                </div>
+                <div className="flex items-center gap-x-3 gap-y-1 flex-wrap mt-1 text-gray-600 dark:text-slate-400">
+                  {e.dropped_trailer_id && <span className="text-orange-600 dark:text-orange-400 font-semibold">▼ drop #{trailerMap.get(e.dropped_trailer_id) || '—'}</span>}
+                  {e.picked_trailer_id && <span className="text-cyan-600 dark:text-cyan-400 font-semibold">▲ hook #{trailerMap.get(e.picked_trailer_id) || '—'}</span>}
+                  {e.driver_id && <span>· {driverMap.get(e.driver_id) || 'driver'}</span>}
+                </div>
+                {e.notes && <div className="mt-1 text-gray-500 dark:text-slate-500 italic">{e.notes}</div>}
+              </li>
+            )
+          })}
         </ol>
       )}
     </div>
@@ -237,8 +267,8 @@ function HomeYardCard({ homeYard, onBack }) {
 }
 
 export default function WarehousePanel({ lane, homeYard, onBack, onEdit, canEdit,
-  events = [], planned = [], staged = [], trailerMap = new Map(), driverMap = new Map(),
-  onRecordEvent, onAddPlanned, onDeletePlanned }) {
+  events = [], planned = [], staged = [], trailerMap = new Map(), driverMap = new Map(), truckMap = new Map(),
+  recipients = [], onRecordEvent, onAddPlanned, onDeletePlanned, onSaveRecipients }) {
   if (lane === 'home') return <HomeYardCard homeYard={homeYard} onBack={onBack} />
 
   if (!lane) {
@@ -326,7 +356,9 @@ export default function WarehousePanel({ lane, homeYard, onBack, onEdit, canEdit
           </>
         )}
 
-        <HistoryList events={events} trailerMap={trailerMap} driverMap={driverMap} />
+        <HistoryList events={events} trailerMap={trailerMap} driverMap={driverMap} truckMap={truckMap} recipients={recipients} />
+
+        <TelegramSettings recipients={recipients} canEdit={canEdit} onSave={onSaveRecipients} />
       </div>
     </div>
   )

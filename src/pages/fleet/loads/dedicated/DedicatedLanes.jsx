@@ -5,14 +5,14 @@ import { useAuth } from '../../../../contexts/AuthContext'
 import { useToast } from '../../../../contexts/ToastContext'
 import { fmtMoney } from '../spotlight/spotlightShared'
 import { DedicatedKeyframes } from './dedicatedUi'
-import { fetchDedicatedLanes, fetchLaneManagement, stagedByLane, addPlannedTrailer, deletePlannedTrailer, HOME_YARD } from './dedicatedData'
+import { fetchDedicatedLanes, fetchLaneManagement, stagedByLane, addPlannedTrailer, deletePlannedTrailer, updateTelegramRecipients, HOME_YARD } from './dedicatedData'
 import DedicatedMap from './DedicatedMap'
 import WarehousePanel from './WarehousePanel'
 import LanesTable from './LanesTable'
 import NewLaneModal from './NewLaneModal'
 import RecordEventModal from './RecordEventModal'
 
-const EMPTY_MGMT = { events: [], planned: [], required: [], trailers: [], drivers: [] }
+const EMPTY_MGMT = { events: [], planned: [], required: [], trailers: [], drivers: [], trucks: [], recipients: [] }
 
 // Dedicated Lanes — staged-trailer facilities, idle exposure, lane P&L. Every
 // number flows from get_dedicated_lanes() (see dedicatedData.js). A trailer on
@@ -107,6 +107,7 @@ export default function DedicatedLanes() {
   const stagedMap = stagedByLane(mgmt.events)
   const trailerMap = new Map((mgmt.trailers || []).map(t => [t.id, t.unit_number]))
   const driverMap = new Map((mgmt.drivers || []).map(d => [d.id, d.full_name]))
+  const truckMap = new Map((mgmt.trucks || []).map(t => [t.driver_id, t.unit_number]))
   const lanes = (data?.lanes || []).map(l => ({
     ...l,
     required_trailers: requiredMap.get(l.lane_id) ?? null,
@@ -125,6 +126,10 @@ export default function DedicatedLanes() {
   const removePlanned = async (id) => {
     try { await deletePlannedTrailer(id); load() }
     catch (e) { console.error(e); toast.error("Couldn't remove planned trailer", e.message) }
+  }
+  const saveRecipients = async (list) => {
+    try { await updateTelegramRecipients(list); setMgmt(m => ({ ...m, recipients: list })); toast.success('Telegram recipients updated.') }
+    catch (e) { console.error(e); toast.error("Couldn't update recipients", e.message) }
   }
 
   return (
@@ -230,9 +235,9 @@ export default function DedicatedLanes() {
                       events={mgmt.events.filter(e => e.dedicated_lane_id === selectedId)}
                       planned={mgmt.planned.filter(p => p.dedicated_lane_id === selectedId)}
                       staged={stagedMap.get(selectedId) || []}
-                      trailerMap={trailerMap} driverMap={driverMap}
+                      trailerMap={trailerMap} driverMap={driverMap} truckMap={truckMap} recipients={mgmt.recipients}
                       onRecordEvent={canEdit ? setEventDefaults : undefined}
-                      onAddPlanned={addPlanned} onDeletePlanned={removePlanned} />
+                      onAddPlanned={addPlanned} onDeletePlanned={removePlanned} onSaveRecipients={saveRecipients} />
                   </div>
                 </div>
               ) : (

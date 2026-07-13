@@ -92,13 +92,33 @@ export async function fetchLanesRequired() {
   return data || []
 }
 
+// Truck unit per driver (for the Telegram header) + the global recipient list.
+export async function fetchTruckByDriver() {
+  const { data, error } = await supabase.from('trucks').select('driver_id, unit_number').not('driver_id', 'is', null)
+  if (error) throw error
+  return data || []
+}
+export async function fetchTelegramRecipients() {
+  const { data, error } = await supabase.from('telegram_message_settings').select('recipients').eq('scope', 'global').maybeSingle()
+  if (error) throw error
+  return Array.isArray(data?.recipients) ? data.recipients : []
+}
+export async function updateTelegramRecipients(recipients) {
+  const { data: auth } = await supabase.auth.getUser()
+  const { error } = await supabase.from('telegram_message_settings')
+    .update({ recipients, updated_at: new Date().toISOString(), updated_by: auth?.user?.id ?? null })
+    .eq('scope', 'global')
+  if (error) throw error
+}
+
 // One round-trip for the whole management surface (events + planned + required
-// + option lists), loaded alongside get_dedicated_lanes().
+// + option lists + truck map + Telegram recipients), loaded alongside the RPC.
 export async function fetchLaneManagement() {
-  const [events, planned, required, trailers, drivers] = await Promise.all([
+  const [events, planned, required, trailers, drivers, trucks, recipients] = await Promise.all([
     fetchLaneEvents(), fetchLanePlanned(), fetchLanesRequired(), fetchTrailerOptions(), fetchDriverOptions(),
+    fetchTruckByDriver(), fetchTelegramRecipients(),
   ])
-  return { events, planned, required, trailers, drivers }
+  return { events, planned, required, trailers, drivers, trucks, recipients }
 }
 
 // Staged = distinct trailers whose latest event on a lane is a drop with no
