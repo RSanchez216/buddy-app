@@ -51,7 +51,7 @@ function FacilityMarker({ f, color, sel, aging, showLabel, onSelect, laneName, p
           <text x={p[0]} y={p[1] - r - 18} textAnchor="middle" className="fill-slate-700 dark:fill-slate-200 font-bold" fontSize="11">
             {f.name || `${f.city}, ${f.state}`}
           </text>
-          <text x={p[0]} y={p[1] - r - 7} textAnchor="middle" className="fill-slate-400 dark:fill-slate-500 font-medium" fontSize="9">
+          <text x={p[0]} y={p[1] - r - 7} textAnchor="middle" className="fill-slate-600 dark:fill-slate-300 font-medium" fontSize="10">
             {position} · {f.city}, {f.state}
           </text>
         </>
@@ -133,7 +133,7 @@ export default function DedicatedMap({ lanes, homeYard, selectedId, onSelect }) 
               <text x={home.p[0]} y={home.p[1] + 4} textAnchor="middle" className="fill-white font-bold" fontSize="12">{homeYard.count}</text>
             </g>
             <text x={home.p[0]} y={home.p[1] - home.r - 18} textAnchor="middle" className="fill-slate-700 dark:fill-slate-200 font-bold" fontSize="11">Home Yard</text>
-            <text x={home.p[0]} y={home.p[1] - home.r - 7} textAnchor="middle" className="fill-slate-400 dark:fill-slate-500 font-medium" fontSize="9">
+            <text x={home.p[0]} y={home.p[1] - home.r - 7} textAnchor="middle" className="fill-slate-600 dark:fill-slate-300 font-medium" fontSize="10">
               {homeYard.city}, {homeYard.state} · true idle
             </text>
           </g>
