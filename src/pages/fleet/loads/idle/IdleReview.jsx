@@ -527,45 +527,53 @@ function InfoDot({ tip }) {
   )
 }
 
-// Equipment idle card: count + carrying cost lost so far (red) + monthly
-// run-rate (muted). "Lost" is cash already spent; kept separate from driver
-// revenue foregone.
+// Equipment idle card — compact side-by-side: label on top, then the big count
+// on the left with the metric block stacked tight to its right. "Lost" is cash
+// already spent; kept separate from driver revenue foregone.
 function EquipIdleCard({ label, count, lost, monthly, loading }) {
   return (
-    <div className={`${S.card} px-4 py-3`}>
+    <div className={`${S.card} px-4 py-2.5`}>
       <div className="text-[10px] font-semibold uppercase tracking-widest text-gray-600 dark:text-slate-500">{label}</div>
-      <div className="mt-0.5 text-2xl font-mono font-bold text-gray-900 dark:text-white">{loading ? '…' : (count ?? 0)}</div>
-      <div className="mt-1 flex items-center gap-1.5">
-        <span className="font-mono text-sm font-bold text-red-600 dark:text-red-400">{loading ? '…' : `${money0(lost)} lost so far`}</span>
-        <InfoDot tip="Carrying cost already spent on these idle units — each counted since it last moved (units are idle different lengths of time)." />
-      </div>
-      <div className="text-[11px] text-gray-500 dark:text-slate-400">carrying cost, since each last moved</div>
-      <div className="mt-1 flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-slate-400">
-        <span>{loading ? '' : `~${money0(monthly)}/mo while idle`}</span>
-        {!loading && <InfoDot tip="What these idle units cost per month at their current rate if they keep sitting." />}
+      <div className="mt-1 flex items-center gap-3">
+        <div className="shrink-0 text-3xl font-mono font-bold leading-none text-gray-900 dark:text-white">{loading ? '…' : (count ?? 0)}</div>
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5">
+            <span className="font-mono text-sm font-bold text-red-600 dark:text-red-400">{loading ? '…' : `${money0(lost)} lost so far`}</span>
+            <InfoDot tip="Carrying cost already spent on these idle units — each counted since it last moved (units are idle different lengths of time)." />
+          </div>
+          <div className="text-[11px] leading-tight text-gray-500 dark:text-slate-400">carrying cost, since each last moved</div>
+          <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-slate-400">
+            <span>{loading ? '' : `~${money0(monthly)}/mo while idle`}</span>
+            {!loading && <InfoDot tip="What these idle units cost per month at their current rate if they keep sitting." />}
+          </div>
+        </div>
       </div>
     </div>
   )
 }
 
-// Driver idle card: count + estimated revenue foregone (opportunity, red) +
-// weekly earning power sitting (muted) + a behind-on-purchase flag (amber).
+// Driver idle card — same compact side-by-side shape: estimated revenue foregone
+// (opportunity, red) + weekly earning power sitting (muted) + behind flag (amber).
 function DriverIdleCard({ ps, loading }) {
   return (
-    <div className={`${S.card} px-4 py-3`}>
+    <div className={`${S.card} px-4 py-2.5`}>
       <div className="text-[10px] font-semibold uppercase tracking-widest text-gray-600 dark:text-slate-500">Idle drivers</div>
-      <div className="mt-0.5 text-2xl font-mono font-bold text-gray-900 dark:text-white">{loading ? '…' : (ps?.idle_drivers ?? 0)}</div>
-      <div className="mt-1 flex items-center gap-1.5">
-        <span className="font-mono text-sm font-bold text-red-600 dark:text-red-400">{loading ? '…' : `~${money0(ps.drivers_revenue_foregone)} revenue foregone`}</span>
-        <InfoDot tip="Estimated revenue not earned while these drivers sit — each driver's typical daily revenue × days idle. An estimate, not a booked loss." />
-      </div>
-      <div className="text-[11px] text-gray-500 dark:text-slate-400">est. — daily earning rate × days idle</div>
-      <div className="mt-1 text-[11px] text-gray-500 dark:text-slate-400">{loading ? '' : `~${money0(ps.drivers_weekly_earning)}/wk of earning power sitting`}</div>
-      {!loading && Number(ps?.drivers_behind_count) > 0 && (
-        <div className="mt-1.5 text-[11px] font-semibold text-amber-700 dark:text-amber-400">
-          {ps.drivers_behind_count} also behind on purchase · {money0(ps.drivers_behind_amt)}
+      <div className="mt-1 flex items-center gap-3">
+        <div className="shrink-0 text-3xl font-mono font-bold leading-none text-gray-900 dark:text-white">{loading ? '…' : (ps?.idle_drivers ?? 0)}</div>
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5">
+            <span className="font-mono text-sm font-bold text-red-600 dark:text-red-400">{loading ? '…' : `~${money0(ps.drivers_revenue_foregone)} revenue foregone`}</span>
+            <InfoDot tip="Estimated revenue not earned while these drivers sit — each driver's typical daily revenue × days idle. An estimate, not a booked loss." />
+          </div>
+          <div className="text-[11px] leading-tight text-gray-500 dark:text-slate-400">est. — daily earning rate × days idle</div>
+          <div className="mt-0.5 text-[11px] text-gray-500 dark:text-slate-400">{loading ? '' : `~${money0(ps.drivers_weekly_earning)}/wk of earning power sitting`}</div>
+          {!loading && Number(ps?.drivers_behind_count) > 0 && (
+            <div className="mt-0.5 text-[11px] font-semibold text-amber-700 dark:text-amber-400">
+              {ps.drivers_behind_count} also behind on purchase · {money0(ps.drivers_behind_amt)}
+            </div>
+          )}
         </div>
-      )}
+      </div>
     </div>
   )
 }
