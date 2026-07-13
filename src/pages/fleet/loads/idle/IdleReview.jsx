@@ -51,6 +51,7 @@ const CAP = 10
 const ROW_BTN = 'inline-flex items-center px-2 py-1 text-[11px] font-medium rounded-md border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 active:bg-gray-100 dark:active:bg-white/10 transition-colors'
 
 const COST_TIP = "Monthly carrying cost — the lease or loan payment for this unit, which keeps being charged while it sits idle. It's the monthly run-rate, not prorated to the idle days shown. Driver-owned equipment is $0. For a driver, it's the combined carrying cost of the company truck and trailer they're holding."
+const UNIT_COST_TIP = "What this unit has cost while sitting unused — its monthly carrying cost prorated over the days it hasn't moved (~$/day × days idle)."
 
 // Column defs drive the sortable headers + comparator. `get` returns the sort
 // value; `type` picks the comparator (text / numeric / severity). Hoisted to
@@ -59,7 +60,7 @@ const UNIT_COLUMNS = [
   { key: 'label', label: 'Unit', type: 'text', get: r => r.label || '' },
   { key: 'days', label: 'Idle', type: 'num', align: 'right', get: r => r.days_idle },
   { key: 'extra', label: 'Assigned driver', type: 'text', get: r => r.extra || '' },
-  { key: 'cost', label: 'Holding', type: 'num', align: 'right', tip: COST_TIP, get: r => Number(r.holding_prorated) },
+  { key: 'cost', label: 'Holding', type: 'num', align: 'right', tip: UNIT_COST_TIP, get: r => Number(r.holding_prorated) },
   { key: 'reason', label: 'Reason', type: 'severity', get: r => SEV_RANK[severity(r)] },
 ]
 const DRIVER_COLUMNS = [
@@ -205,9 +206,20 @@ function HoldingCell({ row }) {
   const bd = []
   if (row.truck_unit) bd.push(`truck ${part(row.truck_unit, row.truck_holding)}`)
   if (row.trailer_unit) bd.push(`trailer ${part(row.trailer_unit, row.trailer_holding)}`)
+  // Trucks/trailers read as "cost of sitting unused" + a per-day rate
+  // (monthly ÷ 30.44). Driver/team rows keep the plain "held · Xd" wording.
+  const isUnit = row.subject_type === 'truck' || row.subject_type === 'trailer'
+  const perDay = monthly > 0 ? Math.round(monthly / 30.44) : 0
   return (
     <div className="text-right">
-      <div className="font-mono text-amber-600 dark:text-amber-400 whitespace-nowrap">{held > 0 ? money0(held) : '$0'} <span className="text-[9px] font-sans text-gray-600 dark:text-slate-400">held · {row.days_idle ?? 0}d</span></div>
+      <div className="font-mono text-amber-600 dark:text-amber-400 whitespace-nowrap">
+        {held > 0 ? money0(held) : '$0'}
+        {isUnit ? (
+          <span className="text-[9px] font-sans text-gray-600 dark:text-slate-400"> · {row.days_idle ?? 0}d sitting unused{perDay > 0 ? ` · ~${money0(perDay)}/day` : ''}</span>
+        ) : (
+          <span className="text-[9px] font-sans text-gray-600 dark:text-slate-400"> held · {row.days_idle ?? 0}d</span>
+        )}
+      </div>
       <div className="text-[10px] font-mono text-gray-600 dark:text-slate-400 whitespace-nowrap">{monthly > 0 ? `${money0(monthly)}/mo` : '$0 (owned)'}</div>
       {bd.length > 0 && <div className="text-[10px] text-gray-600 dark:text-slate-400">{bd.join(' + ')}</div>}
     </div>
