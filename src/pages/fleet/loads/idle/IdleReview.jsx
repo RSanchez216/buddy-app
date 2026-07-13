@@ -455,6 +455,22 @@ export default function IdleReview() {
         </p>
       </div>
 
+      {/* Headline banner — equipment carrying cost lost so far (trucks +
+          trailers only; driver revenue-foregone is opportunity cost and stays
+          on the drivers card, never summed in here). */}
+      {pageSummary && (
+        <div className="rounded-xl border border-red-200 dark:border-red-500/25 bg-red-50/60 dark:bg-red-500/[0.06] px-4 py-3">
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <span className="text-[10px] font-semibold uppercase tracking-widest text-red-700/70 dark:text-red-400/70">Idle equipment · lost so far</span>
+            <span className="font-mono text-2xl font-bold text-red-600 dark:text-red-400">{money0(pageSummary.equip_lost_total)}</span>
+            <span className="text-xs text-red-700/80 dark:text-red-300/80">Still costing ~{money0(pageSummary.equip_monthly_total)}/mo while idle</span>
+          </div>
+          <p className="mt-1 text-[11px] text-gray-500 dark:text-slate-400">
+            Carrying cost already spent on idle trucks &amp; trailers — each counted since it last moved (currently {pageSummary.equip_idle_days_min}–{pageSummary.equip_idle_days_max} days idle). Includes equipment held by idle drivers.
+          </p>
+        </div>
+      )}
+
       {/* Cost-of-idle summary cards — equipment carrying cost (cash spent) and
           driver revenue foregone (opportunity) kept separate, never summed. */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
