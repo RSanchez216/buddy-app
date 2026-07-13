@@ -9,32 +9,54 @@ import { facilityGeo, fetchUnassignedTrailers, createFacility, createDedicatedLa
 // lat/lng override. Manager/admin only (RLS enforces regardless).
 
 const FLD_HELP = 'text-[11px] text-gray-400 dark:text-slate-500 mt-1'
-const emptyFacility = () => ({ name: '', city: '', state: '', lat: '', lng: '' })
+const FLD_ERR = 'text-[11px] text-red-600 dark:text-red-400 mt-1'
+const emptyFacility = () => ({ name: '', address: '', city: '', state: '', lat: '', lng: '' })
 
-function FacilityFields({ label, f, onChange, onResolve, resolving }) {
+// Required to save: name, address, city, state. Lat/lng stay optional (resolved or manual).
+function facilityErrors(f) {
+  return {
+    name: !f.name.trim() ? 'Facility name is required.' : '',
+    address: !f.address.trim() ? 'Street address is required.' : '',
+    city: !f.city.trim() ? 'City is required.' : '',
+    state: !f.state.trim() ? 'State is required.' : '',
+  }
+}
+
+// Apply an inline-error ring to a required input when its error should show.
+const errInput = (show) => `${S.input}${show ? ' border-red-400 dark:border-red-500/50 focus:ring-red-500/40 focus:border-red-500/40' : ''}`
+
+function FacilityFields({ label, f, onChange, onResolve, resolving, errors, showErr, onBlur }) {
   const hasPin = f.lat !== '' && f.lng !== ''
   return (
     <div className="sm:col-span-2 rounded-xl border border-gray-200 dark:border-white/10 p-3.5 space-y-3">
       <div className="text-[11px] font-extrabold uppercase tracking-wide text-gray-500 dark:text-slate-400">{label}</div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div className="sm:col-span-2">
-          <label className={S.label}>Facility name <span className="text-gray-400 font-normal">(optional)</span></label>
-          <input className={S.input} placeholder="e.g. Del Campo DC" value={f.name} onChange={e => onChange({ ...f, name: e.target.value })} />
+          <label className={S.label}>Facility name</label>
+          <input className={errInput(showErr('name'))} placeholder="e.g. Del Campo DC" value={f.name} onChange={e => onChange({ ...f, name: e.target.value })} onBlur={() => onBlur('name')} />
+          {showErr('name') && <p className={FLD_ERR}>{errors.name}</p>}
+        </div>
+        <div className="sm:col-span-2">
+          <label className={S.label}>Street address</label>
+          <input className={errInput(showErr('address'))} placeholder="e.g. 400 Aberdeen Loop" value={f.address} onChange={e => onChange({ ...f, address: e.target.value })} onBlur={() => onBlur('address')} />
+          {showErr('address') && <p className={FLD_ERR}>{errors.address}</p>}
         </div>
         <div>
           <label className={S.label}>City</label>
-          <input className={S.input} placeholder="Laredo" value={f.city} onChange={e => onChange({ ...f, city: e.target.value })} />
+          <input className={errInput(showErr('city'))} placeholder="e.g. Panama City" value={f.city} onChange={e => onChange({ ...f, city: e.target.value })} onBlur={() => onBlur('city')} />
+          {showErr('city') && <p className={FLD_ERR}>{errors.city}</p>}
         </div>
         <div>
           <label className={S.label}>State</label>
-          <input className={S.input} placeholder="TX" maxLength={2} value={f.state} onChange={e => onChange({ ...f, state: e.target.value.toUpperCase() })} />
+          <input className={errInput(showErr('state'))} placeholder="TX" maxLength={2} value={f.state} onChange={e => onChange({ ...f, state: e.target.value.toUpperCase() })} onBlur={() => onBlur('state')} />
+          {showErr('state') && <p className={FLD_ERR}>{errors.state}</p>}
         </div>
         <div>
-          <label className={S.label}>Latitude</label>
+          <label className={S.label}>Latitude <span className="text-gray-400 font-normal">(optional)</span></label>
           <input className={S.input} placeholder="27.5306" inputMode="decimal" value={f.lat} onChange={e => onChange({ ...f, lat: e.target.value })} />
         </div>
         <div>
-          <label className={S.label}>Longitude</label>
+          <label className={S.label}>Longitude <span className="text-gray-400 font-normal">(optional)</span></label>
           <input className={S.input} placeholder="-99.4803" inputMode="decimal" value={f.lng} onChange={e => onChange({ ...f, lng: e.target.value })} />
         </div>
       </div>
@@ -64,14 +86,26 @@ export default function NewLaneModal({ open, onClose, onCreated }) {
   const [assigned, setAssigned] = useState([]) // trailer ids
   const [query, setQuery] = useState('')
   const [saving, setSaving] = useState(false)
+  const [touched, setTouched] = useState(() => new Set()) // 'origin.city', 'name', …
+  const [attempted, setAttempted] = useState(false)        // reveal all errors once Create is pressed
 
   useEffect(() => {
     if (!open) return
     // reset + load the unassigned pool
     setName(''); setCustomer(''); setRate(''); setThreshold('0'); setOrigin(emptyFacility()); setDestination(emptyFacility())
-    setAssigned([]); setQuery('')
+    setAssigned([]); setQuery(''); setTouched(new Set()); setAttempted(false)
     fetchUnassignedTrailers().then(setUnassigned).catch(e => { console.error(e); setUnassigned([]) })
   }, [open])
+
+  const touch = (key) => setTouched(prev => new Set(prev).add(key))
+  const originErrors = facilityErrors(origin)
+  const destErrors = facilityErrors(destination)
+  const nameError = !name.trim() ? 'Lane name is required.' : ''
+  // A required field's error shows once its input is blurred or Create is attempted.
+  const showFor = (prefix, errs) => (field) => (attempted || touched.has(`${prefix}.${field}`)) && !!errs[field]
+  const canSave = !nameError &&
+    !Object.values(originErrors).some(Boolean) &&
+    !Object.values(destErrors).some(Boolean)
 
   const byId = useMemo(() => new Map(unassigned.map(t => [t.id, t])), [unassigned])
   const suggestions = useMemo(() => {
@@ -90,16 +124,15 @@ export default function NewLaneModal({ open, onClose, onCreated }) {
     } catch (e) { toast.error("Couldn't resolve pin", e.message) } finally { setResolving(null) }
   }
 
-  const validFacility = (f) => f.city && f.state && f.lat !== '' && f.lng !== '' && Number.isFinite(Number(f.lat)) && Number.isFinite(Number(f.lng))
+  // Lat/lng optional: pass a finite number when present, else null (never 0 from a blank box).
+  const pinOrNull = (v) => (v !== '' && Number.isFinite(Number(v)) ? Number(v) : null)
 
   async function create() {
-    if (!name.trim()) { toast.error('Give the lane a name first.'); return }
-    if (!validFacility(origin)) { toast.error('Origin needs a city, state, and pin.'); return }
-    if (!validFacility(destination)) { toast.error('Destination needs a city, state, and pin.'); return }
+    if (!canSave) { setAttempted(true); return } // reveal inline errors, no blocking dialog
     setSaving(true)
     try {
-      const originId = await createFacility({ name: origin.name, city: origin.city, state: origin.state, lat: Number(origin.lat), lng: Number(origin.lng) })
-      const destId = await createFacility({ name: destination.name, city: destination.city, state: destination.state, lat: Number(destination.lat), lng: Number(destination.lng) })
+      const originId = await createFacility({ name: origin.name, address: origin.address, city: origin.city, state: origin.state, lat: pinOrNull(origin.lat), lng: pinOrNull(origin.lng) })
+      const destId = await createFacility({ name: destination.name, address: destination.address, city: destination.city, state: destination.state, lat: pinOrNull(destination.lat), lng: pinOrNull(destination.lng) })
       const laneId = await createDedicatedLane({ name: name.trim(), customer, originFacilityId: originId, destinationFacilityId: destId, underwaterThreshold: threshold, rate })
       await assignTrailersToLane(laneId, assigned)
       toast.success(`Dedicated lane “${name.trim()}” created${assigned.length ? ` · ${assigned.length} trailer${assigned.length === 1 ? '' : 's'} assigned` : ''}.`)
@@ -115,7 +148,8 @@ export default function NewLaneModal({ open, onClose, onCreated }) {
       <div className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div className="sm:col-span-2">
           <label className={S.label}>Lane name</label>
-          <input className={S.input} placeholder="e.g. Laredo Produce" value={name} onChange={e => setName(e.target.value)} autoFocus />
+          <input className={errInput((attempted || touched.has('name')) && !!nameError)} placeholder="e.g. Laredo Produce" value={name} onChange={e => setName(e.target.value)} onBlur={() => touch('name')} autoFocus />
+          {(attempted || touched.has('name')) && nameError && <p className={FLD_ERR}>{nameError}</p>}
         </div>
         <div>
           <label className={S.label}>Customer / Contract <span className="text-gray-400 font-normal">(optional)</span></label>
@@ -127,7 +161,7 @@ export default function NewLaneModal({ open, onClose, onCreated }) {
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-slate-500 text-sm pointer-events-none">$</span>
             <input className={`${S.input} pl-6`} placeholder="e.g. 950" inputMode="decimal" value={rate} onChange={e => setRate(e.target.value)} />
           </div>
-          <p className={FLD_HELP}>flat rate this lane pays per load</p>
+          <p className={FLD_HELP}>optional · a fixed rate this lane pays per load; used for profit calc when it applies. Not required, and never the sole rule.</p>
         </div>
         <div>
           <label className={S.label}>Underwater threshold</label>
@@ -135,8 +169,10 @@ export default function NewLaneModal({ open, onClose, onCreated }) {
           <p className={FLD_HELP}>net · MTD below this flags the lane red (default 0)</p>
         </div>
 
-        <FacilityFields label="Origin facility" f={origin} onChange={setOrigin} onResolve={() => resolve('origin')} resolving={resolving === 'origin'} />
-        <FacilityFields label="Destination facility" f={destination} onChange={setDestination} onResolve={() => resolve('destination')} resolving={resolving === 'destination'} />
+        <FacilityFields label="Origin facility" f={origin} onChange={setOrigin} onResolve={() => resolve('origin')} resolving={resolving === 'origin'}
+          errors={originErrors} showErr={showFor('origin', originErrors)} onBlur={(field) => touch(`origin.${field}`)} />
+        <FacilityFields label="Destination facility" f={destination} onChange={setDestination} onResolve={() => resolve('destination')} resolving={resolving === 'destination'}
+          errors={destErrors} showErr={showFor('destination', destErrors)} onBlur={(field) => touch(`destination.${field}`)} />
 
         <div className="sm:col-span-2">
           <label className={S.label}>Assign trailers <span className="text-gray-400 font-normal">(from unassigned)</span></label>
@@ -166,8 +202,8 @@ export default function NewLaneModal({ open, onClose, onCreated }) {
       </div>
       <div className="flex justify-end gap-3 px-5 py-4 border-t border-gray-100 dark:border-white/5">
         <button onClick={onClose} className={S.btnCancel} disabled={saving}>Cancel</button>
-        <button onClick={create} disabled={saving}
-          className="px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 text-white rounded-xl transition-all shadow-lg shadow-orange-500/20 disabled:opacity-50">
+        <button onClick={create} disabled={saving || !canSave}
+          className="px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 text-white rounded-xl transition-all shadow-lg shadow-orange-500/20 disabled:opacity-50 disabled:cursor-not-allowed">
           {saving ? 'Creating…' : 'Create lane'}
         </button>
       </div>

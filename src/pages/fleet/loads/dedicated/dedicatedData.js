@@ -55,10 +55,11 @@ export async function fetchUnassignedTrailers() {
   return data || []
 }
 
-export async function createFacility({ name, city, state, lat, lng }) {
+export async function createFacility({ name, address, city, state, lat, lng }) {
   const { data, error } = await supabase
     .from('facilities')
-    .insert({ name: name || `${city}, ${state}`, city, state_code: state, lat, lng })
+    // `state` maps to the state_code column; address is nullable (form-required only).
+    .insert({ name: name || `${city}, ${state}`, address: address?.trim() || null, city, state_code: state, lat, lng })
     .select('id').single()
   if (error) throw error
   return data.id

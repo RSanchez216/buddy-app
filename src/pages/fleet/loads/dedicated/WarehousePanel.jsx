@@ -61,7 +61,9 @@ function BayGroup({ title, facility, trailers, startIndex }) {
     <div>
       <div className="flex items-baseline justify-between px-1 mb-2">
         <span className="text-[11px] font-extrabold uppercase tracking-wide text-gray-500 dark:text-slate-400">{title}</span>
-        <span className="text-[11px] text-gray-400 dark:text-slate-500">{facility ? `${facility.city}, ${facility.state}` : ''} · {trailers.length}</span>
+        <span className="text-[11px] text-gray-400 dark:text-slate-500">
+          {facility?.address ? `${facility.address} · ` : ''}{facility ? `${facility.city}, ${facility.state}` : ''} · {trailers.length}
+        </span>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
         {trailers.map((t, i) => <TrailerBay key={t.trailer_id || t.unit} t={t} index={startIndex + i} />)}
