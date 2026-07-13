@@ -194,8 +194,8 @@ export default function DedicatedMap({ lanes, homeYard, selectedId, onSelect }) 
                 fill={HOME_YARD_HEX} stroke="#fff" strokeWidth="2" transform={`rotate(45 ${home.p[0]} ${home.p[1]})`} className="dark:stroke-[#0d0d1f]" />
               <text x={home.p[0]} y={home.p[1] + 4} textAnchor="middle" className="fill-white font-bold" fontSize="12">{homeYard.count}</text>
             </g>
-            <text x={home.p[0]} y={home.p[1] - home.r - 18} textAnchor="middle" className="fill-slate-700 dark:fill-slate-200 font-bold" fontSize="11">Home Yard</text>
-            <text x={home.p[0]} y={home.p[1] - home.r - 7} textAnchor="middle" className="fill-slate-600 dark:fill-slate-300 font-medium" fontSize="10">
+            <text x={home.p[0]} y={home.p[1] - home.r - 18} textAnchor="middle" className="fill-slate-700 dark:fill-slate-200 font-bold uppercase" fontSize="11">Home Yard</text>
+            <text x={home.p[0]} y={home.p[1] - home.r - 7} textAnchor="middle" className="fill-slate-600 dark:fill-slate-300 font-medium uppercase" fontSize="10">
               {homeYard.city}, {homeYard.state} · true idle
             </text>
           </g>

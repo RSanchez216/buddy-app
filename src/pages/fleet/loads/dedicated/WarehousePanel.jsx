@@ -111,9 +111,9 @@ function HomeYardCard({ homeYard, onBack }) {
         <div>
           <div className="flex items-center gap-2">
             <span className="w-3 h-3 rotate-45 rounded-[3px] bg-gray-500 shrink-0" />
-            <h3 className="text-[16px] font-extrabold text-gray-900 dark:text-white">Home Yard</h3>
+            <h3 className="text-[16px] font-extrabold text-gray-900 dark:text-white uppercase">Home Yard</h3>
           </div>
-          <p className="text-xs text-gray-500 dark:text-slate-500 mt-1">{homeYard.city}, {homeYard.state} · not a dedicated lane</p>
+          <p className="text-xs text-gray-500 dark:text-slate-500 mt-1 uppercase">{homeYard.city}, {homeYard.state} · not a dedicated lane</p>
         </div>
         <button onClick={onBack} className="text-xs font-semibold text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-colors shrink-0">← Back to map</button>
       </div>
