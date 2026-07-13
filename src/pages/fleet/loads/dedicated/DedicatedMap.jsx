@@ -79,14 +79,17 @@ export default function DedicatedMap({ lanes, homeYard, selectedId, onSelect }) 
     }).filter(Boolean), [lanes])
 
   // Dedupe facilities across all lanes so each physical yard renders once, even
-  // when it's the shared origin/destination of several lanes. Trailer counts and
-  // aging badges sum across the lanes that use it; color = worst lane status.
+  // when it's the shared origin/destination of several lanes. Keyed by identity
+  // (name + address + city + state), NOT id, so the legacy triplicate rows that
+  // share an identity collapse to one marker. Trailer counts and aging badges
+  // sum across the lanes that use it; color = worst lane status.
   const facilities = useMemo(() => {
+    const norm = (s) => (s || '').trim().toLowerCase()
     const byId = new Map()
     routes.forEach(({ lane }) => {
       const status = lane.status
       ;[['origin', lane.origin], ['destination', lane.destination]].forEach(([role, f]) => {
-        const id = f.id ?? `${f.lat},${f.lng}`
+        const id = `${norm(f.name)}|${norm(f.address)}|${norm(f.city)}|${norm(f.state)}`
         let acc = byId.get(id)
         if (!acc) {
           const p = projection([Number(f.lng), Number(f.lat)])

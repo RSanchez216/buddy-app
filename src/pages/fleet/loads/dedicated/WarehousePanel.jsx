@@ -55,13 +55,15 @@ function TrailerBay({ t, index }) {
   )
 }
 
-// Labeled endpoint for the lane header: ORIGIN/DESTINATION caption, facility
-// name, then city/state. Name wraps rather than blowing out the panel width.
+// Labeled endpoint for the lane header: ORIGIN/DESTINATION caption (same style as
+// the modal's ORIGIN FACILITY caption), facility name, street address (when
+// present), then city/state. Name/address wrap rather than blow out the panel.
 function Endpoint({ role, facility }) {
   return (
     <div className="min-w-0 flex-1">
-      <div className="text-[10px] font-extrabold uppercase tracking-wide text-gray-400 dark:text-slate-500">{role}</div>
+      <div className="text-[11px] font-extrabold uppercase tracking-wide text-gray-500 dark:text-slate-400">{role}</div>
       <div className="text-[13px] font-bold text-gray-900 dark:text-white leading-snug break-words">{facility?.name || `${facility?.city}, ${facility?.state}`}</div>
+      {facility?.address && <div className="text-[11px] text-gray-500 dark:text-slate-400 break-words">{facility.address}</div>}
       <div className="text-[11px] text-gray-500 dark:text-slate-400">{facility?.city}, {facility?.state}</div>
     </div>
   )
@@ -133,7 +135,7 @@ function HomeYardCard({ homeYard, onBack }) {
   )
 }
 
-export default function WarehousePanel({ lane, homeYard, onBack }) {
+export default function WarehousePanel({ lane, homeYard, onBack, onEdit }) {
   if (lane === 'home') return <HomeYardCard homeYard={homeYard} onBack={onBack} />
 
   if (!lane) {
@@ -171,7 +173,15 @@ export default function WarehousePanel({ lane, homeYard, onBack }) {
               <StatusPill status={lane.status} days={lane.days_in_status} />
             </p>
           </div>
-          <button onClick={onBack} className="text-xs font-semibold text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-colors shrink-0">← Back to map</button>
+          <div className="flex items-center gap-3 shrink-0">
+            {onEdit && (
+              <button onClick={() => onEdit(lane)} className="inline-flex items-center gap-1 text-xs font-semibold text-orange-600 dark:text-orange-400 hover:text-orange-500 transition-colors">
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                Edit
+              </button>
+            )}
+            <button onClick={onBack} className="text-xs font-semibold text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-colors">← Back to map</button>
+          </div>
         </div>
         <dl className="flex gap-6 mt-3.5 flex-wrap">
           {[

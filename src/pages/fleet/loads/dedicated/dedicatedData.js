@@ -65,6 +65,37 @@ export async function createFacility({ name, address, city, state, zip, lat, lng
   return data.id
 }
 
+const normFac = (s) => (s || '').trim().toLowerCase()
+
+// Find-or-create by full identity (name + address + city + state, case-insensitive)
+// so we stop minting duplicate facility rows. Address is part of the key on
+// purpose: two facilities in the same city/state stay distinct by street.
+export async function findOrCreateFacility({ name, address, city, state, zip, lat, lng }) {
+  const { data, error } = await supabase
+    .from('facilities')
+    .select('id, name, address, city, state_code')
+    .ilike('city', (city || '').trim())
+    .ilike('state_code', (state || '').trim())
+  if (error) throw error
+  const hit = (data || []).find(f =>
+    normFac(f.name) === normFac(name) &&
+    normFac(f.address) === normFac(address) &&
+    normFac(f.city) === normFac(city) &&
+    normFac(f.state_code) === normFac(state))
+  if (hit) return hit.id
+  return createFacility({ name, address, city, state, zip, lat, lng })
+}
+
+// Edit an existing facility in place (fixes the actual record). Intentionally
+// leaves postal_code/notes untouched — the edit form doesn't surface them.
+export async function updateFacility(id, { name, address, city, state, lat, lng }) {
+  const { error } = await supabase
+    .from('facilities')
+    .update({ name: name?.trim() || `${city}, ${state}`, address: address?.trim() || null, city: city?.trim(), state_code: state, lat, lng })
+    .eq('id', id)
+  if (error) throw error
+}
+
 export async function createDedicatedLane({ name, customer, originFacilityId, destinationFacilityId, underwaterThreshold, rate }) {
   const { data, error } = await supabase
     .from('dedicated_lanes')
@@ -79,6 +110,21 @@ export async function createDedicatedLane({ name, customer, originFacilityId, de
     .select('id').single()
   if (error) throw error
   return data.id
+}
+
+export async function updateDedicatedLane(id, { name, customer, rate, underwaterThreshold, active }) {
+  const { error } = await supabase
+    .from('dedicated_lanes')
+    .update({
+      name: name.trim(),
+      customer: customer?.trim() || null,
+      // null (unset) stays distinct from a real $0 rate.
+      rate: rate == null || rate === '' ? null : Number(rate),
+      underwater_threshold: Number(underwaterThreshold) || 0,
+      active: !!active,
+    })
+    .eq('id', id)
+  if (error) throw error
 }
 
 export async function assignTrailersToLane(laneId, trailerIds) {

@@ -74,6 +74,7 @@ export default function DedicatedLanes() {
   const [tab, setTab] = useState('map')
   const [selectedId, setSelectedId] = useState(null)
   const [modalOpen, setModalOpen] = useState(false)
+  const [editLane, setEditLane] = useState(null) // lane object when editing; null = create
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
 
@@ -91,7 +92,9 @@ export default function DedicatedLanes() {
   const selected = selectedId === 'home' ? 'home' : lanes.find(l => l.lane_id === selectedId) || null
   const laneCount = overview.lane_count || 0
 
-  const onCreated = () => { setModalOpen(false); load() }
+  const onCreated = () => { setModalOpen(false); setEditLane(null); load() }
+  const openCreate = () => { setEditLane(null); setModalOpen(true) }
+  const openEdit = (l) => { setEditLane(l); setModalOpen(true) }
 
   return (
     <div className="max-w-[1400px] mx-auto space-y-4">
@@ -107,7 +110,7 @@ export default function DedicatedLanes() {
           <p className="text-sm text-gray-500 dark:text-slate-500 mt-0.5">Staged-trailer facilities · idle exposure · lane profitability</p>
         </div>
         {canEdit && (
-          <button onClick={() => setModalOpen(true)}
+          <button onClick={openCreate}
             className="px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 text-white rounded-xl transition-all shadow-lg shadow-orange-500/20 shrink-0">
             + New Dedicated Lane
           </button>
@@ -152,7 +155,7 @@ export default function DedicatedLanes() {
                 <Link to="/fleet/profitability/idle" className="text-orange-600 dark:text-orange-400 font-medium hover:underline">Open Idle Review →</Link>
               </p>
               {canEdit && (
-                <button onClick={() => setModalOpen(true)} className="mt-4 px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 text-white rounded-xl transition-all shadow-lg shadow-orange-500/20">
+                <button onClick={openCreate} className="mt-4 px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 text-white rounded-xl transition-all shadow-lg shadow-orange-500/20">
                   + New Dedicated Lane
                 </button>
               )}
@@ -191,7 +194,7 @@ export default function DedicatedLanes() {
                     </div>
                   </div>
                   <div className={`${S.card} overflow-hidden min-h-[380px]`}>
-                    <WarehousePanel lane={selected} homeYard={homeYard} onBack={() => setSelectedId(null)} />
+                    <WarehousePanel lane={selected} homeYard={homeYard} onBack={() => setSelectedId(null)} onEdit={canEdit ? openEdit : undefined} />
                   </div>
                 </div>
               ) : (
@@ -204,7 +207,7 @@ export default function DedicatedLanes() {
         </>
       )}
 
-      <NewLaneModal open={modalOpen} onClose={() => setModalOpen(false)} onCreated={onCreated} />
+      <NewLaneModal open={modalOpen} onClose={() => { setModalOpen(false); setEditLane(null) }} onCreated={onCreated} lane={editLane} lanes={lanes} />
     </div>
   )
 }
