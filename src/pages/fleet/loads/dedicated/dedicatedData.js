@@ -63,7 +63,7 @@ export async function fetchTrailerOptions() {
   return data || []
 }
 export async function fetchDriverOptions() {
-  const { data, error } = await supabase.from('drivers').select('id, full_name').order('full_name')
+  const { data, error } = await supabase.from('drivers').select('id, full_name, internal_id, current_status').order('full_name')
   if (error) throw error
   return data || []
 }

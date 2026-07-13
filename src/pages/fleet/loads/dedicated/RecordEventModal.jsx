@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import Modal from '../../../../components/Modal'
+import ComboBox from '../../../../components/ComboBox'
 import { S } from '../../../../lib/styles'
 import { useToast } from '../../../../contexts/ToastContext'
 import { recordLaneEvent } from './dedicatedData'
@@ -9,7 +10,10 @@ import { recordLaneEvent } from './dedicatedData'
 // picked-up trailer). At least one trailer required; future times blocked.
 
 const FLD_ERR = 'text-[11px] text-red-600 dark:text-red-400 mt-1'
-const selCls = `w-full ${S.select}`
+
+// Single leading '#': strip any existing hashes off the unit, then prepend one.
+const oneHash = (u) => `#${String(u ?? '').replace(/^#+/, '')}`
+const trailerLabel = (t) => `${oneHash(t.unit_number)}${t.trailer_type ? ` · ${t.trailer_type}` : ''}`
 
 const pad = (n) => String(n).padStart(2, '0')
 function nowParts() {
@@ -30,6 +34,7 @@ export default function RecordEventModal({ open, onClose, onSaved, lane, trailer
   const [notes, setNotes] = useState('')
   const [saving, setSaving] = useState(false)
   const [attempted, setAttempted] = useState(false)
+  const [showAllDrivers, setShowAllDrivers] = useState(false)
 
   useEffect(() => {
     if (!open) return
@@ -37,10 +42,23 @@ export default function RecordEventModal({ open, onClose, onSaved, lane, trailer
     setDropped(defaults.droppedTrailerId || '')
     setPicked(defaults.pickedTrailerId || '')
     setFacilityId(defaults.facilityId || lane?.origin?.id || '')
-    setDriverId(''); setNotes(''); setAttempted(false)
+    setDriverId(''); setNotes(''); setAttempted(false); setShowAllDrivers(false)
     setDate(n.date); setTime(n.time)
     setIsInitial(!!defaults.isInitial)
   }, [open, lane, defaults])
+
+  // Searchable option lists. Trailers show a single '#'; drivers show
+  // "ID — Name" and match on either, defaulting to active-only.
+  const trailerOptions = useMemo(() => trailers.map(t => ({
+    id: t.id, name: trailerLabel(t), searchText: `${String(t.unit_number ?? '').replace(/^#+/, '')} ${t.trailer_type ?? ''}`,
+  })), [trailers])
+  const driverOptions = useMemo(() => drivers
+    .filter(d => showAllDrivers || d.current_status === 'active')
+    .map(d => ({
+      id: d.id,
+      name: d.internal_id ? `${d.internal_id} — ${d.full_name}` : d.full_name,
+      searchText: [d.internal_id, d.full_name].filter(Boolean).join(' '),
+    })), [drivers, showAllDrivers])
 
   const today = nowParts().date // for the date input max
   const occurredAt = useMemo(() => (date && time ? new Date(`${date}T${time}`) : null), [date, time])
@@ -80,17 +98,13 @@ export default function RecordEventModal({ open, onClose, onSaved, lane, trailer
       <div className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <label className={S.label}>Dropped trailer {optional}</label>
-          <select className={selCls} value={dropped} onChange={e => setDropped(e.target.value)}>
-            <option value="">—</option>
-            {trailers.map(t => <option key={t.id} value={t.id}>#{t.unit_number}{t.trailer_type ? ` · ${t.trailer_type}` : ''}</option>)}
-          </select>
+          <ComboBox options={trailerOptions} value={dropped} onChange={setDropped}
+            placeholder="Select trailer…" searchPlaceholder="search unit #…" noResultsLabel="No trailer found" />
         </div>
         <div>
           <label className={S.label}>Picked-up trailer {optional}</label>
-          <select className={selCls} value={picked} onChange={e => setPicked(e.target.value)}>
-            <option value="">—</option>
-            {trailers.map(t => <option key={t.id} value={t.id}>#{t.unit_number}{t.trailer_type ? ` · ${t.trailer_type}` : ''}</option>)}
-          </select>
+          <ComboBox options={trailerOptions} value={picked} onChange={setPicked}
+            placeholder="Select trailer…" searchPlaceholder="search unit #…" noResultsLabel="No trailer found" />
         </div>
         {attempted && noneSelected && (
           <p className={`sm:col-span-2 ${FLD_ERR} !mt-0`}>Select at least a dropped or a picked-up trailer.</p>
@@ -98,16 +112,19 @@ export default function RecordEventModal({ open, onClose, onSaved, lane, trailer
 
         <div>
           <label className={S.label}>Facility</label>
-          <select className={selCls} value={facilityId} onChange={e => setFacilityId(e.target.value)}>
+          <select className={`w-full ${S.select}`} value={facilityId} onChange={e => setFacilityId(e.target.value)}>
             {facilities.map(f => <option key={f.id} value={f.id}>{f.name || `${f.city}, ${f.state}`} · {f.city}, {f.state}</option>)}
           </select>
         </div>
         <div>
           <label className={S.label}>Driver {optional}</label>
-          <select className={selCls} value={driverId} onChange={e => setDriverId(e.target.value)}>
-            <option value="">—</option>
-            {drivers.map(d => <option key={d.id} value={d.id}>{d.full_name}</option>)}
-          </select>
+          <ComboBox options={driverOptions} value={driverId} onChange={setDriverId}
+            placeholder="Select driver…" searchPlaceholder="search ID or name…" noResultsLabel="No driver found" />
+          <label className="mt-1.5 flex items-center gap-2 cursor-pointer select-none">
+            <input type="checkbox" checked={showAllDrivers} onChange={e => setShowAllDrivers(e.target.checked)}
+              className="w-3.5 h-3.5 rounded accent-orange-500 focus:ring-orange-500/40" />
+            <span className="text-[11px] text-gray-500 dark:text-slate-400">Show all drivers (incl. terminated/inactive)</span>
+          </label>
         </div>
 
         <div>
