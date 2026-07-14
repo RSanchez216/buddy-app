@@ -13,7 +13,7 @@ import TopPerformers from './TopPerformers'
 import TrailerTypeTrends from './TrailerTypeTrends'
 import { aggregateLanes, AMAZON_TYPE, EXCLUDED_STATUSES, fetchLaneLegs, makeRpmScale, makeTypeColorMap, makeWidthScale, pickAllLoadMetrics, resolveLegTypes, RPM_NULL_COLOR, UNKNOWN_TYPE } from './laneData'
 import { binHeatCells } from './mapShared'
-import { fmtMoney, fmtNum, fmtRpm, formatRange, shiftYmd, spanDays, thisMonth, thisWeek } from '../spotlight/spotlightShared'
+import { fmtMoney, fmtNum, fmtRpm, formatRange, parseYmd, shiftYmd, spanDays, thisMonth, thisWeek } from '../spotlight/spotlightShared'
 
 // Lane Flow Map — where the money moves, geographically. Every leg in the
 // window draws as an origin → destination arc: thickness = volume on that
@@ -21,6 +21,30 @@ import { fmtMoney, fmtNum, fmtRpm, formatRange, shiftYmd, spanDays, thisMonth, t
 // the existing Profitability page, calendar, and Spotlight are untouched.
 
 const PRESET_LABEL = { week: 'This week', month: 'This month', custom: 'Custom' }
+
+// How many whole periods the displayed range is from the current one (0 =
+// current), derived from the SAME anchor/boundary logic the toggle uses
+// (thisWeek/thisMonth) so the label can never disagree with the shown range.
+// shiftRange moves both endpoints by the period span, so that span is invariant
+// and the offset is exactly (range.from − anchor.from) / span. null for Custom.
+function periodOffset(preset, range) {
+  if (preset === 'custom' || !range?.from) return null
+  const anchor = preset === 'week' ? thisWeek() : thisMonth()
+  const span = spanDays(anchor.from, anchor.to)
+  if (!span) return null
+  return Math.round((parseYmd(range.from) - parseYmd(anchor.from)) / (span * 86400000))
+}
+
+// Relative period label for offset n. "This week" / "Last week" / "Next week" /
+// "N weeks ago" / "In N weeks" (and the month equivalents). No cap.
+function relativePeriodLabel(preset, n) {
+  if (n == null) return null
+  const [u, us] = preset === 'week' ? ['week', 'weeks'] : ['month', 'months']
+  if (n === 0) return `This ${u}`
+  if (n === -1) return `Last ${u}`
+  if (n === 1) return `Next ${u}`
+  return n < 0 ? `${-n} ${us} ago` : `In ${n} ${us}`
+}
 const LEADERBOARD_SORTS = [
   { key: 'revenue', label: 'Revenue', fn: (a, b) => b.revenue - a.revenue },
   { key: 'rpm', label: '$/mile', fn: (a, b) => (b.rpm ?? -1) - (a.rpm ?? -1) },
@@ -1110,6 +1134,18 @@ export default function LaneFlowMap() {
     })
   }
 
+  // Honest period labels: the active preset pill and the caption reflect how far
+  // the displayed period is from the current one; the reset pill appears only
+  // when off-current. All derived from the same state the range uses.
+  const periodN = periodOffset(preset, range)
+  const relLabel = relativePeriodLabel(preset, periodN)          // null for Custom
+  const offCurrent = periodN != null && periodN !== 0
+  const periodOptions = [
+    ['week', preset === 'week' ? relLabel : 'This week'],
+    ['month', preset === 'month' ? relLabel : 'This month'],
+    ['custom', 'Custom'],
+  ]
+
   // Lane KPIs count distinct corridors, not the type-split rows.
   const distinctLanes = agg ? new Set(agg.lanes.map(l => `${l.origin} → ${l.destination}`)).size : 0
   const offMapLanes = agg ? new Set(agg.lanes.filter(l => !l.geocoded).map(l => `${l.origin} → ${l.destination}`)).size : 0
@@ -1272,8 +1308,22 @@ export default function LaneFlowMap() {
           )}
         <div className="flex flex-wrap items-center gap-2">
             <button onClick={() => shiftRange(-1)} className="px-2 py-1.5 text-xs font-medium rounded border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors" title="Previous period">◀</button>
-            <Pills value={preset} onChange={setPresetRange} options={[['week', 'This week'], ['month', 'This month'], ['custom', 'Custom']]} />
+            <Pills value={preset} onChange={setPresetRange} options={periodOptions} />
             <button onClick={() => shiftRange(1)} className="px-2 py-1.5 text-xs font-medium rounded border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors" title="Next period">▶</button>
+            {offCurrent && (
+              <button
+                onClick={() => setPresetRange(preset)}
+                aria-label={preset === 'week' ? 'Return to this week' : 'Return to this month'}
+                title={preset === 'week' ? 'Back to this week' : 'Back to this month'}
+                className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-lg border border-[#F97316] text-[#F97316] bg-transparent hover:bg-orange-50 dark:hover:bg-orange-500/10 transition-colors shrink-0"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5 shrink-0" aria-hidden>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 14l-4 -4l4 -4" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 10h11a4 4 0 1 1 0 8h-1" />
+                </svg>
+                {preset === 'week' ? 'This week' : 'This month'}
+              </button>
+            )}
             <Pills value={basis} onChange={setBasis} options={[['delivery', 'By delivery'], ['pickup', 'By pickup']]} />
             {preset === 'custom' && (
               <div className="flex items-center gap-1.5 shrink-0">
@@ -1286,7 +1336,7 @@ export default function LaneFlowMap() {
         <p className="basis-full text-[11px] text-gray-400 dark:text-slate-500 -mt-1">{[...selectedPhases].sort((a, b) => {
             const order = { booked: 0, in_transit: 1, delivered: 2 }
             return (order[a] ?? 3) - (order[b] ?? 3)
-          }).map(p => p === 'in_transit' ? 'In transit' : p.charAt(0).toUpperCase() + p.slice(1)).join(' + ')} · {formatRange(range.from, range.to)} · by {basis} date</p>
+          }).map(p => p === 'in_transit' ? 'In transit' : p.charAt(0).toUpperCase() + p.slice(1)).join(' + ')} · {formatRange(range.from, range.to)}{relLabel ? <> · <span className="text-orange-500 dark:text-orange-400 font-medium">{relLabel.toLowerCase()}</span></> : ''} · by {basis} date</p>
       </div>
 
       {/* Miles review — pinned worklist of real loads with missing/inflated miles. */}
