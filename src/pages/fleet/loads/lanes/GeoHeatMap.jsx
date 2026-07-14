@@ -233,13 +233,13 @@ export default function GeoHeatMap({ range, phases }) {
   }[colorBy]
 
   return (
-    <div className={`${S.card} space-y-4`}>
+    <div className={`${S.card} p-5 space-y-4`}>
       <div>
         <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-orange-600 dark:text-orange-400 mb-1">
           <span className="w-1.5 h-1.5 rounded-full bg-orange-500" /> Geography
         </div>
         <h2 className="text-xl font-bold text-gray-900 dark:text-white">Lanes by region & state</h2>
-        <p className="text-sm text-gray-500 dark:text-slate-500 mt-0.5">Where your freight runs across the five regions and individual states — colored by the metric you choose.</p>
+        <p className="text-sm text-gray-600 dark:text-gray-300 mt-0.5">Where your freight runs across the five regions and individual states — colored by the metric you choose.</p>
 
         {/* Controls */}
         <div className="flex items-center flex-wrap gap-2 mb-4">
@@ -275,7 +275,7 @@ export default function GeoHeatMap({ range, phases }) {
         </div>
 
         {/* Caption */}
-        <p className="text-[11px] text-gray-400 dark:text-slate-500 mb-3">
+        <p className="text-[11px] text-gray-700 dark:text-gray-200 mb-3">
           {basis === 'origin' ? 'Origin' : 'Destination'} basis · {Array.from(phases).sort().map(p => p === 'in_transit' ? 'In transit' : p.charAt(0).toUpperCase() + p.slice(1)).join(' + ')} ·{' '}
           {range.from} to {range.to} · hover a state for full detail
         </p>
@@ -316,13 +316,13 @@ export default function GeoHeatMap({ range, phases }) {
       {colorScale && (
         <div className="flex items-center justify-between text-[11px]">
           <div className="flex items-center gap-2">
-            <span className="text-gray-500 dark:text-slate-400 font-mono">
+            <span className="text-gray-700 dark:text-gray-200 font-mono">
               {formatFull(colorScale.domain[0], colorBy)}
             </span>
             <div className="h-2 w-32 rounded-full" style={{
               background: `linear-gradient(90deg, ${colorScale.colorAt(0)}, ${colorScale.colorAt(0.5)}, ${colorScale.colorAt(1)})`,
             }} />
-            <span className="text-gray-500 dark:text-slate-400 font-mono">
+            <span className="text-gray-700 dark:text-gray-200 font-mono">
               {formatFull(colorScale.domain[1], colorBy)}
             </span>
           </div>
@@ -331,14 +331,14 @@ export default function GeoHeatMap({ range, phases }) {
               className="w-3 h-3 rounded"
               style={{ background: isDark ? NO_DATA_COLORS.dark : NO_DATA_COLORS.light }}
             />
-            <span className="text-gray-500 dark:text-slate-400">No/low data</span>
+            <span className="text-gray-700 dark:text-gray-300">No/low data</span>
           </div>
         </div>
       )}
 
       {/* Top 3 caption */}
       {top3.length > 0 && (
-        <div className="text-[11px] text-gray-500 dark:text-slate-400">
+        <div className="text-[11px] text-gray-700 dark:text-gray-300">
           Top {view === 'region' ? 'regions' : 'states'} by {metricLabel}:{' '}
           {top3.map((item, i) => {
             const val = colorBy === 'loads' ? item.legs : colorBy === 'gross' ? item.gross : colorBy === 'avg' ? item.avg : item.rpm
@@ -385,6 +385,13 @@ function SVGMap({ view, data, colorScale, colorBy, isDark }) {
   const projection = geoAlbersUsa().scale(1100).translate([450, 280])
   const pathGenerator = geoPath().projection(projection)
 
+  // Keep centroid labels off the map frame: the continental projection lives in
+  // ~0..900 × 0..560, so clamp label anchors to stay ≥ EDGE px from every side
+  // (topPad/botPad leave room for the two stacked text lines' extent).
+  const MAP_W = 900, MAP_H = 560, EDGE = 12
+  const clampLabelX = (x) => Math.max(EDGE, Math.min(MAP_W - EDGE, x))
+  const clampLabelY = (y, topPad = EDGE, botPad = EDGE) => Math.max(topPad, Math.min(MAP_H - botPad, y))
+
   // Map state names to abbreviations
   const getStateAbbr = (name) => STATE_NAME_TO_ABBR[name] || name
 
@@ -420,12 +427,16 @@ function SVGMap({ view, data, colorScale, colorBy, isDark }) {
           stroke={isDark ? 'rgba(255,255,255,.18)' : '#fff'}
           strokeWidth={1}
         />
-        {showOnMapLabel && (
+        {showOnMapLabel && (() => {
+          // Anchor the two-line label, clamped so neither line crosses the frame.
+          const lx = clampLabelX(centroid[0])
+          const ly = clampLabelY(centroid[1], EDGE + 14, EDGE + 8)
+          return (
           <>
             {/* State abbreviation */}
             <text
-              x={centroid[0]}
-              y={centroid[1] - 8}
+              x={lx}
+              y={ly - 8}
               textAnchor="middle"
               fontSize="11"
               fontWeight="500"
@@ -439,8 +450,8 @@ function SVGMap({ view, data, colorScale, colorBy, isDark }) {
             </text>
             {/* Metric value */}
             <text
-              x={centroid[0]}
-              y={centroid[1] + 6}
+              x={lx}
+              y={ly + 6}
               textAnchor="middle"
               fontSize="11"
               fill={isDark ? '#e2e8f0' : '#1f2937'}
@@ -452,7 +463,8 @@ function SVGMap({ view, data, colorScale, colorBy, isDark }) {
               {formatCompact(metricValue, colorBy)}
             </text>
           </>
-        )}
+          )
+        })()}
         <title>
           {`${abbr}${
             stateData
@@ -550,7 +562,7 @@ function SVGMap({ view, data, colorScale, colorBy, isDark }) {
               y={labelY + 18}
               textAnchor="middle"
               fontSize="10"
-              fill={isDark ? '#cbd5e1' : '#4b5563'}
+              fill={isDark ? '#e2e8f0' : '#1f2937'}
             >
               {formatCompact(item.metricValue, colorBy)}
             </text>
@@ -590,11 +602,16 @@ function SVGMap({ view, data, colorScale, colorBy, isDark }) {
       regionData.rpm
     ) : null
 
+    // Clamp the region label so neither the name nor the value below it (y+14)
+    // crosses the map frame.
+    const rlx = clampLabelX(avgX)
+    const rly = clampLabelY(avgY, EDGE + 6, EDGE + 14)
+
     return (
       <g key={`label-${region}`}>
         <text
-          x={avgX}
-          y={avgY}
+          x={rlx}
+          y={rly}
           textAnchor="middle"
           fontSize="12"
           fontWeight="600"
@@ -608,11 +625,11 @@ function SVGMap({ view, data, colorScale, colorBy, isDark }) {
         </text>
         {metricValue != null && (
           <text
-            x={avgX}
-            y={avgY + 14}
+            x={rlx}
+            y={rly + 14}
             textAnchor="middle"
             fontSize="11"
-            fill={isDark ? '#cbd5e1' : '#4b5563'}
+            fill={isDark ? '#e2e8f0' : '#1f2937'}
             fontWeight="500"
             style={{ paintOrder: 'stroke' }}
             stroke={isDark ? '#0d0d1f' : '#fff'}

@@ -1355,7 +1355,7 @@ export default function LaneFlowMap() {
                 <span className="w-1.5 h-1.5 rounded-full bg-orange-500" /> Map
               </div>
               <h2 className="text-xl font-bold text-gray-900 dark:text-white">Origin → destination</h2>
-              <p className="text-sm text-gray-500 dark:text-slate-500 mt-0.5">
+              <p className="text-sm text-gray-700 dark:text-gray-200 mt-0.5">
                 {[...selectedPhases].sort((a, b) => {
                   const order = { booked: 0, in_transit: 1, delivered: 2 }
                   return (order[a] ?? 3) - (order[b] ?? 3)
@@ -1363,7 +1363,7 @@ export default function LaneFlowMap() {
               </p>
             </div>
             {mapMode === 'heat' ? null : colorBy === 'type' && typesPresent.length > 0 ? (
-              <div className="flex items-center gap-2.5 flex-wrap text-[10px] text-gray-400 dark:text-slate-500">
+              <div className="flex items-center gap-2.5 flex-wrap text-[10px] text-gray-700 dark:text-gray-300">
                 {typesPresent.map(t => (
                   <span key={t} className="inline-flex items-center gap-1">
                     <span className="rounded-full" style={{ background: typeColorFor(t), height: 3, width: 12 }} />
@@ -1372,7 +1372,7 @@ export default function LaneFlowMap() {
                 ))}
               </div>
             ) : rpmScale && (
-              <div className="flex items-center gap-2 text-[10px] text-gray-400 dark:text-slate-500">
+              <div className="flex items-center gap-2 text-[10px] text-gray-700 dark:text-gray-200">
                 <span className="font-mono">{fmtRpm(rpmScale.domain[0])}/mi</span>
                 <span className="h-1.5 w-24 rounded-full" style={{ background: `linear-gradient(90deg, ${rpmScale.colorAt(0)}, ${rpmScale.colorAt(0.5)}, ${rpmScale.colorAt(1)})` }} />
                 <span className="font-mono">{fmtRpm(rpmScale.domain[1])}/mi</span>

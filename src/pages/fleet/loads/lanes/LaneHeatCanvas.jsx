@@ -137,8 +137,8 @@ export default function LaneHeatCanvas({ cells, metric, tintColor, selectedKey, 
       {/* Legend — always shows the actual ramp range */}
       {scale && (
         <div className="absolute left-4 bottom-3 rounded-lg border border-gray-200 dark:border-white/10 bg-white/85 dark:bg-[#12132e]/85 backdrop-blur px-2.5 py-1.5">
-          <p className="text-[9px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">{meta.label}</p>
-          <div className="mt-1 flex items-center gap-1.5 text-[10px] text-gray-500 dark:text-slate-400">
+          <p className="text-[9px] font-semibold uppercase tracking-widest text-gray-600 dark:text-gray-300">{meta.label}</p>
+          <div className="mt-1 flex items-center gap-1.5 text-[10px] text-gray-700 dark:text-gray-200">
             <span className="font-mono">{meta.fmt(scale.lo)}</span>
             <span className="h-1.5 w-20 rounded-full" style={{ background: `linear-gradient(90deg, ${stops.join(', ')})` }} />
             <span className="font-mono">{meta.fmt(scale.hi)}{scale.clamped ? '+' : ''}</span>
