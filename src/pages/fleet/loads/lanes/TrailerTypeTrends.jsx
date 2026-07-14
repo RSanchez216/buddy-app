@@ -119,6 +119,16 @@ export default function TrailerTypeTrends() {
     const showPeriods = periods.slice(-shown)
     const periodCols = showPeriods.map((p, i) => ({ date: p, idx: periods.length - shown + i }))
 
+    // The delta compares the last two shown periods; derive the header's month
+    // labels from those exact periods so it rolls forward automatically.
+    // Short label = the period label minus the year suffix (e.g. "Jun '26" → "Jun").
+    const latestPeriod = showPeriods[showPeriods.length - 1]
+    const prevPeriod = showPeriods[showPeriods.length - 2]
+    const shortLabel = (p) => (p ? formatPeriodLabel(p, granularity).replace(/\s*'\d{2}$/, '') : '')
+    const changeHeader = (prevPeriod && latestPeriod)
+      ? `Change (${shortLabel(prevPeriod)} → ${shortLabel(latestPeriod)})`
+      : 'Change'
+
     return (
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
@@ -130,7 +140,15 @@ export default function TrailerTypeTrends() {
                   {formatPeriodLabel(pc.date, granularity)}
                 </th>
               ))}
-              <th className={`${S.th} text-gray-900 dark:text-slate-200`}>Δ vs prior</th>
+              <th className={`${S.th} text-gray-900 dark:text-slate-200`}>
+                <span className="inline-flex items-center gap-1">
+                  {changeHeader}
+                  <span
+                    className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border border-gray-300 dark:border-slate-600 text-[9px] font-normal normal-case text-gray-500 dark:text-slate-400 cursor-help align-middle"
+                    title="Percent change in revenue per mile from the previous month to the latest."
+                  >i</span>
+                </span>
+              </th>
               <th className={`${S.th} text-gray-900 dark:text-slate-200`}>6-period avg</th>
             </tr>
           </thead>
@@ -184,10 +202,10 @@ export default function TrailerTypeTrends() {
                   <td className={S.td}>
                     {deltaPct != null ? (
                       <span className={`font-mono text-sm ${deltaPct >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                        {deltaPct >= 0 ? '+' : ''}{deltaPct.toFixed(1)}%
+                        {deltaPct >= 0 ? '↗' : '↘'} {Math.abs(deltaPct).toFixed(1)}%
                       </span>
                     ) : (prevLegs < 10 || lastLegs < 10) && (prevVal != null || lastVal != null) ? (
-                      <span className="inline-block px-1.5 py-0.5 rounded text-[9px] bg-gray-100 dark:bg-slate-700/40 text-gray-500 dark:text-slate-400">low sample</span>
+                      <span className="inline-block px-1.5 py-0.5 rounded text-[9px] bg-gray-100 dark:bg-slate-700/40 text-gray-500 dark:text-slate-400 cursor-help" title="Too few loads that month to compare reliably.">low sample</span>
                     ) : (
                       <span className="text-gray-900 dark:text-slate-200">—</span>
                     )}
@@ -267,7 +285,7 @@ export default function TrailerTypeTrends() {
                         {deltaPct >= 0 ? '+' : ''}{deltaPct.toFixed(1)}%
                       </span>
                     ) : (legsA < 10 || legsB < 10) && (valA != null || valB != null) ? (
-                      <span className="inline-block px-1.5 py-0.5 rounded text-[9px] bg-gray-100 dark:bg-slate-700/40 text-gray-500 dark:text-slate-400">low sample</span>
+                      <span className="inline-block px-1.5 py-0.5 rounded text-[9px] bg-gray-100 dark:bg-slate-700/40 text-gray-500 dark:text-slate-400 cursor-help" title="Too few loads that month to compare reliably.">low sample</span>
                     ) : (
                       <span className="text-gray-900 dark:text-slate-200">—</span>
                     )}
@@ -489,7 +507,7 @@ export default function TrailerTypeTrends() {
         const sw = li.querySelector('svg path, svg rect, svg line, .recharts-legend-icon')
         return { label: norm(li.textContent), rgb: toRGB(sw ? (getComputedStyle(sw).fill || sw.getAttribute('fill')) : null) }
       })
-      const san = s => norm(s).replace(/Δ/g, 'Change').replace(/[^\x00-\x7F]/g, m => m === '—' ? '-' : m)
+      const san = s => norm(s).replace(/Δ/g, 'Change').replace(/↗/g, '+').replace(/↘/g, '-').replace(/→/g, '->').replace(/[^\x00-\x7F]/g, m => m === '—' ? '-' : m)
       const table = root.querySelector('table')
       const headers = Array.from(table.querySelectorAll('thead th')).map(t => san(t.textContent))
       const rows = Array.from(table.querySelectorAll('tbody tr'))
