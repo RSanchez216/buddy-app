@@ -20,29 +20,27 @@ export function normalizeUnitNumber(raw) {
   return s.replace(/^#+/, '').replace(/\s+/g, '').toUpperCase()
 }
 
-// Excel dates from this TMS export arrive as MM/DD/YYYY (some rows MM-DD-YYYY).
-// Blank string → null (the upload uses blank End Date to mean "currently open").
-export function parseAssignmentDate(raw) {
+// Convert a TMS start/end value to a literal calendar date "YYYY-MM-DD".
+//   "07-09-2026 15:00" | "07-09-2026" | "2026-07-09T…" → "2026-07-09"
+//   ""/"N/A"/unrecognized → null (blank End = "currently open").
+//
+// IMPORTANT: the date is extracted straight from the string — the time token is
+// dropped and we NEVER build a JS Date / call toISOString / getTime. The TMS
+// times are Central, so routing an afternoon end (e.g. 15:00) through a UTC
+// conversion rolled the calendar day back one (07-09 → 07-08); pulling the date
+// token verbatim avoids that entirely.
+export function tmsDateToISO(raw) {
   if (raw == null) return null
-  const s = String(raw).trim()
-  if (!s) return null
-
-  let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+  const datePart = String(raw).trim().split(/[ T]/)[0] // date token only — drop any time
+  if (!datePart) return null
+  if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) return datePart // already ISO
+  const m = datePart.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/) // MM-DD-YYYY or MM/DD/YYYY
   if (m) {
     const [, mm, dd, yyyy] = m
     if (Number(mm) < 1 || Number(mm) > 12 || Number(dd) < 1 || Number(dd) > 31) return null
-    return `${yyyy}-${mm.padStart(2,'0')}-${dd.padStart(2,'0')}`
+    return `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`
   }
-  m = s.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/)
-  if (m) {
-    const [, mm, dd, yyyy] = m
-    if (Number(mm) < 1 || Number(mm) > 12 || Number(dd) < 1 || Number(dd) > 31) return null
-    return `${yyyy}-${mm.padStart(2,'0')}-${dd.padStart(2,'0')}`
-  }
-  // Defensive: ISO already
-  m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/)
-  if (m) return s
-  return null
+  return null // unrecognized → leave unset rather than guess
 }
 
 function findCol(row, candidates) {
@@ -118,7 +116,7 @@ export function parseEquipmentAssignmentsWorkbook(arrayBuffer, equipmentType) {
 
     const tmsEquipmentId = parseTmsId(r[cols.equipmentId])
     const equipmentNameRaw = cleanStr(r[cols.equipmentName])
-    const startDate = parseAssignmentDate(r[cols.startDate])
+    const startDate = tmsDateToISO(r[cols.startDate])
 
     // Skip fully blank rows silently; flag partial rows.
     if (tmsEquipmentId == null && !equipmentNameRaw && !startDate) continue
@@ -131,7 +129,7 @@ export function parseEquipmentAssignmentsWorkbook(arrayBuffer, equipmentType) {
     // parsing, since those are genuinely unparseable.
     let endDate = null
     if (!isOpenEndDateSentinel(endRaw)) {
-      endDate = parseAssignmentDate(endRaw)
+      endDate = tmsDateToISO(endRaw)
       if (!endDate) {
         errors.push(`Row ${rowNum}: unrecognized End Date "${endRaw}" — treating as currently open.`)
       }
