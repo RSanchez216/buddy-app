@@ -169,6 +169,11 @@ export default function TrailerTypeTrends() {
               const delta = prevVal != null && lastVal != null ? lastVal - prevVal : null
               const deltaPct = (prevVal != null && lastVal != null && prevVal !== 0 && lastLegs >= 10 && prevLegs >= 10)
                 ? ((lastVal - prevVal) / prevVal * 100) : null
+              // Headline per-mile dollar change (unsigned — arrow + color show
+              // direction). $/mi → 2 decimals; gross → separators.
+              const absDelta = delta != null
+                ? (metric === 'rpm' ? `$${Math.abs(delta).toFixed(2)}` : fmtMoney(Math.abs(delta)))
+                : null
 
               // 6-period average: only over populated periods (legs > 0)
               const last6Rows = periods.slice(-6).map(p => dataMap.get(`${p}|${type}`)).filter(r => r && r.legs > 0)
@@ -201,8 +206,11 @@ export default function TrailerTypeTrends() {
                   ))}
                   <td className={S.td}>
                     {deltaPct != null ? (
-                      <span className={`font-mono text-sm ${deltaPct >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                        {deltaPct >= 0 ? '↗' : '↘'} {Math.abs(deltaPct).toFixed(1)}%
+                      <span className="font-mono text-sm tabular-nums">
+                        <span className={deltaPct >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}>
+                          {deltaPct >= 0 ? '↗' : '↘'} {absDelta}
+                        </span>
+                        <span className="text-gray-500 dark:text-slate-400"> {Math.abs(deltaPct).toFixed(1)}%</span>
                       </span>
                     ) : (prevLegs < 10 || lastLegs < 10) && (prevVal != null || lastVal != null) ? (
                       <span className="inline-block px-1.5 py-0.5 rounded text-[9px] bg-gray-100 dark:bg-slate-700/40 text-gray-500 dark:text-slate-400 cursor-help" title="Too few loads that month to compare reliably.">low sample</span>
