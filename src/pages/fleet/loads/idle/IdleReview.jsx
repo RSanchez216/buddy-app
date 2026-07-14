@@ -197,6 +197,33 @@ function LastLoadLine({ row }) {
   return <div className="text-[10px] text-gray-600 dark:text-slate-400 mt-0.5 max-w-[22rem] truncate" title={`Last: ${parts.join(' · ')}`}>Last: {parts.join(' · ')}</div>
 }
 
+// Amber "far from the Aurora yard" flag for a driverless truck/trailer whose
+// last drop geocodes >150 mi from Aurora, IL — a cue to verify where it is.
+// Shows the resolved drop city + mileage as useful subtext (state-only lane
+// display isn't enough here).
+function FarFromYardChip({ info }) {
+  const miles = Math.round(Number(info.miles_from_yard) || 0).toLocaleString('en-US')
+  const place = [info.drop_city, info.drop_state].filter(Boolean).join(', ')
+  return (
+    <div className="mt-1">
+      <span
+        title={place ? `Last drop: ${place} · ${miles} mi from Aurora` : undefined}
+        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 dark:bg-amber-500/15 text-amber-800 dark:text-amber-300 border border-amber-300/70 dark:border-amber-500/30"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="w-3 h-3 shrink-0" aria-hidden>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 21s-6-5.686-6-10a6 6 0 1 1 12 0c0 4.314-6 10-6 10z" />
+          <path strokeLinecap="round" d="M12 7.5v3" />
+          <circle cx="12" cy="13" r=".6" fill="currentColor" stroke="none" />
+        </svg>
+        Far from Aurora yard - verify location!
+      </span>
+      {place && (
+        <div className="text-[10px] text-gray-500 dark:text-slate-500 mt-0.5">Last drop: {place} · {miles} mi from Aurora</div>
+      )}
+    </div>
+  )
+}
+
 // Exact prorated holding for the idle span, with the truck/trailer split and the
 // monthly kept as a muted reference. Owned units read $0 (owned).
 function HoldingCell({ row }) {
@@ -281,6 +308,9 @@ export default function IdleReview() {
   const [rows, setRows] = useState(null)
   const [error, setError] = useState(null)
   const [pageSummary, setPageSummary] = useState(null) // idle_page_summary — top cards
+  // 'type:id' → { drop_city, drop_state, miles_from_yard } for driverless units
+  // last dropped far from the Aurora yard (idle_far_from_yard).
+  const [farFromYard, setFarFromYard] = useState({})
   const [view, setView] = useState('active') // 'active' | 'resolved'
   const [reviewFilter, setReviewFilter] = useState('all') // 'all' | 'reviewed' | 'needs' | 'pending' — separate axis
   const [financeFilter, setFinanceFilter] = useState('all') // 'all' | 'lease' | 'loan' | 'owned' — orthogonal axis (trucks/trailers)
@@ -299,6 +329,14 @@ export default function IdleReview() {
     // Top-card money summary (equipment carrying cost + driver revenue foregone).
     supabase.rpc('idle_page_summary')
       .then(({ data }) => { if (data) setPageSummary(data) })
+      .catch(() => {})
+    // Driverless units last dropped far from the Aurora yard — a location-verify flag.
+    supabase.rpc('idle_far_from_yard')
+      .then(({ data }) => {
+        const map = {}
+        ;(data || []).forEach(r => { map[`${r.subject_type}:${r.subject_id}`] = r })
+        setFarFromYard(map)
+      })
       .catch(() => {})
   }
 
@@ -522,8 +560,8 @@ export default function IdleReview() {
       ) : (
         <>
           <IdleSection title="Drivers" kind="driver" rows={viewGroups.driver} reasons={DRIVER_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} homeBySubject={homeBySubject} behindBySubject={behindBySubject} />
-          <IdleSection title="Trucks" kind="unit" rows={viewGroups.truck} reasons={UNIT_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} />
-          <IdleSection title="Trailers" kind="unit" rows={viewGroups.trailer} reasons={UNIT_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} />
+          <IdleSection title="Trucks" kind="unit" rows={viewGroups.truck} reasons={UNIT_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} farBySubject={farFromYard} />
+          <IdleSection title="Trailers" kind="unit" rows={viewGroups.trailer} reasons={UNIT_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} farBySubject={farFromYard} />
         </>
       )}
     </div>
@@ -590,7 +628,7 @@ function DriverIdleCard({ ps, loading }) {
   )
 }
 
-function IdleSection({ title, kind, rows, reasons, resolvedView, reviewFilter, financeFilter, onSetReason, onResolve, onReopen, homeBySubject = {}, behindBySubject = {} }) {
+function IdleSection({ title, kind, rows, reasons, resolvedView, reviewFilter, financeFilter, onSetReason, onResolve, onReopen, homeBySubject = {}, behindBySubject = {}, farBySubject = {} }) {
   const columns = kind === 'unit' ? UNIT_COLUMNS : DRIVER_COLUMNS
 
   const [sort, setSort] = useState({ key: 'days', dir: 'desc' })
@@ -700,7 +738,7 @@ function IdleSection({ title, kind, rows, reasons, resolvedView, reviewFilter, f
               </thead>
               <tbody>
                 {visible.map(r => (
-                  <IdleRow key={`${r.subject_type}:${r.subject_id}`} row={r} kind={kind} reasons={reasons} resolvedView={resolvedView} onSetReason={onSetReason} onResolve={onResolve} onReopen={onReopen} homeInfo={homeBySubject[`${r.subject_type}:${r.subject_id}`]} behindInfo={behindBySubject[`${r.subject_type}:${r.subject_id}`]} />
+                  <IdleRow key={`${r.subject_type}:${r.subject_id}`} row={r} kind={kind} reasons={reasons} resolvedView={resolvedView} onSetReason={onSetReason} onResolve={onResolve} onReopen={onReopen} homeInfo={homeBySubject[`${r.subject_type}:${r.subject_id}`]} behindInfo={behindBySubject[`${r.subject_type}:${r.subject_id}`]} farInfo={farBySubject[`${r.subject_type}:${r.subject_id}`]} />
                 ))}
               </tbody>
               <tfoot>
@@ -816,7 +854,7 @@ const TEAM_ICON = (
   </svg>
 )
 
-function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onReopen, homeInfo, behindInfo }) {
+function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onReopen, homeInfo, behindInfo, farInfo }) {
   const sev = severity(row)
 
   const daysCls = (row.days_idle ?? 0) >= 14 ? 'text-red-600 dark:text-red-400 font-semibold' : 'text-gray-700 dark:text-slate-300'
@@ -894,6 +932,7 @@ function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onR
           </span>
           <FinanceBadge row={row} />
           <LastLoadLine row={row} />
+          {farInfo && <FarFromYardChip info={farInfo} />}
         </td>
         <td className={`${S.td} text-right font-mono align-top ${daysCls}`}>{fmtDays(row.days_idle)}</td>
         <td className={`${S.td} text-gray-600 dark:text-slate-400 text-xs align-top`}>
