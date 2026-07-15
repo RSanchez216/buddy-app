@@ -55,6 +55,15 @@ export function parseDriverCell(raw) {
   return { code: null, name: s || null }
 }
 
+// Load # normalizer. Some TMS export variants prefix the load number with a
+// '#' ("#2606-1530"); the DB stores loads.load_number WITHOUT it (it's the
+// upsert conflict key, loads_load_number_key UNIQUE), so the '#' must be
+// stripped or the match fails and a duplicate row is inserted. Tolerant of
+// both: no prefix passes through unchanged.
+//   "#2606-1530" | " 2606-1530 " | "2606-1530" -> "2606-1530"
+export const normalizeLoadNumber = (raw) =>
+  String(raw ?? '').trim().replace(/^#+/, '').trim() || null
+
 function cleanStr(v) {
   if (v == null) return null
   const s = String(v).trim()
@@ -143,7 +152,7 @@ export function parseLoadsWorkbook(arrayBuffer) {
   const rows = []
   for (let i = 0; i < raw.length; i++) {
     const r = raw[i]
-    const loadNumber = cleanStr(r[cols.loadNumber])
+    const loadNumber = normalizeLoadNumber(r[cols.loadNumber])
     const driverRaw = cleanStr(r[cols.driver])
     // A leg must have a load number and a driver; skip blank spacer rows.
     if (!loadNumber || !driverRaw) continue

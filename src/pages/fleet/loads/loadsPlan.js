@@ -176,16 +176,23 @@ export function buildPlan({ rows, refs, existing }) {
       ? { name: custRaw, id: matchByName(custRaw, customerByName),
           match_status: matchByName(custRaw, customerByName) ? 'matched' : 'to_create' }
       : { name: null, id: null, match_status: 'none' }
-    const dispatcher = dispRaw
-      ? { name: dispRaw, id: matchByName(dispRaw, dispatcherByName),
-          match_status: matchByName(dispRaw, dispatcherByName) ? 'matched' : 'to_create' }
+    // Some exports prefix the Dispatcher cell with a "{code} - " code, same
+    // shape as the Driver cell ("24 - James Orunkulov Omurbek"). Reuse the
+    // driver-cell parser so the two stay consistent, and match on the NAME
+    // remainder — otherwise the prefixed string misses the existing dispatcher
+    // and a duplicate is created. Tolerant of both: no prefix → name is the
+    // whole cell. Dispatchers have no code key, so only the name is kept.
+    const dispName = parseDriverCell(dispRaw).name
+    const dispatcher = dispName
+      ? { name: dispName, id: matchByName(dispName, dispatcherByName),
+          match_status: matchByName(dispName, dispatcherByName) ? 'matched' : 'to_create' }
       : { name: null, id: null, match_status: 'none' }
     const carrier = carrRaw
       ? { name: carrRaw, id: matchByName(carrRaw, carrierByName),
           match_status: matchByName(carrRaw, carrierByName) ? 'matched' : 'unmatched' }
       : { name: null, id: null, match_status: 'none' }
     if (customer.match_status === 'to_create') toCreateCustomers.add(normName(custRaw))
-    if (dispatcher.match_status === 'to_create') toCreateDispatchers.add(normName(dispRaw))
+    if (dispatcher.match_status === 'to_create') toCreateDispatchers.add(normName(dispatcher.name))
 
     // Header watched-field diff (existing only).
     const headerDiffs = []
