@@ -180,8 +180,11 @@ export default function LoadsImport() {
   const [fleet, setFleet] = useState({ drivers: [], trucks: [], trailers: [] })
   // Map of driver ID to internal_id for display in needs-review table
   const [internalById, setInternalById] = useState(new Map())
-  // Import-time TONU review: load_numbers already classified (is_tonu NOT NULL —
-  // their prior decision stands) + the reviewer's per-candidate decisions.
+  // Import-time TONU review: load_numbers a HUMAN already judged
+  // (tonu_reviewed_by NOT NULL — their decision stands, never re-prompted) +
+  // the reviewer's per-candidate decisions. Auto-set and unclassified loads are
+  // deliberately NOT here, so an updated load that matches the rule (incl. one
+  // sitting at is_tonu = false) is re-listed and can be (re-)flagged.
   const [tonuClassified, setTonuClassified] = useState(() => new Set())
   const [tonuDecisions, setTonuDecisions] = useState(() => new Map()) // load_number -> 'tonu' | 'real'
   // Dismiss flag for the missing-optional-columns warning banner.
@@ -218,13 +221,15 @@ export default function LoadsImport() {
     await loadMissingTrailers()
   }
 
-  // Which of this batch's loads are already TONU-classified — so we never
-  // re-prompt a prior decision. Re-runs when the staged plan changes.
+  // Which of this batch's loads a human already judged — so we never re-prompt
+  // an explicit decision. Keyed on tonu_reviewed_by (the "a human decided"
+  // signal), NOT is_tonu: an auto-classified or unclassified load still gets
+  // re-evaluated on re-import. Re-runs when the staged plan changes.
   useEffect(() => {
     const nums = plan.map(p => p.load_number)
     if (!nums.length) return
     let stale = false
-    supabase.from('loads').select('load_number, is_tonu').in('load_number', nums).not('is_tonu', 'is', null)
+    supabase.from('loads').select('load_number, tonu_reviewed_by').in('load_number', nums).not('tonu_reviewed_by', 'is', null)
       .then(({ data, error }) => { if (!stale && !error) setTonuClassified(new Set((data || []).map(r => r.load_number))) })
     return () => { stale = true }
   }, [plan])
@@ -472,7 +477,6 @@ export default function LoadsImport() {
       // write-once, legs matched against current DB), so Retry just re-runs
       // from the start — already-written rows no-op.
       const fname = batch.filename
-      const cancelTonu = Number(counts.status_flags || 0)
       const { appliedLoads, appliedLegs, appliedCustomers, appliedDispatchers, error, done, total } = await applyBatch({
         batchId: batch.id, decisions, linkOverrides: links, onProgress: setProgress,
       })
@@ -493,20 +497,41 @@ export default function LoadsImport() {
       //   • 'real'            → explicit Real (is_tonu=false, stamps reviewer)
       //   • 'tonu'            → explicit TONU (is_tonu=true, stamps reviewer)
       //   • untouched default → auto TONU (is_tonu=true, NO reviewer) via p_auto
-      // The candidate set is is_tonu IS NULL only, and p_auto additionally guards
-      // is_tonu IS NULL, so a prior human decision is never flipped.
+      // Candidates exclude only human-reviewed loads (tonu_reviewed_by set), and
+      // p_auto additionally guards tonu_reviewed_by IS NULL — so updated loads
+      // (incl. is_tonu = false) are (re-)flagged while an explicit human
+      // decision is never overwritten.
       let tonuApplied = 0
+      const flaggedTonu = new Set()   // load_numbers this run wrote is_tonu = true
       for (const p of tonuCandidates) {
         const ln = p.load_number
         const d = tonuDecisions.get(ln)
+        const markTonu = d !== 'real'  // auto default or explicit 'tonu' → TONU; 'real' rescues
         const params = (d === 'tonu' || d === 'real')
           ? { p_load_number: ln, p_is_tonu: d === 'tonu' }        // explicit human click
           : { p_load_number: ln, p_is_tonu: true, p_auto: true }  // pre-selected default
-        const { error: tErr } = await supabase.rpc('set_load_tonu', params)
-        if (tErr) console.error('[LoadsImport] set_load_tonu failed for', ln, tErr)
-        else tonuApplied++
+        const { data: tData, error: tErr } = await supabase.rpc('set_load_tonu', params)
+        if (tErr) { console.error('[LoadsImport] set_load_tonu failed for', ln, tErr); continue }
+        tonuApplied++
+        // A TONU decision that actually wrote a row is a Canceled/TONU flag for
+        // the receipt. (The auto path returns no rows on a human-reviewed load.)
+        if (markTonu && (tData?.length ?? 0) > 0) flaggedTonu.add(ln)
       }
       if (tonuApplied > 0) toast.success(`Classified ${tonuApplied} TONU candidate${tonuApplied === 1 ? '' : 's'}`)
+
+      // Canceled/TONU flags actually written this run — heuristic TONU
+      // classifications above plus applied status-text Canceled/TONU flips —
+      // distinct by load number. Persist onto the batch counts (merging what
+      // applyBatch already wrote) so the receipt reflects the DB, not the
+      // build-time estimate that missed status="Billed" TONUs like 2606-1530.
+      const flaggedAll = new Set(flaggedTonu)
+      for (const p of plan) {
+        if (p.is_status_flag && p.classification !== 'unchanged' && decisionFor(p.load_number) !== 'skipped') flaggedAll.add(p.load_number)
+      }
+      const cancelTonu = flaggedAll.size
+      const { data: freshBatch } = await supabase.from('load_import_batches').select('counts').eq('id', batch.id).maybeSingle()
+      await supabase.from('load_import_batches')
+        .update({ counts: { ...(freshBatch?.counts || {}), status_flags: cancelTonu } }).eq('id', batch.id)
 
       // Durable summary so a user who navigated away still sees the outcome.
       setApplySummary({ filename: fname, loads: appliedLoads, legs: appliedLegs, customers: appliedCustomers, dispatchers: appliedDispatchers, cancelTonu })
