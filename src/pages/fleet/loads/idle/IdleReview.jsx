@@ -253,7 +253,7 @@ function HoldingCell({ row }) {
       <div className="font-mono text-amber-600 dark:text-amber-400 whitespace-nowrap">
         {held > 0 ? money0(held) : '$0'}
         {isUnit ? (
-          <span className="text-[9px] font-sans text-gray-600 dark:text-slate-400"> · {row.days_idle ?? 0}d sitting unused{perDay > 0 ? ` · ~${money0(perDay)}/day` : ''}</span>
+          <span className="text-[9px] font-sans text-gray-600 dark:text-slate-400">{row.days_idle == null ? '' : ` · ${row.days_idle}d sitting unused`}{perDay > 0 ? ` · ~${money0(perDay)}/day` : ''}</span>
         ) : (
           <span className="text-[9px] font-sans text-gray-600 dark:text-slate-400"> held · {row.days_idle ?? 0}d</span>
         )}
