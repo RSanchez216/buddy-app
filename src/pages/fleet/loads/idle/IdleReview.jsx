@@ -52,13 +52,16 @@ const ROW_BTN = 'inline-flex items-center px-2 py-1 text-[11px] font-medium roun
 
 const COST_TIP = "Monthly carrying cost — the lease or loan payment for this unit, which keeps being charged while it sits idle. It's the monthly run-rate, not prorated to the idle days shown. Driver-owned equipment is $0. For a driver, it's the combined carrying cost of the company truck and trailer they're holding."
 const UNIT_COST_TIP = "What this unit has cost while sitting unused — its monthly carrying cost prorated over the days it hasn't moved (~$/day × days idle)."
+// Trucks/Trailers idle basis — assignment end, not last load. Drivers keep the
+// last-load basis, so this tip is on the UNIT columns only.
+const UNIT_IDLE_TIP = "Days since the driver came off this unit (assignment end date). While a driver is assigned, the equipment is charged to that driver, not counted as company idle."
 
 // Column defs drive the sortable headers + comparator. `get` returns the sort
 // value; `type` picks the comparator (text / numeric / severity). Hoisted to
 // module scope so the reference is stable across renders (memoization-safe).
 const UNIT_COLUMNS = [
   { key: 'label', label: 'Unit', type: 'text', get: r => r.label || '' },
-  { key: 'days', label: 'Idle', type: 'num', align: 'right', get: r => r.days_idle },
+  { key: 'days', label: 'Idle', type: 'num', align: 'right', tip: UNIT_IDLE_TIP, get: r => r.days_idle },
   { key: 'extra', label: 'Assigned driver', type: 'text', get: r => r.extra || '' },
   { key: 'cost', label: 'Holding', type: 'num', align: 'right', tip: UNIT_COST_TIP, get: r => Number(r.holding_prorated) },
   { key: 'reason', label: 'Reason', type: 'severity', get: r => SEV_RANK[severity(r)] },
@@ -189,7 +192,15 @@ async function exportIdleExcel(groups) {
 
 // Muted "last load that used this subject" line.
 function LastLoadLine({ row }) {
-  if (!row.last_load_number) return <div className="text-[10px] text-gray-600 dark:text-slate-400 mt-0.5">No prior load</div>
+  if (!row.last_load_number) {
+    // No load history, but a real idle count means the clock runs from the
+    // assignment end date (last_activity) — say so instead of a bare
+    // "No prior load", which reads as a contradiction next to e.g. "123d".
+    if (row.days_idle != null && row.last_activity) {
+      return <div className="text-[10px] text-gray-600 dark:text-slate-400 mt-0.5">No load on record · idle since {fmtDateOnly(row.last_activity)}</div>
+    }
+    return <div className="text-[10px] text-gray-600 dark:text-slate-400 mt-0.5">No prior load</div>
+  }
   const parts = [unitTag(row.last_load_number)]
   if (row.last_lane) parts.push(row.last_lane)
   if (row.last_delivery) parts.push(fmtShort(row.last_delivery))
@@ -516,7 +527,7 @@ export default function IdleReview() {
             <span className="text-xs text-red-700/80 dark:text-red-300/80">Still costing ~{money0(pageSummary.equip_monthly_total)}/mo while idle</span>
           </div>
           <p className="mt-1 text-[11px] text-gray-500 dark:text-slate-400">
-            Carrying cost already spent on idle trucks &amp; trailers — each counted since it last moved (currently {pageSummary.equip_idle_days_min}–{pageSummary.equip_idle_days_max} days idle). Includes equipment held by idle drivers.
+            Carrying cost already spent on idle trucks &amp; trailers — each counted since the driver came off it (currently {pageSummary.equip_idle_days_min}–{pageSummary.equip_idle_days_max} days idle). Equipment still assigned to a driver is charged to that driver and is not counted here.
           </p>
         </div>
       )}
@@ -589,9 +600,9 @@ function EquipIdleCard({ label, count, lost, monthly, loading }) {
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
             <span className="font-mono text-sm font-bold text-red-600 dark:text-red-400">{loading ? '…' : `${money0(lost)} lost so far`}</span>
-            <InfoDot tip="Carrying cost already spent on these idle units — each counted since it last moved (units are idle different lengths of time)." />
+            <InfoDot tip="Carrying cost already spent on these idle units — each counted since the driver came off it (units are idle different lengths of time)." />
           </div>
-          <div className="text-[11px] leading-tight text-gray-500 dark:text-slate-400">carrying cost, since each last moved</div>
+          <div className="text-[11px] leading-tight text-gray-500 dark:text-slate-400">carrying cost, since the driver came off</div>
           <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-slate-400">
             <span>{loading ? '' : `~${money0(monthly)}/mo while idle`}</span>
             {!loading && <InfoDot tip="What these idle units cost per month at their current rate if they keep sitting." />}
