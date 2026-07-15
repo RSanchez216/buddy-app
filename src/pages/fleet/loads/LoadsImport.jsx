@@ -187,6 +187,10 @@ export default function LoadsImport() {
   // sitting at is_tonu = false) is re-listed and can be (re-)flagged.
   const [tonuClassified, setTonuClassified] = useState(() => new Set())
   const [tonuDecisions, setTonuDecisions] = useState(() => new Map()) // load_number -> 'tonu' | 'real'
+  // Same-city ≥ $TONU_FLOOR manual review — the ambiguous loads the auto TONU
+  // rule excludes by price. Opposite default: absent = untouched = leave alone
+  // (no write). Only an explicit 'tonu'/'real' click writes is_tonu on Apply.
+  const [sameCityDecisions, setSameCityDecisions] = useState(() => new Map()) // load_number -> 'tonu' | 'real'
   // Dismiss flag for the missing-optional-columns warning banner.
   const [optionalWarningDismissed, setOptionalWarningDismissed] = useState(false)
   // Missing-trailers worklist — reflects current data (independent of any single
@@ -247,7 +251,7 @@ export default function LoadsImport() {
     setBatch(b); setPlan(p || []); setCounts(c || {})
     setRecent(rec)
     setDecisions(new Map()); setLinks(new Map())
-    setTonuDecisions(new Map()); setTonuClassified(new Set())
+    setTonuDecisions(new Map()); setTonuClassified(new Set()); setSameCityDecisions(new Map())
     setLoading(false)
   }
 
@@ -459,6 +463,29 @@ export default function LoadsImport() {
     setTonuDecisions(prev => { const n = new Map(prev); for (const p of tonuCandidates) n.set(p.load_number, d); return n })
   }
 
+  // Same-city loads AT/ABOVE the TONU floor — the ones the auto rule excludes by
+  // price ($500+). Same city normalization as tonuMatches; disjoint from it by
+  // the linehaul cut, so a load is never in both panels. Evaluated on new,
+  // updated, and unchanged rows alike (no reviewed/classified filtering) — these
+  // are surfaced for a human look, never presumed.
+  const sameCityCandidates = useMemo(() => plan.filter(p => {
+    const lh = Number(p.header?.linehaul)
+    if (!Number.isFinite(lh) || lh < TONU_FLOOR) return false
+    const pk = tonuCityKey(p.header?.pu_info), dk = tonuCityKey(p.header?.del_info)
+    return !!pk && pk === dk
+  }), [plan])
+  // Default here is the OPPOSITE of the TONU panel: untouched = Real (leave
+  // alone). tonu = explicit TONU; everything else (incl. untouched) reads Real.
+  const sameCityTally = useMemo(() => {
+    let tonu = 0
+    for (const p of sameCityCandidates) if (sameCityDecisions.get(p.load_number) === 'tonu') tonu++
+    return { tonu, real: sameCityCandidates.length - tonu }
+  }, [sameCityCandidates, sameCityDecisions])
+
+  function setSameCityDecision(loadNumber, d) {
+    setSameCityDecisions(prev => { const n = new Map(prev); if (d) n.set(loadNumber, d); else n.delete(loadNumber); return n })
+  }
+
   // Apply gate: if there are TONU candidates, restate the consequence in a
   // non-blocking confirm card first (never a blocking window.confirm).
   function requestApply() {
@@ -516,6 +543,20 @@ export default function LoadsImport() {
         // A TONU decision that actually wrote a row is a Canceled/TONU flag for
         // the receipt. (The auto path returns no rows on a human-reviewed load.)
         if (markTonu && (tData?.length ?? 0) > 0) flaggedTonu.add(ln)
+      }
+      // Same-city ≥ $floor manual panel — explicit decisions ONLY. Untouched
+      // rows are left completely alone (no RPC call), so a load stays whatever
+      // it was. An explicit TONU sets true; an explicit Real sets false (both
+      // stamp the reviewer via the non-auto path). A TONU write here is also a
+      // Canceled/TONU flag for the receipt.
+      for (const p of sameCityCandidates) {
+        const ln = p.load_number
+        const d = sameCityDecisions.get(ln)
+        if (d !== 'tonu' && d !== 'real') continue   // untouched → leave alone
+        const { data: tData, error: tErr } = await supabase.rpc('set_load_tonu', { p_load_number: ln, p_is_tonu: d === 'tonu' })
+        if (tErr) { console.error('[LoadsImport] set_load_tonu failed for', ln, tErr); continue }
+        tonuApplied++
+        if (d === 'tonu' && (tData?.length ?? 0) > 0) flaggedTonu.add(ln)
       }
       if (tonuApplied > 0) toast.success(`Classified ${tonuApplied} TONU candidate${tonuApplied === 1 ? '' : 's'}`)
 
@@ -705,6 +746,51 @@ export default function LoadsImport() {
                             <span className="inline-flex rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700">
                               <button onClick={() => setTonuDecision(p.load_number, 'tonu')} className={`px-2.5 py-1 ${tonuActive ? 'bg-amber-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400'}`}>TONU</button>
                               <button onClick={() => setTonuDecision(p.load_number, 'real')} className={`px-2.5 py-1 ${isReal ? 'bg-emerald-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400'}`}>Real</button>
+                            </span>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </Section>
+          )}
+
+          {/* Same-city, $500+ — manual review (manager only). Opposite default to
+              the TONU panel: NOT pre-selected, Real by default, untouched rows
+              are left completely alone on Apply. Only an explicit TONU/Real
+              click writes is_tonu. set_load_tonu is the only writer. */}
+          {canEdit && sameCityCandidates.length > 0 && (
+            <Section
+              title={`Same-city, $${TONU_FLOOR} or more (${sameCityCandidates.length})`}
+              subtitle={`Pickup and drop in the same city, but at or above the $${TONU_FLOOR} TONU threshold — review and mark as TONU if the load never ran. Untouched rows are left unchanged.`}
+              action={
+                <span className="text-[11px] font-mono text-gray-500 dark:text-slate-400">{sameCityTally.tonu} → TONU · {sameCityTally.real} → Real</span>
+              }
+            >
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className={S.tableHead}><tr>
+                    <th className={S.th}>Load #</th><th className={S.th}>Lane</th>
+                    <th className={`${S.th} text-right`}>Linehaul</th>
+                    <th className={`${S.th} text-right`}>Decision</th>
+                  </tr></thead>
+                  <tbody>
+                    {sameCityCandidates.map(p => {
+                      const d = sameCityDecisions.get(p.load_number)
+                      const tonuActive = d === 'tonu'            // only an explicit TONU highlights
+                      const realActive = !tonuActive             // untouched + explicit 'real' both read Real
+                      const lh = p.header?.linehaul
+                      return (
+                        <tr key={p.load_number} className={`${S.tableRow} ${tonuActive ? 'bg-amber-50/40 dark:bg-amber-500/[0.04]' : ''}`}>
+                          <td className={`${S.td} font-mono`}>{p.load_number}</td>
+                          <td className={S.td}>{tonuCityLabel(p.header?.pu_info) || '—'} → {tonuCityLabel(p.header?.del_info) || '—'}</td>
+                          <td className={`${S.td} text-right font-mono`}>{lh == null ? '—' : `$${Number(lh).toLocaleString('en-US', { minimumFractionDigits: 2 })}`}</td>
+                          <td className={`${S.td} text-right`}>
+                            <span className="inline-flex rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700">
+                              <button onClick={() => setSameCityDecision(p.load_number, 'tonu')} className={`px-2.5 py-1 ${tonuActive ? 'bg-amber-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400'}`}>TONU</button>
+                              <button onClick={() => setSameCityDecision(p.load_number, 'real')} className={`px-2.5 py-1 ${realActive ? 'bg-emerald-500 text-slate-900 font-semibold' : 'text-gray-500 dark:text-slate-400'}`}>Real</button>
                             </span>
                           </td>
                         </tr>
