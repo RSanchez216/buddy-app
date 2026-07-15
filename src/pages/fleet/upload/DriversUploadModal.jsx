@@ -180,7 +180,12 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
         }
       })
       setRows(preview)
-      setParseErrors(errors)
+      // New drivers whose Status was blank/unrecognized will import as 'active' —
+      // surface each so the fallback is visible in the preview, not silent.
+      const statusWarnings = preview
+        .filter(r => r.match?.method === 'new' && r.status_recognized === false)
+        .map(r => `${r.full_name || `#${r.internal_id}`}: Status "${r.source_status_raw ?? ''}" not recognized — importing as active.`)
+      setParseErrors([...errors, ...statusWarnings])
 
       // Termination detection: currently-active drivers whose internal_id is
       // present in DB but NOT in the upload's id set. Rows matched only by
@@ -230,6 +235,7 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
       by_method: { id_match: 0, name_backfill: 0, new: 0, possible_duplicate: 0, name_ambiguous: 0 },
       unresolved: 0,
       noComp: 0,
+      terminated_in_upload: 0,
     }
     for (const r of rows) {
       if (r.driver_type) c.by_type[r.driver_type] = (c.by_type[r.driver_type] || 0) + 1
@@ -240,6 +246,9 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
       const m = r.match?.method
       if (m && c.by_method[m] !== undefined) c.by_method[m]++
       if ((m === 'possible_duplicate' || m === 'name_ambiguous') && !r.resolution) c.unresolved++
+      // New drivers arriving already Terminated — the file-driven terminations
+      // this upload will actually create (update-path status is never touched).
+      if (!r.skip && m === 'new' && r.mapped_status === 'terminated') c.terminated_in_upload++
     }
     return c
   }, [rows])
@@ -449,7 +458,7 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
                   )}
                 </SummaryGroup>
                 <SummaryGroup title="Termination Detection">
-                  <SummaryRow icon="📋" label="In this upload" value={counts.total} />
+                  <SummaryRow icon="📋" label="In this upload" value={counts.terminated_in_upload} />
                   <SummaryRow icon="⚠️" label="Possibly terminated" value={possiblyTerminated.length} />
                 </SummaryGroup>
                 <SummaryGroup title="Validation">

@@ -36,6 +36,37 @@ export function parseCompensation(raw) {
   return { type: null, value: null }
 }
 
+// TMS "Status" → drivers.current_status (CHECK-constrained vocabulary). Case-
+// and separator-insensitive so "Pre-Hire", "Prehire", "pre hire" all collapse
+// to pre_hire. Blank/unrecognized falls back to 'active' with recognized=false
+// so the caller can surface it (never silently swallow an unknown status).
+// Only ever returns a value from the CHECK list, or the insert would be rejected.
+const TMS_STATUS_MAP = {
+  active: 'active',
+  suspended: 'suspended',
+  terminated: 'terminated',
+  prehire: 'pre_hire',
+  inactive: 'inactive',
+}
+export function mapTmsStatus(raw) {
+  const key = String(raw ?? '').trim().toLowerCase().replace(/[\s_-]+/g, '')
+  const mapped = TMS_STATUS_MAP[key]
+  return mapped ? { status: mapped, recognized: true } : { status: 'active', recognized: false }
+}
+
+// TMS calendar date "MM-DD-YYYY" → ISO "YYYY-MM-DD", built from the parts with
+// NO Date object and NO timezone round-trip (that's the off-by-one trap that
+// hit the assignment importer). Tolerates a trailing time token. Unrecognized
+// format → null.
+export function parseTmsDateToISO(raw) {
+  if (!raw) return null
+  const datePart = String(raw).trim().split(' ')[0]
+  const m = datePart.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/)
+  if (!m) return null
+  const [, mm, dd, yyyy] = m
+  return `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`
+}
+
 export function normalizeDriverType(raw) {
   const lower = String(raw || '').toLowerCase().trim()
   if (!lower) return null
@@ -129,6 +160,7 @@ export function parseDriversWorkbook(arrayBuffer) {
   const cols = {
     driverId:    findCol(sample, ['Driver ID', 'Driver Id', 'Driver ID#']),
     status:      findCol(sample, ['Status']),
+    jobRemoved:  findCol(sample, ['Job date removed', 'Job Date Removed', 'Date removed']),
     fullName:    findCol(sample, ['Full name', 'Full Name', 'Name']),
     truck:       findCol(sample, ['Truck']),
     carrier:     findCol(sample, ['Carrier']),
@@ -171,6 +203,16 @@ export function parseDriversWorkbook(arrayBuffer) {
     const driverTypeRaw = cleanStr(cols.driverType ? r[cols.driverType] : null)
     const driverType = normalizeDriverType(driverTypeRaw)
 
+    // Status + Job date removed → mapped current_status + terminated_at. Used on
+    // the NEW-driver INSERT path only (the commit's update path deliberately
+    // preserves an existing driver's hand-set status). terminated_at is set only
+    // for a terminated status — a terminated driver with a blank/off-format Job
+    // date removed still lands terminated, just with terminated_at NULL.
+    const statusRaw = cleanStr(cols.status ? r[cols.status] : null)
+    const jobRemovedRaw = cleanStr(cols.jobRemoved ? r[cols.jobRemoved] : null)
+    const { status: mappedStatus, recognized: statusRecognized } = mapTmsStatus(statusRaw)
+    const terminatedAt = mappedStatus === 'terminated' ? parseTmsDateToISO(jobRemovedRaw) : null
+
     rows.push({
       _rowNum: rowNum,
       internal_id,
@@ -189,10 +231,21 @@ export function parseDriversWorkbook(arrayBuffer) {
       compensation_raw: compRaw,
       compensation_type: comp.type,
       compensation_value: comp.value,
-      // Anything not 'Active' (case-insensitive) keeps the existing DB status on update;
-      // for insert we default to 'active'. Surfaced for the preview reason text.
-      source_status_raw: cleanStr(cols.status ? r[cols.status] : null),
+      // Raw Status kept for preview reason text. mapped_status/terminated_at are
+      // consumed by the NEW-driver insert path; status_recognized flags a
+      // blank/unknown Status that fell back to 'active' so it can be warned on.
+      source_status_raw: statusRaw,
+      job_date_removed_raw: jobRemovedRaw,
+      mapped_status: mappedStatus,
+      terminated_at: terminatedAt,
+      status_recognized: statusRecognized,
     })
+
+    // A terminated driver whose Job date removed is present but not MM-DD-YYYY
+    // parses to null — surface it so the missing terminated_at is visible.
+    if (mappedStatus === 'terminated' && jobRemovedRaw && !terminatedAt) {
+      errors.push(`Row ${rowNum}: couldn't parse Job date removed "${jobRemovedRaw}" — terminated_at left blank.`)
+    }
 
     if (compRaw && !comp.type) {
       const msg = /flat\s*rate/i.test(compRaw)

@@ -65,43 +65,66 @@ export async function commitDriverRows({ rows, terminations = [], userId }) {
   }
 
   // ── INSERTS (batched) ────────────────────────────────────────────────
+  // New drivers whose Status was blank/unrecognized fell back to 'active' — log
+  // them so the fallback is visible, not silent (per-driver, not a batch-wide
+  // shrug). The mapping itself already happened in the parser (mapped_status).
+  const statusFallbacks = toInsert.filter(r => r.status_recognized === false)
+  if (statusFallbacks.length > 0) {
+    console.warn(`[driversCommit] ${statusFallbacks.length} new driver(s) had a blank/unrecognized Status — imported as 'active':`,
+      statusFallbacks.map(r => `${r.full_name || '?'} (#${r.internal_id}) status="${r.source_status_raw ?? ''}"`))
+  }
+
   for (let i = 0; i < toInsert.length; i += BATCH_INSERT) {
     const slice = toInsert.slice(i, i + BATCH_INSERT)
-    const payloads = slice.map(row => ({
-      internal_id: row.internal_id,
-      full_name: row.full_name,
-      phone: row.phone,
-      email: row.email,
-      driver_type: row.driver_type,
-      carrier: row.carrier,
-      truck_assignment_raw: row.truck_assignment_raw,
-      trailer_assignment_raw: row.trailer_assignment_raw,
-      compensation_raw: row.compensation_raw,
-      compensation_type: row.compensation_type,
-      compensation_value: row.compensation_value,
-      referred_by: row.referred_by,
-      temporary_license: !!row.temporary_license,
-      missing_op: row.missing_op,
-      onboarded_at: row.onboarded_at,
-      current_status: 'active',
-      status_changed_at: new Date().toISOString(),
-      last_seen_in_upload_at: new Date().toISOString(),
-      created_by: userId || null,
-      updated_by: userId || null,
-    }))
+    // Map internal_id -> mapped status so the history to_status and the
+    // terminated tally reflect what actually landed (insert .select can't
+    // return current_status here without an extra column list bloat).
+    const statusByInternalId = new Map(slice.map(r => [r.internal_id, r.mapped_status || 'active']))
+    const payloads = slice.map(row => {
+      const status = row.mapped_status || 'active'   // parser already mapped Status → checked vocabulary
+      return {
+        internal_id: row.internal_id,
+        full_name: row.full_name,
+        phone: row.phone,
+        email: row.email,
+        driver_type: row.driver_type,
+        carrier: row.carrier,
+        truck_assignment_raw: row.truck_assignment_raw,
+        trailer_assignment_raw: row.trailer_assignment_raw,
+        compensation_raw: row.compensation_raw,
+        compensation_type: row.compensation_type,
+        compensation_value: row.compensation_value,
+        referred_by: row.referred_by,
+        temporary_license: !!row.temporary_license,
+        missing_op: row.missing_op,
+        onboarded_at: row.onboarded_at,
+        current_status: status,
+        // Only a terminated status carries a removal date; everything else NULL.
+        terminated_at: status === 'terminated' ? (row.terminated_at ?? null) : null,
+        status_changed_at: new Date().toISOString(),  // when BUDDY learned the status (not a TMS calendar date)
+        last_seen_in_upload_at: new Date().toISOString(),
+        created_by: userId || null,
+        updated_by: userId || null,
+      }
+    })
     const { data: inserted, error } = await supabase
       .from('drivers').insert(payloads).select('id, internal_id')
     if (error) { result.errors.push(`Insert batch ${i / BATCH_INSERT}: ${error.message}`); continue }
     result.inserted += (inserted || []).length
+    // Count new drivers created directly as terminated so the receipt matches reality.
+    result.terminated += (inserted || []).filter(d => statusByInternalId.get(d.internal_id) === 'terminated').length
 
     if ((inserted || []).length > 0) {
-      const histPayloads = inserted.map(d => ({
-        driver_id: d.id,
-        from_status: null,
-        to_status: 'active',
-        reason: 'Initial import via upload',
-        created_by: userId || null,
-      }))
+      const histPayloads = inserted.map(d => {
+        const to = statusByInternalId.get(d.internal_id) || 'active'
+        return {
+          driver_id: d.id,
+          from_status: null,
+          to_status: to,
+          reason: 'Initial import via upload',
+          created_by: userId || null,
+        }
+      })
       const { error: hErr } = await supabase.from('driver_status_history').insert(histPayloads)
       if (hErr) result.errors.push(`History insert (new): ${hErr.message}`)
     }
