@@ -84,6 +84,54 @@ function tonuCityLabel(info) {
 function tonuCityKey(info) {
   return tonuCityLabel(info).toLowerCase()
 }
+
+// ── existing-load lookups (chunked + paginated) ──────────────────────────────
+// The New/Updated/Unchanged diff hinges on which load_numbers already exist.
+// A single .in('load_number', [...thousands]) overflows PostgREST's URL length
+// limit and comes back empty/errored — which the old code read as "no existing
+// loads" → every row misclassified New, and the New-path write would overwrite
+// is_tonu/status on loads that actually exist. Chunk the lookup so each URL
+// stays small, page any query that could exceed the 1000-row cap, and let a
+// query error throw (never silently degrade to an empty set).
+const LOOKUP_CHUNK = 300
+const LOOKUP_PAGE = 1000
+function chunkArray(arr, size) {
+  const out = []
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size))
+  return out
+}
+async function fetchExistingLoads(loadNumbers) {
+  const byNumber = new Map()   // load_number -> row (also dedups)
+  for (const part of chunkArray(loadNumbers, LOOKUP_CHUNK)) {
+    const { data, error } = await supabase
+      .from('loads')
+      .select('id, load_number, status, linehaul, pickup_date, delivery_date')
+      .in('load_number', part)
+    if (error) throw new Error(`Existing-load lookup failed: ${error.message}`)
+    for (const row of data || []) byNumber.set(row.load_number, row)
+  }
+  return [...byNumber.values()]
+}
+async function fetchExistingLegs(loadIds) {
+  const legs = []
+  for (const part of chunkArray(loadIds, LOOKUP_CHUNK)) {
+    // Each 300-load chunk can carry >1000 legs → page it. Ordered by id so the
+    // paging is deterministic.
+    for (let from = 0; ; from += LOOKUP_PAGE) {
+      const { data, error } = await supabase
+        .from('load_legs')
+        .select('id, load_id, leg_seq, driver_raw, truck_raw, trailer_raw, total_miles')
+        .in('load_id', part)
+        .order('id', { ascending: true })
+        .range(from, from + LOOKUP_PAGE - 1)
+      if (error) throw new Error(`Existing-leg lookup failed: ${error.message}`)
+      const page = data || []
+      legs.push(...page)
+      if (page.length < LOOKUP_PAGE) break
+    }
+  }
+  return legs
+}
 function fieldLabel(f) {
   return ({
     linehaul: 'Linehaul', status: 'Status', pickup_date: 'Pickup date', delivery_date: 'Delivery date',
@@ -230,11 +278,23 @@ export default function LoadsImport() {
   // signal), NOT is_tonu: an auto-classified or unclassified load still gets
   // re-evaluated on re-import. Re-runs when the staged plan changes.
   useEffect(() => {
-    const nums = plan.map(p => p.load_number)
+    const nums = [...new Set(plan.map(p => p.load_number).filter(Boolean))]
     if (!nums.length) return
     let stale = false
-    supabase.from('loads').select('load_number, tonu_reviewed_by').in('load_number', nums).not('tonu_reviewed_by', 'is', null)
-      .then(({ data, error }) => { if (!stale && !error) setTonuClassified(new Set((data || []).map(r => r.load_number))) })
+    // Chunked, same as the classification lookup — a single .in() over a large
+    // plan's load_numbers overflows the URL and would silently leave the set
+    // empty. On any chunk error we skip the update (leave it empty) rather than
+    // half-fill it, so we never treat a partial as authoritative.
+    ;(async () => {
+      const reviewed = new Set()
+      for (const part of chunkArray(nums, LOOKUP_CHUNK)) {
+        const { data, error } = await supabase.from('loads')
+          .select('load_number, tonu_reviewed_by').in('load_number', part).not('tonu_reviewed_by', 'is', null)
+        if (error) return
+        for (const r of data || []) reviewed.add(r.load_number)
+      }
+      if (!stale) setTonuClassified(reviewed)
+    })()
     return () => { stale = true }
   }, [plan])
 
@@ -275,25 +335,27 @@ export default function LoadsImport() {
       const presentOptional = OPTIONAL_COLS.filter(c => cols?.[c.key]).map(c => c.label)
       setOptionalWarningDismissed(false)
 
-      // Reference + existing-load data for resolve/diff.
-      const loadNumbers = [...new Set(rows.map(r => r.load_number))]
-      const [drv, trk, trl, car, cus, dis, exLoads] = await Promise.all([
+      // Reference data (small tables — one fetch each).
+      const loadNumbers = [...new Set(rows.map(r => r.load_number).filter(Boolean))]
+      const [drv, trk, trl, car, cus, dis] = await Promise.all([
         supabase.from('drivers').select('id, full_name, internal_id'),
         supabase.from('trucks').select('id, unit_number'),
         supabase.from('trailers').select('id, unit_number'),
         supabase.from('carriers').select('id, name'),
         supabase.from('customers').select('id, name, trailer_required'),
         supabase.from('dispatchers').select('id, name'),
-        supabase.from('loads').select('id, load_number, status, linehaul, pickup_date, delivery_date').in('load_number', loadNumbers),
       ])
-      const existingLoads = exLoads.data || []
-      let existingLegs = []
-      if (existingLoads.length) {
-        const { data: legs } = await supabase.from('load_legs')
-          .select('id, load_id, leg_seq, driver_raw, truck_raw, trailer_raw, total_miles')
-          .in('load_id', existingLoads.map(l => l.id))
-        existingLegs = legs || []
+      // Existing loads/legs for the New/Updated/Unchanged diff — chunked +
+      // paginated (see fetchExistingLoads). Any query error throws into the
+      // catch below rather than degrading to an empty (all-New) set.
+      const existingLoads = await fetchExistingLoads(loadNumbers)
+      // Fail loud: 0 matches on a large file is the exact signature of a broken
+      // lookup (URL overflow / swallowed error). Abort rather than let the
+      // New-path write wipe is_tonu/status on loads that actually exist.
+      if (loadNumbers.length > 50 && existingLoads.length === 0) {
+        throw new Error('Existing-load lookup returned no matches for a large file — classification aborted to prevent duplicate creation. Please retry.')
       }
+      const existingLegs = existingLoads.length ? await fetchExistingLegs(existingLoads.map(l => l.id)) : []
 
       const { plan: built, counts: builtCounts } = buildPlan({
         rows,
@@ -322,6 +384,11 @@ export default function LoadsImport() {
       setBatch(reloaded.batch); setPlan(reloaded.plan); setCounts(reloaded.counts || {})
       setDecisions(new Map()); setLinks(new Map())
       void batchId
+    } catch (err) {
+      // Chunked-lookup errors + the fail-loud large-file guard land here. Surface
+      // loudly — never fall through to a silent all-New classification.
+      console.error('[LoadsImport] upload/classify failed', err)
+      toast.error('Import aborted', err?.message || String(err))
     } finally {
       setBusy(false)
     }

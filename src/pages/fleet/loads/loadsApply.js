@@ -99,12 +99,33 @@ function planFromRows(rows) {
   return plan
 }
 
+// Read EVERY staged row for a batch, paged past PostgREST's 1000-row response
+// cap — a 1000+ leg import would otherwise reload truncated, stranding rows out
+// of the review list AND the apply write (only the first 1000 legs would land).
+// Ordered by row_index so the paging is deterministic. Returns { data, error }
+// like a query so callers can decide whether to surface the error.
+const READ_PAGE = 1000
+async function fetchAllBatchRows(batchId) {
+  const all = []
+  for (let from = 0; ; from += READ_PAGE) {
+    const { data, error } = await supabase.from('load_import_rows')
+      .select('*').eq('batch_id', batchId)
+      .order('row_index', { ascending: true })
+      .range(from, from + READ_PAGE - 1)
+    if (error) return { data: null, error }
+    const page = data || []
+    all.push(...page)
+    if (page.length < READ_PAGE) break
+  }
+  return { data: all, error: null }
+}
+
 // ── load the open (pending_review) batch + its plan, if any ──────────────
 export async function loadPendingBatch() {
   const { data: batch } = await supabase.from('load_import_batches')
     .select('*').eq('status', 'pending_review').order('uploaded_at', { ascending: false }).limit(1).maybeSingle()
   if (!batch) return { batch: null, plan: [] }
-  const { data: rows } = await supabase.from('load_import_rows').select('*').eq('batch_id', batch.id)
+  const { data: rows } = await fetchAllBatchRows(batch.id)
   return { batch, plan: planFromRows(rows || []), counts: batch.counts || {} }
 }
 
@@ -143,7 +164,7 @@ export async function applyBatch({ batchId, decisions, linkOverrides, onProgress
   // completion (no migration), so history can show applied totals + failed.
   const { data: batchRow } = await supabase.from('load_import_batches').select('counts').eq('id', batchId).maybeSingle()
   const baseCounts = batchRow?.counts || {}
-  const { data: rows, error: rowsErr } = await supabase.from('load_import_rows').select('*').eq('batch_id', batchId)
+  const { data: rows, error: rowsErr } = await fetchAllBatchRows(batchId)
   if (rowsErr) return { error: rowsErr }
   const plan = planFromRows(rows || [])
 
