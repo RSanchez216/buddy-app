@@ -79,14 +79,16 @@ export default function Users() {
       return { ...u, invited_by_name: inv?.full_name || inv?.email || null }
     })
 
-    // Effective page count per user + the individually-granted extras (source
-    // 'individual' or 'both') for the +badge and its tooltip.
+    // Effective page count per user + the genuine exceptions for the +badge.
+    // Only source='individual' counts: the role does NOT grant that page.
+    // source='both' means the role already covers it (the individual grant is
+    // redundant) and 'role' is normal — neither is an exception.
     const eff = new Map()
     for (const r of effData || []) {
       let e = eff.get(r.user_id)
       if (!e) { e = { count: 0, extras: [] }; eff.set(r.user_id, e) }
       e.count++
-      if (r.source === 'individual' || r.source === 'both') e.extras.push(r.page_key)
+      if (r.source === 'individual') e.extras.push(r.page_key)
     }
 
     setUsers(flat)
@@ -272,7 +274,7 @@ export default function Users() {
                             {e.extras.length > 0 && (
                               <span
                                 className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${WARN_CHIP}`}
-                                title={`Individual grant${e.extras.length === 1 ? '' : 's'}: ${e.extras.map(k => pageLabels.get(k) || k).join(', ')}`}
+                                title={`Pages this person has that their role doesn't grant: ${e.extras.map(k => pageLabels.get(k) || k).join(', ')}`}
                               >
                                 +{e.extras.length}
                               </span>
