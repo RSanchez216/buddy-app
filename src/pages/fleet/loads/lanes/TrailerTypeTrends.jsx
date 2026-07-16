@@ -4,6 +4,7 @@ import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { supabase } from '../../../../lib/supabase'
 import { S } from '../../../../lib/styles'
+import { useTheme } from '../../../../contexts/ThemeContext'
 import { fmtMoney, fmtRpm, fmtNum, trailerTypeColor } from '../spotlight/spotlightShared'
 
 // Trailer Type Trends — period-over-period metrics by equipment type for recruiting
@@ -51,6 +52,10 @@ const formatPeriodLabel = (dateStr, granularity) => {
 
 export default function TrailerTypeTrends() {
   const panelRef = useRef(null)
+  // Subscribe to the theme so a light↔dark toggle re-renders the chart — the
+  // SVG tick/grid/chip fills are resolved from isDark in JS, not CSS, so they
+  // only adapt when this component actually re-renders.
+  const { theme } = useTheme()
   const [granularity, setGranularity] = useState('month')
   const [metric, setMetric] = useState('rpm')
   const [mode, setMode] = useState('trend')
@@ -372,8 +377,9 @@ export default function TrailerTypeTrends() {
     )
   }
 
-  // Get theme for dark mode support
-  const isDark = typeof window !== 'undefined' && document.documentElement.classList.contains('dark')
+  // Get theme for dark mode support — reactive via useTheme() so it recomputes
+  // (and repaints the SVG chart) whenever the theme toggles.
+  const isDark = theme === 'dark'
   const gridColor = isDark ? '#334155' : '#e5e7eb'
   const tickColor = isDark ? '#94a3b8' : '#6b7280'
   const tooltipBgColor = isDark ? '#1e293b' : '#ffffff'
@@ -446,16 +452,20 @@ export default function TrailerTypeTrends() {
           <text x={0} y={0} dy={14} textAnchor="middle" fill={tickColor} fontSize={12}>{label}</text>
           {isAmber && (
             <g>
-              <title>{UNASSIGNED_TOOLTIP}</title>
-              <rect x={-chipW / 2} y={20} width={chipW} height={17} rx={8.5} fill={amberBg} stroke={amberBorder} strokeWidth={1} />
-              <text x={0} y={20} dy={12} textAnchor="middle" fill={amberText} fontSize={11} fontWeight={600}>{chipText}</text>
+              <rect x={-chipW / 2} y={20} width={chipW} height={17} rx={8.5} fill={amberBg} stroke={amberBorder} strokeWidth={1}>
+                <title>{UNASSIGNED_TOOLTIP}</title>
+              </rect>
+              <text x={0} y={20} dy={12} textAnchor="middle" fill={amberText} fontSize={11} fontWeight={600}>
+                {chipText}
+                <title>{UNASSIGNED_TOOLTIP}</title>
+              </text>
             </g>
           )}
           {isMuted && (
-            <g>
+            <text x={0} y={20} dy={12} textAnchor="middle" fill={mutedChipText} fontSize={11}>
+              {chipText}
               <title>{UNASSIGNED_TOOLTIP}</title>
-              <text x={0} y={20} dy={12} textAnchor="middle" fill={mutedChipText} fontSize={11}>{chipText}</text>
-            </g>
+            </text>
           )}
         </g>
       )
