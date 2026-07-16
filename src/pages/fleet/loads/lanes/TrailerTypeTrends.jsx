@@ -13,6 +13,17 @@ import { fmtMoney, fmtRpm, fmtNum, trailerTypeColor } from '../spotlight/spotlig
 // distinct from the gray Unassigned).
 const getTrailerColor = trailerTypeColor
 
+// Callout eligibility: Unassigned is never crowned (it's power-only or an
+// un-linked trailer, not a real type), and a bucket needs at least this many
+// legs so a 1-load outlier can't headline. Amazon is a real freight category
+// and competes normally. Tunable in one place.
+const CALLOUT_MIN_LEGS = 5
+// Unassigned coverage chip under each x-axis period: at/above this % → amber
+// chip; >0 and below → muted text; exactly 0 → nothing.
+const UNASSIGNED_CHIP_AMBER_PCT = 10
+const UNASSIGNED_TOOLTIP = "Share of this period's loads with no trailer linked. Unassigned can mean power-only (no trailer needed) or a trailer we haven't linked yet — the equipment bars exclude these loads."
+const UNASSIGNED_ROW_NOTE = "Unassigned can mean power-only (no trailer needed) or a trailer we haven't linked yet. Check here for missing trailer assignments."
+
 // Format period label from period_start date (no UTC conversion)
 const formatPeriodLabel = (dateStr, granularity) => {
   if (!dateStr) return '—'
@@ -196,6 +207,9 @@ export default function TrailerTypeTrends() {
                   <td className={`${S.td} text-left flex items-center gap-2`}>
                     <span className="w-2.5 h-2.5 rounded" style={{ background: getTrailerColor(type) }} />
                     <span className="font-medium text-gray-900 dark:text-slate-200">{type}</span>
+                    {type === 'Unassigned' && (
+                      <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border border-gray-300 dark:border-slate-600 text-[9px] font-normal text-gray-500 dark:text-slate-400 cursor-help" title={UNASSIGNED_ROW_NOTE}>i</span>
+                    )}
                   </td>
                   {vals.map((row, i) => (
                     <td key={i} className={S.td}>
@@ -269,6 +283,9 @@ export default function TrailerTypeTrends() {
                   <td className={`${S.td} text-left flex items-center gap-2`}>
                     <span className="w-2.5 h-2.5 rounded" style={{ background: getTrailerColor(type) }} />
                     <span className="font-medium text-gray-900 dark:text-slate-200">{type}</span>
+                    {type === 'Unassigned' && (
+                      <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border border-gray-300 dark:border-slate-600 text-[9px] font-normal text-gray-500 dark:text-slate-400 cursor-help" title={UNASSIGNED_ROW_NOTE}>i</span>
+                    )}
                   </td>
                   <td className={S.td}>
                     <span className="font-mono text-gray-900 dark:text-slate-200">
@@ -313,13 +330,16 @@ export default function TrailerTypeTrends() {
       const lastPeriod = periods[periods.length - 1]
       const rows = trilerTypes.map(type => {
         const row = dataMap.get(`${lastPeriod}|${type}`)
-        return { type, val: row ? row[metricKey] : null }
+        return { type, val: row ? row[metricKey] : null, legs: row ? row.legs : 0 }
       })
-      const valid = rows.filter(r => r.val != null)
-      if (valid.length === 0) return null
+      // Callout eligibility: never crown Unassigned, and require CALLOUT_MIN_LEGS
+      // so a 1-load outlier can't headline (Amazon competes normally). The chart
+      // and table still show every bucket — this guards only the two chips.
+      const eligible = rows.filter(r => r.val != null && r.type !== 'Unassigned' && r.legs >= CALLOUT_MIN_LEGS)
+      if (eligible.length === 0) return null
 
-      const highest = valid.reduce((a, b) => (b.val ?? 0) > (a.val ?? 0) ? b : a)
-      const lowest = valid.reduce((a, b) => (b.val ?? 0) < (a.val ?? 0) ? b : a)
+      const highest = eligible.reduce((a, b) => (b.val ?? 0) > (a.val ?? 0) ? b : a)
+      const lowest = eligible.reduce((a, b) => (b.val ?? 0) < (a.val ?? 0) ? b : a)
 
       return (
         <div className="flex flex-wrap gap-3 mb-4">
@@ -391,13 +411,65 @@ export default function TrailerTypeTrends() {
       return row
     })
 
+    // Unassigned coverage per period (label → %), from the already-loaded RPC
+    // rows: Unassigned legs ÷ all legs in that period. No new query.
+    const pctByLabel = new Map()
+    showPeriods.forEach(period => {
+      let total = 0, unassigned = 0
+      trilerTypes.forEach(type => {
+        const r = dataMap.get(`${period}|${type}`)
+        if (!r) return
+        total += r.legs || 0
+        if (type === 'Unassigned') unassigned += r.legs || 0
+      })
+      pctByLabel.set(formatPeriodLabel(period, granularity), total > 0 ? (100 * unassigned / total) : 0)
+    })
+
+    // Chip colors (dark-aware) — the panel's existing amber token for ≥ amber
+    // threshold, the same muted grey as the "low sample" chip below it.
+    const amberBg = isDark ? 'rgba(245,158,11,0.12)' : '#fffbeb'
+    const amberBorder = isDark ? 'rgba(245,158,11,0.30)' : '#fde68a'
+    const amberText = isDark ? '#fbbf24' : '#b45309'
+    const mutedChipText = isDark ? '#94a3b8' : '#6b7280'
+
+    // Custom x-axis tick: the period label with the unassigned-coverage chip
+    // directly beneath it, centered.
+    const periodTick = ({ x, y, payload }) => {
+      const label = payload.value
+      const pct = Math.round(pctByLabel.get(label) ?? 0)
+      const isAmber = pct >= UNASSIGNED_CHIP_AMBER_PCT
+      const isMuted = pct > 0 && pct < UNASSIGNED_CHIP_AMBER_PCT
+      const chipText = `${pct}% unassigned`
+      const chipW = chipText.length * 6 + 14
+      return (
+        <g transform={`translate(${x},${y})`}>
+          <text x={0} y={0} dy={14} textAnchor="middle" fill={tickColor} fontSize={12}>{label}</text>
+          {isAmber && (
+            <g>
+              <title>{UNASSIGNED_TOOLTIP}</title>
+              <rect x={-chipW / 2} y={20} width={chipW} height={17} rx={8.5} fill={amberBg} stroke={amberBorder} strokeWidth={1} />
+              <text x={0} y={20} dy={12} textAnchor="middle" fill={amberText} fontSize={11} fontWeight={600}>{chipText}</text>
+            </g>
+          )}
+          {isMuted && (
+            <g>
+              <title>{UNASSIGNED_TOOLTIP}</title>
+              <text x={0} y={20} dy={12} textAnchor="middle" fill={mutedChipText} fontSize={11}>{chipText}</text>
+            </g>
+          )}
+        </g>
+      )
+    }
+
     return (
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={chartData}>
           <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
           <XAxis
             dataKey="period"
-            tick={{ fill: tickColor, fontSize: 12 }}
+            tick={periodTick}
+            interval={0}
+            height={48}
             stroke={tickColor}
             axisLine={{ stroke: gridColor }}
           />
