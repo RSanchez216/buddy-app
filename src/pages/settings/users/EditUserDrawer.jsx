@@ -149,12 +149,12 @@ export default function EditUserDrawer({ open, user, onClose, onChange, onSucces
             <input className={S.input} value={fullName} onChange={e => setFullName(e.target.value)} />
           </div>
           <div>
-            <label className={S.label}>Role</label>
+            <label className={S.label}>Permission</label>
             <Select value={role} onChange={e => setRole(e.target.value)}>
               {ROLES.map(r => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
             </Select>
             {isSelf && (
-              <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1">Changing your own role takes effect after the next page load.</p>
+              <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1">Changing your own permission takes effect after the next page load.</p>
             )}
           </div>
 

@@ -25,6 +25,25 @@ export function rolePill(role) {
   }
 }
 
+// Chip for an assigned role_id role (Dispatch/Accounting/…). Distinct from the
+// admin/manager Permission pills — neutral indigo so the two concepts read
+// differently in the table.
+export const ROLE_CHIP = 'bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/20'
+// "No role" / individual-grant badge — warning colour (amber).
+export const WARN_CHIP = 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/20'
+
+// Derive a UNIQUE role key from a name: lowercase, spaces → hyphens, strip
+// anything not [a-z0-9-], collapse/trim hyphens. "Dispatch Ops!" → "dispatch-ops".
+export function slugifyRoleKey(name) {
+  return String(name || '')
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+}
+
 export function statusPill(status) {
   switch (status) {
     case 'active':      return 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20'
