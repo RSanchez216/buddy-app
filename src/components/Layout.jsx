@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { countOpenTasks, TASKS_CHANGED_EVENT } from '../pages/command-center/commandCenterData'
@@ -6,6 +6,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { BuddyLogoSmall } from '../components/BuddyLogo'
 import NotificationBell from './NotificationBell'
 import UserMenu from './UserMenu'
+import ManageSimpleViewModal from './ManageSimpleViewModal'
 
 // ── Icons ──────────────────────────────────────────────────────────────────
 const Icons = {
@@ -41,6 +42,24 @@ const Icons = {
   command:   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 3v2m0 14v2m9-9h-2M5 12H3m13.95 4.95l-1.414-1.414M8.464 8.464L7.05 7.05m9.9 0l-1.414 1.414M8.464 15.536L7.05 16.95M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>,
   warehouse: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 21V9.5L12 4l9 5.5V21M3 21h18M7 21v-8h10v8M7 17h10" /></svg>,
 }
+
+// page_key → sidebar icon. Preserves the hand-tuned icon per page so the sidebar
+// (now rendered from my_pages() rather than hardcoded) looks identical to before.
+const PAGE_ICON = {
+  command_center: Icons.command, the_rig: Icons.truck, boardroom: Icons.boardroom,
+  lane_map: Icons.map, lifeline: Icons.lifeline,
+  payment_calendar: Icons.calendar, debt_schedule: Icons.debt, driver_purchases: Icons.driverSale,
+  profitability: Icons.cost, driver_spotlight: Icons.driver, contribution: Icons.report,
+  'dedicated-lanes': Icons.warehouse, idle_review: Icons.cost, miles_performance: Icons.map,
+  trucks: Icons.truck, trailers: Icons.trailer, drivers: Icons.driver, teams: Icons.users,
+  equipment_cost: Icons.cost, loads_import: Icons.truck, settlement_import: Icons.payment,
+  combined_loads: Icons.merge,
+  dashboard: Icons.dashboard, vendor_master: Icons.vendors, invoice_inbox: Icons.invoices,
+  transaction_feed: Icons.txns, monthly_report: Icons.report,
+}
+// nav_group render order (matches the previous hardcoded sidebar). Groups not
+// listed here fall to the end, alphabetically.
+const SECTION_ORDER = ['Today', 'Money', 'Profitability', 'Fleet', 'Payables']
 
 // ── Nav item ───────────────────────────────────────────────────────────────
 // Always reserves a 2px left border so the active orange marker doesn't
@@ -125,9 +144,12 @@ function NavSection({ id, label, badge, children, defaultOpen = true, withDivide
 // pinned to the bottom of the sidebar — they now live in the global header
 // (right side: bell + UserMenu). Sidebar is purely navigation.
 export default function Layout() {
-  const { isAdmin } = useAuth()
+  const { isAdmin, user, profile, refreshProfile } = useAuth()
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [accessibleRoutes, setAccessibleRoutes] = useState(new Set()) // routes user can see
+  const [pages, setPages] = useState([])          // full my_pages() rows (single source of truth)
+  const [pagesLoaded, setPagesLoaded] = useState(false)
+  const [navMode, setNavMode] = useState('simple') // 'simple' | 'advanced' — mirrors users.nav_mode
+  const [showManage, setShowManage] = useState(false)
   const [openTaskCount, setOpenTaskCount] = useState(0) // non-closed tasks → nav bubble
 
   const close = () => setSidebarOpen(false)
@@ -143,31 +165,68 @@ export default function Layout() {
     return () => { stale = true; window.removeEventListener(TASKS_CHANGED_EVENT, refresh); clearInterval(id) }
   }, [])
 
-  useEffect(() => {
-    const loadAccessiblePages = async () => {
-      try {
-        const { data, error } = await supabase.rpc('my_pages')
-        if (error) {
-          console.error('Failed to load accessible pages:', error)
-          return
-        }
-        const routes = new Set((data || []).map(p => p.route))
-        setAccessibleRoutes(routes)
-      } catch (e) {
-        console.error('Error loading accessible pages:', e)
-      }
-    }
-    loadAccessiblePages()
-  }, [])
-
-  // Count visible items per section for hiding empty groups
-  const visibleCounts = {
-    today: ['/command-center', '/rig', '/fleet/profitability/boardroom', '/fleet/profitability/lanes', '/cash-flow/lifeline'].filter(r => accessibleRoutes.has(r)).length,
-    money: ['/cash-flow/payment-calendar', '/financial-controls/debt-schedule', '/financial-controls/driver-purchases'].filter(r => accessibleRoutes.has(r)).length,
-    profitability: ['/fleet/profitability', '/fleet/profitability/spotlight', '/fleet/profitability/contribution', '/fleet/profitability/idle', '/fleet/profitability/dedicated-lanes', '/fleet/profitability/miles-performance'].filter(r => accessibleRoutes.has(r)).length,
-    fleet: ['/fleet/trucks', '/fleet/trailers', '/fleet/drivers', '/fleet/teams', '/fleet/cost', '/fleet/loads/import', '/fleet/settlements/import', '/fleet/combined-loads'].filter(r => accessibleRoutes.has(r)).length,
-    payables: ['/dashboard', '/vendors', '/invoices', '/transactions', '/reports'].filter(r => accessibleRoutes.has(r)).length,
+  // my_pages() drives BOTH modes (Simple = is_bookmarked rows, Advanced = all).
+  // Re-render off this alone so losing access to a page removes it automatically.
+  const loadPages = async () => {
+    const { data, error } = await supabase.rpc('my_pages')
+    if (error) console.error('Failed to load pages:', error)
+    else setPages(data || [])
+    setPagesLoaded(true)
   }
+  useEffect(() => { loadPages() }, [])
+
+  // Mode is persisted in users.nav_mode (follows the user across devices).
+  useEffect(() => { if (profile?.nav_mode) setNavMode(profile.nav_mode) }, [profile?.nav_mode])
+
+  async function changeMode(next) {
+    if (next === navMode) return
+    const prev = navMode
+    setNavMode(next)                                       // optimistic
+    const { error } = await supabase.rpc('set_nav_mode', { p_mode: next })
+    if (error) { setNavMode(prev); console.error('set_nav_mode failed:', error); return }
+    refreshProfile?.()                                     // keep profile.nav_mode in sync
+  }
+
+  // Bookmark writes go straight to user_page_bookmarks (RLS scopes to the caller).
+  async function toggleBookmark(pageKey, sortOrder, isBookmarked) {
+    setPages(prev => prev.map(p => p.page_key === pageKey ? { ...p, is_bookmarked: !isBookmarked } : p)) // optimistic
+    const { error } = isBookmarked
+      ? await supabase.from('user_page_bookmarks').delete().eq('user_id', user.id).eq('page_key', pageKey)
+      : await supabase.from('user_page_bookmarks').insert({ user_id: user.id, page_key: pageKey, sort_order: sortOrder })
+    if (error) {
+      setPages(prev => prev.map(p => p.page_key === pageKey ? { ...p, is_bookmarked: isBookmarked } : p)) // revert
+      console.error('Bookmark toggle failed:', error)
+    }
+  }
+
+  async function resetBookmarks() {
+    if (!confirm('Reset your simple view to every page you can access?')) return
+    const rows = pages.map(p => ({ user_id: user.id, page_key: p.page_key, sort_order: p.sort_order }))
+    const { error } = await supabase.from('user_page_bookmarks').upsert(rows, { onConflict: 'user_id,page_key' })
+    if (error) { console.error('Reset bookmarks failed:', error); return }
+    setPages(prev => prev.map(p => ({ ...p, is_bookmarked: true })))
+  }
+
+  // Group the pages to show (Simple filters to bookmarks), sorted within group.
+  const grouped = useMemo(() => {
+    const g = {}
+    for (const p of pages) {
+      if (navMode === 'simple' && !p.is_bookmarked) continue
+      ;(g[p.nav_group] ||= []).push(p)
+    }
+    Object.values(g).forEach(arr => arr.sort((a, b) => a.sort_order - b.sort_order))
+    return g
+  }, [pages, navMode])
+
+  const orderedGroups = useMemo(() => {
+    const groups = Object.keys(grouped)
+    return groups.sort((a, b) => {
+      const ia = SECTION_ORDER.indexOf(a), ib = SECTION_ORDER.indexOf(b)
+      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || a.localeCompare(b)
+    })
+  }, [grouped])
+
+  const simpleEmpty = navMode === 'simple' && pagesLoaded && !pages.some(p => p.is_bookmarked)
 
   return (
     <div className="min-h-screen flex bg-gray-50 dark:bg-[#09091a]">
@@ -191,63 +250,65 @@ export default function Layout() {
           </div>
         </div>
 
-        {/* Navigation — scrollable middle section */}
+        {/* Navigation — scrollable middle section, rendered from my_pages() */}
         <nav className="flex-1 p-2.5 space-y-3 overflow-y-auto min-h-0">
-
-          {/* TODAY — pinned at top */}
-          <NavSection id="today" label="Today" visibleCount={visibleCounts.today}>
-            <NavItem to="/command-center" label="Command Center" icon={Icons.command} onClick={close} visible={accessibleRoutes.has('/command-center')} count={openTaskCount} />
-            <NavItem to="/rig" label="The Rig" icon={Icons.truck} onClick={close} visible={accessibleRoutes.has('/rig')} />
-            <NavItem to="/fleet/profitability/boardroom" label="Boardroom" icon={Icons.boardroom} onClick={close} visible={accessibleRoutes.has('/fleet/profitability/boardroom')} />
-            <NavItem to="/fleet/profitability/lanes" label="Lane Map" icon={Icons.map} onClick={close} visible={accessibleRoutes.has('/fleet/profitability/lanes')} />
-            <NavItem to="/cash-flow/lifeline" label="Lifeline" icon={Icons.lifeline} onClick={close} visible={accessibleRoutes.has('/cash-flow/lifeline')} />
-          </NavSection>
-
-          {/* MONEY */}
-          <NavSection id="money" label="Money" withDivider visibleCount={visibleCounts.money}>
-            <NavItem to="/cash-flow/payment-calendar" label="Payment Calendar" icon={Icons.calendar} onClick={close} visible={accessibleRoutes.has('/cash-flow/payment-calendar')} />
-            <NavItem to="/financial-controls/debt-schedule" label="Debt Schedule" icon={Icons.debt} onClick={close} visible={accessibleRoutes.has('/financial-controls/debt-schedule')} />
-            <NavItem to="/financial-controls/driver-purchases" label="Driver Purchases" icon={Icons.driverSale} onClick={close} visible={accessibleRoutes.has('/financial-controls/driver-purchases')} />
-          </NavSection>
-
-          {/* PROFITABILITY */}
-          <NavSection id="profitability" label="Profitability" withDivider visibleCount={visibleCounts.profitability}>
-            <NavItem to="/fleet/profitability" label="Profitability" icon={Icons.cost} end onClick={close} visible={accessibleRoutes.has('/fleet/profitability')} />
-            <NavItem to="/fleet/profitability/spotlight" label="Driver Spotlight" icon={Icons.driver} onClick={close} visible={accessibleRoutes.has('/fleet/profitability/spotlight')} />
-            <NavItem to="/fleet/profitability/contribution" label="Contribution" icon={Icons.report} onClick={close} visible={accessibleRoutes.has('/fleet/profitability/contribution')} />
-            <NavItem to="/fleet/profitability/dedicated-lanes" label="Dedicated Lanes" icon={Icons.warehouse} onClick={close} visible={accessibleRoutes.has('/fleet/profitability/dedicated-lanes')} />
-            <NavItem to="/fleet/profitability/idle" label="Idle review" icon={Icons.cost} onClick={close} visible={accessibleRoutes.has('/fleet/profitability/idle')} />
-            <NavItem to="/fleet/profitability/miles-performance" label="Miles & Performance" icon={Icons.map} onClick={close} visible={accessibleRoutes.has('/fleet/profitability/miles-performance')} />
-          </NavSection>
-
-          {/* FLEET */}
-          <NavSection id="fleet" label="Fleet" withDivider visibleCount={visibleCounts.fleet}>
-            <NavItem to="/fleet/trucks" label="Trucks" icon={Icons.truck} onClick={close} visible={accessibleRoutes.has('/fleet/trucks')} />
-            <NavItem to="/fleet/trailers" label="Trailers" icon={Icons.trailer} onClick={close} visible={accessibleRoutes.has('/fleet/trailers')} />
-            <NavItem to="/fleet/drivers" label="Drivers" icon={Icons.driver} onClick={close} visible={accessibleRoutes.has('/fleet/drivers')} />
-            <NavItem to="/fleet/teams" label="Teams" icon={Icons.users} onClick={close} visible={accessibleRoutes.has('/fleet/teams')} />
-            <NavItem to="/fleet/cost" label="Equipment Cost" icon={Icons.cost} onClick={close} visible={accessibleRoutes.has('/fleet/cost')} />
-            <NavItem to="/fleet/loads/import" label="Loads Import" icon={Icons.truck} onClick={close} visible={accessibleRoutes.has('/fleet/loads/import')} />
-            <NavItem to="/fleet/settlements/import" label="Settlement Import" icon={Icons.payment} onClick={close} visible={accessibleRoutes.has('/fleet/settlements/import')} />
-            <NavItem to="/fleet/combined-loads" label="Combined Loads" icon={Icons.merge} onClick={close} visible={accessibleRoutes.has('/fleet/combined-loads')} />
-          </NavSection>
-
-          {/* PAYABLES */}
-          <NavSection id="payables" label="Payables" withDivider visibleCount={visibleCounts.payables}>
-            <NavItem to="/dashboard" label="Dashboard" icon={Icons.dashboard} onClick={close} visible={accessibleRoutes.has('/dashboard')} />
-            <NavItem to="/vendors" label="Vendor Master" icon={Icons.vendors} onClick={close} visible={accessibleRoutes.has('/vendors')} />
-            <NavItem to="/invoices" label="Invoice Inbox" icon={Icons.invoices} onClick={close} visible={accessibleRoutes.has('/invoices')} />
-            <NavItem to="/transactions" label="Transaction Feed" icon={Icons.txns} onClick={close} visible={accessibleRoutes.has('/transactions')} />
-            <NavItem to="/reports" label="Monthly Report" icon={Icons.report} onClick={close} visible={accessibleRoutes.has('/reports')} />
-          </NavSection>
+          {simpleEmpty ? (
+            <div className="px-3 py-4 text-xs text-gray-500 dark:text-slate-400 leading-relaxed">
+              No pages in your simple view yet.{' '}
+              <button
+                onClick={() => setShowManage(true)}
+                className="font-medium text-cyan-600 dark:text-cyan-400 hover:underline"
+              >
+                Manage simple view ›
+              </button>
+            </div>
+          ) : (
+            orderedGroups.map((group, i) => {
+              const items = grouped[group] || []
+              return (
+                <NavSection key={group} id={group.toLowerCase()} label={group} withDivider={i > 0} visibleCount={items.length}>
+                  {items.map(p => (
+                    <NavItem
+                      key={p.page_key}
+                      to={p.route}
+                      label={p.label}
+                      icon={PAGE_ICON[p.page_key]}
+                      end={p.page_key === 'profitability'}
+                      onClick={close}
+                      count={p.page_key === 'command_center' ? openTaskCount : 0}
+                    />
+                  ))}
+                </NavSection>
+              )
+            })
+          )}
         </nav>
 
-        {/* SETTINGS — pinned footer at bottom, admin-only */}
-        {isAdmin && (
-          <div className="shrink-0 p-2.5 border-t border-gray-200 dark:border-white/5">
-            <NavItem to="/settings" label="Settings" icon={Icons.gear} onClick={close} />
+        {/* Footer — Simple/Advanced toggle + manage link, then admin Settings */}
+        <div className="shrink-0 p-2.5 border-t border-gray-200 dark:border-white/5 space-y-2">
+          <div className="flex gap-1 p-0.5 rounded-xl bg-gray-100 dark:bg-white/5">
+            {[['simple', '⚡', 'Simple'], ['advanced', '☰', 'Advanced']].map(([m, ic, lbl]) => (
+              <button
+                key={m}
+                onClick={() => changeMode(m)}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                  navMode === m
+                    ? 'bg-white dark:bg-white/10 text-cyan-600 dark:text-cyan-400 shadow-sm'
+                    : 'text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200'
+                }`}
+              >
+                <span aria-hidden>{ic}</span>{lbl}
+              </button>
+            ))}
           </div>
-        )}
+          <button
+            onClick={() => setShowManage(true)}
+            className="w-full text-left px-2 text-[11px] text-gray-500 dark:text-slate-400 hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors"
+          >
+            Manage simple view ›
+          </button>
+          {isAdmin && <NavItem to="/settings" label="Settings" icon={Icons.gear} onClick={close} />}
+        </div>
 
       </aside>
 
@@ -282,6 +343,14 @@ export default function Layout() {
           <Outlet />
         </main>
       </div>
+
+      <ManageSimpleViewModal
+        open={showManage}
+        onClose={() => setShowManage(false)}
+        pages={pages}
+        onToggle={toggleBookmark}
+        onReset={resetBookmarks}
+      />
     </div>
   )
 }
