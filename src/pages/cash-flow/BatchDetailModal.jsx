@@ -107,7 +107,7 @@ export default function BatchDetailModal({
   // via the shared hook (active rows for the dropdown; archived shown
   // only when the row already references one). The "+ Add new category"
   // path INSERTs into expense_categories then triggers a refetch.
-  const { active: activeCategories, archived: archivedCategories, labelByName: categoryLabelByName, refetch: refetchCategories } = useExpenseCategories()
+  const { activeFleet: activeCategories, archived: archivedCategories, labelByName: categoryLabelByName, refetch: refetchCategories } = useExpenseCategories()
   const { active: activeFactors, byId: factorsById } = useFactors()
   // Per-row inline "add new category" state — when set, the category cell
   // for this row renders a text input with Save / Cancel inline instead

@@ -15,7 +15,7 @@ async function fetchExpenseCategories() {
   if (inflight) return inflight
   inflight = supabase
     .from('expense_categories')
-    .select('id, name, display_label, sort_order, is_active')
+    .select('id, name, display_label, sort_order, is_active, scope')
     .order('sort_order', { ascending: true })
     .order('display_label', { ascending: true })
     .then(({ data, error }) => {
@@ -77,6 +77,15 @@ export function useExpenseCategories() {
   const active   = useMemo(() => categories.filter(c => c.is_active),  [categories])
   const archived = useMemo(() => categories.filter(c => !c.is_active), [categories])
 
+  // Scope-filtered active options. A category's scope is one of
+  // 'fleet' | 'office' | 'both'; rows without a scope are treated as
+  // 'fleet' so existing cash-flow categories keep showing everywhere they
+  // did before. Fleet surfaces (Payment Calendar, recurring templates) want
+  // fleet+both; the Office Expenses page wants office+both.
+  const scopeOf = (c) => c.scope || 'fleet'
+  const activeFleet  = useMemo(() => active.filter(c => scopeOf(c) === 'fleet'  || scopeOf(c) === 'both'), [active])
+  const activeOffice = useMemo(() => active.filter(c => scopeOf(c) === 'office' || scopeOf(c) === 'both'), [active])
+
   async function refetch() {
     invalidateExpenseCategories()
     const next = await fetchExpenseCategories()
@@ -84,5 +93,5 @@ export function useExpenseCategories() {
     return next
   }
 
-  return { categories, active, archived, labelByName, formatLabel, loading, refetch }
+  return { categories, active, activeFleet, activeOffice, archived, labelByName, formatLabel, loading, refetch }
 }

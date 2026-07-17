@@ -33,7 +33,7 @@ export default function RecurringExpensesModal({ open, onClose, onSaved }) {
   const [items, setItems] = useState([])
   const [entities, setEntities] = useState([])
   const [accounts, setAccounts] = useState([])
-  const { active: activeCategories, archived: archivedCategories, formatLabel: formatCategoryLabel } = useExpenseCategories()
+  const { activeFleet: activeCategories, archived: archivedCategories, formatLabel: formatCategoryLabel } = useExpenseCategories()
   const [loading, setLoading] = useState(false)
   const [editing, setEditing] = useState(null) // template object | 'new' | null
   const [form, setForm] = useState(empty())

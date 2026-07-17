@@ -48,7 +48,7 @@ const Icons = {
 const PAGE_ICON = {
   command_center: Icons.command, the_rig: Icons.truck, boardroom: Icons.boardroom,
   lane_map: Icons.map, lifeline: Icons.lifeline,
-  payment_calendar: Icons.calendar, debt_schedule: Icons.debt, driver_purchases: Icons.driverSale,
+  payment_calendar: Icons.calendar, office_expenses: Icons.vendors, debt_schedule: Icons.debt, driver_purchases: Icons.driverSale,
   profitability: Icons.cost, driver_spotlight: Icons.driver, contribution: Icons.report,
   'dedicated-lanes': Icons.warehouse, idle_review: Icons.cost, miles_performance: Icons.map,
   trucks: Icons.truck, trailers: Icons.trailer, drivers: Icons.driver, teams: Icons.users,

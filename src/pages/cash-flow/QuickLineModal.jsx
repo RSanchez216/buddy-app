@@ -275,7 +275,7 @@ export default function QuickLineModal({ open, kind, focusedDate, defaultSubTab,
   const toast = useToast()
   const { active: activeFactors, byId: factorsById } = useFactors()
   const {
-    active: activeCategories,
+    activeFleet: activeCategories,   // Payment Calendar shows fleet + both only
     archived: archivedCategories,
     labelByName: categoryLabelByName,
     refetch: refetchCategories,

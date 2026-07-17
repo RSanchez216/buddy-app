@@ -19,7 +19,27 @@ import {
 } from '../../hooks/useExpenseCategories'
 import { isValidCategoryName } from '../../constants/expenseCategories'
 
-const empty = { name: '', display_label: '', sort_order: 100 }
+const empty = { name: '', display_label: '', sort_order: 100, scope: 'fleet' }
+
+// Which surfaces a category shows up on. Fleet = cash-flow (Payment Calendar,
+// recurring templates); Office = the Office Expenses page; Both = everywhere.
+const SCOPES = [
+  { value: 'fleet',  label: 'Fleet' },
+  { value: 'office', label: 'Office' },
+  { value: 'both',   label: 'Both' },
+]
+const SCOPE_LABEL = { fleet: 'Fleet', office: 'Office', both: 'Both' }
+const scopeOf = (it) => it.scope || 'fleet'
+
+function ScopeChip({ scope }) {
+  const s = scope || 'fleet'
+  const tone = s === 'office'
+    ? 'bg-violet-50 dark:bg-violet-500/10 text-violet-700 dark:text-violet-300 border-violet-200 dark:border-violet-500/20'
+    : s === 'both'
+      ? 'bg-cyan-50 dark:bg-cyan-500/10 text-cyan-700 dark:text-cyan-300 border-cyan-200 dark:border-cyan-500/20'
+      : 'bg-gray-100 dark:bg-white/5 text-gray-600 dark:text-slate-300 border-gray-200 dark:border-white/10'
+  return <span className={`inline-block px-2 py-0.5 text-[11px] font-medium rounded-full border ${tone}`}>{SCOPE_LABEL[s]}</span>
+}
 
 export default function SettingsExpenseCategories() {
   const { user, profile, canEdit } = useAuth()
@@ -28,6 +48,7 @@ export default function SettingsExpenseCategories() {
   const [usageByName, setUsageByName] = useState({})
   const [loading, setLoading] = useState(true)
   const [showArchived, setShowArchived] = useState(false)
+  const [scopeFilter, setScopeFilter] = useState('all') // all | fleet | office | both
 
   const [showModal, setShowModal] = useState(false)
   const [editItem, setEditItem] = useState(null) // null = add, row = edit
@@ -52,8 +73,8 @@ export default function SettingsExpenseCategories() {
     setLoading(false)
   }
 
-  const active   = useMemo(() => items.filter(i => i.is_active),  [items])
-  const archived = useMemo(() => items.filter(i => !i.is_active), [items])
+  const active   = useMemo(() => items.filter(i => i.is_active  && (scopeFilter === 'all' || scopeOf(i) === scopeFilter)),  [items, scopeFilter])
+  const archived = useMemo(() => items.filter(i => !i.is_active && (scopeFilter === 'all' || scopeOf(i) === scopeFilter)), [items, scopeFilter])
 
   function openAdd() {
     setEditItem(null); setForm(empty); setError(''); setShowModal(true)
@@ -64,6 +85,7 @@ export default function SettingsExpenseCategories() {
       name: it.name || '',
       display_label: it.display_label || '',
       sort_order: it.sort_order ?? 100,
+      scope: it.scope || 'fleet',
     })
     setError(''); setShowModal(true)
   }
@@ -92,14 +114,15 @@ export default function SettingsExpenseCategories() {
     const name = String(form.name || '').trim().toLowerCase()
     const display_label = String(form.display_label || '').trim()
     const sort_order = Number(form.sort_order)
+    const scope = SCOPES.some(s => s.value === form.scope) ? form.scope : 'fleet'
     if (!display_label) return setError('Display label is required')
     if (Number.isNaN(sort_order)) return setError('Sort order must be a number')
 
     if (editItem) {
       // Rename of the lowercase name is not supported; the form locks it
-      // to the original value. Only display_label / sort_order can change.
-      const payload = { display_label, sort_order }
-      if (payload.display_label === editItem.display_label && payload.sort_order === editItem.sort_order) {
+      // to the original value. Only display_label / sort_order / scope change.
+      const payload = { display_label, sort_order, scope }
+      if (payload.display_label === editItem.display_label && payload.sort_order === editItem.sort_order && scope === (editItem.scope || 'fleet')) {
         setShowModal(false); return
       }
       setSaving(true); setError('')
@@ -129,7 +152,7 @@ export default function SettingsExpenseCategories() {
     setSaving(true); setError('')
     const { data, error: e } = await supabase
       .from('expense_categories')
-      .insert({ name, display_label, sort_order: Number.isFinite(sort_order) ? sort_order : 500, is_active: true })
+      .insert({ name, display_label, sort_order: Number.isFinite(sort_order) ? sort_order : 500, scope, is_active: true })
       .select('*')
       .single()
     if (e || !data) {
@@ -183,6 +206,14 @@ export default function SettingsExpenseCategories() {
             Add Category
           </button>
         )}
+      </div>
+
+      <div className="flex items-center gap-2">
+        {[{ value: 'all', label: 'All' }, ...SCOPES].map(s => (
+          <button key={s.value} onClick={() => setScopeFilter(s.value)} className={S.filterBtn(scopeFilter === s.value)}>
+            {s.label}
+          </button>
+        ))}
       </div>
 
       <CategoryTable items={active}   usageByName={usageByName} onEdit={openEdit} onArchive={(it) => setActive(it, false)} canEdit={canEdit} />
@@ -240,6 +271,19 @@ export default function SettingsExpenseCategories() {
             />
           </div>
           <div>
+            <label className={S.label}>Scope</label>
+            <select
+              className={S.input}
+              value={form.scope}
+              onChange={e => setForm(f => ({ ...f, scope: e.target.value }))}
+            >
+              {SCOPES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </select>
+            <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">
+              Fleet = cash-flow dropdowns. Office = Office Expenses page. Both = everywhere.
+            </p>
+          </div>
+          <div>
             <label className={S.label}>Sort Order</label>
             <input
               type="number"
@@ -270,6 +314,7 @@ function CategoryTable({ items, usageByName, onEdit, onArchive, onUnarchive, can
             <th className={S.th}>Sort</th>
             <th className={S.th}>Name</th>
             <th className={S.th}>Display Label</th>
+            <th className={S.th}>Scope</th>
             <th className={S.th}>Usage</th>
             <th className={S.th}></th>
           </tr>
@@ -277,7 +322,7 @@ function CategoryTable({ items, usageByName, onEdit, onArchive, onUnarchive, can
         <tbody>
           {items.length === 0 ? (
             <tr>
-              <td colSpan={5} className="px-4 py-8 text-center text-gray-400 dark:text-slate-600 text-sm">
+              <td colSpan={6} className="px-4 py-8 text-center text-gray-400 dark:text-slate-600 text-sm">
                 No categories in this section
               </td>
             </tr>
@@ -288,6 +333,7 @@ function CategoryTable({ items, usageByName, onEdit, onArchive, onUnarchive, can
                 <td className={`${S.td} text-gray-500 dark:text-slate-400`}>{it.sort_order}</td>
                 <td className={`${S.td} text-gray-500 dark:text-slate-400 font-mono text-xs`}>{it.name}</td>
                 <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>{it.display_label}</td>
+                <td className={S.td}><ScopeChip scope={it.scope} /></td>
                 <td className={`${S.td} text-gray-500 dark:text-slate-400`}>
                   {usage === 0 ? <span className="italic text-gray-400">unused</span> : `${usage} row${usage === 1 ? '' : 's'}`}
                 </td>

@@ -36,6 +36,7 @@ import DriverPurchaseDetail from './pages/driver-purchases/DriverPurchaseDetail'
 import SettingsDriverPurchaseStatuses from './pages/settings/DriverPurchaseStatusesSettings'
 import NotificationsPage from './pages/Notifications'
 import PaymentCalendar from './pages/cash-flow/PaymentCalendar'
+import OfficeExpenses from './pages/cash-flow/office/OfficeExpenses'
 import TrucksList from './pages/fleet/TrucksList'
 import TrailersList from './pages/fleet/TrailersList'
 import TruckDetail from './pages/fleet/TruckDetail'
@@ -239,6 +240,7 @@ export default function App() {
               <Route path="notifications" element={<NotificationsPage />} />
               {/* Cash Flow */}
               <Route path="cash-flow/payment-calendar" element={<RequirePageAccess pageKey="cash-flow/payment-calendar"><PaymentCalendar /></RequirePageAccess>} />
+              <Route path="cash-flow/office-expenses" element={<RequirePageAccess pageKey="office_expenses"><OfficeExpenses /></RequirePageAccess>} />
               <Route path="cash-flow/lifeline" element={
                 <RequirePageAccess pageKey="cash-flow/lifeline">
                   <Suspense fallback={<div className="p-8 text-sm text-gray-400 dark:text-slate-500">Loading Lifeline…</div>}>
