@@ -199,8 +199,8 @@ export default function SettingsExpenseCategories() {
           </p>
         </div>
         {canEdit && (
-          <button onClick={openAdd} className={S.btnPrimary}>
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <button onClick={openAdd} className={`${S.btnPrimary} shrink-0 whitespace-nowrap`}>
+            <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
             </svg>
             Add Category
