@@ -6,6 +6,7 @@ import { S } from '../../../lib/styles'
 import Select from '../../../components/Select'
 import { ROLES, ROLE_LABEL, rolePill, statusPill, fmtDateTime } from './userUtils'
 import PageAccessPanel from './PageAccessPanel'
+import EffectivePageList from './EffectivePageList'
 import { useToast } from '../../../contexts/ToastContext'
 
 const ORANGE_BTN = 'px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 disabled:bg-gray-200 dark:disabled:bg-slate-700 disabled:text-gray-400 dark:disabled:text-slate-500 text-white rounded-xl transition-all'
@@ -183,6 +184,12 @@ export default function EditUserDrawer({ open, user, onClose, onChange, onSucces
                 Reactivate
               </button>
             )}
+          </div>
+
+          {/* Read-only effective page access — scrolls with the drawer body;
+              the sticky Save/Cancel footer below stays pinned and usable. */}
+          <div className="border-t border-gray-100 dark:border-white/5 pt-4">
+            <EffectivePageList user={user} />
           </div>
         </div>
 
