@@ -191,12 +191,20 @@ export default function SettingsExpenseCategories() {
 
   return (
     <div className="space-y-5 max-w-3xl">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Expense Categories</h1>
-          <p className="text-sm text-gray-500 dark:text-slate-500 mt-0.5">
-            Used for one-off expenses and recurring templates. Categories appear in dropdowns sorted by order below.
-          </p>
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Expense Categories</h1>
+        <p className="text-sm text-gray-500 dark:text-slate-500 mt-0.5">
+          Used for one-off expenses and recurring templates. Categories appear in dropdowns sorted by order below.
+        </p>
+      </div>
+
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          {[{ value: 'all', label: 'All' }, ...SCOPES].map(s => (
+            <button key={s.value} onClick={() => setScopeFilter(s.value)} className={S.filterBtn(scopeFilter === s.value)}>
+              {s.label}
+            </button>
+          ))}
         </div>
         {canEdit && (
           <button onClick={openAdd} className={`${S.btnPrimary} shrink-0 whitespace-nowrap`}>
@@ -206,14 +214,6 @@ export default function SettingsExpenseCategories() {
             Add Category
           </button>
         )}
-      </div>
-
-      <div className="flex items-center gap-2">
-        {[{ value: 'all', label: 'All' }, ...SCOPES].map(s => (
-          <button key={s.value} onClick={() => setScopeFilter(s.value)} className={S.filterBtn(scopeFilter === s.value)}>
-            {s.label}
-          </button>
-        ))}
       </div>
 
       <CategoryTable items={active}   usageByName={usageByName} onEdit={openEdit} onArchive={(it) => setActive(it, false)} canEdit={canEdit} />
