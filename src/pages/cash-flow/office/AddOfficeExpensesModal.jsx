@@ -123,7 +123,7 @@ export default function AddOfficeExpensesModal({ open, office, defaultDate, peri
       }
     })
     const { error: e } = await supabase.from('office_expenses').insert(payload)
-    if (e) { setError(e.message || 'Save failed'); toast.error("Couldn't save expenses", e); setSaving(false); return }
+    if (e) { setError(`Couldn't save: ${e.message || 'unknown error'}`); toast.error("Couldn't save expenses", e); setSaving(false); return }
     toast.success(`${payload.length} expense${payload.length === 1 ? '' : 's'} added`)
     setSaving(false)
     onSaved?.()

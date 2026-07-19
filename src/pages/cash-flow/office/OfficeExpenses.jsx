@@ -104,6 +104,14 @@ export default function OfficeExpenses() {
   const prevSpent = sel?.prev_spent_usd ?? null
   const prevIn = sel?.prev_in_usd ?? null
 
+  // Opening (carried-in) local balance for the selected period: the closing
+  // balance minus this period's transfers-in plus this period's spend = what was
+  // already there at the start. Derived from the same office_period_stats row —
+  // no new query. Null when there's no closing balance to work from.
+  const openingLocal = balLocal != null
+    ? Number(balLocal) - Number(sel?.in_local ?? 0) + Number(sel?.spent_local ?? 0)
+    : null
+
   const isInherited = useCallback((e) => {
     const t = e.rate_transfer_id && transfersById[e.rate_transfer_id]
     if (!t) return false
@@ -260,7 +268,12 @@ export default function OfficeExpenses() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <StatCard label={`Spent (${period.label})`} value={usd2(spentUsd)} sub={local0(sel?.spent_local, ccy)} delta={spentDelta} deltaLabel={`vs ${prevPeriodLabel(grain, anchor)}`} invertDelta />
             <StatCard label="Transferred in" value={usd2(inUsd)} sub={local0(sel?.in_local, ccy)} delta={inDelta} deltaLabel={`vs ${prevPeriodLabel(grain, anchor)}`} />
-            <StatCard label="Balance (period end)" value={balUsd != null ? usd2(balUsd) : '—'} sub={local0(balLocal, ccy)} />
+            <StatCard
+              label={`Balance (end of ${period.label})`}
+              value={balUsd != null ? usd2(balUsd) : '—'}
+              sub={local0(balLocal, ccy)}
+              foot={openingLocal != null ? `Opened at ${local0(openingLocal, ccy)} · carried from prior months` : null}
+            />
             <StatCard label="Rate" value={periodRate ? `${rate2(periodRate)} ${ccy}` : '—'} sub={periodRate ? 'per 1 USD' : 'no transfer yet'} />
           </div>
 
@@ -428,7 +441,7 @@ export default function OfficeExpenses() {
   )
 }
 
-function StatCard({ label, value, sub, delta, deltaLabel, invertDelta }) {
+function StatCard({ label, value, sub, delta, deltaLabel, invertDelta, foot }) {
   const hasDelta = delta != null && Number.isFinite(delta) && Math.round(delta) !== 0
   // invertDelta: for spend, an increase is "bad" (red).
   const up = delta > 0
@@ -445,6 +458,11 @@ function StatCard({ label, value, sub, delta, deltaLabel, invertDelta }) {
           </span>
         )}
       </div>
+      {foot && (
+        <div className="mt-2 pt-2 border-t border-gray-100 dark:border-white/5 text-[11px] text-gray-500 dark:text-slate-400 tabular-nums">
+          {foot}
+        </div>
+      )}
     </div>
   )
 }

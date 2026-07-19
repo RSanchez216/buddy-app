@@ -20,7 +20,7 @@ export default function OfficeTransferModal({ open, office, onClose, onSaved }) 
   const [amountLocal, setAmountLocal] = useState('')
   const [sentDate, setSentDate] = useState('')
   const [receivedDate, setReceivedDate] = useState('')
-  const [method, setMethod] = useState('')
+  const [method, setMethod] = useState('bank') // office_transfers.method CHECK: 'bank' | 'cash'
   const [notes, setNotes] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -33,7 +33,7 @@ export default function OfficeTransferModal({ open, office, onClose, onSaved }) 
     ;(async () => {
       const t = todayISO()
       setError(''); setFromId(''); setAmountUsd(''); setAmountLocal('')
-      setMethod(''); setNotes(''); setSentDate(t); setReceivedDate(t)
+      setMethod('bank'); setNotes(''); setSentDate(t); setReceivedDate(t)
       const { data } = await supabase.from('funding_accounts')
         .select('id, name, bank_name, last_four, is_active').order('name')
       if (cancelled) return
@@ -68,11 +68,11 @@ export default function OfficeTransferModal({ open, office, onClose, onSaved }) 
       amount_local: l,
       sent_date: sentDate,
       received_date: receivedDate,
-      method: method.trim() || null,
+      method, // 'bank' | 'cash' — matches the DB CHECK constraint
       notes: notes.trim() || null,
       created_by: user?.id || null,
     })
-    if (e) { setError(e.message || 'Save failed'); toast.error("Couldn't record transfer", e); setSaving(false); return }
+    if (e) { setError(`Couldn't save: ${e.message || 'unknown error'}`); toast.error("Couldn't record transfer", e); setSaving(false); return }
     toast.success(`Transfer recorded — ${usd2(u)} → ${office.name}`)
     setSaving(false)
     onSaved?.()
@@ -131,7 +131,10 @@ export default function OfficeTransferModal({ open, office, onClose, onSaved }) 
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className={S.label}>Method</label>
-            <input className={S.input} value={method} onChange={e => setMethod(e.target.value)} placeholder="e.g. wire, Western Union" />
+            <select className={S.input} value={method} onChange={e => setMethod(e.target.value)}>
+              <option value="bank">Bank</option>
+              <option value="cash">Cash</option>
+            </select>
           </div>
           <div>
             <label className={S.label}>Notes</label>
