@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 
 const AuthContext = createContext({})
@@ -9,6 +9,11 @@ export function AuthProvider({ children }) {
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
   const [accessError, setAccessError] = useState('')
+  // Dedupe the profile fetch: boot fires getSession() AND onAuthStateChange
+  // (INITIAL_SESSION, then SIGNED_IN/TOKEN_REFRESHED) for the SAME user, which
+  // otherwise triggers three identical users?id=eq.<me> round trips. We reuse
+  // the first in-flight/settled fetch per user id; refreshProfile() forces one.
+  const profileFetch = useRef({ userId: null, promise: null })
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -23,6 +28,7 @@ export function AuthProvider({ children }) {
       setUser(session?.user ?? null)
       if (session?.user) loadProfile(session.user.id)
       else {
+        profileFetch.current = { userId: null, promise: null }
         setProfile(null)
         setLoading(false)
       }
@@ -31,25 +37,33 @@ export function AuthProvider({ children }) {
     return () => subscription.unsubscribe()
   }, [])
 
-  async function loadProfile(userId) {
-    const { data } = await supabase
-      .from('users')
-      .select('*, departments(name)')
-      .eq('id', userId)
-      .single()
-
-    // Block deactivated accounts: sign them out immediately so they can't
-    // see any data from this point on. The UI surfaces accessError on /login.
-    if (data && data.status === 'deactivated') {
-      setAccessError('Your account has been deactivated. Contact your admin.')
-      await supabase.auth.signOut()
-      setProfile(null); setSession(null); setUser(null)
-      setLoading(false)
-      return
+  function loadProfile(userId, { force = false } = {}) {
+    // Same user already fetched (or in flight) → reuse it, no extra round trip.
+    if (!force && profileFetch.current.userId === userId && profileFetch.current.promise) {
+      return profileFetch.current.promise
     }
+    const promise = (async () => {
+      const { data } = await supabase
+        .from('users')
+        .select('*, departments(name)')
+        .eq('id', userId)
+        .single()
 
-    setProfile(data)
-    setLoading(false)
+      // Block deactivated accounts: sign them out immediately so they can't
+      // see any data from this point on. The UI surfaces accessError on /login.
+      if (data && data.status === 'deactivated') {
+        setAccessError('Your account has been deactivated. Contact your admin.')
+        await supabase.auth.signOut()
+        setProfile(null); setSession(null); setUser(null)
+        setLoading(false)
+        return
+      }
+
+      setProfile(data)
+      setLoading(false)
+    })()
+    profileFetch.current = { userId, promise }
+    return promise
   }
 
   const signIn = async (email, password) => {
@@ -64,7 +78,7 @@ export function AuthProvider({ children }) {
   // ProtectedRoute sees the new status and lets the user into the dashboard.
   async function refreshProfile() {
     const { data: { session: currentSession } } = await supabase.auth.getSession()
-    if (currentSession?.user) await loadProfile(currentSession.user.id)
+    if (currentSession?.user) await loadProfile(currentSession.user.id, { force: true })
   }
 
   // Convenience role flags (computed only when profile is loaded)

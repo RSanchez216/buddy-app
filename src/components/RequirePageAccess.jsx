@@ -1,21 +1,22 @@
-import { useEffect, useState } from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
-import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
+import { usePageAccess } from '../contexts/PageAccessContext'
 
 // RequirePageAccess: guard a route by page_key
 // - Admins always pass through
 // - Non-admins: pass if they have access to this page_key, else redirect to first accessible page
 // - If no accessible pages exist, redirect to /no-access
+//
+// Access is derived from the shared my_pages() result (PageAccessProvider) —
+// no per-guard my_pages()/has_page_access() network calls. hasPageAccess()
+// mirrors the has_page_access() SQL function exactly.
 export default function RequirePageAccess({ pageKey: propPageKey, children }) {
   const { profile, loading, isAdmin } = useAuth()
+  const { pages, pagesLoaded, hasPageAccess } = usePageAccess()
   const location = useLocation()
-  const [hasAccess, setHasAccess] = useState(null)
-  const [firstAccessibleRoute, setFirstAccessibleRoute] = useState(null)
-  const [accessLoading, setAccessLoading] = useState(true)
 
   // Resolve the canonical page_key from my_pages() by matching the current route
-  const resolvePageKey = (pages, pathname) => {
+  const resolvePageKey = (pathname) => {
     if (!pages || pages.length === 0) return propPageKey
 
     // Remove leading slash for comparison
@@ -37,53 +38,8 @@ export default function RequirePageAccess({ pageKey: propPageKey, children }) {
     return match ? match.page_key : propPageKey
   }
 
-  useEffect(() => {
-    if (!profile || loading) return
-
-    const checkAccess = async () => {
-      try {
-        // Fetch all pages to resolve the canonical page_key for this route
-        const { data: allPages, error: pagesErr } = await supabase.rpc('my_pages')
-        if (pagesErr) {
-          console.error('my_pages fetch failed:', pagesErr)
-          setHasAccess(false)
-          setAccessLoading(false)
-          return
-        }
-
-        const resolvedPageKey = resolvePageKey(allPages, location.pathname)
-
-        // Check if user has access to this specific page
-        const { data: hasIt, error: accessErr } = await supabase.rpc(
-          'has_page_access',
-          { page_key: resolvedPageKey }
-        )
-
-        if (accessErr) {
-          console.error('Page access check failed:', accessErr)
-          setHasAccess(false)
-        } else {
-          setHasAccess(hasIt === true)
-        }
-
-        // Admins don't need the fallback, but use the pages we already fetched
-        if (!isAdmin) {
-          const first = allPages?.[0]
-          setFirstAccessibleRoute(first?.route || null)
-        }
-      } catch (e) {
-        console.error('Access check error:', e)
-        setHasAccess(false)
-      } finally {
-        setAccessLoading(false)
-      }
-    }
-
-    checkAccess()
-  }, [profile, loading, location.pathname, isAdmin])
-
-  // Still loading auth or access info
-  if (loading || accessLoading) {
+  // Still loading auth, or (non-admin) the shared pages haven't arrived yet
+  if (loading || !profile || (!isAdmin && !pagesLoaded)) {
     return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500" /></div>
   }
 
@@ -92,12 +48,13 @@ export default function RequirePageAccess({ pageKey: propPageKey, children }) {
     return children
   }
 
-  // Non-admin: check access
-  if (hasAccess) {
+  // Non-admin: derive access from the shared pages list
+  if (hasPageAccess(resolvePageKey(location.pathname))) {
     return children
   }
 
   // No access — redirect to first accessible page or no-access screen
+  const firstAccessibleRoute = pages?.[0]?.route || null
   if (firstAccessibleRoute) {
     return <Navigate to={firstAccessibleRoute} replace />
   }

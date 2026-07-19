@@ -1,6 +1,7 @@
 import { Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider } from './contexts/AuthContext'
+import { PageAccessProvider } from './contexts/PageAccessContext'
 import { ThemeProvider } from './contexts/ThemeContext'
 import { ToastProvider } from './contexts/ToastContext'
 import ProtectedRoute from './components/ProtectedRoute'
@@ -95,6 +96,7 @@ export default function App() {
       <ThemeProvider>
         <AuthProvider>
           <ToastProvider>
+          <PageAccessProvider>
           <ErrorBoundary label="the app">
           <Routes>
             <Route path="/login" element={<Login />} />
@@ -275,6 +277,7 @@ export default function App() {
             <Route path="*" element={<Navigate to="/fleet/profitability/lanes" replace />} />
           </Routes>
           </ErrorBoundary>
+          </PageAccessProvider>
           <UpdateBanner />
           </ToastProvider>
         </AuthProvider>

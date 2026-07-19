@@ -3,6 +3,7 @@ import { NavLink, Outlet } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { countOpenTasks, TASKS_CHANGED_EVENT } from '../pages/command-center/commandCenterData'
 import { useAuth } from '../contexts/AuthContext'
+import { usePageAccess } from '../contexts/PageAccessContext'
 import { BuddyLogoSmall } from '../components/BuddyLogo'
 import NotificationBell from './NotificationBell'
 import UserMenu from './UserMenu'
@@ -145,9 +146,10 @@ function NavSection({ id, label, badge, children, defaultOpen = true, withDivide
 // (right side: bell + UserMenu). Sidebar is purely navigation.
 export default function Layout() {
   const { isAdmin, user, profile, refreshProfile } = useAuth()
+  // Sidebar pages come from the shared PageAccessProvider (my_pages() is fetched
+  // once per app load and shared with the route guards + landing redirect).
+  const { pages, setPages, pagesLoaded } = usePageAccess()
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [pages, setPages] = useState([])          // full my_pages() rows (single source of truth)
-  const [pagesLoaded, setPagesLoaded] = useState(false)
   const [navMode, setNavMode] = useState('simple') // 'simple' | 'advanced' — mirrors users.nav_mode
   const [showManage, setShowManage] = useState(false)
   const [openTaskCount, setOpenTaskCount] = useState(0) // non-closed tasks → nav bubble
@@ -164,16 +166,6 @@ export default function Layout() {
     const id = setInterval(refresh, 150000) // ~2.5 min
     return () => { stale = true; window.removeEventListener(TASKS_CHANGED_EVENT, refresh); clearInterval(id) }
   }, [])
-
-  // my_pages() drives BOTH modes (Simple = is_bookmarked rows, Advanced = all).
-  // Re-render off this alone so losing access to a page removes it automatically.
-  const loadPages = async () => {
-    const { data, error } = await supabase.rpc('my_pages')
-    if (error) console.error('Failed to load pages:', error)
-    else setPages(data || [])
-    setPagesLoaded(true)
-  }
-  useEffect(() => { loadPages() }, [])
 
   // Mode is persisted in users.nav_mode (follows the user across devices).
   useEffect(() => { if (profile?.nav_mode) setNavMode(profile.nav_mode) }, [profile?.nav_mode])
