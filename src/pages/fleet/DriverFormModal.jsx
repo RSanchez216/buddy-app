@@ -30,7 +30,7 @@ const empty = {
   truck_assignment_raw: '', trailer_assignment_raw: '',
   compensation_raw: '', compensation_type: '', compensation_value: '',
   referred_by: '', temporary_license: false, missing_op: '',
-  onboarded_at: '', current_status: 'active', terminated_at: '', termination_reason: '', notes: '',
+  hired_at: '', current_status: 'active', terminated_at: '', termination_reason: '', notes: '',
 }
 
 export default function DriverFormModal({ open, editItem, onClose, onSaved }) {
@@ -65,7 +65,7 @@ export default function DriverFormModal({ open, editItem, onClose, onSaved }) {
         referred_by: editItem.referred_by || '',
         temporary_license: !!editItem.temporary_license,
         missing_op: editItem.missing_op || '',
-        onboarded_at: editItem.onboarded_at || '',
+        hired_at: editItem.hired_at || '',
         current_status: editItem.current_status || 'active',
         terminated_at: editItem.terminated_at || '',
         termination_reason: editItem.termination_reason || '',
@@ -94,7 +94,7 @@ export default function DriverFormModal({ open, editItem, onClose, onSaved }) {
       referred_by: form.referred_by.trim() || null,
       temporary_license: !!form.temporary_license,
       missing_op: form.missing_op.trim() || null,
-      onboarded_at: form.onboarded_at || null,
+      hired_at: form.hired_at || null,
       current_status: form.current_status || 'active',
       ...terminationFields(form.current_status, form.terminated_at, form.termination_reason),
       notes: form.notes.trim() || null,
@@ -237,8 +237,8 @@ export default function DriverFormModal({ open, editItem, onClose, onSaved }) {
         </div>
 
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Onboarded">
-            <input type="date" className={S.input} value={form.onboarded_at} onChange={e => setForm(f => ({ ...f, onboarded_at: e.target.value }))} />
+          <Field label="Hired">
+            <input type="date" className={S.input} value={form.hired_at} onChange={e => setForm(f => ({ ...f, hired_at: e.target.value }))} />
           </Field>
           <Field label="Status">
             <Select value={form.current_status} onChange={e => setForm(f => ({ ...f, current_status: e.target.value }))}>

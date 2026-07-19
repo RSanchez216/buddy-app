@@ -97,7 +97,13 @@ export async function commitDriverRows({ rows, terminations = [], userId }) {
         referred_by: row.referred_by,
         temporary_license: !!row.temporary_license,
         missing_op: row.missing_op,
-        onboarded_at: row.onboarded_at,
+        hired_at: row.hired_at,
+        // Home address from the TMS export. home_lat/home_lng are intentionally
+        // omitted — a DB trigger resolves them from geo_places once city+state land.
+        home_city: row.home_city,
+        home_state: row.home_state,
+        home_full_address: row.home_full_address,
+        home_zip: row.home_zip,
         current_status: status,
         // Only a terminated status carries a removal date; everything else NULL.
         terminated_at: status === 'terminated' ? (row.terminated_at ?? null) : null,

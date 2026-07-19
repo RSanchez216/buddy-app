@@ -66,10 +66,16 @@ export function matchExistingDriver(uploadRow, allExistingDrivers) {
 //   DEFINITION    — TMS is authoritative when it has a value; existing kept
 //     when upload is null.
 //   BACKFILL-ONLY — identity fields filled in only when the existing row is
-//     null (never overwritten). internal_id, full_name, onboarded_at.
-//   PRESERVE-ALWAYS — current_status / status_changed_at / terminated_at /
-//     termination_reason / notes. Not in the payload at all; caller handles
-//     re-activation separately when the existing row is inactive/terminated.
+//     null (never overwritten). internal_id, full_name, hired_at.
+//   PRESERVE-ALWAYS — current_status / status_changed_at / termination_reason /
+//     notes. Not in the payload at all; caller handles re-activation separately
+//     when the existing row is inactive/terminated.
+//
+// Home address (city/state/full address/zip) refreshes on every re-import so a
+// driver who moves gets an updated address, using the same ?? fallback as
+// phone/email so a blank in TMS never wipes a known address. home_lat/home_lng
+// are NEVER written here — a DB trigger resolves them from geo_places whenever
+// home_city + home_state change.
 //
 // All null|empty-string values on uploadRow should already be normalized to
 // null by the parser (cleanStr returns null for ''). ?? falls back on null
@@ -93,10 +99,22 @@ export function buildUpdatePayload(existingDriver, uploadRow, userId) {
     temporary_license:  uploadRow.temporary_license  ?? existingDriver.temporary_license,
     missing_op:         uploadRow.missing_op         ?? existingDriver.missing_op,
 
+    // HOME ADDRESS (refresh-always; blank in TMS never wipes a known value).
+    // No home_lat/home_lng — the DB trigger owns coordinates.
+    home_city:         uploadRow.home_city         ?? existingDriver.home_city,
+    home_state:        uploadRow.home_state        ?? existingDriver.home_state,
+    home_full_address: uploadRow.home_full_address ?? existingDriver.home_full_address,
+    home_zip:          uploadRow.home_zip          ?? existingDriver.home_zip,
+
+    // Termination date from "Job date removed". Refreshes when TMS reports one;
+    // a blank keeps the existing value. The re-activation path in driversCommit
+    // overrides this to null after the payload is built.
+    terminated_at: uploadRow.terminated_at ?? existingDriver.terminated_at,
+
     // BACKFILL-ONLY (identity)
-    internal_id:   existingDriver.internal_id  ?? uploadRow.internal_id,
-    full_name:     existingDriver.full_name    ?? uploadRow.full_name,
-    onboarded_at:  existingDriver.onboarded_at ?? uploadRow.onboarded_at,
+    internal_id:   existingDriver.internal_id ?? uploadRow.internal_id,
+    full_name:     existingDriver.full_name   ?? uploadRow.full_name,
+    hired_at:      existingDriver.hired_at    ?? uploadRow.hired_at,
 
     // Audit
     updated_by: userId || null,

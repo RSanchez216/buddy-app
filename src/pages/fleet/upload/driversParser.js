@@ -56,15 +56,39 @@ export function mapTmsStatus(raw) {
 
 // TMS calendar date "MM-DD-YYYY" → ISO "YYYY-MM-DD", built from the parts with
 // NO Date object and NO timezone round-trip (that's the off-by-one trap that
-// hit the assignment importer). Tolerates a trailing time token. Unrecognized
-// format → null.
+// hit the assignment importer). Tolerates a trailing time token separated by a
+// space OR a "T". Unrecognized format → null.
 export function parseTmsDateToISO(raw) {
   if (!raw) return null
-  const datePart = String(raw).trim().split(' ')[0]
+  const datePart = String(raw).trim().split(/[ T]/)[0]
   const m = datePart.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/)
   if (!m) return null
   const [, mm, dd, yyyy] = m
   return `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`
+}
+
+// Full US state name → 2-letter code (what drivers.home_state stores). A value
+// that is already a 2-letter code passes through uppercased; anything blank or
+// unrecognized returns null rather than guessing.
+const US_STATE_TO_CODE = {
+  'alabama':'AL','alaska':'AK','arizona':'AZ','arkansas':'AR','california':'CA',
+  'colorado':'CO','connecticut':'CT','delaware':'DE','district of columbia':'DC',
+  'florida':'FL','georgia':'GA','hawaii':'HI','idaho':'ID','illinois':'IL',
+  'indiana':'IN','iowa':'IA','kansas':'KS','kentucky':'KY','louisiana':'LA',
+  'maine':'ME','maryland':'MD','massachusetts':'MA','michigan':'MI','minnesota':'MN',
+  'mississippi':'MS','missouri':'MO','montana':'MT','nebraska':'NE','nevada':'NV',
+  'new hampshire':'NH','new jersey':'NJ','new mexico':'NM','new york':'NY',
+  'north carolina':'NC','north dakota':'ND','ohio':'OH','oklahoma':'OK','oregon':'OR',
+  'pennsylvania':'PA','rhode island':'RI','south carolina':'SC','south dakota':'SD',
+  'tennessee':'TN','texas':'TX','utah':'UT','vermont':'VT','virginia':'VA',
+  'washington':'WA','west virginia':'WV','wisconsin':'WI','wyoming':'WY',
+  'puerto rico':'PR',
+}
+export function toStateCode(raw) {
+  if (!raw) return null
+  const s = String(raw).trim()
+  if (/^[A-Za-z]{2}$/.test(s)) return s.toUpperCase()   // already a code
+  return US_STATE_TO_CODE[s.toLowerCase()] || null      // full name → code, else null
 }
 
 export function normalizeDriverType(raw) {
@@ -77,10 +101,11 @@ export function normalizeDriverType(raw) {
   return null
 }
 
-// "04-23-2026 15:45:54" → "2026-04-23"
-export function parseOnboardedAt(raw) {
+// "04-23-2026 15:45:54" → "2026-04-23". Accepts MM-DD-YYYY, YYYY-MM-DD and
+// MM/DD/YYYY, with an optional trailing time token. Feeds hired_at.
+export function parseTmsDateFlexible(raw) {
   if (!raw) return null
-  const datePart = String(raw).split(' ')[0]
+  const datePart = String(raw).trim().split(/[ T]/)[0]
   let m = datePart.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/)
   if (m) {
     const [, mm, dd, yyyy] = m
@@ -173,6 +198,15 @@ export function parseDriversWorkbook(arrayBuffer) {
     createdAt:   findCol(sample, ['Created at', 'Created At']),
     tempLicense: findCol(sample, ['Temporary License', 'Temporary license']),
     compensation: findCol(sample, ['Compensation']),
+    // Hire date. Not present in every export — when the column is absent the
+    // parser leaves hired_at undefined so the commit leaves the column alone.
+    jobAdded:    findCol(sample, ['Job date added', 'Job Date Added', 'Date added']),
+    // Home address. drivers.home_lat/home_lng are NOT set here — a DB trigger
+    // resolves coordinates from geo_places whenever home_city + home_state change.
+    state:       findCol(sample, ['State']),
+    city:        findCol(sample, ['City']),
+    address:     findCol(sample, ['Address']),
+    zip:         findCol(sample, ['ZipCode', 'Zip Code', 'Zip', 'Postal Code']),
   }
 
   if (!cols.driverId || !cols.fullName) {
@@ -213,6 +247,18 @@ export function parseDriversWorkbook(arrayBuffer) {
     const { status: mappedStatus, recognized: statusRecognized } = mapTmsStatus(statusRaw)
     const terminatedAt = mappedStatus === 'terminated' ? parseTmsDateToISO(jobRemovedRaw) : null
 
+    // Hire date: prefer "Job date added", fall back to the older "Created at".
+    // If NEITHER column exists in this export, hired_at stays undefined so the
+    // commit's ?? merge leaves an existing driver's hired_at untouched.
+    const hiredAtCol = cols.jobAdded || cols.createdAt
+    const hiredAtRaw = hiredAtCol ? cleanStr(r[hiredAtCol]) : null
+    const hiredAt = hiredAtCol ? parseTmsDateFlexible(hiredAtRaw) : undefined
+
+    // Home address. State is normalized to the 2-letter code the DB stores;
+    // lat/lng are deliberately absent — the DB trigger resolves them.
+    const homeStateRaw = cleanStr(cols.state ? r[cols.state] : null)
+    const homeState = toStateCode(homeStateRaw)
+
     rows.push({
       _rowNum: rowNum,
       internal_id,
@@ -226,7 +272,13 @@ export function parseDriversWorkbook(arrayBuffer) {
       trailer_assignment_raw: cleanStr(cols.trailer ? r[cols.trailer] : null),
       missing_op: cleanStr(cols.missingOp ? r[cols.missingOp] : null),
       referred_by: cleanStr(cols.referred ? r[cols.referred] : null),
-      onboarded_at: parseOnboardedAt(cols.createdAt ? r[cols.createdAt] : null),
+      hired_at: hiredAt,
+      // Home address — refreshed on every re-import so a driver who moves gets
+      // an updated address. home_lat/home_lng are owned by the DB trigger.
+      home_city: cleanStr(cols.city ? r[cols.city] : null),
+      home_state: homeState,
+      home_full_address: cleanStr(cols.address ? r[cols.address] : null),
+      home_zip: cleanStr(cols.zip ? r[cols.zip] : null),   // text — preserves leading zeros
       temporary_license: parseYesNo(cols.tempLicense ? r[cols.tempLicense] : null),
       compensation_raw: compRaw,
       compensation_type: comp.type,
@@ -245,6 +297,12 @@ export function parseDriversWorkbook(arrayBuffer) {
     // parses to null — surface it so the missing terminated_at is visible.
     if (mappedStatus === 'terminated' && jobRemovedRaw && !terminatedAt) {
       errors.push(`Row ${rowNum}: couldn't parse Job date removed "${jobRemovedRaw}" — terminated_at left blank.`)
+    }
+
+    // A State the map doesn't know parses to null — surface it rather than
+    // silently dropping the driver's home state (and with it the coordinates).
+    if (homeStateRaw && !homeState) {
+      errors.push(`Row ${rowNum}: state not recognized — "${homeStateRaw}" (home state left blank).`)
     }
 
     if (compRaw && !comp.type) {
