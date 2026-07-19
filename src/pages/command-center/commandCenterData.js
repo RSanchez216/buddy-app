@@ -47,24 +47,23 @@ export async function loadCommandCenter() {
   if (taskRes.error) throw taskRes.error
   const usersById = new Map((userRes.data || []).map(u => [u.id, u]))
   const tasks = taskRes.data || []
-  const latestActivityByTask = await loadLatestActivityByTask(tasks.map(t => t.id))
+  const latestActivityByTask = await loadLatestActivityByTask()
   return { tasks, users: userRes.data || [], usersById, latestActivityByTask }
 }
 
-// Latest task_activity row per task, in one query (no per-row fetches). Used to
-// decide which open tasks carry an unacted reply. Degrades gracefully: on any
-// error it returns an empty map, so the page simply shows no reply badges.
-async function loadLatestActivityByTask(taskIds) {
+// Latest task_activity row per task. Fetched via an RPC that returns the same
+// { task_id, kind, detail, created_at } rows, already ordered created_at DESC and
+// scoped server-side to the current user's tasks — so there's no task-id list in
+// the request URL (the old .in(...) filter produced an ~18 KB GET that flirted
+// with gateway URL-length limits). Used to decide which open tasks carry an
+// unacted reply. Degrades gracefully: on any error it returns an empty map, so
+// the page simply shows no reply badges.
+async function loadLatestActivityByTask() {
   const map = new Map()
-  if (!taskIds.length) return map
-  const { data, error } = await supabase
-    .from('task_activity')
-    .select('task_id, kind, detail, created_at')
-    .in('task_id', taskIds)
-    .order('created_at', { ascending: false })
+  const { data, error } = await supabase.rpc('task_activity_for_my_tasks')
   if (error) { console.error('[CommandCenter] latest activity load failed', error); return map }
   for (const r of data || []) {
-    if (!map.has(r.task_id)) map.set(r.task_id, r) // first per task = newest (desc order)
+    if (!map.has(r.task_id)) map.set(r.task_id, r) // first per task = newest (RPC returns created_at DESC)
   }
   return map
 }
