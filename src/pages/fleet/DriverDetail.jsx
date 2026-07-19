@@ -169,7 +169,11 @@ export default function DriverDetail() {
           <InfoRow label="Trailer Assignment (raw)" value={row.trailer_assignment_raw} mono />
           <InfoRow label="Compensation" value={row.compensation_raw || fmtCompensation(row)} />
           <InfoRow label="Status" value={DRIVER_STATUS_LABELS[row.current_status] || row.current_status} />
-          {row.terminated_at && <InfoRow label="Terminated" value={fmtDate(row.terminated_at)} />}
+          {/* Lifecycle dates sit with Status. Null is passed through so InfoRow
+              renders its muted em dash rather than fmtDate's plain-text one. */}
+          <InfoRow label="Hired" value={row.hired_at ? fmtDate(row.hired_at) : null} />
+          <InfoRow label="Terminated" value={row.terminated_at ? fmtDate(row.terminated_at) : null} />
+          {row.termination_reason && <InfoRow label="Termination Reason" value={row.termination_reason} />}
           {row.termination_reason && <InfoRow label="Termination Reason" value={row.termination_reason} />}
           <InfoRow label="Referred By" value={row.referred_by} />
           <InfoRow label="Temporary License" value={row.temporary_license ? 'Yes' : 'No'} />
