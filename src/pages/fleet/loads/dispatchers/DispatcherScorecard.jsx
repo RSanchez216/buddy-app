@@ -21,10 +21,12 @@ const TAG = {
   amber: 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-500/30',
   green: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/30',
 }
+// 4px left accent keyed to the focus-card / read severity.
+const BORDER = { red: 'border-l-red-500', amber: 'border-l-amber-500', green: 'border-l-emerald-500' }
 
 export default function DispatcherScorecard() {
   const [params, setParams] = useSearchParams()
-  const grain = VALID_GRAINS.has(params.get('grain')) ? params.get('grain') : 'half'
+  const grain = VALID_GRAINS.has(params.get('grain')) ? params.get('grain') : 'month'
   const anchor = /^\d{4}-\d{2}-\d{2}$/.test(params.get('anchor') || '') ? params.get('anchor') : todayISO()
 
   const [rows, setRows] = useState(null)
@@ -55,10 +57,15 @@ export default function DispatcherScorecard() {
     return () => { cancelled = true }
   }, [grain, anchor])
 
+  // The selected period is still "in progress" when it's the current one — its
+  // gross (and therefore the vs-prior delta) is partial, so we suppress deltas
+  // and keep them out of the read.
+  const inProgress = isCurrentPeriod(grain, anchor)
+
   const desks = useMemo(() => (rows || []).filter(r => !r.is_amazon_team), [rows])
   const amazon = useMemo(() => (rows || []).find(r => r.is_amazon_team) || null, [rows])
   const floors = useMemo(() => computeFloors(desks), [desks])
-  const focus = useMemo(() => (desks.length ? surfaceFocus(desks, floors) : []), [desks, floors])
+  const focus = useMemo(() => (desks.length ? surfaceFocus(desks, floors, { inProgress }) : []), [desks, floors, inProgress])
 
   // Company strip.
   const company = useMemo(() => {
@@ -68,13 +75,14 @@ export default function DispatcherScorecard() {
     const totalTurn = rows.reduce((s, r) => s + Number(r.turnover || 0), 0)
     const allDeltas = rows.every(r => r.gross_delta_pct != null)
     const prevGross = allDeltas ? rows.reduce((s, r) => s + Number(r.prev_gross || 0), 0) : null
-    const grossDelta = prevGross ? ((totalGross - prevGross) / prevGross) * 100 : null
+    // Suppress the delta on an in-progress period — it's partial-vs-full.
+    const grossDelta = (inProgress || !prevGross) ? null : ((totalGross - prevGross) / prevGross) * 100
     return {
       totalGross, activeDesks: desks.length,
       blendedRpm: totalMiles > 0 ? totalGross / totalMiles : 0, // company-wide gross ÷ desk miles
       floorRpm: floors.floorRpm, totalTurn, grossDelta,
     }
-  }, [rows, desks, floors])
+  }, [rows, desks, floors, inProgress])
 
   // Search + sort the leaderboard.
   const shownDesks = useMemo(() => {
@@ -121,8 +129,13 @@ export default function DispatcherScorecard() {
         <div className="flex items-center gap-2">
           <button onClick={() => step(-1)} className={S.btnSecondary} aria-label="Previous period">◀</button>
           <span className="min-w-[8.5rem] text-center text-sm font-semibold text-gray-900 dark:text-white">{periodLabel(grain, anchor)}</span>
-          <button onClick={() => step(1)} disabled={isCurrentPeriod(grain, anchor)} className={`${S.btnSecondary} disabled:opacity-40`} aria-label="Next period">▶</button>
-          {!isCurrentPeriod(grain, anchor) && <button onClick={goCurrent} className={S.btnSecondary}>Current</button>}
+          <button onClick={() => step(1)} disabled={inProgress} className={`${S.btnSecondary} disabled:opacity-40`} aria-label="Next period">▶</button>
+          {!inProgress && <button onClick={goCurrent} className={S.btnSecondary}>Current</button>}
+          {inProgress && (
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-400 border border-orange-200 dark:border-orange-500/25">
+              <span className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-pulse" /> in progress · to date
+            </span>
+          )}
         </div>
       </div>
 
@@ -136,7 +149,7 @@ export default function DispatcherScorecard() {
           {/* Company strip */}
           {company && (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              <Kpi label="Total gross" value={money(company.totalGross)} delta={company.grossDelta} />
+              <Kpi label="Total gross" value={money(company.totalGross)} delta={company.grossDelta} sub={inProgress ? `${periodLabel(grain, anchor).replace(/ ·.*/, '')} to date` : undefined} accent="orange" />
               <Kpi label="Active desks" value={int(company.activeDesks)} />
               <Kpi label="Blended RPM" value={rpm(company.blendedRpm)} sub={`floor ${rpm(company.floorRpm)}`} />
               <Kpi label="Total turnover" value={int(company.totalTurn)} sub="drivers left" />
@@ -150,7 +163,7 @@ export default function DispatcherScorecard() {
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 {focus.map(c => (
                   <button key={c.desk.desk_id} onClick={() => setSelectedDesk(c.desk)}
-                    className={`${S.card} p-4 text-left hover:border-orange-300 dark:hover:border-orange-500/40 transition-colors`}>
+                    className={`${S.card} border-l-4 ${BORDER[c.tone]} p-4 text-left hover:border-orange-300 dark:hover:border-orange-500/40 transition-colors`}>
                     <div className="flex items-center justify-between gap-2 mb-1">
                       <span className="font-semibold text-gray-900 dark:text-white truncate">{c.desk.desk_name}</span>
                       <span className={`shrink-0 text-[10px] uppercase tracking-wide font-bold px-2 py-0.5 rounded-full border ${TAG[c.tone]}`}>{c.tag}</span>
@@ -195,13 +208,13 @@ export default function DispatcherScorecard() {
                     {shownDesks.length === 0 ? (
                       <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400 dark:text-slate-600">No desks match “{search}”.</td></tr>
                     ) : shownDesks.map(d => {
-                      const read = deskRead(d, floors)
+                      const read = deskRead(d, floors, { inProgress })
                       return (
                         <tr key={d.desk_id} onClick={() => setSelectedDesk(d)} className={`${S.tableRow} cursor-pointer`}>
                           <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>{d.desk_name}</td>
                           <td className={`${S.td} text-right tabular-nums text-gray-900 dark:text-slate-200`}>
                             {money(d.gross)}
-                            {d.gross_delta_pct != null && (
+                            {!inProgress && d.gross_delta_pct != null && (
                               <span className={`ml-2 text-[11px] ${Number(d.gross_delta_pct) >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>{pct(d.gross_delta_pct)}</span>
                             )}
                           </td>
@@ -221,7 +234,7 @@ export default function DispatcherScorecard() {
           </section>
 
           {/* Amazon Team card */}
-          {amazon && <AmazonCard amazon={amazon} bookers={bookers} />}
+          {amazon && <AmazonCard amazon={amazon} bookers={bookers} inProgress={inProgress} />}
 
           {/* How turnover is counted */}
           <section className={`${S.card} p-5`}>
@@ -249,30 +262,30 @@ export default function DispatcherScorecard() {
         </>
       )}
 
-      <DeskDrawer open={!!selectedDesk} desk={selectedDesk} floors={floors} grain={grain} anchor={anchor} onClose={() => setSelectedDesk(null)} />
+      <DeskDrawer open={!!selectedDesk} desk={selectedDesk} floors={floors} grain={grain} anchor={anchor} inProgress={inProgress} onClose={() => setSelectedDesk(null)} />
     </div>
   )
 }
 
 // ── Amazon Team card ──────────────────────────────────────────────────────────
-function AmazonCard({ amazon, bookers }) {
+function AmazonCard({ amazon, bookers, inProgress }) {
   const teamRpm = Number(amazon.rpm || 0)
   const TIER = {
     strong: 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/20',
-    mid:    'bg-gray-100 dark:bg-white/5 text-gray-600 dark:text-slate-300 border-gray-200 dark:border-white/10',
+    mid:    'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-500/20',
     weak:   'bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400 border-red-200 dark:border-red-500/20',
   }
   return (
-    <section className={`${S.card} p-5`}>
+    <section className={`${S.card} border-l-4 border-l-blue-500 p-5`}>
       <div className="flex items-center gap-2 mb-1">
         <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Amazon Team</h2>
-        <span className="text-[10px] uppercase tracking-wide font-bold px-2 py-0.5 rounded-full bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-400 border border-orange-200 dark:border-orange-500/20">One desk</span>
+        <span className="text-[10px] uppercase tracking-wide font-bold px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-500/20">One desk</span>
       </div>
       <p className="text-xs text-gray-500 dark:text-slate-400 mb-4 max-w-3xl">
         Judged as one desk because bookings rotate among the team — no single member owns a load, so gross and retention are pooled.
       </p>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
-        <Kpi label="Team gross" value={money(amazon.gross)} delta={amazon.gross_delta_pct} />
+        <Kpi label="Team gross" value={money(amazon.gross)} delta={inProgress ? null : amazon.gross_delta_pct} sub={inProgress ? 'to date' : undefined} accent="blue" />
         <Kpi label="RPM" value={rpm(amazon.rpm)} />
         <Kpi label="Loads" value={int(amazon.loads)} />
         <Kpi label="Turnover" value={int(amazon.turnover)} sub="drivers left" />
@@ -318,10 +331,11 @@ function AmazonCard({ amazon, bookers }) {
 }
 
 // ── small presentational bits ─────────────────────────────────────────────────
-function Kpi({ label, value, sub, delta }) {
+const KPI_ACCENT = { orange: 'border-l-4 border-l-orange-500', blue: 'border-l-4 border-l-blue-500', green: 'border-l-4 border-l-emerald-500' }
+function Kpi({ label, value, sub, delta, accent }) {
   const showDelta = delta != null && Number.isFinite(Number(delta))
   return (
-    <div className={`${S.card} p-4`}>
+    <div className={`${S.card} ${accent ? KPI_ACCENT[accent] : ''} p-4`}>
       <div className="text-xs font-medium text-gray-500 dark:text-slate-500 uppercase tracking-wide">{label}</div>
       <div className="text-2xl font-bold text-gray-900 dark:text-white mt-1 tabular-nums">{value}</div>
       <div className="flex items-center gap-2 mt-1 min-h-[1rem]">

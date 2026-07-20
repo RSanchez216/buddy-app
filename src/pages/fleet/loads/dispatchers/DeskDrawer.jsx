@@ -19,7 +19,7 @@ function fmtLeft(iso) {
   return `${MON[m - 1]} ${d}`
 }
 
-export default function DeskDrawer({ open, desk, floors, grain, anchor, onClose }) {
+export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgress = false, onClose }) {
   const [rows, setRows] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -43,7 +43,7 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, onClose 
 
   if (!open || !desk) return null
 
-  const read = deskRead(desk, floors)
+  const read = deskRead(desk, floors, { inProgress })
   const tone = TONE[read.tone] || TONE.green
   const chips = readChips(desk, floors)
   const active = (rows || []).filter(r => r.status === 'active').sort((a, b) => Number(b.gross) - Number(a.gross))
@@ -78,7 +78,7 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, onClose 
           </div>
 
           {/* Why this read */}
-          <div className={`${S.card} p-4 space-y-3`}>
+          <div className={`${S.card} border-l-4 ${tone.border} p-4 space-y-3`}>
             <div className="flex items-center gap-2">
               <span className={`text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full border ${tone.pill}`}>{read.label}</span>
               <span className="text-[11px] uppercase tracking-wider font-semibold text-gray-400 dark:text-slate-500">Why this read</span>
@@ -119,6 +119,7 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, onClose 
                         <tr key={r.driver_id} className={S.tableRow}>
                           <td className={`${S.td} text-gray-900 dark:text-slate-200`}>
                             {r.driver_name}
+                            <span className="ml-2 inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20 align-middle">active</span>
                             {r.home_share != null && <span className="ml-2 text-[11px] text-gray-400 dark:text-slate-500">{r.home_share}% on desk</span>}
                           </td>
                           <td className={`${S.td} text-right tabular-nums text-gray-600 dark:text-slate-400`}>{int(r.loads)}</td>

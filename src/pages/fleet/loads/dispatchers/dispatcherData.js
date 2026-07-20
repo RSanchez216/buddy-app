@@ -103,12 +103,14 @@ export function computeFloors(desks) {
 
 // ── the "read": leaderboard pill + drawer analysis ───────────────────────────
 // tone drives chip/pill colors and the drawer's left border.
-export function deskRead(d, floors) {
+export function deskRead(d, floors, { inProgress = false } = {}) {
   const cr = churnRate(d)
   const topTier = Number(d.gross) >= floors.topQuartileGross
   const lowChurn = cr < 0.4
   const rpmGap = floors.floorRpm - Number(d.rpm || 0)
-  const delta = d.gross_delta_pct == null ? null : Number(d.gross_delta_pct)
+  // A partial (in-progress) period compares partial-vs-full, so the delta is
+  // misleading — never let it drive the read while the period is still open.
+  const delta = (inProgress || d.gross_delta_pct == null) ? null : Number(d.gross_delta_pct)
 
   let label, tone
   if (cr >= 2.0) { label = 'Retention risk'; tone = 'red' }
@@ -154,7 +156,7 @@ export function readChips(d, floors) {
 }
 
 // ── focus cards (up to 4, each desk on its most severe flag only) ────────────
-export function surfaceFocus(desks, floors) {
+export function surfaceFocus(desks, floors, { inProgress = false } = {}) {
   const used = new Set()
   const cards = []
   const byGrossDesc = [...desks].sort((a, b) => Number(b.gross) - Number(a.gross))
@@ -177,8 +179,9 @@ export function surfaceFocus(desks, floors) {
     cards.push({ desk: rpmPick, tag: 'Watch · low RPM', tone: 'amber', reason: `RPM ${rpm(rpmPick.rpm)} vs ${rpm(floors.floorRpm)} floor — ${money(onTable)} on the table if it reached the floor.` })
   }
 
-  // 3. Slipping (most negative delta; only when deltas are real)
-  const slipPick = desks.filter(d => !used.has(d.desk_id) && d.gross_delta_pct != null)
+  // 3. Slipping (most negative delta; only for COMPLETED periods — a partial
+  // period's delta is partial-vs-full and would flag everyone as slipping)
+  const slipPick = inProgress ? null : desks.filter(d => !used.has(d.desk_id) && d.gross_delta_pct != null)
     .sort((a, b) => Number(a.gross_delta_pct) - Number(b.gross_delta_pct))[0]
   if (cards.length < 4 && slipPick && Number(slipPick.gross_delta_pct) < 0) {
     used.add(slipPick.desk_id)
