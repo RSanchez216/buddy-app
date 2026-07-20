@@ -99,17 +99,31 @@ async function deployedFingerprint() {
   return assets.sort().join('|')
 }
 
+// Returns whether a newer build is pending (true ⇒ this tab is running stale
+// code). Used both by the passive poll and by the click-time gate on the
+// importers (ensureLatestBuild).
 async function checkForNewBuild() {
-  if (buildNotified || !navigator.onLine) return
+  if (buildNotified) return true                 // already known stale
+  if (!navigator.onLine) return false            // can't verify → treat as fresh, don't block
   let current
-  try { current = await deployedFingerprint() } catch { return } // network blip → retry next tick
-  if (!current) return
-  if (knownFingerprint === null) { knownFingerprint = current; return } // baseline (boot: deployed === running)
+  try { current = await deployedFingerprint() } catch { return buildNotified } // network blip → retry next tick
+  if (!current) return buildNotified
+  if (knownFingerprint === null) { knownFingerprint = current; return false } // baseline (boot: deployed === running)
   if (current !== knownFingerprint) {
     buildNotified = true
     window.dispatchEvent(new CustomEvent('buddy:needs-refresh'))
+    return true
   }
+  return false
 }
+
+// Cheap synchronous read of the last-known state (no network).
+export function isNewBuildPending() { return buildNotified }
+
+// Fresh, click-time check with its own network round-trip — closes the ~60s
+// poll-window race so the highest-consequence writes (the importers) never run
+// on stale code. Returns true when a newer build is deployed.
+export async function ensureLatestBuild() { return await checkForNewBuild() }
 
 // One-time startup wiring for the proactive watcher. Poll only while the tab is
 // visible + online so idle background tabs don't hammer the network, and

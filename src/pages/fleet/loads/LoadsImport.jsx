@@ -9,6 +9,8 @@ import LoadsFreshness from '../../../components/LoadsFreshness'
 import { parseLoadsWorkbook } from './loadsParse'
 import { buildPlan } from './loadsPlan'
 import { stageBatch, loadPendingBatch, applyBatch, discardBatch, loadRecentBatches, linkKey } from './loadsApply'
+import { ensureLatestBuild } from '../../../lib/chunkReload'
+import StaleBuildNotice from '../../../components/StaleBuildNotice'
 
 // Loads ingest — Phase 2 review/approve screen. Upload the TMS "All Loads"
 // export → parse + resolve + diff + stage → review New/Updated/Unchanged,
@@ -217,6 +219,7 @@ export default function LoadsImport() {
   // Non-blocking apply confirmation: when TONU candidates exist, Apply first
   // shows a restated-consequence card instead of writing immediately.
   const [confirmApply, setConfirmApply] = useState(false)
+  const [staleBlocked, setStaleBlocked] = useState(false)  // newer build shipped → block the apply
   // Set when an apply stops mid-way: { done, total } → show counter + Retry.
   const [applyError, setApplyError] = useState(null)
   // Recent import batches (history) + a dismissible post-apply summary.
@@ -562,6 +565,15 @@ export default function LoadsImport() {
 
   async function onApply() {
     if (!batch || busy) return
+    // Never let a tab running stale code write loads/legs. Fresh, click-time
+    // check (its own fetch) — if a newer build shipped, block and prompt a
+    // refresh. The staged batch stays intact and re-applies after refresh.
+    if (await ensureLatestBuild()) {
+      setStaleBlocked(true)
+      setConfirmApply(false)
+      window.dispatchEvent(new Event('buddy:needs-refresh'))
+      return
+    }
     setConfirmApply(false)
     setBusy(true)
     setApplyError(null)
@@ -691,6 +703,8 @@ export default function LoadsImport() {
 
   return (
     <div className="space-y-5">
+      {staleBlocked && <StaleBuildNotice />}
+
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
           <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-orange-600 dark:text-orange-400 mb-1">

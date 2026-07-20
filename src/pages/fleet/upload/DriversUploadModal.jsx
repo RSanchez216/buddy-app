@@ -8,6 +8,8 @@ import { DRIVER_TYPES, DriverTypePill } from '../fleetUtils'
 import { parseDriversWorkbook, driversHeaderSignature } from './driversParser'
 import { commitDriverRows } from './driversCommit'
 import { matchExistingDriver } from './driversMatcher'
+import { ensureLatestBuild } from '../../../lib/chunkReload'
+import StaleBuildNotice from '../../../components/StaleBuildNotice'
 
 // Three stages: pick → preview → done.
 // Preview computes possibly-terminated drivers (active in DB but missing from
@@ -64,6 +66,7 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
   const [bulkToast, setBulkToast] = useState('')  // ephemeral confirmation
   const [committing, setCommitting] = useState(false)
   const [commitResult, setCommitResult] = useState(null)
+  const [staleBlocked, setStaleBlocked] = useState(false)  // newer build shipped → block the write
   const [filter, setFilter] = useState('all')
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState(new Set())
@@ -368,6 +371,14 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
   const hasUnresolved = toCommit.some(r => effectiveKind(r) === 'pending')
 
   async function doCommit() {
+    // Never let a tab running stale code touch the DB. Fresh, click-time check
+    // (its own fetch) — if a newer build shipped, block the write and tell the
+    // user to refresh. The selected file / parsed rows are kept intact.
+    if (await ensureLatestBuild()) {
+      setStaleBlocked(true)
+      window.dispatchEvent(new Event('buddy:needs-refresh'))
+      return
+    }
     setCommitting(true)
     const terms = Object.entries(termActions).map(([driverId, { action, reason }]) => ({ driverId, action, reason }))
     const result = await commitDriverRows({ rows: toCommit, terminations: terms, userId: user?.id })
@@ -384,6 +395,8 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
   return (
     <Modal open={open} onClose={onClose} title={title} size="3xl">
       <div className={S.modalBody}>
+        {staleBlocked && <StaleBuildNotice />}
+
         {parseErrors.length > 0 && stage !== 'done' && (
           <div className={S.errorBox}>
             <p className="font-semibold mb-1">{parseErrors.length} parse warning{parseErrors.length === 1 ? '' : 's'}</p>
