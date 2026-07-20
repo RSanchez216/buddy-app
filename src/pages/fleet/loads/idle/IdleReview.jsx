@@ -126,6 +126,56 @@ function fmtShort(s) {
   return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 const money0 = (v) => `$${Math.round(Number(v) || 0).toLocaleString('en-US')}`
+
+// ── Idle breakdown buckets (idle_bucketed.bucket) ──────────────────────────
+// Where each idle subject physically is. Rendered in this order, and always all
+// five even when a bucket is empty (In lanes routinely is), so the split reads
+// as a complete picture rather than a variable-length list.
+const BUCKET_ORDER = ['with_driver', 'in_lanes', 'possibly_at_yard', 'away', 'unknown']
+
+// Full class strings per accent — Tailwind scans source statically, so these
+// can't be built by string concatenation.
+const BUCKET_ACCENT = {
+  cyan:    { icon: 'text-cyan-600 dark:text-cyan-400',       value: 'text-cyan-700 dark:text-cyan-300',       ring: 'ring-cyan-500 dark:ring-cyan-400' },
+  slate:   { icon: 'text-gray-400 dark:text-slate-500',      value: 'text-gray-600 dark:text-slate-400',      ring: 'ring-gray-400 dark:ring-slate-500' },
+  emerald: { icon: 'text-emerald-600 dark:text-emerald-400', value: 'text-emerald-700 dark:text-emerald-300', ring: 'ring-emerald-500 dark:ring-emerald-400' },
+  red:     { icon: 'text-red-600 dark:text-red-400',         value: 'text-red-700 dark:text-red-300',         ring: 'ring-red-500 dark:ring-red-400' },
+  amber:   { icon: 'text-amber-600 dark:text-amber-400',     value: 'text-amber-700 dark:text-amber-300',     ring: 'ring-amber-500 dark:ring-amber-400' },
+}
+
+const svg = (d) => (
+  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d={d} />
+  </svg>
+)
+
+const BUCKET_META = {
+  with_driver: {
+    label: 'With driver', accent: 'cyan',
+    icon: svg('M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z'),
+    sub: (b) => `${b.units} units · ${b.drivers} drivers`,
+  },
+  in_lanes: {
+    label: 'In lanes', accent: 'slate',
+    icon: svg('M4 20L9 4m11 16L15 4M12 5v2m0 4v2m0 4v2'),
+    sub: (b) => `${b.units} units staged`,
+  },
+  possibly_at_yard: {
+    label: 'Possibly at yard', accent: 'emerald',
+    icon: svg('M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6'),
+    sub: (b) => `${b.units} units · ≤ 50 mi`,
+  },
+  away: {
+    label: 'Away / on road', accent: 'red',
+    icon: svg('M17.657 16.657L13.414 20.9a2 2 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0zM15 11a3 3 0 11-6 0 3 3 0 016 0z'),
+    sub: (b) => `${b.units} units · > 50 mi`,
+  },
+  unknown: {
+    label: 'Unknown', accent: 'amber',
+    icon: svg('M8.228 9c.549-1.165 1.775-2 3.222-2 1.99 0 3.55 1.462 3.55 3.25 0 1.5-1.06 2.25-2.06 2.75-.79.395-1.44.9-1.44 1.75V16m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z'),
+    sub: (b) => `${b.units} units · no location`,
+  },
+}
 const unitTag = (u) => `#${String(u || '').replace(/^#/, '').trim()}`
 
 // Unit ownership/finance label (Telegram + reference). Mirrors FinanceBadge.
@@ -325,11 +375,15 @@ export default function IdleReview() {
   const [view, setView] = useState('active') // 'active' | 'resolved'
   const [reviewFilter, setReviewFilter] = useState('all') // 'all' | 'reviewed' | 'needs' | 'pending' — separate axis
   const [financeFilter, setFinanceFilter] = useState('all') // 'all' | 'lease' | 'loan' | 'owned' — orthogonal axis (trucks/trailers)
+  const [bucketFilter, setBucketFilter] = useState(null)   // idle_bucketed.bucket drill-down, or null for all
 
   async function load() {
     setError(null)
     try {
-      const { data, error: err } = await supabase.rpc('idle_subjects', { p_threshold: 3 })
+      // idle_bucketed is a drop-in for idle_subjects — same columns in the same
+      // order, plus `bucket` and `revenue_foregone` for the breakdown section.
+      // p_yard_radius is omitted so the server default (50 mi) applies.
+      const { data, error: err } = await supabase.rpc('idle_bucketed', { p_threshold: 3 })
       if (err) throw err
       setRows(data || [])
     } catch (e) {
@@ -442,8 +496,37 @@ export default function IdleReview() {
     // Financing axis ANDs on top. Driver rows carry a null finance_type, so
     // they fall out of lease/loan/owned automatically and only show under All.
     if (financeFilter !== 'all') list = list.filter(r => r.finance_type === financeFilter)
+    // Breakdown drill-down ANDs on top of every other axis.
+    if (bucketFilter) list = list.filter(r => r.bucket === bucketFilter)
     return groupOf(list)
-  }, [view, activeRows, resolvedRows, reviewFilter, financeFilter])
+  }, [view, activeRows, resolvedRows, reviewFilter, financeFilter, bucketFilter])
+
+  // Idle breakdown — aggregated client-side from the idle_bucketed rows, always
+  // over ALL unresolved rows so the totals stay stable while a bucket is
+  // selected. holding_prorated is cash already spent while idle (the same
+  // measure behind the "lost so far" cards), NOT a monthly run-rate.
+  const breakdown = useMemo(() => {
+    const blank = () => ({ holding: 0, units: 0, drivers: 0, revenue: 0 })
+    const by = Object.fromEntries(BUCKET_ORDER.map(k => [k, blank()]))
+    let equipTotal = 0
+    let revenueTotal = 0
+    for (const r of activeRows) {
+      const holding = Number(r.holding_prorated) || 0
+      const revenue = Number(r.revenue_foregone) || 0
+      equipTotal += holding
+      revenueTotal += revenue
+      const b = by[r.bucket] || (by[r.bucket] = blank())
+      b.holding += holding
+      b.revenue += revenue
+      // A with_driver row is a driver/team holding up to two units; every other
+      // bucket is one driverless unit per row.
+      b.units += r.bucket === 'with_driver'
+        ? (r.truck_unit != null ? 1 : 0) + (r.trailer_unit != null ? 1 : 0)
+        : 1
+      if (r.subject_type === 'driver' || r.subject_type === 'team') b.drivers += 1
+    }
+    return { by, equipTotal, revenueTotal }
+  }, [activeRows])
 
   // Counts for the review-filter chips, within the current Active/Resolved view.
   const reviewCounts = useMemo(() => {
@@ -540,6 +623,11 @@ export default function IdleReview() {
         <DriverIdleCard ps={pageSummary} loading={!pageSummary} />
       </div>
 
+      {/* Where the idle equipment sits — and a drill-down into the list below. */}
+      {!loading && rows?.length > 0 && (
+        <IdleBreakdown breakdown={breakdown} selected={bucketFilter} onSelect={setBucketFilter} />
+      )}
+
       {/* Filters: Active/Resolved (which spell) + Reviewed/Needs (review state). */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-slate-700 text-xs w-fit">
@@ -561,6 +649,17 @@ export default function IdleReview() {
             ))}
           </div>
         </div>
+        {bucketFilter && (
+          <button
+            onClick={() => setBucketFilter(null)}
+            className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-orange-200 dark:border-orange-500/25 bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-300 hover:bg-orange-100 dark:hover:bg-orange-500/20"
+            title="Clear the breakdown filter"
+          >
+            {BUCKET_META[bucketFilter]?.label || bucketFilter}
+            <span aria-hidden="true">✕</span>
+            <span className="sr-only">Clear bucket filter</span>
+          </button>
+        )}
         <button onClick={() => exportIdleExcel(viewGroups)} disabled={loading} className="ml-auto text-xs font-semibold px-3 py-1.5 rounded-lg border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-40" title="Export Drivers / Trucks / Trailers (current filters) to Excel">↓ Export Excel</button>
       </div>
 
@@ -575,6 +674,82 @@ export default function IdleReview() {
           <IdleSection title="Trailers" kind="unit" rows={viewGroups.trailer} reasons={UNIT_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} farBySubject={farFromYard} />
         </>
       )}
+    </div>
+  )
+}
+
+// Idle breakdown — two full-population summaries plus a five-bucket split of
+// WHERE the idle equipment sits. Clicking a bucket drills the list below into
+// it; the summaries deliberately keep showing the full totals.
+function IdleBreakdown({ breakdown, selected, onSelect }) {
+  const { by, equipTotal, revenueTotal } = breakdown
+  return (
+    <div className={`${S.card} p-4 space-y-4`}>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Idle breakdown</h2>
+        {selected && (
+          <button
+            onClick={() => onSelect(null)}
+            className="inline-flex items-center gap-1.5 text-[11px] font-medium px-2 py-1 rounded-md bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-300 border border-orange-200 dark:border-orange-500/25 hover:bg-orange-100 dark:hover:bg-orange-500/20"
+          >
+            Showing: {BUCKET_META[selected]?.label || selected}
+            <span aria-hidden="true">✕</span>
+            <span className="sr-only">Clear bucket filter</span>
+          </button>
+        )}
+      </div>
+
+      {/* Full-population summaries — unaffected by the drill-down. Both are
+          cumulative cash/opportunity to date, not monthly run-rates, so they
+          sit beside (and reconcile with) the "lost so far" cards above. */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="rounded-lg border border-gray-200 dark:border-white/10 px-3 py-2.5">
+          <div className="text-[10px] font-semibold uppercase tracking-widest text-gray-500 dark:text-slate-400">Equipment cash lost</div>
+          <div className="font-mono text-2xl font-bold text-gray-900 dark:text-white tabular-nums">{money0(equipTotal)}</div>
+          <div className="text-[11px] text-gray-500 dark:text-slate-400">
+            Idle equipment + {money0(by.with_driver.holding)} held by idle drivers
+          </div>
+        </div>
+        <div className="rounded-lg border border-gray-200 dark:border-white/10 px-3 py-2.5">
+          <div className="text-[10px] font-semibold uppercase tracking-widest text-gray-500 dark:text-slate-400">Driver revenue foregone</div>
+          <div className="font-mono text-2xl font-bold text-gray-900 dark:text-white tabular-nums">{money0(revenueTotal)}</div>
+          <div className="text-[11px] text-gray-500 dark:text-slate-400">Opportunity cost — never summed with cash</div>
+        </div>
+      </div>
+
+      {/* Bucket split — where the idle equipment physically is. */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
+        {BUCKET_ORDER.map(key => {
+          const meta = BUCKET_META[key]
+          const b = by[key]
+          const accent = BUCKET_ACCENT[meta.accent]
+          const isActive = selected === key
+          const isEmpty = b.units === 0
+          return (
+            <button
+              key={key}
+              type="button"
+              disabled={isEmpty}
+              aria-pressed={isActive}
+              onClick={() => onSelect(isActive ? null : key)}
+              title={isEmpty ? `No idle subjects in ${meta.label}` : `Filter the list to ${meta.label}`}
+              className={`text-left rounded-lg border border-gray-200 dark:border-white/10 px-3 py-2.5 transition-colors
+                ${isActive ? `ring-2 ring-inset ${accent.ring}` : ''}
+                ${isEmpty ? 'opacity-50 cursor-default' : 'hover:bg-gray-50 dark:hover:bg-white/5 cursor-pointer'}`}
+            >
+              <div className={`flex items-center gap-1.5 ${accent.icon}`}>
+                {meta.icon}
+                <span className="text-[11px] font-medium text-gray-600 dark:text-slate-300">{meta.label}</span>
+              </div>
+              <div className={`mt-1 font-mono text-lg font-bold tabular-nums ${accent.value}`}>{money0(b.holding)}</div>
+              <div className="text-[11px] text-gray-500 dark:text-slate-400 tabular-nums">{meta.sub(b)}</div>
+              {key === 'with_driver' && (
+                <div className="text-[11px] text-gray-400 dark:text-slate-500 tabular-nums">+ {money0(b.revenue)} foregone</div>
+              )}
+            </button>
+          )
+        })}
+      </div>
     </div>
   )
 }
