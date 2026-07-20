@@ -37,12 +37,18 @@ export function PageAccessProvider({ children }) {
   }, [profile?.id, loading])
 
   // Mirror has_page_access(page_key): admins pass everything; otherwise the key
-  // is accessible iff it matches a my_pages() row by page_key, route, or
-  // '/'+route — the same canonical resolution the SQL function performs.
+  // is accessible iff it matches a my_pages() row by page_key OR route — the
+  // same canonical resolution the SQL function performs. Routes are compared
+  // with leading slashes stripped on BOTH sides, since pages.route is stored as
+  // "/fleet/..." while callers may pass a slash-stripped path (that mismatch,
+  // plus the old `/${p.route}` double-slash, is what denied every route-style
+  // key and blanked content pages for non-admins).
   const hasPageAccess = useCallback((key) => {
     if (isAdmin) return true
     if (!key) return false
-    return pages.some(p => p.page_key === key || p.route === key || `/${p.route}` === key)
+    const norm = (s) => (s || '').replace(/^\/+/, '')
+    const k = norm(key)
+    return pages.some(p => p.page_key === key || norm(p.route) === k)
   }, [pages, isAdmin])
 
   return (
