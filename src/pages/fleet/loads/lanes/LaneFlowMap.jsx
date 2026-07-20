@@ -493,12 +493,13 @@ function MilesReviewBanner({ from, to, reloadKey, canEdit, onSaved, onOpenLoad }
   )
 }
 
-function Kpi({ label, value, sub }) {
+function Kpi({ label, value, sub, note }) {
   return (
     <div className={`${S.card} px-4 py-3`}>
       <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">{label}</p>
       <p className="text-lg font-bold text-gray-900 dark:text-white font-mono leading-tight mt-0.5">{value}</p>
       {sub && <p className="text-[11px] text-gray-400 dark:text-slate-500">{sub}</p>}
+      {note && <p className="text-[11px] text-gray-400 dark:text-slate-500">{note}</p>}
     </div>
   )
 }
@@ -1195,7 +1196,8 @@ export default function LaneFlowMap() {
       {agg && agg.totals.legs > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           <Kpi label="Lanes" value={fmtNum(distinctLanes)} sub={offMapLanes ? `${offMapLanes} off-map` : 'all on map'} />
-          <Kpi label="Loads" value={fmtNum(agg.totals.loads)} sub={[...selectedPhases].sort().join(' + ')} />
+          <Kpi label="Loads" value={fmtNum(agg.totals.loadsMoved)} sub={[...selectedPhases].sort().join(' + ')}
+            note={agg.totals.tonuLoads > 0 ? `+ ${fmtNum(agg.totals.tonuLoads)} TONU` : undefined} />
           <Kpi label="Revenue" value={fmtMoney(agg.totals.revenue)} sub={`${fmtNum(agg.totals.miles)} mi`} />
           <Kpi label="$/mile" value={agg.totals.rpm == null ? '—' : `${fmtRpm(agg.totals.rpm)}/mi`} sub="all lanes" />
           <Kpi label="Map coverage" value={agg.coverage == null ? '—' : `${Math.round(agg.coverage * 100)}%`} sub="of loads geocoded" />

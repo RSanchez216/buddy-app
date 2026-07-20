@@ -298,6 +298,10 @@ export function aggregateLanes(allLegs, phaseOrView, { byType = false } = {}) {
       // Distinct loads (a multi-leg load is one load) — for the LOADS KPI.
       // Revenue/miles include TONU; $/mi excludes it (real sums).
       loads: byLoad.size,
+      // Actual moved freight — distinct loads excluding confirmed TONU
+      // (is_tonu IS NOT TRUE). This is the headline LOADS number; TONU shows
+      // as a separate "+N TONU" sub-note.
+      loadsMoved: byLoad.size - tonuLoads,
       lanes: lanes.length,
       revenue: totRevenue,
       miles: totMiles,
