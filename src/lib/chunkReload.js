@@ -65,3 +65,59 @@ export function initChunkReload() {
     } catch { /* ignore */ }
   }, RELOAD_WINDOW_MS + 2000)
 }
+
+// ── Proactive new-build detection ────────────────────────────────────────────
+// The handlers above are REACTIVE — they only fire when a lazy import() 404s
+// (navigation after a deploy). They do nothing for the more dangerous case: a
+// tab left open across a deploy on a page whose chunk is already in memory,
+// where the user acts (e.g. a driver/loads import) on STALE code. Nothing
+// 404s, so nothing recovers — the write may run old logic and silently not
+// persist (or persist wrong).
+//
+// This watcher polls the deployed index.html, fingerprints the hashed asset
+// filenames it references, and — when that set changes vs. what this tab booted
+// with — fires the SAME buddy:needs-refresh banner (UpdateBanner) so the user
+// is told to refresh BEFORE acting. It NEVER calls location.reload() itself: a
+// mid-import user must not be reloaded out from under a half-filled form. The
+// banner's Refresh button is the only reload on this path.
+
+const BUILD_POLL_MS = 60_000
+let knownFingerprint = null   // the asset set THIS tab is running
+let buildNotified = false     // fire the banner at most once per detected build
+
+async function deployedFingerprint() {
+  const base = import.meta.env.BASE_URL || '/'
+  const html = await fetch(base, { cache: 'no-store' }).then((r) => {
+    if (!r.ok) throw new Error(`index fetch ${r.status}`)
+    return r.text()
+  })
+  // Every hashed JS/CSS asset index.html references, sorted → stable signature.
+  // Vite content-hashes every chunk and bakes the hashed specifiers into their
+  // importers, so ANY code change (even inside a lazy route chunk) cascades to a
+  // changed filename here. A changed set ⇒ a real deploy.
+  const assets = [...html.matchAll(/\/assets\/[A-Za-z0-9_\-.]+\.(?:js|css)/g)].map((m) => m[0])
+  return assets.sort().join('|')
+}
+
+async function checkForNewBuild() {
+  if (buildNotified || !navigator.onLine) return
+  let current
+  try { current = await deployedFingerprint() } catch { return } // network blip → retry next tick
+  if (!current) return
+  if (knownFingerprint === null) { knownFingerprint = current; return } // baseline (boot: deployed === running)
+  if (current !== knownFingerprint) {
+    buildNotified = true
+    window.dispatchEvent(new CustomEvent('buddy:needs-refresh'))
+  }
+}
+
+// One-time startup wiring for the proactive watcher. Poll only while the tab is
+// visible + online so idle background tabs don't hammer the network, and
+// re-check immediately whenever the tab regains focus.
+export function startBuildWatch() {
+  checkForNewBuild() // establish baseline
+  setInterval(() => { if (!document.hidden) checkForNewBuild() }, BUILD_POLL_MS)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') checkForNewBuild()
+  })
+}
