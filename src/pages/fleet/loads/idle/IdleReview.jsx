@@ -661,10 +661,13 @@ function IdleBreakdown({ breakdown, selected, onSelect }) {
   return (
     <div className={`${S.card} p-4`}>
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 mb-3">
-        <h2 className="text-sm font-medium text-gray-900 dark:text-white">Idle equipment by location</h2>
+        <div className="flex items-center gap-1.5">
+          <h2 className="text-sm font-medium text-gray-900 dark:text-white">Idle equipment by location</h2>
+          <ByLocationInfo />
+        </div>
         <div className="flex items-center gap-2">
           <span className="text-[11px] text-gray-500 dark:text-slate-400 tabular-nums">
-            {money0(equipTotal)}/mo · {driverCount} drivers · {money0(revenueTotal)} foregone
+            {money0(equipTotal)} lost so far · {driverCount} drivers · {money0(revenueTotal)} foregone
           </span>
           {selected && (
             <button
@@ -723,6 +726,56 @@ function InfoDot({ tip }) {
       className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border border-gray-300 dark:border-slate-600 text-[9px] text-gray-500 dark:text-slate-400 cursor-help align-middle shrink-0"
       title={tip}
     >?</span>
+  )
+}
+
+// Rich ⓘ popover for the "Idle equipment by location" section — the content is
+// formatted (bold + bullets), so it can't ride a native title like InfoDot.
+// Opens on hover (desktop, via group-hover) and on tap/click (toggles + closes
+// on outside click). Positioned below the title so it never covers the bars.
+function ByLocationInfo() {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  useEffect(() => {
+    if (!open) return
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [open])
+  const strong = 'font-semibold text-gray-800 dark:text-slate-200'
+  return (
+    <span ref={ref} className="relative inline-flex group">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        aria-label="How idle equipment by location is calculated"
+        aria-expanded={open}
+        className="inline-flex items-center justify-center w-4 h-4 rounded-full border border-gray-300 dark:border-slate-600 text-[10px] leading-none text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 hover:border-gray-400 dark:hover:border-slate-500 cursor-help align-middle shrink-0"
+      >i</button>
+      <div
+        role="tooltip"
+        className={`absolute left-0 top-full mt-2 z-30 w-[22rem] max-w-[calc(100vw-2rem)] p-3 rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-[#0d0d1f] shadow-xl text-[11px] leading-relaxed text-gray-600 dark:text-slate-300 whitespace-normal ${open ? 'block' : 'hidden group-hover:block'}`}
+      >
+        <p className="font-semibold text-gray-900 dark:text-white mb-1">How this is calculated</p>
+        <p className="mb-2">
+          <span className={strong}>Idle</span> = a unit or driver with no load activity for at least the idle threshold (default 3 days). For equipment, idle starts when the driver came off it. Only <span className={strong}>driverless</span> equipment is counted here — a unit still assigned to a driver shows under <span className={strong}>With driver</span>.
+        </p>
+        <p className={`${strong} mb-0.5`}>Buckets <span className="font-normal text-gray-500 dark:text-slate-400">(each driverless unit falls in one, by its last drop location)</span></p>
+        <ul className="list-disc pl-4 mb-2 space-y-0.5">
+          <li><span className="font-medium text-gray-700 dark:text-slate-200">With driver</span> — assigned to an idle driver/team</li>
+          <li><span className="font-medium text-gray-700 dark:text-slate-200">In lanes</span> — trailer staged on a dedicated lane</li>
+          <li><span className="font-medium text-gray-700 dark:text-slate-200">Possibly at yard</span> — last drop ≤ 50 mi from the Aurora yard</li>
+          <li><span className="font-medium text-gray-700 dark:text-slate-200">Away / on road</span> — last drop &gt; 50 mi away</li>
+          <li><span className="font-medium text-gray-700 dark:text-slate-200">Unknown</span> — last drop location couldn&apos;t be determined</li>
+        </ul>
+        <p className="mb-2">
+          <span className={strong}>Dollar amount</span> = monthly lease/carrying cost × months idle = carrying cost <span className="font-medium text-gray-700 dark:text-slate-200">lost so far</span> since the unit went idle (not per month).
+        </p>
+        <p>
+          <span className={strong}>Drivers / foregone</span> = count of idle drivers, and an estimate of their lost earning power (recent daily revenue × days idle).
+        </p>
+      </div>
+    </span>
   )
 }
 
