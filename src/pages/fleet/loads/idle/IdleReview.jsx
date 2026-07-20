@@ -374,8 +374,10 @@ export default function IdleReview() {
   useEffect(() => { load() }, [])
 
   // "Possibly home" per idle driver/team row. Driver rows key off subject_id;
-  // team rows resolve to their primary member's driver_id. The idle list is
-  // small, so a per-driver driver_possibly_home() call is fine.
+  // team rows resolve to their primary member's driver_id. All drivers are
+  // checked in ONE batched drivers_possibly_home_bulk() call (the old
+  // per-driver driver_possibly_home() N+1 saturated the pool and made the page
+  // take tens of seconds).
   const [homeBySubject, setHomeBySubject] = useState({}) // 'type:id' → possibly-home row
   // 'type:id' → { totalPastDue, contractHref } for idle drivers behind on a purchase
   const [behindBySubject, setBehindBySubject] = useState({})
@@ -405,10 +407,13 @@ export default function IdleReview() {
         if (did) subjToDriver[`${r.subject_type}:${r.subject_id}`] = did
       })
       const uniqueDriverIds = [...new Set(Object.values(subjToDriver))]
-      const homeEntries = await Promise.all(uniqueDriverIds.map(async did => {
-        const { data } = await supabase.rpc('driver_possibly_home', { p_driver_id: did })
-        return [did, data?.[0] || null]
-      }))
+      // One batched call for all idle drivers' "possibly home" status, keyed by
+      // driver_id — replaces the old per-driver driver_possibly_home() N+1.
+      const homeByDriver = {}
+      if (uniqueDriverIds.length) {
+        const { data: homeRows } = await supabase.rpc('drivers_possibly_home_bulk', { p_ids: uniqueDriverIds })
+        ;(homeRows || []).forEach(row => { homeByDriver[row.driver_id] = row })
+      }
       // Behind-on-purchase per driver — one query for all idle driver_ids.
       const behindStatuses = new Set(['falling_behind', 'holding'])
       const { data: contracts } = await supabase
@@ -423,7 +428,6 @@ export default function IdleReview() {
       })
 
       if (cancelled) return
-      const homeByDriver = Object.fromEntries(homeEntries)
       const bySubject = {}
       const behindBySubj = {}
       for (const [subjKey, did] of Object.entries(subjToDriver)) {
