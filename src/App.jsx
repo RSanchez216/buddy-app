@@ -49,6 +49,7 @@ import FuelPrices from './pages/fleet/fuel-prices/FuelPrices'
 import Profitability from './pages/fleet/loads/Profitability'
 import Spotlight from './pages/fleet/loads/spotlight/Spotlight'
 import Contribution from './pages/fleet/loads/contribution/Contribution'
+import DispatcherScorecard from './pages/fleet/loads/dispatchers/DispatcherScorecard'
 import SetPassword from './pages/auth/SetPassword'
 import SmartLanding from './pages/SmartLanding'
 
@@ -218,6 +219,13 @@ export default function App() {
                     <Suspense fallback={<div className="p-8 text-sm text-gray-400 dark:text-slate-500">Loading miles & performance…</div>}>
                       <MilesPerformance />
                     </Suspense>
+                  </ErrorBoundary>
+                </RequirePageAccess>
+              } />
+              <Route path="fleet/profitability/dispatchers" element={
+                <RequirePageAccess pageKey="dispatcher_scorecard">
+                  <ErrorBoundary label="the Dispatcher Scorecard">
+                    <DispatcherScorecard />
                   </ErrorBoundary>
                 </RequirePageAccess>
               } />

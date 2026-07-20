@@ -52,6 +52,7 @@ const PAGE_ICON = {
   payment_calendar: Icons.calendar, office_expenses: Icons.vendors, debt_schedule: Icons.debt, driver_purchases: Icons.driverSale,
   profitability: Icons.cost, driver_spotlight: Icons.driver, contribution: Icons.report,
   'dedicated-lanes': Icons.warehouse, idle_review: Icons.cost, miles_performance: Icons.map,
+  dispatcher_scorecard: Icons.users,
   trucks: Icons.truck, trailers: Icons.trailer, drivers: Icons.driver, teams: Icons.users,
   equipment_cost: Icons.cost, loads_import: Icons.truck, settlement_import: Icons.payment,
   combined_loads: Icons.merge,
