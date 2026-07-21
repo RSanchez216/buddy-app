@@ -23,7 +23,7 @@ export function useDriverContracts(driverId) {
     setLoading(true)
     supabase
       .from('v_driver_purchase_summary')
-      .select('id, driver_id, driver_name, status_name, past_due_status, amount_behind, periods_behind, truck_number')
+      .select('id, driver_id, driver_name, equipment_type, truck_number, status_name, status_color, is_active_state, is_terminal, current_balance, past_due_status, amount_behind, periods_behind')
       .eq('driver_id', driverId)
       .then(({ data }) => {
         if (cancelled) return

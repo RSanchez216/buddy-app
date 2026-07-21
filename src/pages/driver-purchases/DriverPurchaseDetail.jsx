@@ -8,8 +8,9 @@ import UnderlyingLoanCard from './components/UnderlyingLoanCard'
 import DocumentsSection from './components/DocumentsSection'
 import ActivityFeed from './components/ActivityFeed'
 import ContractDriversCard from './components/ContractDriversCard'
-import { PastDueSummary } from './components/PastDueStatus'
+import { PastDueSummary, PastDueChip } from './components/PastDueStatus'
 import PaymentHistorySection from './components/PaymentHistorySection'
+import { useDriverContracts } from '../../hooks/useDriverContracts'
 import NotesField from '../../components/NotesField'
 import EditDriverModal from './components/EditDriverModal'
 import PurchaseFormModal from './components/PurchaseFormModal'
@@ -32,6 +33,19 @@ function formatUnitLabel(equipmentType, unitNumber) {
              : 'Unit'
   return `${noun} ${unitNumber}`
 }
+
+// Title-case a possibly-mixed-case equipment_type ('trailer', 'Truck') so
+// the cross-link label reads uniformly — "Trailer #1", "Truck #55".
+function titleCase(s) {
+  return String(s || '').replace(/\b\w/g, ch => ch.toUpperCase())
+}
+
+// Spelled-out count for the "Driver with N contracts" pill. 5+ falls back
+// to the digit — no fleet of drivers holds that many at once.
+const NUMBER_WORDS = { 2: 'two', 3: 'three', 4: 'four' }
+function numberWord(n) { return NUMBER_WORDS[n] || String(n) }
+
+const contractLabel = c => `${titleCase(c.equipment_type || 'Truck')} #${c.truck_number}`
 
 export default function DriverPurchaseDetail() {
   const { id } = useParams()
@@ -238,6 +252,17 @@ export default function DriverPurchaseDetail() {
     load()
   }
 
+  // A driver can hold more than one active contract (each keeps its own
+  // profile page — nothing merges). Terminal contracts (Contract Broken /
+  // Fully Paid / Driver Left) are excluded from both the count and the
+  // cross-links. Guarded on summary so hooks stay unconditional above the
+  // early returns below.
+  const { contracts: driverContracts } = useDriverContracts(summary?.driver_id)
+  const siblingContracts = summary
+    ? driverContracts.filter(c => c.id !== summary.id && c.is_terminal === false)
+    : []
+  const activeContractCount = driverContracts.filter(c => c.is_terminal === false).length
+
   if (loading) {
     return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500" /></div>
   }
@@ -289,10 +314,17 @@ export default function DriverPurchaseDetail() {
               />
             )}
           </div>
-          <p className="text-sm text-gray-500 dark:text-slate-500 mt-1">
-            {summary.entity_name || 'No entity'} · {purchaseTypeLabel(summary.purchase_type)}
-            {summary.driver_internal_id && <span className="ml-2 font-mono text-xs">#{summary.driver_internal_id}</span>}
-          </p>
+          <div className="mt-1 flex items-center gap-2 flex-wrap">
+            <p className="text-sm text-gray-500 dark:text-slate-500">
+              {summary.entity_name || 'No entity'} · {purchaseTypeLabel(summary.purchase_type)}
+              {summary.driver_internal_id && <span className="ml-2 font-mono text-xs">#{summary.driver_internal_id}</span>}
+            </p>
+            {activeContractCount > 1 && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-orange-50 text-orange-700 dark:bg-orange-500/10 dark:text-orange-300">
+                Driver with {numberWord(activeContractCount)} contracts
+              </span>
+            )}
+          </div>
           {summary.driver_id && (
             <div className="mt-1.5 flex items-center gap-3 text-xs">
               <Link to={`/fleet/drivers/${summary.driver_id}`} className="text-orange-600 dark:text-orange-400 hover:underline">View profile</Link>
@@ -336,6 +368,41 @@ export default function DriverPurchaseDetail() {
           </div>
         )}
       </div>
+
+      {/* Other contracts — cross-links to this driver's other active
+          contracts. A nav aid only (each contract keeps its own profile);
+          terminal contracts are already filtered out of siblingContracts. */}
+      {siblingContracts.length > 0 && (
+        <div className={`${S.card} p-4`}>
+          <div className="flex items-center gap-1.5 mb-2.5 text-gray-500 dark:text-slate-400">
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 010 5.656l-3 3a4 4 0 01-5.656-5.656l1.5-1.5m8.656-1.828a4 4 0 000-5.656l-.001-.001a4 4 0 00-5.656 0l-1.5 1.5" />
+            </svg>
+            <h3 className="text-xs font-semibold uppercase tracking-wide">Other contracts</h3>
+          </div>
+          <div className="flex flex-col gap-2">
+            {siblingContracts.map(c => (
+              <Link
+                key={c.id}
+                to={`/financial-controls/driver-purchases/${c.id}`}
+                className="group flex items-center gap-3 flex-wrap rounded-lg border border-gray-100 dark:border-white/5 px-3 py-2 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors"
+              >
+                <span className="text-sm font-medium text-gray-900 dark:text-white group-hover:text-orange-600 dark:group-hover:text-orange-400 transition-colors">
+                  {contractLabel(c)}
+                </span>
+                <StatusPill name={c.status_name} colorHex={c.status_color} />
+                <span className="text-sm font-mono text-gray-600 dark:text-slate-300">
+                  Balance {fmtMoney(c.current_balance)}
+                </span>
+                <PastDueChip status={c.past_due_status} />
+                <svg className="w-4 h-4 ml-auto text-gray-300 dark:text-slate-600 group-hover:text-orange-500 dark:group-hover:text-orange-400 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Two-column body: main content (left) + activity feed (right).
           Collapses to single column below lg (1024px). */}
