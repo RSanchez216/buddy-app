@@ -86,7 +86,7 @@ const FILTERS = [
   { id: 'all',              label: 'All' },
   { id: 'active',           label: 'Active' },
   { id: 'behind',           label: 'Behind' },
-  { id: 'needs_recording',  label: 'Needs recording' },
+  { id: 'under_review',     label: 'Under review' },
   { id: 'fully_paid',       label: 'Fully paid' },
   { id: 'title_pending',    label: 'Title pending', tone: 'amber' },
   { id: 'cancelled',        label: 'Cancelled' },
@@ -198,9 +198,12 @@ export default function DriverPurchasesPage() {
     // v_dp_unit_activity is one small row per contract keyed by dp_id — pull
     // it alongside the summary and merge so the idle cell can follow whoever
     // actually drives the unit now (not just the purchaser).
-    const [sumRes, actRes] = await Promise.all([
+    // under_review lives on driver_purchases (not the summary view), so pull
+    // the one boolean per contract and merge it by id (= summary row id).
+    const [sumRes, actRes, urRes] = await Promise.all([
       supabase.from('v_driver_purchase_summary').select('*').order('driver_name'),
       supabase.from('v_dp_unit_activity').select('*'),
+      supabase.from('driver_purchases').select('id, under_review'),
     ])
     if (sumRes.error) {
       console.error('Driver purchases load error:', sumRes.error)
@@ -209,10 +212,13 @@ export default function DriverPurchasesPage() {
       return
     }
     if (actRes.error) console.error('Unit activity load error:', actRes.error)
+    if (urRes.error) console.error('Under-review flags load error:', urRes.error)
     const actById = new Map((actRes.data || []).map(a => [a.dp_id, a]))
+    const reviewById = new Map((urRes.data || []).map(u => [u.id, u.under_review === true]))
     setRows((sumRes.data || []).map(r => {
       const act = actById.get(r.id)
-      return act ? { ...r, ...act } : r
+      const base = act ? { ...r, ...act } : r
+      return { ...base, under_review: reviewById.get(r.id) === true }
     }))
     setLoading(false)
   }
@@ -379,6 +385,25 @@ export default function DriverPurchasesPage() {
     load()
   }
 
+  // Toggle a contract's shared "under review" flag via the manager-gated RPC.
+  // Optimistic: flip the row (and the tab count) immediately, reconcile to the
+  // value the RPC returns, and roll back + toast if it errors/rejects.
+  async function handleToggleReview(row) {
+    if (!row) return
+    const nextFlag = !row.under_review
+    setRows(prev => prev.map(r => r.id === row.id ? { ...r, under_review: nextFlag } : r))
+    const { data, error } = await supabase.rpc('set_dp_under_review', { p_dp_id: row.id, p_flag: nextFlag })
+    if (error) {
+      setRows(prev => prev.map(r => r.id === row.id ? { ...r, under_review: !nextFlag } : r))
+      toast.error(nextFlag ? "Couldn't flag for review" : "Couldn't remove review flag", error)
+      return
+    }
+    // RPC returns the new value — reconcile in case it differs from our guess.
+    if (typeof data === 'boolean') {
+      setRows(prev => prev.map(r => r.id === row.id ? { ...r, under_review: data } : r))
+    }
+  }
+
   // Counts per filter chip — computed off the unfiltered set
   const counts = useMemo(() => {
     const active     = rows.filter(r => r.is_active_state).length
@@ -390,13 +415,11 @@ export default function DriverPurchasesPage() {
     ).length
     const behind = rows.filter(r => r.is_behind).length
     const titlePending = rows.filter(r => r.title_release_pending).length
-    // "Needs recording" = at least one unpaid past period within the
-    // tracking window. The view's next_record_target_id resolves the
-    // earliest such row per contract; non-null here means there's
-    // work to do on this contract.
-    const needsRecording = rows.filter(r => r.next_record_target_id).length
+    // Live count of contracts flagged for review — updates as rows are
+    // flagged/unflagged (rows carries the optimistic under_review value).
+    const underReview = rows.filter(r => r.under_review).length
     return {
-      all: rows.length, active, behind, needs_recording: needsRecording,
+      all: rows.length, active, behind, under_review: underReview,
       fully_paid: fullyPaid, title_pending: titlePending, cancelled,
     }
   }, [rows])
@@ -411,7 +434,7 @@ export default function DriverPurchasesPage() {
       r.status_name === 'Owner Left'
     )
     else if (filter === 'behind') list = list.filter(r => r.is_behind)
-    else if (filter === 'needs_recording') list = list.filter(r => r.next_record_target_id)
+    else if (filter === 'under_review') list = list.filter(r => r.under_review)
     else if (filter === 'title_pending') list = list.filter(r => r.title_release_pending)
 
     const q = search.trim().toLowerCase()
@@ -584,6 +607,8 @@ export default function DriverPurchasesPage() {
             canEdit={canEdit}
             inlineBusy={inlineBusy}
             onInlineReconcile={handleInlineReconcile}
+            onToggleReview={handleToggleReview}
+            emptyMessage={filter === 'under_review' ? 'No contracts flagged for review yet.' : undefined}
           />
         </>
       )}
