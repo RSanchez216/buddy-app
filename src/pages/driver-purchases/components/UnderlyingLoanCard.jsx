@@ -8,10 +8,22 @@ import { fmtMoney } from '../utils/format'
 export default function UnderlyingLoanCard({ summary }) {
   if (!summary?.underlying_loan_id) return null
 
+  // Once the contract is paid off the bank-vs-driver comparison is stale and
+  // misleading (the summary can still carry an old bank balance + a false
+  // Underwater flag), so drop the whole note. We only have the dp status here
+  // — not the underlying loan's own status — but "Fully Paid" covers it. If we
+  // ever need to also key off the loan being paid_off, expose
+  // underlying_loan_status on v_driver_purchase_summary.
+  const dpFullyPaid = summary.status_name === 'Fully Paid'
+    || (summary.is_terminal === true && !!summary.fully_paid_date)
+  if (dpFullyPaid) return null
+
   const driverBal = Number(summary.current_balance || 0)
   const bankBal   = Number(summary.underlying_loan_balance || 0)
   const gap       = Number(summary.coverage_gap || 0)   // bank - driver
-  const underwater = !!summary.is_underwater
+  // A driver who owes nothing can't be "underwater" — the driver-vs-bank gap
+  // is moot — so never flag it at $0 driver balance, even outside fully-paid.
+  const underwater = !!summary.is_underwater && driverBal > 0
 
   const gapPhrase = underwater
     ? `gap ${fmtMoney(Math.abs(gap))}`
