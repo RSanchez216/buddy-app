@@ -55,10 +55,17 @@ function compareByKey(a, b, key, dir) {
     return (Number(a[key] || 0) - Number(b[key] || 0)) * flip
   }
   if (key === 'owner_days_idle') {
-    // Running/active owners count as 0 (least idle); no-completed-loads (null)
-    // sort last regardless of direction. Descending surfaces the most-idle.
-    const av = a.owner_running ? 0 : (a.owner_days_idle == null ? null : Number(a.owner_days_idle))
-    const bv = b.owner_running ? 0 : (b.owner_days_idle == null ? null : Number(b.owner_days_idle))
+    // Idle now follows the unit's effective driver (current driver if the unit
+    // is used by someone other than the owner, else the owner). Falls back to
+    // the owner_* fields when no unit-activity row merged. Running counts as 0
+    // (least idle); no-completed-loads (null) sort last regardless of dir.
+    const eff = (r) => {
+      const running = r.effective_running ?? r.owner_running
+      const idle = r.effective_days_idle ?? r.owner_days_idle
+      return running ? 0 : (idle == null ? null : Number(idle))
+    }
+    const av = eff(a)
+    const bv = eff(b)
     if (av == null && bv == null) return 0
     if (av == null) return 1   // NULLS LAST
     if (bv == null) return -1
@@ -188,16 +195,25 @@ export default function DriverPurchasesPage() {
 
   async function load() {
     setLoading(true)
-    const { data, error } = await supabase
-      .from('v_driver_purchase_summary')
-      .select('*')
-      .order('driver_name')
-    if (error) {
-      console.error('Driver purchases load error:', error)
+    // v_dp_unit_activity is one small row per contract keyed by dp_id — pull
+    // it alongside the summary and merge so the idle cell can follow whoever
+    // actually drives the unit now (not just the purchaser).
+    const [sumRes, actRes] = await Promise.all([
+      supabase.from('v_driver_purchase_summary').select('*').order('driver_name'),
+      supabase.from('v_dp_unit_activity').select('*'),
+    ])
+    if (sumRes.error) {
+      console.error('Driver purchases load error:', sumRes.error)
       setRows([])
-    } else {
-      setRows(data || [])
+      setLoading(false)
+      return
     }
+    if (actRes.error) console.error('Unit activity load error:', actRes.error)
+    const actById = new Map((actRes.data || []).map(a => [a.dp_id, a]))
+    setRows((sumRes.data || []).map(r => {
+      const act = actById.get(r.id)
+      return act ? { ...r, ...act } : r
+    }))
     setLoading(false)
   }
 

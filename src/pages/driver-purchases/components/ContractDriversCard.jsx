@@ -77,7 +77,14 @@ function computeGaps(rows, purchaseDate) {
 // contract's truck (with drove-dates) and any manually-added associations.
 // Fed by get_contract_drivers(); manual rows are add/removable. This is the
 // set a future TMS-adjustments importer will match deductions against.
-export default function ContractDriversCard({ purchaseId, canEdit, purchaseDate }) {
+// Title-cased equipment noun for the "{noun} unused" gap line. Trailer
+// contracts read "Trailer unused"; everything else defaults to "Truck"
+// (preserves the prior copy for units with no/unknown type).
+function equipmentNoun(kind) {
+  return String(kind || '').toLowerCase() === 'trailer' ? 'Trailer' : 'Truck'
+}
+
+export default function ContractDriversCard({ purchaseId, canEdit, purchaseDate, equipmentKind }) {
   const { user } = useAuth()
   const toast = useToast()
   const [rows, setRows] = useState([])
@@ -166,7 +173,7 @@ export default function ContractDriversCard({ purchaseId, canEdit, purchaseDate 
         <ul className="space-y-2.5">
           {purchaser && <DriverRow key={purchaser.driver_id} row={purchaser} canEdit={canEdit} busy={busy} onRemove={removeManual} />}
           {timeline.map(entry => entry.type === 'gap'
-            ? <GapRow key={`gap-${entry.gap.start}`} gap={entry.gap} />
+            ? <GapRow key={`gap-${entry.gap.start}`} gap={entry.gap} equipmentKind={equipmentKind} />
             : <DriverRow key={entry.row.driver_id} row={entry.row} canEdit={canEdit} busy={busy} onRemove={removeManual} />
           )}
         </ul>
@@ -223,9 +230,9 @@ function DriverRow({ row, canEdit, busy, onRemove }) {
   )
 }
 
-// A "truck unused" coverage gap — muted, dashed, no avatar, so it reads as
-// context (nobody drove the unit) rather than a person on the contract.
-function GapRow({ gap }) {
+// A "{equipment} unused" coverage gap — muted, dashed, no avatar, so it reads
+// as context (nobody drove the unit) rather than a person on the contract.
+function GapRow({ gap, equipmentKind }) {
   return (
     <li className="flex items-center gap-3">
       <div className="w-8 h-8 rounded-full shrink-0 flex items-center justify-center border border-dashed border-gray-300 dark:border-slate-600/60 text-gray-400 dark:text-slate-500">
@@ -235,7 +242,7 @@ function GapRow({ gap }) {
         </svg>
       </div>
       <div className="min-w-0 text-xs text-gray-500 dark:text-slate-400">
-        <span className="font-medium">Truck unused</span>
+        <span className="font-medium">{equipmentNoun(equipmentKind)} unused</span>
         <span className="text-gray-400 dark:text-slate-500"> · {fmtGapRange(gap.start, gap.end)} · {gap.days} days</span>
       </div>
     </li>

@@ -47,6 +47,17 @@ function numberWord(n) { return NUMBER_WORDS[n] || String(n) }
 
 const contractLabel = c => `${titleCase(c.equipment_type || 'Truck')} #${c.truck_number}`
 
+// Fleet detail route for the contract's unit, so the unit number links
+// straight to its profile. Only when the unit is in fleet inventory
+// (resolved_equipment_unit_id non-null — retired/total-loss units have none).
+function equipmentHref(kind, unitId) {
+  if (!unitId) return null
+  const t = String(kind || '').toLowerCase()
+  if (t === 'trailer') return `/fleet/trailers/${unitId}`
+  if (t === 'truck') return `/fleet/trucks/${unitId}`
+  return null
+}
+
 export default function DriverPurchaseDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -65,6 +76,7 @@ export default function DriverPurchaseDetail() {
   const [purchase, setPurchase] = useState(null)      // raw driver_purchases row (for edit form)
   const [driver, setDriver] = useState(null)
   const [equipment, setEquipment] = useState(null)
+  const [unitActivity, setUnitActivity] = useState(null)  // v_dp_unit_activity row (resolved unit + who drives it)
   const [loading, setLoading] = useState(true)
   // ActivityFeed has its own Realtime subscription, so we don't need a
   // refresh-key bump on save. Modals just trigger load() to re-pull the
@@ -88,11 +100,13 @@ export default function DriverPurchaseDetail() {
   // history and its modals) stay mounted instead of unmounting/remounting.
   const load = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setLoading(true)
-    const [sumRes, pRes] = await Promise.all([
+    const [sumRes, pRes, actRes] = await Promise.all([
       supabase.from('v_driver_purchase_summary').select('*').eq('id', id).maybeSingle(),
       supabase.from('driver_purchases').select('*').eq('id', id).maybeSingle(),
+      supabase.from('v_dp_unit_activity').select('*').eq('dp_id', id).maybeSingle(),
     ])
     if (!sumRes.data || !pRes.data) { setLoading(false); return }
+    setUnitActivity(actRes.data || null)
 
     const purchaseRow = pRes.data
     const driverPromise = supabase.from('drivers').select('*').eq('id', purchaseRow.driver_id).maybeSingle()
@@ -443,7 +457,12 @@ export default function DriverPurchaseDetail() {
           </div>
 
           {/* Drivers on this contract — purchaser + assigned + manual */}
-          <ContractDriversCard purchaseId={id} canEdit={canEdit} purchaseDate={summary.purchase_date} />
+          <ContractDriversCard
+            purchaseId={id}
+            canEdit={canEdit}
+            purchaseDate={summary.purchase_date}
+            equipmentKind={unitActivity?.resolved_equipment_kind || summary.equipment_type}
+          />
 
           {/* Contract terms */}
           <div className={`${S.card} p-5 space-y-4`}>
@@ -451,7 +470,20 @@ export default function DriverPurchaseDetail() {
             <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
               <Fact label="Entity" value={summary.entity_name} />
               <Fact label="Sale price" value={fmtMoney(summary.sale_price)} mono />
-              <Fact label="Unit number" value={summary.truck_number} mono />
+              <Fact
+                label="Unit number"
+                value={(() => {
+                  if (!summary.truck_number) return null
+                  const href = equipmentHref(
+                    unitActivity?.resolved_equipment_kind || summary.equipment_type,
+                    unitActivity?.resolved_equipment_unit_id,
+                  )
+                  return href
+                    ? <Link to={href} className="text-cyan-600 dark:text-cyan-400 hover:underline">{summary.truck_number}</Link>
+                    : summary.truck_number
+                })()}
+                mono
+              />
               <Fact label="Downpayment" value={fmtMoney(summary.downpayment)} mono />
               <Fact label="VIN" value={summary.vin} mono />
               <Fact label="Current balance" value={fmtMoney(summary.current_balance)} mono />

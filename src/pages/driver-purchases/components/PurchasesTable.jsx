@@ -62,24 +62,51 @@ function ownerIdleToneClass(days) {
   return 'text-amber-600 dark:text-amber-400'
 }
 
-// Owner (purchaser) work status — running = the good state ("On road"); else
-// days since last delivery with escalating emphasis; null = no completed loads.
-function OwnerIdleCell({ running, daysIdle }) {
+// Unit work status — reflects whoever actually drives the unit now (the
+// current driver if it's used by someone other than the owner, else the
+// owner). effective_running = the good state ("On road"); else days since the
+// last delivery with escalating emphasis; null = no completed loads. Falls
+// back to the owner_* fields when no unit-activity row merged. When the unit
+// is used by a non-owner, a "used by {name}" line makes that explicit and the
+// owner's own idle moves to the tooltip.
+function IdleCell({ row }) {
+  const running = row.effective_running ?? row.owner_running
+  const daysIdle = row.effective_days_idle ?? row.owner_days_idle
+  const usedByOther = row.used_by_other_driver === true
+  const ownerTip = row.owner_days_idle == null
+    ? 'Owner has no completed loads'
+    : `Owner idle ${Number(row.owner_days_idle)}d`
+
+  let main
   if (running) {
-    return (
-      <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400" title="Owner currently has a load in transit">
+    main = (
+      <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400" title={usedByOther ? ownerTip : 'Unit currently has a load in transit'}>
         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> On road
       </span>
     )
+  } else if (daysIdle == null) {
+    main = <span className="text-xs text-gray-400 dark:text-slate-600" title="No completed loads on this unit">—</span>
+  } else {
+    const d = Number(daysIdle)
+    main = (
+      <span className={`text-xs ${ownerIdleToneClass(d)}`} title={usedByOther ? ownerTip : "Days since the unit's last delivery"}>
+        {d} {d === 1 ? 'day' : 'days'}
+      </span>
+    )
   }
-  if (daysIdle == null) {
-    return <span className="text-xs text-gray-400 dark:text-slate-600" title="Owner has no completed loads">—</span>
-  }
-  const d = Number(daysIdle)
+
   return (
-    <span className={`text-xs ${ownerIdleToneClass(d)}`} title="Days since the owner's last delivery">
-      {d} {d === 1 ? 'day' : 'days'}
-    </span>
+    <div className="flex flex-col gap-0.5 items-start">
+      {main}
+      {usedByOther && row.current_driver_name && (
+        <span
+          className="text-[10px] text-gray-500 dark:text-slate-400 whitespace-nowrap"
+          title={`Unit currently driven by ${row.current_driver_name}, not the owner`}
+        >
+          used by {row.current_driver_name}
+        </span>
+      )}
+    </div>
   )
 }
 
@@ -169,7 +196,7 @@ export default function PurchasesTable({
               <SortableTh label="Payment"        columnKey="payment_amount"     sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
               <SortableTh label="Balance"        columnKey="current_balance"    sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
               <SortableTh label="Behind"         columnKey="periods_behind"     sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
-              <SortableTh label="Owner idle"     columnKey="owner_days_idle"    sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+              <SortableTh label="Idle"           columnKey="owner_days_idle"    sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
               <th className={S.th} aria-label="Quick action" />
               <SortableTh label="Last charged"   columnKey="last_charged_date"  sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
               <SortableTh label="Last update"    columnKey="last_update_at"     sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
@@ -198,7 +225,7 @@ export default function PurchasesTable({
             <SortableTh label="Payment"        columnKey="payment_amount"     sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
             <SortableTh label="Balance"        columnKey="current_balance"    sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
             <SortableTh label="Behind"         columnKey="periods_behind"     sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
-            <SortableTh label="Owner idle"     columnKey="owner_days_idle"    sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+            <SortableTh label="Idle"           columnKey="owner_days_idle"    sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
             <th className={S.th} aria-label="Quick action" />
             <SortableTh label="Last charged"   columnKey="last_charged_date"  sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
             <SortableTh label="Last update"    columnKey="last_update_at"     sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
@@ -280,7 +307,7 @@ export default function PurchasesTable({
                 })()}
               </td>
               <td className={`${S.td} whitespace-nowrap`}>
-                <OwnerIdleCell running={r.owner_running} daysIdle={r.owner_days_idle} />
+                <IdleCell row={r} />
               </td>
               <td className={S.td} onClick={e => e.stopPropagation()}>
                 <QuickActionCell
