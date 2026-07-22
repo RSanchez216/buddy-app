@@ -50,6 +50,36 @@ export function isCurrentPeriod(grain, anchorISO) {
   return anchorForRpc(grain, anchorISO) >= anchorForRpc(grain, todayISO())
 }
 
+// Half-open bounds of the grain's window + the list of month-starts inside it
+// (1 for month, 3/6/12 for quarter/half/year). Used to roll monthly reviews up
+// across a multi-month period and to render one pip per constituent month.
+export function periodBounds(grain, anchorISO) {
+  const start = anchorForRpc(grain, anchorISO)
+  const end = stepAnchor(grain, start, 1) // first day of the next window
+  const months = []
+  let cur = start
+  while (cur < end) { months.push(cur); cur = stepAnchor('month', cur, 1) }
+  return { start, end, months }
+}
+
+// Short month label from a 'YYYY-MM-01' period_month (e.g. "May").
+export function monthShort(iso) {
+  const { m } = parts(iso)
+  return MON[m - 1] || ''
+}
+
+// Compact period label for PDF header/filename: "May 2026" · "Q2 2026" ·
+// "H1 2026" · "2026" (the on-screen stepper keeps the month-span label).
+export function periodLabelShort(grain, anchorISO) {
+  const { y, m } = parts(anchorISO)
+  const sm = startMonth(grain, m)
+  if (grain === 'year') return `${y}`
+  if (grain === 'month') return `${MON[sm - 1]} ${y}`
+  if (grain === 'quarter') return `Q${Math.floor((sm - 1) / 3) + 1} ${y}`
+  if (grain === 'half') return `H${sm <= 6 ? 1 : 2} ${y}`
+  return periodLabel(grain, anchorISO)
+}
+
 // ── formatting ───────────────────────────────────────────────────────────────
 export function money(n) {
   if (n == null) return '—'
@@ -116,6 +146,17 @@ export async function fetchReviews(monthStart) {
     supabase.from('dispatcher_reviews')
       .select('desk_key, reviewed, note, reviewed_by, reviewed_at')
       .eq('period_month', monthStart)
+      .abortSignal(signal))
+  if (error) throw error
+  return data || []
+}
+// All monthly reviews within a half-open [start, end) period — for the
+// multi-month roll-up on the Quarter/Half/Year views.
+export async function fetchReviewsRange(start, end) {
+  const { data, error } = await withTimeout(signal =>
+    supabase.from('dispatcher_reviews')
+      .select('desk_key, period_month, reviewed, note')
+      .gte('period_month', start).lt('period_month', end)
       .abortSignal(signal))
   if (error) throw error
   return data || []
