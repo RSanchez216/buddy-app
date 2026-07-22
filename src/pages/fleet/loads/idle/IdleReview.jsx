@@ -1360,10 +1360,8 @@ function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onR
           </span>
           <FinanceBadge row={row} />
           <LastLoadLine row={row} />
-          <div className="mt-1 flex items-start gap-1.5 flex-wrap">
-            {verifyControl}
-            {farInfo && !atYard && <FarFromYardChip info={farInfo} />}
-          </div>
+          {farInfo && !atYard && <FarFromYardChip info={farInfo} />}
+          <div className="mt-1">{verifyControl}</div>
         </td>
         <td className={`${S.td} text-right font-mono align-top ${daysCls}`}>{fmtDays(row.days_idle)}</td>
         <td className={`${S.td} text-gray-600 dark:text-slate-400 text-xs align-top`}>
