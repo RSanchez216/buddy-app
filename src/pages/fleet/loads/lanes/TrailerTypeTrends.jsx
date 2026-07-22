@@ -50,6 +50,26 @@ const formatPeriodLabel = (dateStr, granularity) => {
   }
 }
 
+// Shared value cell for the trend + compare tables. In Per-driver mode it
+// prints the driver count as muted subtext (sample-size transparency) and
+// mutes the value for thin samples (< 3 drivers) — but never hides it, so
+// required buckets like Amazon (often 1 driver) always show.
+function MetricValueCell({ value, drivers, showDrivers, fmt }) {
+  const lowSample = showDrivers && drivers > 0 && drivers < 3
+  return (
+    <>
+      <span className={`font-mono ${lowSample ? 'text-gray-400 dark:text-slate-500' : 'text-gray-900 dark:text-slate-200'}`}>
+        {value != null ? fmt(value) : <span className="text-gray-400 dark:text-slate-500">—</span>}
+      </span>
+      {showDrivers && value != null && (
+        <span className="block text-[10px] text-gray-400 dark:text-slate-500 font-normal">
+          {fmtNum(drivers)} {drivers === 1 ? 'driver' : 'drivers'}
+        </span>
+      )}
+    </>
+  )
+}
+
 export default function TrailerTypeTrends() {
   const panelRef = useRef(null)
   // Subscribe to the theme so a light↔dark toggle re-renders the chart — the
@@ -128,6 +148,19 @@ export default function TrailerTypeTrends() {
 
   const metricKey = metric === 'rpm' ? 'rpm' : 'gross'
   const fmt = metric === 'rpm' ? fmtRpm : fmtMoney
+  const isPerDriver = metric === 'per_driver'
+
+  // Metric value for a row. Per-driver = gross ÷ distinct drivers (computed
+  // here, not a DB column); null when the period has no drivers so callers
+  // render an em dash. rpm/gross read straight off the row.
+  const getVal = (row) => {
+    if (!row) return null
+    if (isPerDriver) {
+      const d = Number(row.drivers || 0)
+      return d > 0 ? Number(row.gross || 0) / d : null
+    }
+    return row[metricKey]
+  }
 
   // Trend mode: show last 3 periods + avg + delta
   const renderTrendTable = () => {
@@ -176,8 +209,8 @@ export default function TrailerTypeTrends() {
               })
               const last = vals[vals.length - 1]
               const prev = vals[vals.length - 2]
-              const lastVal = last ? last[metricKey] : null
-              const prevVal = prev ? prev[metricKey] : null
+              const lastVal = getVal(last)
+              const prevVal = getVal(prev)
 
               // Delta suppression: only show if both periods have legs >= 10
               const lastLegs = last ? last.legs : 0
@@ -195,11 +228,19 @@ export default function TrailerTypeTrends() {
               const last6Rows = periods.slice(-6).map(p => dataMap.get(`${p}|${type}`)).filter(r => r && r.legs > 0)
               let avg6 = null
               if (last6Rows.length > 0) {
-                if (metricKey === 'rpm') {
+                if (metric === 'rpm') {
                   // Loaded-mile weighted RPM: sum(linehaul) / sum(loaded_miles)
                   const totalLinehaul = last6Rows.reduce((sum, r) => sum + (r.linehaul || 0), 0)
                   const totalLoadedMiles = last6Rows.reduce((sum, r) => sum + (r.loaded_miles || 0), 0)
                   avg6 = totalLoadedMiles > 0 ? totalLinehaul / totalLoadedMiles : null
+                } else if (isPerDriver) {
+                  // Mean of the per-period per-driver averages across the window.
+                  const perDriverVals = last6Rows
+                    .map(r => { const d = Number(r.drivers || 0); return d > 0 ? Number(r.gross || 0) / d : null })
+                    .filter(v => v != null)
+                  avg6 = perDriverVals.length > 0
+                    ? perDriverVals.reduce((s, v) => s + v, 0) / perDriverVals.length
+                    : null
                 } else {
                   // Gross: simple average over populated periods
                   const sum = last6Rows.reduce((total, r) => total + (r.gross || 0), 0)
@@ -218,9 +259,12 @@ export default function TrailerTypeTrends() {
                   </td>
                   {vals.map((row, i) => (
                     <td key={i} className={S.td}>
-                      <span className="font-mono text-gray-900 dark:text-slate-200">
-                        {row && row[metricKey] != null ? fmt(row[metricKey]) : '—'}
-                      </span>
+                      <MetricValueCell
+                        value={getVal(row)}
+                        drivers={row ? Number(row.drivers || 0) : 0}
+                        showDrivers={isPerDriver}
+                        fmt={fmt}
+                      />
                     </td>
                   ))}
                   <td className={S.td}>
@@ -274,8 +318,8 @@ export default function TrailerTypeTrends() {
             {trilerTypes.map(type => {
               const rowA = dataMap.get(`${periodA}|${type}`)
               const rowB = dataMap.get(`${periodB}|${type}`)
-              const valA = rowA ? rowA[metricKey] : null
-              const valB = rowB ? rowB[metricKey] : null
+              const valA = getVal(rowA)
+              const valB = getVal(rowB)
               const legsA = rowA ? rowA.legs : 0
               const legsB = rowB ? rowB.legs : 0
 
@@ -293,14 +337,10 @@ export default function TrailerTypeTrends() {
                     )}
                   </td>
                   <td className={S.td}>
-                    <span className="font-mono text-gray-900 dark:text-slate-200">
-                      {valA != null ? fmt(valA) : <span className="text-gray-400 dark:text-slate-500">—</span>}
-                    </span>
+                    <MetricValueCell value={valA} drivers={rowA ? Number(rowA.drivers || 0) : 0} showDrivers={isPerDriver} fmt={fmt} />
                   </td>
                   <td className={S.td}>
-                    <span className="font-mono text-gray-900 dark:text-slate-200">
-                      {valB != null ? fmt(valB) : <span className="text-gray-400 dark:text-slate-500">—</span>}
-                    </span>
+                    <MetricValueCell value={valB} drivers={rowB ? Number(rowB.drivers || 0) : 0} showDrivers={isPerDriver} fmt={fmt} />
                   </td>
                   <td className={S.td}>
                     {delta != null ? (
@@ -335,7 +375,7 @@ export default function TrailerTypeTrends() {
       const lastPeriod = periods[periods.length - 1]
       const rows = trilerTypes.map(type => {
         const row = dataMap.get(`${lastPeriod}|${type}`)
-        return { type, val: row ? row[metricKey] : null, legs: row ? row.legs : 0 }
+        return { type, val: getVal(row), legs: row ? row.legs : 0 }
       })
       // Callout eligibility: never crown Unassigned, and require CALLOUT_MIN_LEGS
       // so a 1-load outlier can't headline (Amazon competes normally). The chart
@@ -351,7 +391,7 @@ export default function TrailerTypeTrends() {
           <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-orange-50 dark:bg-orange-500/10 border border-orange-200 dark:border-orange-500/20">
             <span className="text-2xl">↑</span>
             <div className="text-xs">
-              <p className="text-orange-700 dark:text-orange-400 font-medium">{metric === 'rpm' ? 'Highest $/mi' : 'Highest Gross'}</p>
+              <p className="text-orange-700 dark:text-orange-400 font-medium">{metric === 'rpm' ? 'Highest $/mi' : isPerDriver ? 'Highest avg/driver' : 'Highest Gross'}</p>
               <p className="text-orange-900 dark:text-orange-300 font-bold">{highest.type} · {fmt(highest.val)}</p>
             </div>
           </div>
@@ -412,7 +452,7 @@ export default function TrailerTypeTrends() {
       const row = { period: formatPeriodLabel(period, granularity) }
       trilerTypes.forEach(type => {
         const dataRow = dataMap.get(`${period}|${type}`)
-        row[type] = dataRow && dataRow.legs > 0 ? dataRow[metricKey] : null
+        row[type] = dataRow && dataRow.legs > 0 ? getVal(dataRow) : null
       })
       return row
     })
@@ -525,8 +565,8 @@ export default function TrailerTypeTrends() {
       const rowB = dataMap.get(`${periodB}|${type}`)
       return {
         type,
-        [labelA]: rowA && rowA.legs > 0 ? rowA[metricKey] : null,
-        [labelB]: rowB && rowB.legs > 0 ? rowB[metricKey] : null,
+        [labelA]: rowA && rowA.legs > 0 ? getVal(rowA) : null,
+        [labelB]: rowB && rowB.legs > 0 ? getVal(rowB) : null,
       }
     })
 
@@ -567,7 +607,7 @@ export default function TrailerTypeTrends() {
   const handleExport = async () => {
     const root = panelRef.current
     if (!root) return
-    const metricLabel = metric === 'rpm' ? '$/mi' : 'Gross'
+    const metricLabel = metric === 'rpm' ? '$/mi' : metric === 'per_driver' ? 'Avg gross/driver' : 'Gross'
     const granularityLabel = granularity === 'week' ? 'Weekly' : granularity === 'month' ? 'Monthly' : 'Quarterly'
     const modeLabel = mode === 'trend' ? 'Trend' : 'Compare'
     try {
@@ -627,7 +667,7 @@ export default function TrailerTypeTrends() {
       <div className="flex items-start justify-between">
         <div>
           <h2 className="text-lg font-bold text-gray-900 dark:text-white">Trailer Type Trends</h2>
-          <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">Period-over-period gross and RPM by equipment type</p>
+          <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">{isPerDriver ? 'Average gross per driver, by equipment type' : 'Period-over-period gross and RPM by equipment type'}</p>
         </div>
         <button
           data-export-button
@@ -668,14 +708,15 @@ export default function TrailerTypeTrends() {
         </div>
 
         <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700 text-xs">
-          {['rpm', 'gross'].map(m => (
+          {['rpm', 'gross', 'per_driver'].map(m => (
             <button key={m} onClick={() => setMetric(m)}
+              title={m === 'per_driver' ? 'Average load revenue per driver' : undefined}
               className={`px-3 py-1.5 font-medium transition-all ${
                 metric === m
                   ? 'bg-orange-500 text-white'
                   : 'text-gray-700 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5'
               }`}>
-              {m === 'rpm' ? '$/mi' : 'Gross'}
+              {m === 'rpm' ? '$/mi' : m === 'gross' ? 'Gross' : 'Per driver'}
             </button>
           ))}
         </div>
