@@ -3,8 +3,13 @@ import { feature } from 'topojson-client'
 import { geoAlbersUsa, geoPath } from 'd3-geo'
 import { interpolateRgbBasis } from 'd3-interpolate'
 import { S } from '../../../../lib/styles'
-import { fmtMoney } from '../spotlight/spotlightShared'
+import { fmtMoney, trailerTypeColor } from '../spotlight/spotlightShared'
 import { fetchLaneGeoRollup } from './laneData'
+
+// Trailer-type filter options — mirrors the Lane Flow Map's pills (same colored
+// dots via trailerTypeColor); single-select on this map. 'Unknown' = legs with
+// a NULL effective trailer type.
+const TRAILER_TYPES = ['Dry Van', 'Flatbed', 'Reefer', 'Step Deck', 'Unknown']
 
 // State-to-region mapping (mirrors the DB's state_region — all 51 codes,
 // 50 states + DC). Used only to draw the choropleth shapes/labels; the tile
@@ -112,6 +117,7 @@ export default function GeoHeatMap({ range, phases }) {
   const [view, setView] = useState('region') // region | state
   const [colorBy, setColorBy] = useState('gross') // loads | gross | avg | rpm
   const [basis, setBasis] = useState('origin') // origin | destination
+  const [trailerType, setTrailerType] = useState(null) // null = all types; single-select
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -122,7 +128,7 @@ export default function GeoHeatMap({ range, phases }) {
   // Note: topology is loaded in SVGMap component
 
   // Fetch data when filters change
-  const dataKey = `${range.from}|${range.to}|${basis}|${[...phases].sort().join(',')}`
+  const dataKey = `${range.from}|${range.to}|${basis}|${[...phases].sort().join(',')}|${trailerType || 'all'}`
   useEffect(() => {
     let stale = false
     setLoading(true)
@@ -136,6 +142,7 @@ export default function GeoHeatMap({ range, phases }) {
           basis,
           grain: view,
           phases: Array.from(phases),
+          trailerType,
         })
 
         if (!stale) {
@@ -167,7 +174,7 @@ export default function GeoHeatMap({ range, phases }) {
     return () => {
       stale = true
     }
-  }, [dataKey, range, basis, view, phases])
+  }, [dataKey, range, basis, view, phases, trailerType])
 
   // Compute color scale
   const colorScale = useMemo(() => {
@@ -272,6 +279,35 @@ export default function GeoHeatMap({ range, phases }) {
             ]}
             title="Geographic basis"
           />
+
+          {/* Trailer-type filter — single-select. Mirrors the Lane Flow Map's
+              colored-dot pills. No selection = all types; clicking the active
+              pill again clears back to all. Drives only this map. */}
+          <div className="flex items-center gap-1 flex-wrap" title="Filter the map to one trailer type">
+            {TRAILER_TYPES.map(t => {
+              const active = trailerType === null || trailerType === t
+              return (
+                <button
+                  key={t}
+                  onClick={() => setTrailerType(cur => cur === t ? null : t)}
+                  title={trailerType === t ? 'Showing this trailer type — click to show all' : 'Filter the map to this trailer type'}
+                  className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full border text-[11px] transition-colors ${active ? 'border-gray-300 dark:border-white/20 text-gray-700 dark:text-slate-200 bg-white dark:bg-white/5' : 'border-gray-200 dark:border-white/10 text-gray-400 dark:text-slate-600 opacity-60'}`}
+                >
+                  <span className="w-2 h-2 rounded-full shrink-0" style={{ background: trailerTypeColor(t), opacity: active ? 1 : 0.4 }} />
+                  {t}
+                </button>
+              )
+            })}
+            {trailerType && (
+              <button
+                onClick={() => setTrailerType(null)}
+                className="text-[11px] text-orange-600 dark:text-orange-400 hover:underline px-1"
+                title="Show all trailer types"
+              >
+                All types
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Caption */}

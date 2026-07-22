@@ -69,18 +69,26 @@ export async function fetchLaneLegs({ from, to, basis = 'delivery' }) {
 // the rate isn't distorted by the zero-mile legs. Date window mirrors the
 // RPC: coalesce(delivery_date, pickup_date) within [from, to]. Returns rows
 // shaped like the RPC's output ({ unit, legs, gross, avg_rev_per_load, rpm }).
-export async function fetchLaneGeoRollup({ from, to, basis = 'origin', grain = 'region', phases = ['in_transit', 'delivered'] }) {
+// trailerType (optional): single trailer-type filter for the region/state map,
+// matching lane_geo_rollup's 6th-arg semantics — a named type filters on
+// effective_trailer_type; 'Unknown' matches legs with a NULL effective type
+// (COALESCE(effective_trailer_type,'Unknown')); null/undefined = all types. We
+// filter here rather than via the RPC so the zero-mile-revenue fix above holds.
+export async function fetchLaneGeoRollup({ from, to, basis = 'origin', grain = 'region', phases = ['in_transit', 'delivered'], trailerType = null }) {
   const unitCol = grain === 'state'
     ? (basis === 'destination' ? 'dest_state' : 'origin_state')
     : (basis === 'destination' ? 'dest_region' : 'origin_region')
 
   const rows = []
   for (let page = 0; ; page++) {
-    const { data, error } = await supabase.from('v_lane_geo')
+    let query = supabase.from('v_lane_geo')
       .select(`${unitCol}, leg_id, leg_revenue, leg_total_miles`)
       .in('load_phase', phases)
       // coalesce(delivery_date, pickup_date) BETWEEN from AND to
       .or(`and(delivery_date.gte.${from},delivery_date.lte.${to}),and(delivery_date.is.null,pickup_date.gte.${from},pickup_date.lte.${to})`)
+    if (trailerType === UNKNOWN_TYPE) query = query.is('effective_trailer_type', null)
+    else if (trailerType) query = query.eq('effective_trailer_type', trailerType)
+    const { data, error } = await query
       .order('leg_id', { ascending: true })
       .range(page * 1000, page * 1000 + 999)
     if (error) throw error
