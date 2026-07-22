@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { S } from '../../../../lib/styles'
-import { fetchDeskDrivers, deskRead, readChips, money, perDriver, rpm, int } from './dispatcherData'
+import { fetchDeskDrivers, deskRead, readChips, deskKeyOf, money, perDriver, rpm, int } from './dispatcherData'
 
 // Slide-in drawer for one desk. Roster data (dispatcher_desk_drivers) is
 // fetched on open so the leaderboard never waits on it. Left border + pill +
@@ -19,7 +19,7 @@ function fmtLeft(iso) {
   return `${MON[m - 1]} ${d}`
 }
 
-export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgress = false, onClose }) {
+export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgress = false, monthly = false, review, reviewerName, canEdit = false, monthLabel, onSaveReview, onClose }) {
   const [rows, setRows] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -94,6 +94,18 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgre
             </div>
           </div>
 
+          {/* Monthly review — same record the leaderboard checkmark/notes read. */}
+          {monthly && (
+            <MonthlyReviewPanel
+              deskKey={deskKeyOf(desk)}
+              review={review}
+              reviewerName={reviewerName}
+              canEdit={canEdit}
+              monthLabel={monthLabel}
+              onSave={onSaveReview}
+            />
+          )}
+
           {error && <div className={S.errorBox}>{error}</div>}
           {loading && <div className="flex items-center justify-center h-24"><div className="animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500" /></div>}
 
@@ -167,6 +179,71 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgre
       </div>
     </div>,
     document.body
+  )
+}
+
+// Human date for the "Reviewed · … · {date}" line (America/Chicago).
+function fmtReviewedAt(ts) {
+  if (!ts) return ''
+  try {
+    return new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(ts))
+  } catch { return '' }
+}
+
+// Monthly review sign-off for this desk. Toggle + note write through onSave to
+// the same dispatcher_reviews record the leaderboard reads, so a change here is
+// reflected in the table (and vice-versa). Note saves on blur and on toggle.
+function MonthlyReviewPanel({ deskKey, review, reviewerName, canEdit, monthLabel, onSave }) {
+  const reviewed = !!review?.reviewed
+  const [note, setNote] = useState(review?.note || '')
+  const [saved, setSaved] = useState(false)
+  // Re-sync when the underlying record changes (e.g. reconcile after save, or
+  // switching desks reuses this mounted panel).
+  useEffect(() => { setNote(review?.note || '') }, [review?.note, deskKey])
+  const flash = () => { setSaved(true); setTimeout(() => setSaved(false), 1500) }
+
+  async function toggle() {
+    if (!canEdit) return
+    if (await onSave(deskKey, { reviewed: !reviewed, note })) flash()
+  }
+  async function saveNote() {
+    if (!canEdit) return
+    const trimmed = note.trim()
+    if ((review?.note || '') === trimmed) return // no-op — don't rewrite
+    if (await onSave(deskKey, { note: trimmed })) flash()
+  }
+
+  return (
+    <div className={`${S.card} p-4 space-y-3`}>
+      <div className="flex items-center justify-between gap-2">
+        <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400">Monthly review · {monthLabel}</h4>
+        {saved && <span className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">Saved</span>}
+      </div>
+      <button
+        onClick={toggle}
+        disabled={!canEdit}
+        className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-medium transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${reviewed ? 'bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/30 text-emerald-700 dark:text-emerald-400' : 'border-gray-300 dark:border-slate-600 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5'}`}
+      >
+        <span className={`w-4 h-4 rounded-full border inline-flex items-center justify-center ${reviewed ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-gray-400 dark:border-slate-500 text-transparent'}`}>
+          <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+        </span>
+        {reviewed ? 'Reviewed' : 'Mark as reviewed'}
+      </button>
+      {reviewed && (
+        <p className="text-[11px] text-gray-500 dark:text-slate-400">
+          Reviewed{reviewerName ? ` · by ${reviewerName}` : ''}{review?.reviewed_at ? ` · ${fmtReviewedAt(review.reviewed_at)}` : ''}
+        </p>
+      )}
+      <textarea
+        value={note}
+        onChange={e => setNote(e.target.value)}
+        onBlur={saveNote}
+        disabled={!canEdit}
+        rows={3}
+        placeholder="Add a note on this desk's performance / flags…"
+        className="w-full text-sm rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 px-2.5 py-2 text-gray-700 dark:text-slate-200 placeholder-gray-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-orange-500/40 resize-y disabled:opacity-60"
+      />
+    </div>
   )
 }
 

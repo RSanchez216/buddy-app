@@ -104,6 +104,40 @@ export async function fetchAmazonBookers(grain, anchorISO) {
   return data || []
 }
 
+// ── monthly review sign-off (dispatcher_reviews) ─────────────────────────────
+// desk_key convention: desk_id::text for normal desks, the literal 'amazon' for
+// the Amazon Team row (its desk_id is null). Used both to key the RPC and to
+// merge review rows back onto the scorecard desks.
+export function deskKeyOf(desk) {
+  return desk?.is_amazon_team ? 'amazon' : String(desk?.desk_id)
+}
+export async function fetchReviews(monthStart) {
+  const { data, error } = await withTimeout(signal =>
+    supabase.from('dispatcher_reviews')
+      .select('desk_key, reviewed, note, reviewed_by, reviewed_at')
+      .eq('period_month', monthStart)
+      .abortSignal(signal))
+  if (error) throw error
+  return data || []
+}
+export async function setDispatcherReview(deskKey, monthStart, reviewed, note) {
+  const { data, error } = await withTimeout(signal =>
+    supabase.rpc('set_dispatcher_review', {
+      p_desk_key: deskKey, p_period_month: monthStart, p_reviewed: reviewed, p_note: note ?? null,
+    }).abortSignal(signal))
+  if (error) throw error
+  return data
+}
+// Resolve reviewer display names for the "Reviewed · by {name}" line.
+export async function fetchUserNames(ids) {
+  const unique = [...new Set((ids || []).filter(Boolean))]
+  if (!unique.length) return {}
+  const { data } = await supabase.from('users').select('id, full_name, email').in('id', unique)
+  const m = {}
+  ;(data || []).forEach(u => { m[u.id] = u.full_name || u.email || 'A manager' })
+  return m
+}
+
 // ── reference floors (from non-Amazon rows) ──────────────────────────────────
 export const churnRate = (d) => (d.turnover || 0) / Math.max(d.drivers_period || 0, 1)
 

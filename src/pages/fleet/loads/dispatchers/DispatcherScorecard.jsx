@@ -1,10 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { S } from '../../../../lib/styles'
+import { useAuth } from '../../../../contexts/AuthContext'
+import { useToast } from '../../../../contexts/ToastContext'
 import DeskDrawer from './DeskDrawer'
 import {
   fetchScorecard, fetchAmazonBookers, computeFloors, deskRead, surfaceFocus, bookerTier,
   periodLabel, stepAnchor, isCurrentPeriod, anchorForRpc, todayISO,
+  fetchReviews, setDispatcherReview, fetchUserNames, deskKeyOf,
   money, perDriver, rpm, int, pct,
 } from './dispatcherData'
 
@@ -29,6 +32,10 @@ export default function DispatcherScorecard() {
   const grain = VALID_GRAINS.has(params.get('grain')) ? params.get('grain') : 'month'
   const anchor = /^\d{4}-\d{2}-\d{2}$/.test(params.get('anchor') || '') ? params.get('anchor') : todayISO()
 
+  const { profile, user } = useAuth()
+  const toast = useToast()
+  const canEdit = profile?.role === 'admin' || profile?.role === 'manager'
+
   const [rows, setRows] = useState(null)
   const [bookers, setBookers] = useState([])
   const [loading, setLoading] = useState(true)
@@ -37,6 +44,14 @@ export default function DispatcherScorecard() {
   const [selectedDesk, setSelectedDesk] = useState(null)
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState({ key: 'gross', dir: 'desc' })
+  // Monthly review sign-offs — only meaningful on the Monthly grain.
+  const [reviews, setReviews] = useState({})           // desk_key → { reviewed, note, reviewed_by, reviewed_at }
+  const [reviewerNames, setReviewerNames] = useState({}) // user_id → display name
+  const [reviewTab, setReviewTab] = useState('all')    // all | reviewed | to_review
+  const [exportingPdf, setExportingPdf] = useState(false)
+
+  const isMonthly = grain === 'month'
+  const monthStart = anchorForRpc('month', anchor) // period_month for the review record
 
   const setGrain = (g) => setParams(p => { p.set('grain', g); p.set('anchor', anchorForRpc(g, anchor)); return p }, { replace: true })
   const step = (dir) => setParams(p => { p.set('grain', grain); p.set('anchor', stepAnchor(grain, anchor, dir)); return p }, { replace: true })
@@ -48,7 +63,19 @@ export default function DispatcherScorecard() {
       setLoading(true); setError(''); setSelectedDesk(null)
       try {
         const [sc, bk] = await Promise.all([fetchScorecard(grain, anchor), fetchAmazonBookers(grain, anchor)])
-        if (!cancelled) { setRows(sc); setBookers(bk) }
+        if (cancelled) return
+        setRows(sc); setBookers(bk)
+        // Monthly review sign-offs — one row per (desk, month), keyed by desk_key.
+        if (grain === 'month') {
+          const revs = await fetchReviews(monthStart)
+          if (cancelled) return
+          const byKey = {}
+          revs.forEach(r => { byKey[r.desk_key] = r })
+          setReviews(byKey)
+          setReviewerNames(await fetchUserNames(revs.map(r => r.reviewed_by)))
+        } else {
+          setReviews({}); setReviewerNames({})
+        }
       } catch (e) {
         if (!cancelled) setError(e.message || 'Failed to load scorecard')
       } finally {
@@ -56,9 +83,55 @@ export default function DispatcherScorecard() {
       }
     })()
     return () => { cancelled = true }
-  }, [grain, anchor, reloadTick])
+  }, [grain, anchor, reloadTick, monthStart])
 
   const retry = () => setReloadTick(t => t + 1)
+
+  // Silent reconcile after a save — pulls the true reviewed_by/at stamps the RPC
+  // wrote (first reviewer preserved, cleared on un-review) + any new names.
+  async function refreshReviews() {
+    if (grain !== 'month') return
+    try {
+      const revs = await fetchReviews(monthStart)
+      const byKey = {}
+      revs.forEach(r => { byKey[r.desk_key] = r })
+      setReviews(byKey)
+      const names = await fetchUserNames(revs.map(r => r.reviewed_by))
+      setReviewerNames(prev => ({ ...prev, ...names }))
+    } catch { /* keep the optimistic state */ }
+  }
+
+  // Shared review write used by the table checkmark and the drawer panel.
+  // patch = { reviewed?, note? }; the unspecified field keeps its current value.
+  // Optimistic; returns true on success, false on error (rolls back + toasts).
+  async function saveReview(deskKey, patch) {
+    const cur = reviews[deskKey] || {}
+    const nextReviewed = patch.reviewed != null ? patch.reviewed : !!cur.reviewed
+    const nextNote = patch.note != null ? patch.note : (cur.note || '')
+    const prev = reviews
+    setReviews(r => ({
+      ...r,
+      [deskKey]: {
+        ...cur, reviewed: nextReviewed, note: nextNote,
+        reviewed_by: nextReviewed ? (cur.reviewed_by ?? user?.id ?? null) : null,
+        reviewed_at: nextReviewed ? (cur.reviewed_at ?? new Date().toISOString()) : null,
+      },
+    }))
+    // Surface the current user's name immediately (before the reconcile fetch)
+    // so the drawer's "Reviewed · by {name}" line isn't briefly nameless.
+    if (nextReviewed && user?.id) {
+      setReviewerNames(n => n[user.id] ? n : { ...n, [user.id]: profile?.full_name || profile?.email || 'You' })
+    }
+    try {
+      await setDispatcherReview(deskKey, monthStart, nextReviewed, nextNote)
+      refreshReviews()
+      return true
+    } catch (e) {
+      setReviews(prev)
+      toast.error("Couldn't save the review", e)
+      return false
+    }
+  }
 
   // Grain word for the partial-period notice.
   const PERIOD_WORD = { month: 'month', quarter: 'quarter', half: 'half', year: 'year' }
@@ -90,12 +163,24 @@ export default function DispatcherScorecard() {
     }
   }, [rows, desks, floors, inProgress])
 
-  // Search + sort the leaderboard.
+  const isReviewed = useCallback((d) => !!reviews[deskKeyOf(d)]?.reviewed, [reviews])
+
+  // Monthly review progress — X of N desks signed off this month.
+  const reviewProgress = useMemo(() => ({
+    reviewed: desks.filter(isReviewed).length,
+    total: desks.length,
+  }), [desks, isReviewed])
+
+  // Search + review-tab filter + sort the leaderboard.
   const shownDesks = useMemo(() => {
     const q = search.trim().toLowerCase()
     let list = q ? desks.filter(d => d.desk_name.toLowerCase().includes(q)) : [...desks]
+    if (isMonthly && reviewTab !== 'all') {
+      list = list.filter(d => (reviewTab === 'reviewed' ? isReviewed(d) : !isReviewed(d)))
+    }
     const key = sort.key
     const get = (d) => key === 'desk' ? d.desk_name.toLowerCase()
+      : key === 'reviewed' ? (isReviewed(d) ? 1 : 0)
       : key === 'per_driver_month' ? Number(d.per_driver_month || 0)
       : Number(d[key] || 0)
     list.sort((a, b) => {
@@ -104,10 +189,77 @@ export default function DispatcherScorecard() {
       return sort.dir === 'asc' ? cmp : -cmp
     })
     return list
-  }, [desks, search, sort])
+  }, [desks, search, sort, isMonthly, reviewTab, isReviewed])
 
   const toggleSort = (key) => setSort(s => s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: key === 'desk' ? 'asc' : 'desc' })
   const arrow = (key) => sort.key === key ? (sort.dir === 'asc' ? '↑' : '↓') : ''
+
+  // Monthly PDF report — header stats + focus cards + full desk table with the
+  // manager's sign-off. Client-side jsPDF + autoTable (dynamic import so the
+  // libs don't bloat this page's bundle). Numeric RGB fills per the app's
+  // Recharts→PDF convention.
+  async function generatePdf() {
+    if (exportingPdf || !company) return
+    setExportingPdf(true)
+    try {
+      const [{ jsPDF }, autoTableMod] = await Promise.all([import('jspdf'), import('jspdf-autotable')])
+      const autoTable = autoTableMod.default
+      const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' })
+      const monthTitle = periodLabel('month', anchor)
+      const M = 40
+
+      doc.setFontSize(16); doc.setTextColor(20)
+      doc.text(`Dispatcher Scorecard — ${monthTitle}`, M, 40)
+      doc.setFontSize(10); doc.setTextColor(110)
+      doc.text(
+        `Total Gross: ${money(company.totalGross)}      Active Desks: ${int(company.activeDesks)}      Blended RPM: ${rpm(company.blendedRpm)}      Total Turnover: ${int(company.totalTurn)}`,
+        M, 60,
+      )
+
+      let y = 82
+      if (focus.length > 0) {
+        doc.setFontSize(12); doc.setTextColor(20); doc.text('Desks to focus on', M, y)
+        autoTable(doc, {
+          startY: y + 8,
+          head: [['Desk', 'Flag', 'Why']],
+          body: focus.map(c => [c.desk.desk_name, c.tag, c.reason]),
+          styles: { fontSize: 8, cellPadding: 3, overflow: 'linebreak' },
+          headStyles: { fillColor: [234, 88, 12] },
+          columnStyles: { 2: { cellWidth: 460 } },
+          margin: { left: M, right: M },
+        })
+        y = doc.lastAutoTable.finalY + 18
+      }
+
+      doc.setFontSize(12); doc.setTextColor(20); doc.text('All active desks', M, y)
+      const reportDesks = [...desks].sort((a, b) => Number(b.gross) - Number(a.gross))
+      autoTable(doc, {
+        startY: y + 8,
+        head: [['Desk', 'Gross', '$/drv·mo', 'Turnover', 'RPM', 'Read', 'Reviewed', 'Notes']],
+        body: reportDesks.map(d => {
+          const rev = reviews[deskKeyOf(d)] || {}
+          return [
+            d.desk_name, money(d.gross), perDriver(d.per_driver_month), int(d.turnover), rpm(d.rpm),
+            deskRead(d, floors, { inProgress }).label, rev.reviewed ? 'Yes' : 'No', rev.note || '',
+          ]
+        }),
+        styles: { fontSize: 8, cellPadding: 3, overflow: 'linebreak' },
+        headStyles: { fillColor: [234, 88, 12] },
+        columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' }, 7: { cellWidth: 220 } },
+        margin: { left: M, right: M },
+      })
+
+      const who = profile?.full_name || profile?.email || 'Unknown'
+      const today = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', year: 'numeric', month: 'short', day: 'numeric' }).format(new Date())
+      doc.setFontSize(8); doc.setTextColor(150)
+      doc.text(`Generated ${today} by ${who}`, M, doc.internal.pageSize.getHeight() - 20)
+      doc.save(`Dispatcher Review - ${monthTitle}.pdf`)
+    } catch (e) {
+      toast.error("Couldn't generate the PDF", e)
+    } finally {
+      setExportingPdf(false)
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -143,6 +295,21 @@ export default function DispatcherScorecard() {
             </span>
           )}
         </div>
+        {/* Monthly PDF report — the month's stats, focus cards, and the full
+            desk table with each desk's review sign-off + notes. */}
+        {isMonthly && (
+          <button
+            onClick={generatePdf}
+            disabled={exportingPdf || loading || !rows?.length}
+            className="ml-auto inline-flex items-center gap-1.5 text-sm font-semibold px-3 py-1.5 rounded-lg border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-40"
+            title="Generate a monthly PDF report for this month"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3" />
+            </svg>
+            {exportingPdf ? 'Generating…' : 'Generate PDF'}
+          </button>
+        )}
       </div>
 
       {/* Partial-period notice — the selected window hasn't finished yet, so the
@@ -205,7 +372,24 @@ export default function DispatcherScorecard() {
           {/* All active desks */}
           <section>
             <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-              <h2 className="text-sm font-semibold text-gray-900 dark:text-white">All active desks ({desks.length})</h2>
+              <div className="flex flex-wrap items-center gap-3">
+                <h2 className="text-sm font-semibold text-gray-900 dark:text-white">All active desks ({desks.length})</h2>
+                {isMonthly && (
+                  <>
+                    <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700 text-xs">
+                      {[['all', 'All'], ['reviewed', 'Reviewed'], ['to_review', 'To review']].map(([k, lbl]) => (
+                        <button key={k} onClick={() => setReviewTab(k)}
+                          className={`px-2.5 py-1 whitespace-nowrap ${reviewTab === k ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5'}`}>
+                          {lbl}
+                        </button>
+                      ))}
+                    </div>
+                    <span className="text-xs text-gray-500 dark:text-slate-400 tabular-nums">
+                      {reviewProgress.reviewed} of {reviewProgress.total} reviewed
+                    </span>
+                  </>
+                )}
+              </div>
               <input
                 value={search} onChange={e => setSearch(e.target.value)}
                 placeholder="Search desks…"
@@ -223,13 +407,16 @@ export default function DispatcherScorecard() {
                       <Th onClick={() => toggleSort('turnover')} arrow={arrow('turnover')} right>Turnover</Th>
                       <Th onClick={() => toggleSort('rpm')} arrow={arrow('rpm')} right>RPM</Th>
                       <th className={S.th}>Read</th>
+                      {isMonthly && <Th onClick={() => toggleSort('reviewed')} arrow={arrow('reviewed')}>Reviewed</Th>}
+                      {isMonthly && <th className={S.th}>Notes</th>}
                     </tr>
                   </thead>
                   <tbody>
                     {shownDesks.length === 0 ? (
-                      <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400 dark:text-slate-600">No desks match “{search}”.</td></tr>
+                      <tr><td colSpan={isMonthly ? 8 : 6} className="px-4 py-8 text-center text-gray-400 dark:text-slate-600">No desks match this filter.</td></tr>
                     ) : shownDesks.map(d => {
                       const read = deskRead(d, floors, { inProgress })
+                      const rev = reviews[deskKeyOf(d)]
                       return (
                         <tr key={d.desk_id} onClick={() => setSelectedDesk(d)} className={`${S.tableRow} cursor-pointer`}>
                           <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>{d.desk_name}</td>
@@ -245,6 +432,18 @@ export default function DispatcherScorecard() {
                           <td className={S.td}>
                             <span className={`inline-block text-[10px] uppercase tracking-wide font-bold px-2 py-0.5 rounded-full border ${PILL[read.tone]}`}>{read.label}</span>
                           </td>
+                          {isMonthly && (
+                            <td className={S.td} onClick={e => e.stopPropagation()}>
+                              <ReviewCheck reviewed={!!rev?.reviewed} canEdit={canEdit} onToggle={() => saveReview(deskKeyOf(d), { reviewed: !rev?.reviewed })} />
+                            </td>
+                          )}
+                          {isMonthly && (
+                            <td className={`${S.td} max-w-[16rem]`}>
+                              {rev?.note
+                                ? <span className="block text-xs text-gray-600 dark:text-slate-400 line-clamp-2" title={rev.note}>{rev.note}</span>
+                                : <span className="text-xs text-gray-400 dark:text-slate-500">+ Add note</span>}
+                            </td>
+                          )}
                         </tr>
                       )
                     })}
@@ -283,7 +482,16 @@ export default function DispatcherScorecard() {
         </>
       )}
 
-      <DeskDrawer open={!!selectedDesk} desk={selectedDesk} floors={floors} grain={grain} anchor={anchor} inProgress={inProgress} onClose={() => setSelectedDesk(null)} />
+      <DeskDrawer
+        open={!!selectedDesk} desk={selectedDesk} floors={floors} grain={grain} anchor={anchor} inProgress={inProgress}
+        monthly={isMonthly}
+        review={selectedDesk ? reviews[deskKeyOf(selectedDesk)] : null}
+        reviewerName={selectedDesk ? reviewerNames[reviews[deskKeyOf(selectedDesk)]?.reviewed_by] : ''}
+        canEdit={canEdit}
+        monthLabel={periodLabel('month', anchor)}
+        onSaveReview={saveReview}
+        onClose={() => setSelectedDesk(null)}
+      />
     </div>
   )
 }
@@ -379,5 +587,32 @@ function Th({ children, onClick, arrow, right }) {
     <th className={`${S.th} ${right ? 'text-right' : ''} cursor-pointer select-none hover:text-gray-900 dark:hover:text-slate-200`} onClick={onClick}>
       {children}{arrow && <span className="ml-1">{arrow}</span>}
     </th>
+  )
+}
+
+// Round review checkmark — empty circle when unreviewed, green check when
+// reviewed. Managers get a toggle; non-managers a read-only indicator.
+export function ReviewCheck({ reviewed, canEdit, onToggle }) {
+  const check = (
+    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+    </svg>
+  )
+  const base = 'w-6 h-6 inline-flex items-center justify-center rounded-full border transition-colors'
+  const on = 'bg-emerald-500 border-emerald-500 text-white'
+  const off = 'border-gray-300 dark:border-slate-600 text-transparent'
+  if (!canEdit) {
+    return <span className={`${base} ${reviewed ? on : off}`} title={reviewed ? 'Reviewed' : 'Not reviewed'}>{check}</span>
+  }
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-pressed={reviewed}
+      title={reviewed ? 'Reviewed — click to un-review' : 'Mark as reviewed'}
+      className={`${base} ${reviewed ? `${on} hover:bg-emerald-600` : `${off} hover:border-emerald-400 hover:text-emerald-400`}`}
+    >
+      {check}
+    </button>
   )
 }
