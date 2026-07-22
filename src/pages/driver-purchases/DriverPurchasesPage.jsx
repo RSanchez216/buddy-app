@@ -411,7 +411,8 @@ export default function DriverPurchasesPage() {
     const cancelled  = rows.filter(r =>
       r.status_name === 'Contract Broken' ||
       r.status_name === 'Driver Left' ||
-      r.status_name === 'Owner Left'
+      r.status_name === 'Owner Left' ||
+      r.status_name === 'Total Loss'
     ).length
     const behind = rows.filter(r => r.is_behind).length
     const titlePending = rows.filter(r => r.title_release_pending).length
@@ -431,7 +432,8 @@ export default function DriverPurchasesPage() {
     else if (filter === 'cancelled')  list = list.filter(r =>
       r.status_name === 'Contract Broken' ||
       r.status_name === 'Driver Left' ||
-      r.status_name === 'Owner Left'
+      r.status_name === 'Owner Left' ||
+      r.status_name === 'Total Loss'
     )
     else if (filter === 'behind') list = list.filter(r => r.is_behind)
     else if (filter === 'under_review') list = list.filter(r => r.under_review)
