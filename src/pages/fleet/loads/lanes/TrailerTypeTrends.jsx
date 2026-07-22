@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
+import { BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { supabase } from '../../../../lib/supabase'
@@ -48,6 +48,41 @@ const formatPeriodLabel = (dateStr, granularity) => {
     const year = String(y).slice(2)
     return `Q${quarter} '${year}`
   }
+}
+
+// ── Partial ("so far") period detection ──────────────────────────────────
+// The trailing column is the current, still-in-progress period; its numbers
+// (esp. per-driver averages) read low until the period elapses. Purely
+// presentational — the values are already correct.
+
+// America/Chicago "today" as YYYY-MM-DD (en-CA renders ISO order).
+function chicagoTodayYmd() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date())
+}
+
+const ymdOf = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`
+
+// date_trunc(granularity, ymd) → the period_start the RPC buckets `ymd` into.
+// Week = Monday-start, matching Postgres date_trunc('week').
+function periodStartOf(ymd, granularity) {
+  const [y, m, d] = ymd.split('-').map(Number)
+  if (granularity === 'month') return `${y}-${String(m).padStart(2, '0')}-01`
+  if (granularity === 'quarter') {
+    const qMonth = Math.floor((m - 1) / 3) * 3 + 1
+    return `${y}-${String(qMonth).padStart(2, '0')}-01`
+  }
+  const isoDow = (new Date(y, m - 1, d).getDay() + 6) % 7 // 0=Mon … 6=Sun
+  return ymdOf(new Date(y, m - 1, d - isoDow))
+}
+
+// Last calendar day (inclusive) of the period starting at startYmd.
+function periodEndOf(startYmd, granularity) {
+  const [y, m, d] = startYmd.split('-').map(Number)
+  if (granularity === 'month') return ymdOf(new Date(y, m, 0))
+  if (granularity === 'quarter') return ymdOf(new Date(y, m - 1 + 3, 0))
+  return ymdOf(new Date(y, m - 1, d + 6)) // Sunday
 }
 
 // Shared value cell for the trend + compare tables. In Per-driver mode it
@@ -162,6 +197,18 @@ export default function TrailerTypeTrends() {
     return row[metricKey]
   }
 
+  // period_start of the current, in-progress period — or null if the trailing
+  // column is a fully-elapsed past period (only the single current one is
+  // flagged). "Partial" = today falls in the period and isn't its final day.
+  const partialPeriodStart = useMemo(() => {
+    const today = chicagoTodayYmd()
+    const curStart = periodStartOf(today, granularity)
+    return today < periodEndOf(curStart, granularity) ? curStart : null
+  }, [granularity])
+
+  const periodWord = granularity === 'week' ? 'week' : granularity === 'month' ? 'month' : 'quarter'
+  const partialTooltip = `Current ${periodWord} in progress — fills in as the ${periodWord}'s loads and imports land.`
+
   // Trend mode: show last 3 periods + avg + delta
   const renderTrendTable = () => {
     const shown = 3
@@ -187,6 +234,9 @@ export default function TrailerTypeTrends() {
               {periodCols.map((pc, i) => (
                 <th key={i} className={`${S.th} text-gray-900 dark:text-slate-200`}>
                   {formatPeriodLabel(pc.date, granularity)}
+                  {pc.date === partialPeriodStart && (
+                    <span className="ml-1 font-normal normal-case text-[10px] text-gray-400 dark:text-slate-500" title={partialTooltip}>· so far</span>
+                  )}
                 </th>
               ))}
               <th className={`${S.th} text-gray-900 dark:text-slate-200`}>
@@ -308,8 +358,18 @@ export default function TrailerTypeTrends() {
           <thead className={S.tableHead}>
             <tr>
               <th className={`${S.th} text-left text-gray-900 dark:text-slate-200`}>Trailer type</th>
-              <th className={`${S.th} text-gray-900 dark:text-slate-200`}>{labelA}</th>
-              <th className={`${S.th} text-gray-900 dark:text-slate-200`}>{labelB}</th>
+              <th className={`${S.th} text-gray-900 dark:text-slate-200`}>
+                {labelA}
+                {periodA === partialPeriodStart && (
+                  <span className="ml-1 font-normal normal-case text-[10px] text-gray-400 dark:text-slate-500" title={partialTooltip}>· so far</span>
+                )}
+              </th>
+              <th className={`${S.th} text-gray-900 dark:text-slate-200`}>
+                {labelB}
+                {periodB === partialPeriodStart && (
+                  <span className="ml-1 font-normal normal-case text-[10px] text-gray-400 dark:text-slate-500" title={partialTooltip}>· so far</span>
+                )}
+              </th>
               <th className={`${S.th} text-gray-900 dark:text-slate-200`}>Δ</th>
               <th className={`${S.th} text-gray-900 dark:text-slate-200`}>Δ %</th>
             </tr>
@@ -446,6 +506,9 @@ export default function TrailerTypeTrends() {
 
     const shown = 6
     const showPeriods = periods.slice(-shown)
+    // Formatted label of the in-progress period (if shown) so the x-axis tick
+    // and bar opacity can mark it "so far".
+    const partialLabel = partialPeriodStart ? formatPeriodLabel(partialPeriodStart, granularity) : null
 
     // Build data: array of { period: "Jun '26", "Dry Van": 3.27, "Reefer": 2.18, ... }
     const chartData = showPeriods.map(period => {
@@ -487,9 +550,13 @@ export default function TrailerTypeTrends() {
       const isMuted = pct > 0 && pct < UNASSIGNED_CHIP_AMBER_PCT
       const chipText = `${pct}% unassigned`
       const chipW = chipText.length * 6 + 14
+      const isPartial = label === partialLabel
       return (
         <g transform={`translate(${x},${y})`}>
-          <text x={0} y={0} dy={14} textAnchor="middle" fill={tickColor} fontSize={12}>{label}</text>
+          <text x={0} y={0} dy={14} textAnchor="middle" fill={tickColor} fontSize={12}>
+            {label}
+            {isPartial && <tspan fill={mutedChipText} fontSize={10}> · so far</tspan>}
+          </text>
           {isAmber && (
             <g>
               <rect x={-chipW / 2} y={20} width={chipW} height={17} rx={8.5} fill={amberBg} stroke={amberBorder} strokeWidth={1}>
@@ -543,7 +610,13 @@ export default function TrailerTypeTrends() {
               fill={getTrailerColor(type)}
               radius={[4, 4, 0, 0]}
               isAnimationActive={false}
-            />
+            >
+              {/* Lighten the in-progress period's bars so the partial column
+                  reads as distinct from the fully-elapsed ones. */}
+              {chartData.map((entry, idx) => (
+                <Cell key={idx} fillOpacity={entry.period === partialLabel ? 0.5 : 1} />
+              ))}
+            </Bar>
           ))}
         </BarChart>
       </ResponsiveContainer>
