@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { supabase } from '../../../../lib/supabase'
@@ -254,6 +254,85 @@ function FarFromYardChip({ info }) {
   )
 }
 
+// "Verify at yard" location control — identical on every idle row. Unverified:
+// a pin inside a dashed-amber circle + "Verify at yard". Verified: a solid-green
+// pin-check + "At yard · verified {Mon D}". Managers toggle (unverified opens
+// the confirm map; verified click un-verifies); non-managers see it read-only.
+function VerifyYardButton({ atYard, verifiedAt, verifierName, canEdit, onVerify, onUnverify }) {
+  const pinDashed = (
+    <span className="w-3.5 h-3.5 rounded-full border border-dashed border-amber-500 dark:border-amber-400 inline-flex items-center justify-center shrink-0">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-2 h-2">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 21s-6-5.686-6-10a6 6 0 1 1 12 0c0 4.314-6 10-6 10z" />
+        <circle cx="12" cy="11" r="1.4" fill="currentColor" stroke="none" />
+      </svg>
+    </span>
+  )
+  const pinCheck = (
+    <span className="w-3.5 h-3.5 rounded-full bg-emerald-500 text-white inline-flex items-center justify-center shrink-0">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="w-2 h-2"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+    </span>
+  )
+  const chip = 'inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full border whitespace-nowrap'
+
+  if (atYard) {
+    const when = fmtReviewed(verifiedAt)
+    const title = `At yard${verifierName ? ` · verified by ${verifierName}` : ''}${when ? ` on ${when}` : ''}${canEdit ? ' · click to un-verify' : ''}`
+    const cls = `${chip} border-emerald-300 dark:border-emerald-500/40 text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-500/10`
+    const body = <>{pinCheck}At yard · verified {when || ''}</>
+    return canEdit
+      ? <button type="button" onClick={onUnverify} title={title} className={`${cls} hover:bg-emerald-100 dark:hover:bg-emerald-500/15`}>{body}</button>
+      : <span title={title} className={cls}>{body}</span>
+  }
+
+  const cls = `${chip} border-dashed border-amber-400 dark:border-amber-500/50 text-amber-700 dark:text-amber-300 bg-amber-50/60 dark:bg-amber-500/[0.07]`
+  const body = <>{pinDashed}Verify at yard</>
+  return canEdit
+    ? <button type="button" onClick={onVerify} title="Confirm this unit is at the Aurora yard" className={`${cls} hover:bg-amber-100 dark:hover:bg-amber-500/15`}>{body}</button>
+    : <span title="Not verified at yard" className={`${cls} opacity-60`}>{body}</span>
+}
+
+// Confirmation dialog for "Verify at yard". No dedicated in-app map exists, so
+// the "map view" is a Google Maps link to the last known drop (or the Aurora
+// yard) the manager can eyeball before confirming.
+function VerifyYardModal({ row, farInfo, busy, onConfirm, onClose }) {
+  const label = row.label || row.subject_type
+  const place = farInfo ? [farInfo.drop_city, farInfo.drop_state].filter(Boolean).join(', ') : ''
+  const miles = farInfo ? Math.round(Number(farInfo.miles_from_yard) || 0).toLocaleString('en-US') : null
+  const mapUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(place || 'Aurora, IL')}`
+  return createPortal(
+    <div className="fixed inset-0 z-[95] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40 dark:bg-black/60" onClick={onClose} />
+      <div className={`relative w-full max-w-md ${S.card} p-5 space-y-4`}>
+        <div className="flex items-start justify-between gap-2">
+          <h3 className="text-base font-bold text-gray-900 dark:text-white">Verify at yard</h3>
+          <button onClick={onClose} disabled={busy} className="text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 disabled:opacity-50">
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <p className="text-sm text-gray-600 dark:text-slate-400">
+          Confirm <span className="font-semibold text-gray-900 dark:text-slate-200">{label}</span> is parked at the Aurora yard. Open the map to check its last known location, then confirm.
+        </p>
+        {farInfo && (
+          <div className="rounded-lg border border-amber-200 dark:border-amber-500/25 bg-amber-50/70 dark:bg-amber-500/[0.06] px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+            Last drop: {place || 'unknown'}{miles ? ` · ${miles} mi from Aurora` : ''}
+          </div>
+        )}
+        <a href={mapUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-sm font-medium text-cyan-600 dark:text-cyan-400 hover:underline">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M12 21s-6-5.686-6-10a6 6 0 1 1 12 0c0 4.314-6 10-6 10z" /><circle cx="12" cy="11" r="1.4" fill="currentColor" stroke="none" /></svg>
+          View {place ? 'last drop' : 'Aurora yard'} on map ↗
+        </a>
+        <div className="flex justify-end gap-2 pt-1">
+          <button onClick={onClose} disabled={busy} className={ROW_BTN}>Cancel</button>
+          <button onClick={onConfirm} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold rounded-md bg-emerald-500 hover:bg-emerald-600 text-white disabled:opacity-50">
+            {busy ? 'Confirming…' : 'Confirm at yard'}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
 // Exact prorated holding for the idle span, with the truck/trailer split and the
 // monthly kept as a muted reference. Owned units read $0 (owned).
 function HoldingCell({ row }) {
@@ -348,10 +427,25 @@ export default function IdleReview() {
   // Shared "under review" flags — Set of `${subject_type}:${subject_id}` keys.
   // Only flagged subjects have a row in idle_review_flags.
   const [reviewFlags, setReviewFlags] = useState(() => new Set())
+  // "At yard" location confirmations, keyed by `${subject_type}:${subject_id}`.
+  // Only verified subjects have a row; a flag self-expires once the subject's
+  // last_activity moves past verified_last_activity (see isAtYard).
+  const [yardFlags, setYardFlags] = useState({})
+  const [yardVerifierNames, setYardVerifierNames] = useState({}) // user_id → name
+  const [verifyModalRow, setVerifyModalRow] = useState(null)     // row awaiting at-yard confirmation
+  const [verifyBusy, setVerifyBusy] = useState(false)
 
-  const { profile } = useAuth()
+  const { profile, user } = useAuth()
   const toast = useToast()
   const canEdit = profile?.role === 'admin' || profile?.role === 'manager'
+
+  // A subject counts as verified-at-yard only if a flag exists AND it was
+  // verified against the subject's CURRENT last_activity — so if the unit has
+  // moved since, the stale confirmation no longer hides the far-from-yard flag.
+  const isAtYard = useCallback((r) => {
+    const f = yardFlags[`${r.subject_type}:${r.subject_id}`]
+    return !!f && String(f.verified_last_activity) === String(r.last_activity)
+  }, [yardFlags])
 
   async function load() {
     setError(null)
@@ -382,6 +476,21 @@ export default function IdleReview() {
     // Shared "under review" flags — only flagged subjects have a row.
     supabase.from('idle_review_flags').select('subject_type, subject_id')
       .then(({ data }) => setReviewFlags(new Set((data || []).map(f => `${f.subject_type}:${f.subject_id}`))))
+      .catch(() => {})
+    // "At yard" confirmations — only verified subjects have a row.
+    supabase.from('idle_yard_flags').select('subject_type, subject_id, verified_at, verified_last_activity, verified_by')
+      .then(async ({ data }) => {
+        const map = {}
+        ;(data || []).forEach(r => { map[`${r.subject_type}:${r.subject_id}`] = r })
+        setYardFlags(map)
+        const ids = [...new Set((data || []).map(r => r.verified_by).filter(Boolean))]
+        if (ids.length) {
+          const { data: users } = await supabase.from('users').select('id, full_name, email').in('id', ids)
+          const names = {}
+          ;(users || []).forEach(u => { names[u.id] = u.full_name || u.email || 'A manager' })
+          setYardVerifierNames(names)
+        }
+      })
       .catch(() => {})
   }
 
@@ -478,14 +587,23 @@ export default function IdleReview() {
         ? base.filter(r => r.reason === 'Pending - TBD')
         : reviewFilter === 'under_review'
           ? base.filter(r => reviewFlags.has(`${r.subject_type}:${r.subject_id}`))
-          : base.filter(r => (reviewFilter === 'reviewed' ? !!r.last_reviewed_at : !r.last_reviewed_at))
+          : reviewFilter === 'at_yard'
+            ? base.filter(isAtYard)
+            : base.filter(r => (reviewFilter === 'reviewed' ? !!r.last_reviewed_at : !r.last_reviewed_at))
     // Financing axis ANDs on top. Driver rows carry a null finance_type, so
     // they fall out of lease/loan/owned automatically and only show under All.
     if (financeFilter !== 'all') list = list.filter(r => r.finance_type === financeFilter)
     // Breakdown drill-down ANDs on top of every other axis.
     if (bucketFilter) list = list.filter(r => r.bucket === bucketFilter)
     return groupOf(list)
-  }, [view, activeRows, resolvedRows, reviewFilter, financeFilter, bucketFilter, reviewFlags])
+  }, [view, activeRows, resolvedRows, reviewFilter, financeFilter, bucketFilter, reviewFlags, isAtYard])
+
+  // Count of subjects currently verified-at-yard (post self-expiry), within the
+  // active/resolved view — drives the "At yard" filter tab.
+  const atYardCount = useMemo(() => {
+    const base = view === 'resolved' ? resolvedRows : activeRows
+    return base.filter(isAtYard).length
+  }, [view, activeRows, resolvedRows, isAtYard])
 
   // Idle breakdown — aggregated client-side from the idle_bucketed rows, always
   // over ALL unresolved rows so the totals stay stable while a bucket is
@@ -591,6 +709,42 @@ export default function IdleReview() {
     if (typeof data === 'boolean') apply(data) // reconcile to server truth
   }
 
+  // Verify / un-verify a subject at the Aurora yard. Passes the subject's
+  // current last_activity so the flag can self-expire once the unit moves.
+  // Optimistic; rolls back + toasts on error. Returns true on success.
+  async function verifyAtYard(row, flag) {
+    const key = `${row.subject_type}:${row.subject_id}`
+    const prev = yardFlags
+    setYardFlags(y => {
+      const next = { ...y }
+      if (flag) next[key] = { verified_at: new Date().toISOString(), verified_last_activity: row.last_activity, verified_by: user?.id ?? null }
+      else delete next[key]
+      return next
+    })
+    if (flag && user?.id) {
+      setYardVerifierNames(n => n[user.id] ? n : { ...n, [user.id]: profile?.full_name || profile?.email || 'You' })
+    }
+    try {
+      const { error: err } = await supabase.rpc('set_idle_at_yard', {
+        p_subject_type: row.subject_type, p_subject_id: row.subject_id, p_flag: flag, p_last_activity: row.last_activity,
+      })
+      if (err) throw err
+      return true
+    } catch (e) {
+      setYardFlags(prev) // rollback
+      toast.error(flag ? "Couldn't verify at yard" : "Couldn't un-verify", e)
+      return false
+    }
+  }
+
+  async function confirmVerify() {
+    if (!verifyModalRow || verifyBusy) return
+    setVerifyBusy(true)
+    const ok = await verifyAtYard(verifyModalRow, true)
+    setVerifyBusy(false)
+    if (ok) setVerifyModalRow(null)
+  }
+
   const loading = rows === null
   const resolvedView = view === 'resolved'
 
@@ -644,7 +798,7 @@ export default function IdleReview() {
           ))}
         </div>
         <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-slate-700 text-xs w-fit">
-          {[['all', `All (${reviewCounts.all})`], ['reviewed', `Reviewed (${reviewCounts.reviewed})`], ['needs', `Needs review (${reviewCounts.needs})`], ['pending', `Pending (${reviewCounts.pending})`], ['under_review', `Under review (${reviewFlags.size})`]].map(([k, lbl]) => (
+          {[['all', `All (${reviewCounts.all})`], ['reviewed', `Reviewed (${reviewCounts.reviewed})`], ['needs', `Needs review (${reviewCounts.needs})`], ['pending', `Pending (${reviewCounts.pending})`], ['under_review', `Under review (${reviewFlags.size})`], ['at_yard', `At yard (${atYardCount})`]].map(([k, lbl]) => (
             <button key={k} onClick={() => setReviewFilter(k)} className={`px-3 py-1.5 whitespace-nowrap ${reviewFilter === k ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5'}`}>{lbl}</button>
           ))}
         </div>
@@ -677,10 +831,20 @@ export default function IdleReview() {
         <div className={`${S.card} p-12 text-center text-sm text-gray-500 dark:text-slate-500 animate-pulse`}>Finding idle subjects…</div>
       ) : (
         <>
-          <IdleSection title="Drivers" kind="driver" rows={viewGroups.driver} reasons={DRIVER_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} homeBySubject={homeBySubject} behindBySubject={behindBySubject} reviewFlags={reviewFlags} canEdit={canEdit} onToggleReview={toggleReview} />
-          <IdleSection title="Trucks" kind="unit" rows={viewGroups.truck} reasons={UNIT_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} farBySubject={farFromYard} reviewFlags={reviewFlags} canEdit={canEdit} onToggleReview={toggleReview} />
-          <IdleSection title="Trailers" kind="unit" rows={viewGroups.trailer} reasons={UNIT_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} farBySubject={farFromYard} reviewFlags={reviewFlags} canEdit={canEdit} onToggleReview={toggleReview} />
+          <IdleSection title="Drivers" kind="driver" rows={viewGroups.driver} reasons={DRIVER_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} homeBySubject={homeBySubject} behindBySubject={behindBySubject} reviewFlags={reviewFlags} canEdit={canEdit} onToggleReview={toggleReview} yardFlags={yardFlags} yardVerifierNames={yardVerifierNames} onOpenVerify={setVerifyModalRow} onUnverify={row => verifyAtYard(row, false)} />
+          <IdleSection title="Trucks" kind="unit" rows={viewGroups.truck} reasons={UNIT_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} farBySubject={farFromYard} reviewFlags={reviewFlags} canEdit={canEdit} onToggleReview={toggleReview} yardFlags={yardFlags} yardVerifierNames={yardVerifierNames} onOpenVerify={setVerifyModalRow} onUnverify={row => verifyAtYard(row, false)} />
+          <IdleSection title="Trailers" kind="unit" rows={viewGroups.trailer} reasons={UNIT_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} farBySubject={farFromYard} reviewFlags={reviewFlags} canEdit={canEdit} onToggleReview={toggleReview} yardFlags={yardFlags} yardVerifierNames={yardVerifierNames} onOpenVerify={setVerifyModalRow} onUnverify={row => verifyAtYard(row, false)} />
         </>
+      )}
+
+      {verifyModalRow && (
+        <VerifyYardModal
+          row={verifyModalRow}
+          farInfo={farFromYard[`${verifyModalRow.subject_type}:${verifyModalRow.subject_id}`]}
+          busy={verifyBusy}
+          onConfirm={confirmVerify}
+          onClose={() => { if (!verifyBusy) setVerifyModalRow(null) }}
+        />
       )}
     </div>
   )
@@ -869,7 +1033,7 @@ function DriverIdleCard({ ps, loading }) {
   )
 }
 
-function IdleSection({ title, kind, rows, reasons, resolvedView, reviewFilter, financeFilter, onSetReason, onResolve, onReopen, homeBySubject = {}, behindBySubject = {}, farBySubject = {}, reviewFlags = new Set(), canEdit = false, onToggleReview }) {
+function IdleSection({ title, kind, rows, reasons, resolvedView, reviewFilter, financeFilter, onSetReason, onResolve, onReopen, homeBySubject = {}, behindBySubject = {}, farBySubject = {}, reviewFlags = new Set(), canEdit = false, onToggleReview, yardFlags = {}, yardVerifierNames = {}, onOpenVerify, onUnverify }) {
   const columns = kind === 'unit' ? UNIT_COLUMNS : DRIVER_COLUMNS
 
   const [sort, setSort] = useState({ key: 'days', dir: 'desc' })
@@ -978,9 +1142,14 @@ function IdleSection({ title, kind, rows, reasons, resolvedView, reviewFilter, f
                 </tr>
               </thead>
               <tbody>
-                {visible.map(r => (
-                  <IdleRow key={`${r.subject_type}:${r.subject_id}`} row={r} kind={kind} reasons={reasons} resolvedView={resolvedView} onSetReason={onSetReason} onResolve={onResolve} onReopen={onReopen} homeInfo={homeBySubject[`${r.subject_type}:${r.subject_id}`]} behindInfo={behindBySubject[`${r.subject_type}:${r.subject_id}`]} farInfo={farBySubject[`${r.subject_type}:${r.subject_id}`]} flagged={reviewFlags.has(`${r.subject_type}:${r.subject_id}`)} canEdit={canEdit} onToggleReview={onToggleReview} />
-                ))}
+                {visible.map(r => {
+                  const key = `${r.subject_type}:${r.subject_id}`
+                  const yf = yardFlags[key]
+                  const atYard = !!yf && String(yf.verified_last_activity) === String(r.last_activity)
+                  return (
+                    <IdleRow key={key} row={r} kind={kind} reasons={reasons} resolvedView={resolvedView} onSetReason={onSetReason} onResolve={onResolve} onReopen={onReopen} homeInfo={homeBySubject[key]} behindInfo={behindBySubject[key]} farInfo={farBySubject[key]} flagged={reviewFlags.has(key)} canEdit={canEdit} onToggleReview={onToggleReview} atYard={atYard} yardInfo={atYard ? yf : null} verifierName={yf ? yardVerifierNames[yf.verified_by] : ''} onOpenVerify={onOpenVerify} onUnverify={onUnverify} />
+                  )
+                })}
               </tbody>
               <tfoot>
                 <tr className="border-t-2 border-gray-200 dark:border-white/10 bg-gray-50/70 dark:bg-white/[0.02]">
@@ -1095,12 +1264,25 @@ const TEAM_ICON = (
   </svg>
 )
 
-function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onReopen, homeInfo, behindInfo, farInfo, flagged, canEdit, onToggleReview }) {
+function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onReopen, homeInfo, behindInfo, farInfo, flagged, canEdit, onToggleReview, atYard, yardInfo, verifierName, onOpenVerify, onUnverify }) {
   const sev = severity(row)
 
   // Shared "under review" flag toggle — leftmost in the subject cell, same
   // affordance as Driver Purchases.
   const reviewFlag = <ReviewFlagButton flagged={flagged} canEdit={canEdit} onToggle={() => onToggleReview(row)} />
+
+  // "Verify at yard" location control — identical on every row. When verified,
+  // it turns green and the far-from-yard badge is suppressed.
+  const verifyControl = (
+    <VerifyYardButton
+      atYard={atYard}
+      verifiedAt={yardInfo?.verified_at}
+      verifierName={verifierName}
+      canEdit={canEdit}
+      onVerify={() => onOpenVerify?.(row)}
+      onUnverify={() => onUnverify?.(row)}
+    />
+  )
 
   const daysCls = (row.days_idle ?? 0) >= 14 ? 'text-red-600 dark:text-red-400 font-semibold' : 'text-gray-700 dark:text-slate-300'
 
@@ -1178,7 +1360,10 @@ function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onR
           </span>
           <FinanceBadge row={row} />
           <LastLoadLine row={row} />
-          {farInfo && <FarFromYardChip info={farInfo} />}
+          <div className="mt-1 flex items-start gap-1.5 flex-wrap">
+            {verifyControl}
+            {farInfo && !atYard && <FarFromYardChip info={farInfo} />}
+          </div>
         </td>
         <td className={`${S.td} text-right font-mono align-top ${daysCls}`}>{fmtDays(row.days_idle)}</td>
         <td className={`${S.td} text-gray-600 dark:text-slate-400 text-xs align-top`}>
@@ -1218,6 +1403,7 @@ function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onR
             {behindInfo && <BehindOnPurchaseChip href={behindInfo.contractHref} totalPastDue={behindInfo.totalPastDue} compact />}
           </div>
         )}
+        <div className="mt-1">{verifyControl}</div>
       </td>
       <td className={`${S.td} text-right font-mono align-top ${daysCls}`}>{fmtDays(row.days_idle)}</td>
       <td className={`${S.td} align-top`}><HoldingCell row={row} /></td>
