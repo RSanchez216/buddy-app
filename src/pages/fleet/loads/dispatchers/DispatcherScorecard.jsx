@@ -33,6 +33,7 @@ export default function DispatcherScorecard() {
   const [bookers, setBookers] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [reloadTick, setReloadTick] = useState(0) // bumped by Retry to re-run the fetch
   const [selectedDesk, setSelectedDesk] = useState(null)
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState({ key: 'gross', dir: 'desc' })
@@ -55,7 +56,12 @@ export default function DispatcherScorecard() {
       }
     })()
     return () => { cancelled = true }
-  }, [grain, anchor])
+  }, [grain, anchor, reloadTick])
+
+  const retry = () => setReloadTick(t => t + 1)
+
+  // Grain word for the partial-period notice.
+  const PERIOD_WORD = { month: 'month', quarter: 'quarter', half: 'half', year: 'year' }
 
   // The selected period is still "in progress" when it's the current one — its
   // gross (and therefore the vs-prior delta) is partial, so we suppress deltas
@@ -139,9 +145,24 @@ export default function DispatcherScorecard() {
         </div>
       </div>
 
-      {error && <div className={S.errorBox}>{error}</div>}
+      {/* Partial-period notice — the selected window hasn't finished yet, so the
+          numbers are year-to-date and read low. Real and correct, just partial. */}
+      {inProgress && !loading && !error && (
+        <div className="flex items-center gap-2 text-[13px] text-gray-500 dark:text-slate-400 bg-gray-50 dark:bg-white/[0.03] border border-gray-200 dark:border-white/10 rounded-lg px-3 py-2">
+          <svg className="w-4 h-4 shrink-0 text-gray-400 dark:text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          This is all we have so far; the {PERIOD_WORD[grain] || 'period'} is not completed.
+        </div>
+      )}
+
       {loading ? (
         <div className="flex items-center justify-center h-48"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500" /></div>
+      ) : error ? (
+        <div className={`${S.card} p-10 text-center`}>
+          <p className="text-sm text-gray-600 dark:text-slate-400 mb-3">Couldn&apos;t load the scorecard.</p>
+          <button onClick={retry} className={S.btnSecondary}>Retry</button>
+        </div>
       ) : !rows?.length ? (
         <div className={`${S.card} p-10 text-center text-gray-400 dark:text-slate-600`}>No dispatcher activity in {periodLabel(grain, anchor)}.</div>
       ) : (

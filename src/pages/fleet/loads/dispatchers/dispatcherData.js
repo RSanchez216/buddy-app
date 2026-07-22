@@ -67,18 +67,39 @@ export const int = (n) => (n == null ? '—' : Number(n).toLocaleString('en-US')
 export const pct = (n) => (n == null ? null : `${n > 0 ? '+' : ''}${Number(n).toFixed(1)}%`)
 
 // ── queries ──────────────────────────────────────────────────────────────────
+// Comfortably above the slowest grain (year ~4s after the RPC was optimized) so
+// a cold query is never cut off, but bounded so a genuinely hung request
+// surfaces the retry UI instead of spinning forever (the browser fetch has no
+// timeout of its own).
+const RPC_TIMEOUT_MS = 20000
+
+// Run a PostgREST builder with an abort-based timeout. `build(signal)` should
+// return the builder with .abortSignal(signal) applied. Rejects on timeout.
+async function withTimeout(build, ms = RPC_TIMEOUT_MS) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), ms)
+  try {
+    return await build(controller.signal)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 export async function fetchScorecard(grain, anchorISO) {
-  const { data, error } = await supabase.rpc('dispatcher_scorecard', { p_grain: grain, p_anchor: anchorForRpc(grain, anchorISO) })
+  const { data, error } = await withTimeout(signal =>
+    supabase.rpc('dispatcher_scorecard', { p_grain: grain, p_anchor: anchorForRpc(grain, anchorISO) }).abortSignal(signal))
   if (error) throw error
   return data || []
 }
 export async function fetchDeskDrivers(deskId, grain, anchorISO) {
-  const { data, error } = await supabase.rpc('dispatcher_desk_drivers', { p_desk: deskId, p_grain: grain, p_anchor: anchorForRpc(grain, anchorISO) })
+  const { data, error } = await withTimeout(signal =>
+    supabase.rpc('dispatcher_desk_drivers', { p_desk: deskId, p_grain: grain, p_anchor: anchorForRpc(grain, anchorISO) }).abortSignal(signal))
   if (error) throw error
   return data || []
 }
 export async function fetchAmazonBookers(grain, anchorISO) {
-  const { data, error } = await supabase.rpc('amazon_team_bookers', { p_grain: grain, p_anchor: anchorForRpc(grain, anchorISO) })
+  const { data, error } = await withTimeout(signal =>
+    supabase.rpc('amazon_team_bookers', { p_grain: grain, p_anchor: anchorForRpc(grain, anchorISO) }).abortSignal(signal))
   if (error) throw error
   return data || []
 }
