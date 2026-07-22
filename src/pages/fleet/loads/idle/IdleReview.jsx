@@ -3,7 +3,10 @@ import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { supabase } from '../../../../lib/supabase'
 import { S } from '../../../../lib/styles'
+import { useAuth } from '../../../../contexts/AuthContext'
+import { useToast } from '../../../../contexts/ToastContext'
 import CopyButton from '../../../../components/CopyButton'
+import ReviewFlagButton from '../../../../components/ReviewFlagButton'
 import PossiblyHomeChip from '../../PossiblyHomeChip'
 import BehindOnPurchaseChip from '../../../driver-purchases/components/BehindChip'
 
@@ -342,6 +345,13 @@ export default function IdleReview() {
   const [reviewFilter, setReviewFilter] = useState('all') // 'all' | 'reviewed' | 'needs' | 'pending' — separate axis
   const [financeFilter, setFinanceFilter] = useState('all') // 'all' | 'lease' | 'loan' | 'owned' — orthogonal axis (trucks/trailers)
   const [bucketFilter, setBucketFilter] = useState(null)   // idle_bucketed.bucket drill-down, or null for all
+  // Shared "under review" flags — Set of `${subject_type}:${subject_id}` keys.
+  // Only flagged subjects have a row in idle_review_flags.
+  const [reviewFlags, setReviewFlags] = useState(() => new Set())
+
+  const { profile } = useAuth()
+  const toast = useToast()
+  const canEdit = profile?.role === 'admin' || profile?.role === 'manager'
 
   async function load() {
     setError(null)
@@ -368,6 +378,10 @@ export default function IdleReview() {
         ;(data || []).forEach(r => { map[`${r.subject_type}:${r.subject_id}`] = r })
         setFarFromYard(map)
       })
+      .catch(() => {})
+    // Shared "under review" flags — only flagged subjects have a row.
+    supabase.from('idle_review_flags').select('subject_type, subject_id')
+      .then(({ data }) => setReviewFlags(new Set((data || []).map(f => `${f.subject_type}:${f.subject_id}`))))
       .catch(() => {})
   }
 
@@ -462,14 +476,16 @@ export default function IdleReview() {
       ? base
       : reviewFilter === 'pending'
         ? base.filter(r => r.reason === 'Pending - TBD')
-        : base.filter(r => (reviewFilter === 'reviewed' ? !!r.last_reviewed_at : !r.last_reviewed_at))
+        : reviewFilter === 'under_review'
+          ? base.filter(r => reviewFlags.has(`${r.subject_type}:${r.subject_id}`))
+          : base.filter(r => (reviewFilter === 'reviewed' ? !!r.last_reviewed_at : !r.last_reviewed_at))
     // Financing axis ANDs on top. Driver rows carry a null finance_type, so
     // they fall out of lease/loan/owned automatically and only show under All.
     if (financeFilter !== 'all') list = list.filter(r => r.finance_type === financeFilter)
     // Breakdown drill-down ANDs on top of every other axis.
     if (bucketFilter) list = list.filter(r => r.bucket === bucketFilter)
     return groupOf(list)
-  }, [view, activeRows, resolvedRows, reviewFilter, financeFilter, bucketFilter])
+  }, [view, activeRows, resolvedRows, reviewFilter, financeFilter, bucketFilter, reviewFlags])
 
   // Idle breakdown — aggregated client-side from the idle_bucketed rows, always
   // over ALL unresolved rows so the totals stay stable while a bucket is
@@ -552,6 +568,29 @@ export default function IdleReview() {
     }
   }
 
+  // Toggle a subject's shared "under review" flag via the manager-gated RPC.
+  // Optimistic (flip the Set — and the tab count — immediately), reconcile to
+  // the value the RPC returns, roll back + toast on error/rejection.
+  async function toggleReview(row) {
+    const key = `${row.subject_type}:${row.subject_id}`
+    const next = !reviewFlags.has(key)
+    const apply = (flag) => setReviewFlags(prev => {
+      const s = new Set(prev)
+      if (flag) s.add(key); else s.delete(key)
+      return s
+    })
+    apply(next) // optimistic
+    const { data, error: err } = await supabase.rpc('set_idle_under_review', {
+      p_subject_type: row.subject_type, p_subject_id: row.subject_id, p_flag: next,
+    })
+    if (err) {
+      apply(!next) // rollback
+      toast.error(next ? "Couldn't flag for review" : "Couldn't remove review flag", err)
+      return
+    }
+    if (typeof data === 'boolean') apply(data) // reconcile to server truth
+  }
+
   const loading = rows === null
   const resolvedView = view === 'resolved'
 
@@ -605,7 +644,7 @@ export default function IdleReview() {
           ))}
         </div>
         <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-slate-700 text-xs w-fit">
-          {[['all', `All (${reviewCounts.all})`], ['reviewed', `Reviewed (${reviewCounts.reviewed})`], ['needs', `Needs review (${reviewCounts.needs})`], ['pending', `Pending (${reviewCounts.pending})`]].map(([k, lbl]) => (
+          {[['all', `All (${reviewCounts.all})`], ['reviewed', `Reviewed (${reviewCounts.reviewed})`], ['needs', `Needs review (${reviewCounts.needs})`], ['pending', `Pending (${reviewCounts.pending})`], ['under_review', `Under review (${reviewFlags.size})`]].map(([k, lbl]) => (
             <button key={k} onClick={() => setReviewFilter(k)} className={`px-3 py-1.5 whitespace-nowrap ${reviewFilter === k ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5'}`}>{lbl}</button>
           ))}
         </div>
@@ -638,9 +677,9 @@ export default function IdleReview() {
         <div className={`${S.card} p-12 text-center text-sm text-gray-500 dark:text-slate-500 animate-pulse`}>Finding idle subjects…</div>
       ) : (
         <>
-          <IdleSection title="Drivers" kind="driver" rows={viewGroups.driver} reasons={DRIVER_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} homeBySubject={homeBySubject} behindBySubject={behindBySubject} />
-          <IdleSection title="Trucks" kind="unit" rows={viewGroups.truck} reasons={UNIT_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} farBySubject={farFromYard} />
-          <IdleSection title="Trailers" kind="unit" rows={viewGroups.trailer} reasons={UNIT_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} farBySubject={farFromYard} />
+          <IdleSection title="Drivers" kind="driver" rows={viewGroups.driver} reasons={DRIVER_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} homeBySubject={homeBySubject} behindBySubject={behindBySubject} reviewFlags={reviewFlags} canEdit={canEdit} onToggleReview={toggleReview} />
+          <IdleSection title="Trucks" kind="unit" rows={viewGroups.truck} reasons={UNIT_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} farBySubject={farFromYard} reviewFlags={reviewFlags} canEdit={canEdit} onToggleReview={toggleReview} />
+          <IdleSection title="Trailers" kind="unit" rows={viewGroups.trailer} reasons={UNIT_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} farBySubject={farFromYard} reviewFlags={reviewFlags} canEdit={canEdit} onToggleReview={toggleReview} />
         </>
       )}
     </div>
@@ -830,7 +869,7 @@ function DriverIdleCard({ ps, loading }) {
   )
 }
 
-function IdleSection({ title, kind, rows, reasons, resolvedView, reviewFilter, financeFilter, onSetReason, onResolve, onReopen, homeBySubject = {}, behindBySubject = {}, farBySubject = {} }) {
+function IdleSection({ title, kind, rows, reasons, resolvedView, reviewFilter, financeFilter, onSetReason, onResolve, onReopen, homeBySubject = {}, behindBySubject = {}, farBySubject = {}, reviewFlags = new Set(), canEdit = false, onToggleReview }) {
   const columns = kind === 'unit' ? UNIT_COLUMNS : DRIVER_COLUMNS
 
   const [sort, setSort] = useState({ key: 'days', dir: 'desc' })
@@ -940,7 +979,7 @@ function IdleSection({ title, kind, rows, reasons, resolvedView, reviewFilter, f
               </thead>
               <tbody>
                 {visible.map(r => (
-                  <IdleRow key={`${r.subject_type}:${r.subject_id}`} row={r} kind={kind} reasons={reasons} resolvedView={resolvedView} onSetReason={onSetReason} onResolve={onResolve} onReopen={onReopen} homeInfo={homeBySubject[`${r.subject_type}:${r.subject_id}`]} behindInfo={behindBySubject[`${r.subject_type}:${r.subject_id}`]} farInfo={farBySubject[`${r.subject_type}:${r.subject_id}`]} />
+                  <IdleRow key={`${r.subject_type}:${r.subject_id}`} row={r} kind={kind} reasons={reasons} resolvedView={resolvedView} onSetReason={onSetReason} onResolve={onResolve} onReopen={onReopen} homeInfo={homeBySubject[`${r.subject_type}:${r.subject_id}`]} behindInfo={behindBySubject[`${r.subject_type}:${r.subject_id}`]} farInfo={farBySubject[`${r.subject_type}:${r.subject_id}`]} flagged={reviewFlags.has(`${r.subject_type}:${r.subject_id}`)} canEdit={canEdit} onToggleReview={onToggleReview} />
                 ))}
               </tbody>
               <tfoot>
@@ -1056,8 +1095,12 @@ const TEAM_ICON = (
   </svg>
 )
 
-function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onReopen, homeInfo, behindInfo, farInfo }) {
+function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onReopen, homeInfo, behindInfo, farInfo, flagged, canEdit, onToggleReview }) {
   const sev = severity(row)
+
+  // Shared "under review" flag toggle — leftmost in the subject cell, same
+  // affordance as Driver Purchases.
+  const reviewFlag = <ReviewFlagButton flagged={flagged} canEdit={canEdit} onToggle={() => onToggleReview(row)} />
 
   const daysCls = (row.days_idle ?? 0) >= 14 ? 'text-red-600 dark:text-red-400 font-semibold' : 'text-gray-700 dark:text-slate-300'
 
@@ -1129,6 +1172,7 @@ function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onR
       <tr className={S.tableRow}>
         <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200 align-top`}>
           <span className="inline-flex items-center gap-1.5">
+            {reviewFlag}
             <SubjectLink row={row} />
             {row.label && <CopyButton value={row.label.replace(/^#/, '').trim()} label="Copy unit number" />}
           </span>
@@ -1160,6 +1204,7 @@ function IdleRow({ row, kind, reasons, resolvedView, onSetReason, onResolve, onR
     <tr className={S.tableRow}>
       <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200 align-top`}>
         <span className="inline-flex items-center gap-1.5 flex-wrap">
+          {reviewFlag}
           {isTeam && TEAM_ICON}
           {isTeam ? <span>{row.label || '—'}</span> : <SubjectLink row={row} />}
           {row.label && <CopyButton value={row.label.trim()} label={isTeam ? 'Copy team' : 'Copy driver name'} />}
