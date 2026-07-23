@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { useToast } from '../../../../contexts/ToastContext'
 import { S } from '../../../../lib/styles'
 import { supabase } from '../../../../lib/supabase'
+import { withTimeout } from '../../../../lib/withTimeout'
+import { ErrorRetry } from '../../../../components/Loading'
 import SpotlightDeck from './SpotlightDeck'
 import DriverSpotlightCard from './DriverSpotlightCard'
 import ErrorBoundary from '../../../../components/ErrorBoundary'
@@ -27,8 +28,8 @@ const PRESET_LABEL = { week: 'This week', month: 'This month', custom: 'Custom' 
 
 export default function Spotlight({ dimension = 'driver' }) {
   const config = DIMENSION_CONFIGS[dimension]
-  const toast = useToast()
   const [searchParams] = useSearchParams()
+  const [reloadKey, setReloadKey] = useState(0) // bump to re-run the deck fetch (Retry)
 
   const [preset, setPreset] = useState('week')
   const [range, setRange] = useState(thisWeek)
@@ -40,7 +41,7 @@ export default function Spotlight({ dimension = 'driver' }) {
   // for, so a period/basis change invalidates them by derivation — no
   // synchronous reset-effects needed.
   const deckKey = `${dimension}|${range.from}|${range.to}|${basis}`
-  const [deckState, setDeckState] = useState({ key: null, data: null })
+  const [deckState, setDeckState] = useState({ key: null, data: null, error: false })
   const [trendState, setTrendState] = useState({ key: null, data: null })
   const [detailMap, setDetailMap] = useState({}) // `${deckKey}|${entryId}` -> lanes[]
   const [signedUrls, setSignedUrls] = useState({}) // photoPath -> signed URL
@@ -49,24 +50,29 @@ export default function Spotlight({ dimension = 'driver' }) {
   // ── Deck load: one rollup pass per period; lanes hydrate per card ──
   useEffect(() => {
     let stale = false
-    config.fetchDeck({ from: range.from, to: range.to, basis })
-      .then(d => { if (!stale) setDeckState({ key: deckKey, data: d }) })
+    withTimeout(() => config.fetchDeck({ from: range.from, to: range.to, basis }))
+      .then(d => { if (!stale) setDeckState({ key: deckKey, data: d, error: false }) })
       .catch(err => {
+        // Never leak the exception, and never fall through to an empty deck
+        // that reads as "no drivers ran loads" — flag the error state.
         if (!stale) {
-          toast.error("Couldn't load the spotlight deck", err)
-          setDeckState({ key: deckKey, data: { entries: [], benchmarks: null, days: 0 } })
+          console.error("Couldn't load the spotlight deck:", err)
+          setDeckState({ key: deckKey, data: null, error: true })
         }
       })
     // Trend is secondary — fetched in parallel, bars render when ready.
-    fetchTrendWeeks({ to: range.to, basis })
+    withTimeout(() => fetchTrendWeeks({ to: range.to, basis }))
       .then(t => { if (!stale) setTrendState({ key: deckKey, data: t }) })
       .catch(() => {})
     return () => { stale = true }
-  }, [deckKey, range.from, range.to, basis, config, toast])
+  }, [deckKey, range.from, range.to, basis, config, reloadKey])
 
   const loading = deckState.key !== deckKey
   const deck = loading ? null : deckState.data
+  const error = !loading && deckState.error
   const trend = trendState.key === deckKey ? trendState.data : null
+  // Retry returns the deck to loading (key reset), then re-runs the fetch.
+  const retry = () => { setDeckState({ key: null, data: null, error: false }); setReloadKey(k => k + 1) }
 
   // ── Batch signed URLs for driver photos ──
   useEffect(() => {
@@ -351,6 +357,8 @@ export default function Spotlight({ dimension = 'driver' }) {
         <div className="relative h-[680px]">
           <div className="absolute left-1/2 top-2 -translate-x-1/2 w-[min(860px,94vw)] h-[640px] rounded-3xl border border-gray-200 dark:border-white/10 bg-gradient-to-b from-white to-gray-50 dark:from-[#12132e] dark:to-[#0a0a18] animate-pulse" />
         </div>
+      ) : error ? (
+        <ErrorRetry message="Couldn't load the spotlight deck." onRetry={retry} />
       ) : sorted.length === 0 ? (
         <div className={`${S.card} p-16 text-center text-sm text-gray-400 dark:text-slate-500`}>
           No {config.noun} with activity in this window. Import loads first, then check the date range.

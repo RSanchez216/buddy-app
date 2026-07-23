@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../../../lib/supabase'
+import { withTimeout } from '../../../lib/withTimeout'
+import { ErrorRetry, TableSkeleton } from '../../../components/Loading'
 import { S } from '../../../lib/styles'
 import CopyButton from '../../../components/CopyButton'
 import { fmtMoney, fmtNum, fmtRpm } from '../loads/spotlight/spotlightShared'
@@ -137,7 +139,7 @@ function CombinedLoads() {
   const [groups, setGroups] = useState(null)
   const [unmappedCities, setUnmappedCities] = useState(null)
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
+  const [error, setError] = useState(false)
 
   const days = preset === 'week' ? 7 : 30
 
@@ -148,46 +150,50 @@ function CombinedLoads() {
   async function loadData() {
     let stale = false
     setLoading(true)
-    setError(null)
+    setError(false)
 
     try {
       // Load candidates
-      const { data: candData, error: candErr } = await supabase.rpc('detect_combined_load_candidates', { p_days: days })
+      const { data: candData, error: candErr } = await withTimeout(signal => supabase.rpc('detect_combined_load_candidates', { p_days: days }).abortSignal(signal))
       if (candErr) throw candErr
 
       // Load dismissed pairs
-      const { data: dismissedData, error: dismissedErr } = await supabase
+      const { data: dismissedData, error: dismissedErr } = await withTimeout(signal => supabase
         .from('load_combine_dismissals')
         .select('*')
         .order('dismissed_at', { ascending: false })
+        .abortSignal(signal))
       if (dismissedErr) throw dismissedErr
 
       // Load unmapped cities
-      const { data: unmappedData, error: unmappedErr } = await supabase.rpc('detect_unmapped_cities', { p_days: days })
+      const { data: unmappedData, error: unmappedErr } = await withTimeout(signal => supabase.rpc('detect_unmapped_cities', { p_days: days }).abortSignal(signal))
       if (unmappedErr) throw unmappedErr
 
       // Load existing groups with member loads (graceful degradation on error)
       let groupsWithLoads = []
       try {
-        const { data: groupsData, error: groupsErr } = await supabase
+        const { data: groupsData, error: groupsErr } = await withTimeout(signal => supabase
           .from('load_combine_groups')
           .select('*')
           .order('created_at', { ascending: false })
+          .abortSignal(signal))
         if (groupsErr) throw groupsErr
 
         // For each group, fetch member loads and calculate corrected metrics
         groupsWithLoads = await Promise.all((groupsData || []).map(async (group) => {
-          const { data: loads, error: loadErr } = await supabase
+          const { data: loads, error: loadErr } = await withTimeout(signal => supabase
             .from('loads')
             .select('id, load_number, pu_info, del_info, pickup_date, delivery_date, linehaul, combine_group_id')
             .eq('combine_group_id', group.id)
+            .abortSignal(signal))
           if (loadErr) throw loadErr
 
           // Fetch profit data for the group's loads to calculate corrected RPM
-          const { data: profitData, error: profitErr } = await supabase
+          const { data: profitData, error: profitErr } = await withTimeout(signal => supabase
             .from('v_load_leg_profit')
             .select('leg_revenue, leg_total_miles, load_number')
             .in('load_number', (loads || []).map(l => l.load_number))
+            .abortSignal(signal))
           if (profitErr) throw profitErr
 
           // Calculate group metrics from profit view
@@ -220,22 +226,15 @@ function CombinedLoads() {
       }
     } catch (err) {
       if (!stale) {
+        // Never leak the exception to the UI — log it, flag the error state.
         console.error('Failed to load combined loads data:', err)
-        setError(err.message || 'Failed to load data')
+        setError(true)
       }
     } finally {
       if (!stale) setLoading(false)
     }
 
     return () => { stale = true }
-  }
-
-  if (error) {
-    return (
-      <div className={`${S.card} p-4 text-center text-sm text-red-600 dark:text-red-400`}>
-        {error}
-      </div>
-    )
   }
 
   return (
@@ -269,10 +268,10 @@ function CombinedLoads() {
       </div>
 
       {/* Section 1: Candidates */}
-      {loading ? (
-        <div className={`${S.card} h-64 flex items-center justify-center`}>
-          <div className="text-sm text-gray-400 dark:text-slate-500">Loading…</div>
-        </div>
+      {error ? (
+        <ErrorRetry message="Couldn't load combined loads." onRetry={loadData} />
+      ) : loading ? (
+        <TableSkeleton rows={6} cols={5} />
       ) : (
         <>
           <CandidatesSection candidates={candidates || []} onRefresh={loadData} />

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useToast } from '../../../../contexts/ToastContext'
 import { S } from '../../../../lib/styles'
 import { supabase } from '../../../../lib/supabase'
+import { withTimeout } from '../../../../lib/withTimeout'
 import ErrorBoundary from '../../../../components/ErrorBoundary'
 import { fetchContribution, prorateUnitCost, fetchTeamByDriver } from './contributionData'
 import { fmtMoney, fmtNum, formatRange, shiftYmd, spanDays, thisMonth, thisWeek } from '../spotlight/spotlightShared'
@@ -176,7 +176,7 @@ function RowDetail({ row, days, dimension }) {
 }
 
 export default function Contribution() {
-  const toast = useToast()
+  const [reloadKey, setReloadKey] = useState(0) // bump to re-run the main fetch (Retry)
 
   const [viewMode, setViewMode] = useState('equipment') // 'equipment' | 'driver-pay'
   const [dimension, setDimension] = useState('truck')
@@ -193,7 +193,7 @@ export default function Contribution() {
   // period / basis change invalidates them by derivation, no reset effects.
   const dataKey = `${dimension}|${range.from}|${range.to}|${basis}`
   const driverPayKey = `driver-pay|${range.from}|${range.to}|${basis}`
-  const [dataState, setDataState] = useState({ key: null, data: null })
+  const [dataState, setDataState] = useState({ key: null, data: null, error: false })
   const [driverPayState, setDriverPayState] = useState({ key: null, data: null })
   const [expandState, setExpandState] = useState({ key: null, id: null })
   // Current-team overlay (driver_id → {team_id, team_name}) — the driver-pay
@@ -203,16 +203,18 @@ export default function Contribution() {
 
   useEffect(() => {
     let stale = false
-    fetchContribution({ dimension, from: range.from, to: range.to, basis })
-      .then(d => { if (!stale) setDataState({ key: dataKey, data: d }) })
+    withTimeout(() => fetchContribution({ dimension, from: range.from, to: range.to, basis }))
+      .then(d => { if (!stale) setDataState({ key: dataKey, data: d, error: false }) })
       .catch(err => {
+        // Never leak the exception, and never fall through to a zeroed totals
+        // strip / empty leaderboard — flag the error state.
         if (!stale) {
-          toast.error("Couldn't load contribution data", err)
-          setDataState({ key: dataKey, data: { rows: [], days: 0, effDays: 0, unattributed: { amount: 0, count: 0 }, unassigned: { revenue: 0, miles: 0 } } })
+          console.error("Couldn't load contribution data:", err)
+          setDataState({ key: dataKey, data: null, error: true })
         }
       })
     return () => { stale = true }
-  }, [dataKey, dimension, range.from, range.to, basis, toast])
+  }, [dataKey, dimension, range.from, range.to, basis, reloadKey])
 
   // Fetch driver pay estimates (parallel to equipment data, always driver-keyed).
   // The pay-rollup collapses a team to its primary row; overlay the team-aware
@@ -222,10 +224,10 @@ export default function Contribution() {
   // separate co-driver row.
   useEffect(() => {
     let stale = false
-    Promise.all([
-      supabase.rpc('driver_pay_estimate_rollup', { p_from: range.from, p_to: range.to, p_basis: basis }),
-      supabase.rpc('driver_contribution_inputs', { p_from: range.from, p_to: range.to, p_basis: basis }),
-    ]).then(([rollup, ci]) => {
+    withTimeout(signal => Promise.all([
+      supabase.rpc('driver_pay_estimate_rollup', { p_from: range.from, p_to: range.to, p_basis: basis }).abortSignal(signal),
+      supabase.rpc('driver_contribution_inputs', { p_from: range.from, p_to: range.to, p_basis: basis }).abortSignal(signal),
+    ])).then(([rollup, ci]) => {
       if (stale) return
       if (rollup.error) throw rollup.error
       const unit = new Map((ci.error ? [] : (ci.data || [])).map(r => [r.driver_id, r]))
@@ -255,6 +257,9 @@ export default function Contribution() {
 
   const loading = dataState.key !== dataKey
   const data = loading ? null : dataState.data
+  const error = !loading && dataState.error
+  // Retry returns the view to loading, then re-runs the main contribution fetch.
+  const retry = () => { setDataState({ key: null, data: null, error: false }); setReloadKey(k => k + 1) }
   const expandedId = expandState.key === dataKey ? expandState.id : null
 
   const filtered = useMemo(() => {
@@ -454,8 +459,19 @@ export default function Contribution() {
         </div>
       </div>
 
+      {/* Main-fetch error in driver-pay mode — the equipment totals strip is
+          hidden (no $0 fall-through) and this mode has no table of its own to
+          carry the message, so surface it here. Equipment mode shows the error
+          inside its table body instead. */}
+      {viewMode === 'driver-pay' && error && (
+        <div className="flex items-center gap-3 flex-wrap p-3 rounded-xl bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20">
+          <p className="text-sm text-red-700 dark:text-red-300 flex-1 min-w-0">Couldn't load contribution data.</p>
+          <button onClick={retry} className={S.btnSecondary}>Retry</button>
+        </div>
+      )}
+
       {/* ── Fleet totals strip (equipment + driver-pay modes) ── */}
-      {viewMode !== 'company-net' && (<>
+      {viewMode !== 'company-net' && !error && (<>
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         {[
           { label: 'Realized revenue', value: fmtMoney(totals.revenue), tone: '' },
@@ -514,7 +530,14 @@ export default function Contribution() {
                 </tr>
               </thead>
               <tbody>
-                {loading ? (
+                {error ? (
+                  <tr><td colSpan={8} className="px-4 py-12 text-center">
+                    <div className="flex flex-col items-center gap-3">
+                      <p className="text-sm text-gray-600 dark:text-slate-400">Couldn't load contribution data.</p>
+                      <button onClick={retry} className={S.btnSecondary}>Retry</button>
+                    </div>
+                  </td></tr>
+                ) : loading ? (
                   <tr><td colSpan={8} className="px-4 py-12 text-center text-sm text-gray-600 dark:text-slate-500 animate-pulse">Crunching the leaderboard…</td></tr>
                 ) : sorted.length === 0 ? (
                   <tr><td colSpan={8} className="px-4 py-12 text-center text-sm text-gray-600 dark:text-slate-500">No {nounSingular}s with activity or carrying cost in this window.</td></tr>
@@ -751,10 +774,11 @@ function payBasisText(d) {
 }
 
 function CompanyNetView({ from, to, basis, query }) {
-  const [state, setState] = useState({ key: null, data: null })
+  const [state, setState] = useState({ key: null, data: null, error: false })
   const [sort, setSort] = useState({ key: 'companyNet', dir: 'desc' })
   const [expandId, setExpandId] = useState(null)
   const [loadsByDriver, setLoadsByDriver] = useState({}) // driver_id → { loading, rows }
+  const [reloadKey, setReloadKey] = useState(0) // bump to re-run the fetch (Retry)
 
   // Period/basis changes remount this component (key in the parent), so state
   // starts fresh and this effect just fetches — no synchronous reset needed,
@@ -762,13 +786,21 @@ function CompanyNetView({ from, to, basis, query }) {
   const key = `${from}|${to}|${basis}`
   useEffect(() => {
     let stale = false
-    supabase.rpc('driver_contribution_inputs', { p_from: from, p_to: to, p_basis: basis })
-      .then(({ data, error }) => { if (!stale) setState({ key, data: error ? [] : (data || []) }) })
-      .catch(() => { if (!stale) setState({ key, data: [] }) })
+    withTimeout(signal => supabase.rpc('driver_contribution_inputs', { p_from: from, p_to: to, p_basis: basis }).abortSignal(signal))
+      .then(({ data, error }) => {
+        if (stale) return
+        // A query error resolves as { error } — treat it as the error state,
+        // never an empty "no drivers" table with a $0 summary strip.
+        if (error) { console.error('Company net load failed:', error); setState({ key, data: null, error: true }) }
+        else setState({ key, data: data || [], error: false })
+      })
+      .catch(err => { if (!stale) { console.error('Company net load failed:', err); setState({ key, data: null, error: true }) } })
     return () => { stale = true }
-  }, [key, from, to, basis])
+  }, [key, from, to, basis, reloadKey])
 
   const loading = state.key !== key
+  const error = !loading && state.error
+  const retry = () => { setState({ key: null, data: null, error: false }); setReloadKey(k => k + 1) }
   const days = spanDays(from, to)
 
   const rows = useMemo(() => {
@@ -844,7 +876,8 @@ function CompanyNetView({ from, to, basis, query }) {
 
   return (
     <div className="space-y-3">
-      {/* Summary strip */}
+      {/* Summary strip — hidden on error so it never reads as a real $0 net. */}
+      {!error && (
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
           { label: 'Revenue', value: fmtMoney(totals.revenue), tone: '' },
@@ -858,6 +891,7 @@ function CompanyNetView({ from, to, basis, query }) {
           </div>
         ))}
       </div>
+      )}
 
       <div className={`${S.card} overflow-hidden`}>
         <div className="overflow-x-auto">
@@ -874,7 +908,14 @@ function CompanyNetView({ from, to, basis, query }) {
               </tr>
             </thead>
             <tbody>
-              {loading ? (
+              {error ? (
+                <tr><td colSpan={6} className="px-4 py-12 text-center">
+                  <div className="flex flex-col items-center gap-3">
+                    <p className="text-sm text-gray-600 dark:text-slate-400">Couldn't load contribution data.</p>
+                    <button onClick={retry} className={S.btnSecondary}>Retry</button>
+                  </div>
+                </td></tr>
+              ) : loading ? (
                 <tr><td colSpan={6} className="px-4 py-12 text-center text-sm text-gray-600 dark:text-slate-500 animate-pulse">Crunching company net…</td></tr>
               ) : sorted.length === 0 ? (
                 <tr><td colSpan={6} className="px-4 py-12 text-center text-sm text-gray-600 dark:text-slate-500">No revenue-bearing drivers in this window.</td></tr>

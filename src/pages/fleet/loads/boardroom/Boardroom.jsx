@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useToast } from '../../../../contexts/ToastContext'
 import { S } from '../../../../lib/styles'
+import { withTimeout } from '../../../../lib/withTimeout'
+import { ErrorRetry } from '../../../../components/Loading'
 import { fetchBoardroom, pctDelta } from './boardroomData'
 import { fmtMoney, fmtNum, fmtRpm, formatRange, shiftYmd, spanDays, thisMonth, thisWeek } from '../spotlight/spotlightShared'
 
@@ -402,30 +403,34 @@ function RoadmapPanel() {
 
 // ── Page ──────────────────────────────────────────────────────────────────
 export default function Boardroom() {
-  const toast = useToast()
   const [preset, setPreset] = useState('week')
   const [range, setRange] = useState(thisWeek)
   const [basis, setBasis] = useState('delivery')
+  const [reloadKey, setReloadKey] = useState(0) // bump to re-run the fetch (Retry)
 
   // Period-keyed async state (the Spotlight derivation pattern): a range or
   // basis change invalidates the data by key, no reset-effects needed.
   const dataKey = `${range.from}|${range.to}|${basis}`
-  const [state, setState] = useState({ key: null, data: null })
+  const [state, setState] = useState({ key: null, data: null, error: false })
   useEffect(() => {
     let stale = false
-    fetchBoardroom({ from: range.from, to: range.to, basis })
-      .then(d => { if (!stale) setState({ key: dataKey, data: d }) })
+    withTimeout(() => fetchBoardroom({ from: range.from, to: range.to, basis }))
+      .then(d => { if (!stale) setState({ key: dataKey, data: d, error: false }) })
       .catch(err => {
+        // Never leak the exception to the UI — log it, flag the error state.
         if (!stale) {
-          toast.error("Couldn't load the Boardroom", err)
-          setState({ key: dataKey, data: null })
+          console.error("Couldn't load the Boardroom:", err)
+          setState({ key: dataKey, data: null, error: true })
         }
       })
     return () => { stale = true }
-  }, [dataKey, range.from, range.to, basis, toast])
+  }, [dataKey, range.from, range.to, basis, reloadKey])
 
   const loading = state.key !== dataKey
   const data = loading ? null : state.data
+  const error = !loading && state.error
+  // Retry returns the page to loading (key reset), then re-runs the fetch.
+  const retry = () => { setState({ key: null, data: null, error: false }); setReloadKey(k => k + 1) }
 
   function setPresetRange(p) {
     setPreset(p)
@@ -530,8 +535,13 @@ export default function Boardroom() {
                 sub={`of ${totalDrivers}`}
                 delta={pctDelta(pulse.cur.activeEntities, pulse.prior.activeEntities)} cmpLabel={cmpLabel} />
             </div>
+          ) : error ? (
+            <div className="py-6 flex flex-col items-start gap-3">
+              <p className="text-sm text-gray-500 dark:text-slate-400">Couldn't load the pulse — check the connection and try again.</p>
+              <button onClick={retry} className={S.btnSecondary}>Retry</button>
+            </div>
           ) : (
-            <p className="text-sm text-gray-400 dark:text-slate-500 py-6">Couldn't load the pulse — check the connection and try another period.</p>
+            <p className="text-sm text-gray-400 dark:text-slate-500 py-6">No freight activity in this window.</p>
           )}
         </div>
       </div>
@@ -553,6 +563,8 @@ export default function Boardroom() {
       <div className="grid lg:grid-cols-3 gap-4 items-stretch">
         {loading ? (
           [...Array(3)].map((_, i) => <div key={i} className={`${S.card} h-72 animate-pulse`} />)
+        ) : error ? (
+          <div className="lg:col-span-3"><ErrorRetry message="Couldn't load the Boardroom." onRetry={retry} /></div>
         ) : (
           <>
             <ConcentrationCard concentration={data?.concentration} />
