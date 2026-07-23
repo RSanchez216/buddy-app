@@ -3,6 +3,8 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { S } from '../../lib/styles'
+import { withTimeout } from '../../lib/withTimeout'
+import { Skeleton, ErrorRetry } from '../../components/Loading'
 import Select from '../../components/Select'
 import {
   CF, addDays, endOfMonthGrid, fmtRange, startOfMonthGrid, startOfWeek, toISO, isPaidStatus,
@@ -84,6 +86,7 @@ export default function PaymentCalendar() {
   // and keyed by custom_outflows.id.
   const [customCategoryById, setCustomCategoryById] = useState({})
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
 
   // Modal state
   // The original AddIncome/AddExpense/AddTransfer modals stay mounted for
@@ -175,53 +178,54 @@ export default function PaymentCalendar() {
   useEffect(() => { loadData() /* eslint-disable-line */ }, [fetchRange.start.getTime(), fetchRange.end.getTime(), entityFilter])
 
   async function loadData() {
-    setLoading(true)
+    setLoading(true); setError(null)
     const startISO = toISO(fetchRange.start)
     const endISO = toISO(fetchRange.end)
+    try {
+      const [evRes, cashRes, accRes] = await Promise.all([
+        withTimeout(signal => {
+          let q = supabase.from('v_cash_flow_events').select('*').gte('event_date', startISO).lte('event_date', endISO)
+          if (entityFilter) q = q.eq('entity_id', entityFilter)
+          return q.abortSignal(signal)
+        }),
+        withTimeout(signal => supabase.from('cash_positions').select('week_start_date, starting_cash').gte('week_start_date', startISO).lte('week_start_date', endISO).abortSignal(signal)),
+        withTimeout(signal => supabase.from('funding_accounts')
+          .select('id, name, bank_name, last_four, current_balance, balance_as_of_date, is_active')
+          .eq('is_active', true).order('name').abortSignal(signal)),
+      ])
+      if (evRes.error) throw evRes.error
+      if (accRes.error) throw accRes.error
+      if (cashRes.error) throw cashRes.error
 
-    let query = supabase
-      .from('v_cash_flow_events')
-      .select('*')
-      .gte('event_date', startISO)
-      .lte('event_date', endISO)
-    if (entityFilter) query = query.eq('entity_id', entityFilter)
+      const allEvents = evRes.data || []
+      setEvents(allEvents)
+      setAccounts(accRes.data || [])
 
-    const [evRes, cashRes, accRes] = await Promise.all([
-      query,
-      supabase.from('cash_positions').select('week_start_date, starting_cash').gte('week_start_date', startISO).lte('week_start_date', endISO),
-      supabase.from('funding_accounts')
-        .select('id, name, bank_name, last_four, current_balance, balance_as_of_date, is_active')
-        .eq('is_active', true)
-        .order('name'),
-    ])
+      // Sub-category fetch for the BatchCard line tag (Payroll / Insurance /
+      // Telematics / etc.). v_cash_flow_events flattens this to 'custom' or
+      // 'recurring'; we want the fine grain. One-shot lookup by id.
+      const customIds = allEvents
+        .filter(e => e.reference_type === 'custom' || e.reference_type === 'recurring')
+        .map(e => e.reference_id)
+      if (customIds.length) {
+        const { data: cats } = await withTimeout(signal =>
+          supabase.from('custom_outflows').select('id, category').in('id', customIds).abortSignal(signal))
+        const map = {}
+        for (const r of (cats || [])) map[r.id] = r.category
+        setCustomCategoryById(map)
+      } else {
+        setCustomCategoryById({})
+      }
 
-    const allEvents = evRes.data || []
-    setEvents(allEvents)
-    setAccounts(accRes.data || [])
-
-    // Sub-category fetch for the BatchCard line tag (Payroll / Insurance /
-    // Telematics / etc.). v_cash_flow_events flattens this to 'custom' or
-    // 'recurring'; we want the fine grain. One-shot lookup by id.
-    const customIds = allEvents
-      .filter(e => e.reference_type === 'custom' || e.reference_type === 'recurring')
-      .map(e => e.reference_id)
-    if (customIds.length) {
-      const { data: cats } = await supabase
-        .from('custom_outflows')
-        .select('id, category')
-        .in('id', customIds)
-      const map = {}
-      for (const r of (cats || [])) map[r.id] = r.category
-      setCustomCategoryById(map)
-    } else {
-      setCustomCategoryById({})
+      const cashMap = {}
+      for (const c of (cashRes.data || [])) cashMap[c.week_start_date] = Number(c.starting_cash || 0)
+      setStartingCashByWeek(cashMap)
+    } catch (e) {
+      console.error('Payment Calendar load failed:', e)
+      setError(e.message || 'Failed to load the calendar')
+    } finally {
+      setLoading(false)
     }
-
-    const cashMap = {}
-    for (const c of (cashRes.data || [])) cashMap[c.week_start_date] = Number(c.starting_cash || 0)
-    setStartingCashByWeek(cashMap)
-
-    setLoading(false)
   }
 
   // Visible events after the Show-paid toggle and quick-filter pill.
@@ -651,7 +655,9 @@ export default function PaymentCalendar() {
       )}
 
       {loading ? (
-        <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500" /></div>
+        <CalendarSkeleton view={view} />
+      ) : error ? (
+        <ErrorRetry message="Couldn't load the calendar." onRetry={loadData} />
       ) : view === 'week' ? (
         <>
           {/* Main grid + right rail */}
@@ -715,7 +721,7 @@ export default function PaymentCalendar() {
         />
       )}
 
-      {!loading && <CalendarLegend />}
+      {!loading && !error && <CalendarLegend />}
 
       {/* Modals */}
       <AddIncomeModal
@@ -826,6 +832,39 @@ export default function PaymentCalendar() {
           </button>
         </div>
       )}
+    </div>
+  )
+}
+
+// Loading skeleton that mirrors the calendar's eventual layout (week grid +
+// right rail, or the month grid) so data landing doesn't jump the page.
+function CalendarSkeleton({ view }) {
+  if (view === 'week') {
+    return (
+      <div className="grid gap-4" style={{ gridTemplateColumns: '1fr 240px' }}>
+        <div className="grid grid-cols-7 gap-2">
+          {Array.from({ length: 7 }).map((_, i) => (
+            <div key={i} className={`${S.card} p-2 h-64 space-y-2`}>
+              <Skeleton className="h-4 w-12" />
+              <Skeleton className="h-9 w-full" />
+              <Skeleton className="h-9 w-full" />
+              <Skeleton className="h-9 w-full" />
+            </div>
+          ))}
+        </div>
+        <div className={`${S.card} p-3 h-64 space-y-3`}>
+          <Skeleton className="h-4 w-24" />
+          <Skeleton className="h-16 w-full" />
+          <Skeleton className="h-16 w-full" />
+        </div>
+      </div>
+    )
+  }
+  return (
+    <div className="grid grid-cols-7 gap-2">
+      {Array.from({ length: 35 }).map((_, i) => (
+        <div key={i} className={`${S.card} p-2 h-24`}><Skeleton className="h-4 w-6" /></div>
+      ))}
     </div>
   )
 }

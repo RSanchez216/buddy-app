@@ -7,6 +7,7 @@
 // All math is plain client-side; no realtime subscriptions or server calls.
 
 import { supabase } from '../../lib/supabase'
+import { withTimeout } from '../../lib/withTimeout'
 import { addDays, toISO } from './calendarUtils'
 
 const UNASSIGNED = '__unassigned__'
@@ -36,12 +37,19 @@ export async function fetchProjectedBalances(accounts, viewEndISO) {
     return { timelines, shortfallDays }
   }
   const results = await Promise.all(activeAccounts.map(async acc => {
-    const { data, error } = await supabase.rpc('projected_balances', {
-      p_funding_account_id: acc.id,
-      p_end_date: viewEndISO,
-    })
-    if (error) console.warn('projected_balances error for', acc.name, error.message)
-    return { acc, rows: error ? [] : (data || []) }
+    try {
+      const { data, error } = await withTimeout(signal => supabase.rpc('projected_balances', {
+        p_funding_account_id: acc.id,
+        p_end_date: viewEndISO,
+      }).abortSignal(signal))
+      if (error) console.warn('projected_balances error for', acc.name, error.message)
+      return { acc, rows: error ? [] : (data || []) }
+    } catch (e) {
+      // Timed out / aborted — treat as no rows (consumer shows "balance not
+      // set") rather than hanging the whole projection.
+      console.warn('projected_balances timed out for', acc.name, e?.message)
+      return { acc, rows: [] }
+    }
   }))
   for (const { acc, rows } of results) {
     // Empty rows = no anchor entry yet for this account. The consumer
