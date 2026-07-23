@@ -121,6 +121,7 @@ export default function GeoHeatMap({ range, phases }) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [reloadKey, setReloadKey] = useState(0)
 
   // Determine theme (we'll use dark: class from Tailwind)
   const isDark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
@@ -174,7 +175,7 @@ export default function GeoHeatMap({ range, phases }) {
     return () => {
       stale = true
     }
-  }, [dataKey, range, basis, view, phases, trailerType])
+  }, [dataKey, range, basis, view, phases, trailerType, reloadKey])
 
   // Compute color scale
   const colorScale = useMemo(() => {
@@ -326,8 +327,9 @@ export default function GeoHeatMap({ range, phases }) {
         )}
 
         {error && (
-          <div className="aspect-[900/560] rounded-lg bg-red-50 dark:bg-red-500/10 flex items-center justify-center p-4 text-center">
-            <div className="text-sm text-red-600 dark:text-red-400">Failed to load data: {error}</div>
+          <div className="aspect-[900/560] rounded-lg bg-red-50 dark:bg-red-500/10 flex flex-col items-center justify-center gap-3 p-4 text-center">
+            <div className="text-sm text-red-600 dark:text-red-400">Couldn&apos;t load the map.</div>
+            <button onClick={() => setReloadKey(k => k + 1)} className={S.btnSecondary}>Retry</button>
           </div>
         )}
 

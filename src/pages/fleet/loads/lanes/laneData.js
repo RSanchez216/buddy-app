@@ -5,6 +5,7 @@
 // but off the map, and coverage stats reflect actual geocoding success.
 
 import { supabase } from '../../../../lib/supabase'
+import { withTimeout } from '../../../../lib/withTimeout'
 import { trailerTypeColor } from '../spotlight/spotlightShared'
 
 // Load statuses to exclude from best/worst ranking (e.g., TONU, cancellations).
@@ -81,16 +82,16 @@ export async function fetchLaneGeoRollup({ from, to, basis = 'origin', grain = '
 
   const rows = []
   for (let page = 0; ; page++) {
-    let query = supabase.from('v_lane_geo')
-      .select(`${unitCol}, leg_id, leg_revenue, leg_total_miles`)
-      .in('load_phase', phases)
-      // coalesce(delivery_date, pickup_date) BETWEEN from AND to
-      .or(`and(delivery_date.gte.${from},delivery_date.lte.${to}),and(delivery_date.is.null,pickup_date.gte.${from},pickup_date.lte.${to})`)
-    if (trailerType === UNKNOWN_TYPE) query = query.is('effective_trailer_type', null)
-    else if (trailerType) query = query.eq('effective_trailer_type', trailerType)
-    const { data, error } = await query
-      .order('leg_id', { ascending: true })
-      .range(page * 1000, page * 1000 + 999)
+    const { data, error } = await withTimeout(signal => {
+      let query = supabase.from('v_lane_geo')
+        .select(`${unitCol}, leg_id, leg_revenue, leg_total_miles`)
+        .in('load_phase', phases)
+        // coalesce(delivery_date, pickup_date) BETWEEN from AND to
+        .or(`and(delivery_date.gte.${from},delivery_date.lte.${to}),and(delivery_date.is.null,pickup_date.gte.${from},pickup_date.lte.${to})`)
+      if (trailerType === UNKNOWN_TYPE) query = query.is('effective_trailer_type', null)
+      else if (trailerType) query = query.eq('effective_trailer_type', trailerType)
+      return query.order('leg_id', { ascending: true }).range(page * 1000, page * 1000 + 999).abortSignal(signal)
+    })
     if (error) throw error
     rows.push(...(data || []))
     if (!data || data.length < 1000) break

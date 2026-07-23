@@ -4,6 +4,8 @@ import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { supabase } from '../../../../lib/supabase'
 import { S } from '../../../../lib/styles'
+import { withTimeout } from '../../../../lib/withTimeout'
+import { Skeleton, ErrorRetry } from '../../../../components/Loading'
 import { useTheme } from '../../../../contexts/ThemeContext'
 import { fmtMoney, fmtRpm, fmtNum, trailerTypeColor } from '../spotlight/spotlightShared'
 
@@ -118,23 +120,29 @@ export default function TrailerTypeTrends() {
   const [cmpB, setCmpB] = useState(null)
   const [dataByGran, setDataByGran] = useState({})
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
+  const [reloadKey, setReloadKey] = useState(0)
 
-  // Fetch data for a granularity if not cached
+  // Fetch data for a granularity if not cached. On error we deliberately DON'T
+  // cache an empty array (so a genuine error never looks like real "no data",
+  // and Retry can re-fetch). Not caching also means the error path doesn't
+  // change dataByGran, so the effect won't loop.
   useEffect(() => {
-    if (dataByGran[granularity]) return
+    if (dataByGran[granularity]) { setError(null); return }
 
     setLoading(true)
-    supabase.rpc('lane_trailer_type_trends', { p_granularity: granularity })
-      .then(({ data, error }) => {
-        if (error) throw error
+    setError(null)
+    withTimeout(signal => supabase.rpc('lane_trailer_type_trends', { p_granularity: granularity }).abortSignal(signal))
+      .then(({ data, error: err }) => {
+        if (err) throw err
         setDataByGran(prev => ({ ...prev, [granularity]: data || [] }))
       })
       .catch(err => {
         console.error('Failed to load trailer type trends:', err)
-        setDataByGran(prev => ({ ...prev, [granularity]: [] }))
+        setError(err.message || 'Failed to load')
       })
       .finally(() => setLoading(false))
-  }, [granularity, dataByGran])
+  }, [granularity, dataByGran, reloadKey])
 
   const rawData = dataByGran[granularity] || []
 
@@ -830,8 +838,13 @@ export default function TrailerTypeTrends() {
       {renderInsights()}
 
       {/* Table + Chart */}
-      {loading ? (
-        <div className="p-4 text-center text-gray-500 dark:text-slate-400 text-sm">Loading…</div>
+      {error ? (
+        <ErrorRetry message="Couldn't load trailer type trends." onRetry={() => setReloadKey(k => k + 1)} />
+      ) : loading ? (
+        <div className="space-y-3">
+          <Skeleton className="h-64 w-full rounded-lg" />
+          <Skeleton className="h-40 w-full rounded-lg" />
+        </div>
       ) : rawData.length === 0 ? (
         <div className="p-6 text-center text-gray-500 dark:text-slate-400">
           <p className="text-sm mb-1">No data available yet</p>

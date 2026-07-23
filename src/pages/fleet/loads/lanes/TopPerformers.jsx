@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState, useRef } from 'react'
 import { supabase } from '../../../../lib/supabase'
 import { S } from '../../../../lib/styles'
+import { withTimeout } from '../../../../lib/withTimeout'
+import { Skeleton, ErrorRetry } from '../../../../components/Loading'
 import { fmtMoney, fmtNum, fmtRpm } from '../spotlight/spotlightShared'
 import { exportToExcel, exportToPDF } from './exportTopPerformers'
 
@@ -339,6 +341,7 @@ export default function TopPerformers({ range, phases }) {
   const [dispatchers, setDispatchers] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [reloadKey, setReloadKey] = useState(0)
 
   const dataKey = `${range.from}|${range.to}|${[...phases].sort().join(',')}`
 
@@ -352,16 +355,12 @@ export default function TopPerformers({ range, phases }) {
         const phasesArray = Array.from(phases)
 
         const [driverRes, dispatcherRes] = await Promise.all([
-          supabase.rpc('lane_top_drivers', {
-            page_start: range.from,
-            page_end: range.to,
-            phases: phasesArray,
-          }),
-          supabase.rpc('lane_top_dispatchers', {
-            page_start: range.from,
-            page_end: range.to,
-            phases: phasesArray,
-          }),
+          withTimeout(signal => supabase.rpc('lane_top_drivers', {
+            page_start: range.from, page_end: range.to, phases: phasesArray,
+          }).abortSignal(signal)),
+          withTimeout(signal => supabase.rpc('lane_top_dispatchers', {
+            page_start: range.from, page_end: range.to, phases: phasesArray,
+          }).abortSignal(signal)),
         ])
 
         if (driverRes.error) throw driverRes.error
@@ -387,14 +386,10 @@ export default function TopPerformers({ range, phases }) {
     return () => {
       stale = true
     }
-  }, [dataKey, range, phases])
+  }, [dataKey, range, phases, reloadKey])
 
   if (error) {
-    return (
-      <div className={`${S.card} p-4 text-center text-sm text-red-600 dark:text-red-400`}>
-        {error}
-      </div>
-    )
+    return <ErrorRetry message="Couldn't load top performers." onRetry={() => setReloadKey(k => k + 1)} />
   }
 
   return (
@@ -410,8 +405,13 @@ export default function TopPerformers({ range, phases }) {
       </div>
 
       {loading && (
-        <div className={`${S.card} h-64 flex items-center justify-center`}>
-          <div className="text-sm text-gray-400 dark:text-slate-500">Loading…</div>
+        <div className="grid gap-4 lg:grid-cols-2">
+          {[0, 1].map(i => (
+            <div key={i} className={`${S.card} p-4 space-y-3`}>
+              <Skeleton className="h-4 w-32" />
+              {Array.from({ length: 6 }).map((_, r) => <Skeleton key={r} className="h-8 w-full" />)}
+            </div>
+          ))}
         </div>
       )}
 
