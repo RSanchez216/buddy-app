@@ -96,7 +96,6 @@ export async function commitDriverRows({ rows, terminations = [], userId }) {
         compensation_value: row.compensation_value,
         referred_by: row.referred_by,
         temporary_license: !!row.temporary_license,
-        missing_op: row.missing_op,
         hired_at: row.hired_at,
         // Home address from the TMS export. home_lat/home_lng are intentionally
         // omitted — a DB trigger resolves them from geo_places once city+state land.

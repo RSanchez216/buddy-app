@@ -193,7 +193,6 @@ export function parseDriversWorkbook(arrayBuffer) {
     driverType:  findCol(sample, ['Driver type', 'Driver Type']),
     phone:       findCol(sample, ['Phone number', 'Phone']),
     email:       findCol(sample, ['Email', 'Email Address', 'E-mail']),
-    missingOp:   findCol(sample, ['Missing OP']),
     referred:    findCol(sample, ['Referred by', 'Referred By']),
     createdAt:   findCol(sample, ['Created at', 'Created At']),
     tempLicense: findCol(sample, ['Temporary License', 'Temporary license']),
@@ -270,7 +269,6 @@ export function parseDriversWorkbook(arrayBuffer) {
       email: cleanEmail(cols.email ? r[cols.email] : null),
       truck_assignment_raw: cleanStr(cols.truck ? r[cols.truck] : null),
       trailer_assignment_raw: cleanStr(cols.trailer ? r[cols.trailer] : null),
-      missing_op: cleanStr(cols.missingOp ? r[cols.missingOp] : null),
       referred_by: cleanStr(cols.referred ? r[cols.referred] : null),
       hired_at: hiredAt,
       // Home address — refreshed on every re-import so a driver who moves gets

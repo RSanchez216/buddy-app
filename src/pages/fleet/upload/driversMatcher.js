@@ -97,7 +97,6 @@ export function buildUpdatePayload(existingDriver, uploadRow, userId) {
     compensation_value: uploadRow.compensation_value ?? existingDriver.compensation_value,
     referred_by:        uploadRow.referred_by        ?? existingDriver.referred_by,
     temporary_license:  uploadRow.temporary_license  ?? existingDriver.temporary_license,
-    missing_op:         uploadRow.missing_op         ?? existingDriver.missing_op,
 
     // HOME ADDRESS (refresh-always; blank in TMS never wipes a known value).
     // No home_lat/home_lng — the DB trigger owns coordinates.

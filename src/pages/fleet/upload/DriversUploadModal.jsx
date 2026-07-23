@@ -443,7 +443,7 @@ export default function DriversUploadModal({ open, onClose, onCommitted }) {
               Select multiple files with matching columns to import them together.
             </p>
             <p className="text-[11px] text-gray-500 dark:text-slate-500 mt-2">
-              Expected columns: Driver ID, Status, Full name, Truck, Carrier, Trailer, Driver type, Phone number, Email, Missing OP, Referred by, Created at, Temporary License, Compensation
+              Expected columns: Driver ID, Status, Full name, Truck, Carrier, Trailer, Driver type, Phone number, Email, Referred by, Created at, Temporary License, Compensation
             </p>
           </div>
         )}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
@@ -31,6 +31,9 @@ export default function DriversList() {
   // Composes with the status filter (e.g. Active + Missing comp). Not reset on
   // status change — that's the whole point.
   const [missingCompFilter, setMissingCompFilter] = useState(false)
+  // Review queue for equipment still on the driver-import fallback (no live
+  // assignment). Composes with status/search like Missing comp.
+  const [unconfirmedFilter, setUnconfirmedFilter] = useState(false)
   const [sortField, setSortField] = useState('full_name')
   const [sortDir, setSortDir] = useState('asc')
   const [showModal, setShowModal] = useState(false)
@@ -151,6 +154,25 @@ export default function DriversList() {
     [rows],
   )
 
+  // "Unconfirmed equipment" = truck or trailer still showing the driver-import
+  // value because no assignment row has ever existed (the view flags it via
+  // *_source = 'driver_import'). A review queue, not a status — steady state is
+  // 0–1; a rising count means an assignments import hasn't run. Count mirrors
+  // Missing comp: over the status base (stable as the search box is typed in),
+  // with amber emphasis keyed off active drivers.
+  const isUnconfirmedEquip = useCallback((r) => {
+    const eq = equipByDriver.get(r.id)
+    return eq?.truck_source === 'driver_import' || eq?.trailer_source === 'driver_import'
+  }, [equipByDriver])
+  const unconfirmedEquipCount = useMemo(() => {
+    const base = statusFilter === 'all' ? rows : rows.filter(r => r.current_status === statusFilter)
+    return base.filter(isUnconfirmedEquip).length
+  }, [rows, statusFilter, isUnconfirmedEquip])
+  const activeUnconfirmedEquip = useMemo(
+    () => rows.filter(r => r.current_status === 'active' && isUnconfirmedEquip(r)).length,
+    [rows, isUnconfirmedEquip],
+  )
+
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase()
     const base = statusFilter === 'all' ? rows : rows.filter(r => r.current_status === statusFilter)
@@ -172,6 +194,9 @@ export default function DriversList() {
     }
     if (missingCompFilter) {
       result = result.filter(r => r.compensation_value == null)
+    }
+    if (unconfirmedFilter) {
+      result = result.filter(isUnconfirmedEquip)
     }
     if (teamFilter) {
       result = result.filter(r => teamByDriver.has(r.id))
@@ -198,7 +223,7 @@ export default function DriversList() {
       if (va > vb) return  1 * dir
       return 0
     })
-  }, [rows, filter, statusFilter, photoFilter, missingCompFilter, teamFilter, teamByDriver, equipByDriver, sortField, sortDir])
+  }, [rows, filter, statusFilter, photoFilter, missingCompFilter, unconfirmedFilter, isUnconfirmedEquip, teamFilter, teamByDriver, equipByDriver, sortField, sortDir])
 
   // Team drivers within the current status base (drives the filter-chip count).
   const teamCount = useMemo(() => {
@@ -287,6 +312,20 @@ export default function DriversList() {
         >
           {activeMissingComp > 0 && <span aria-hidden>⚠️</span>}
           Missing comp <span className="font-semibold ml-1">{missingCompCount}</span>
+        </button>
+        <button
+          onClick={() => setUnconfirmedFilter(v => !v)}
+          title="Truck or trailer still on the driver-import value — no live assignment yet. Review and confirm via an assignments import."
+          className={`px-3 py-1.5 text-xs font-medium rounded-full border transition-colors flex items-center gap-1 ${
+            unconfirmedFilter
+              ? 'bg-orange-50 dark:bg-orange-500/10 border-orange-300 dark:border-orange-500/30 text-orange-700 dark:text-orange-400'
+              : activeUnconfirmedEquip > 0
+                ? 'bg-amber-50/70 dark:bg-amber-500/10 border-amber-300 dark:border-amber-500/40 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-500/15'
+                : 'border-gray-200 dark:border-slate-700/50 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5'
+          }`}
+        >
+          {activeUnconfirmedEquip > 0 && <span aria-hidden>⚠️</span>}
+          Unconfirmed equipment <span className="font-semibold ml-1">{unconfirmedEquipCount}</span>
         </button>
         {teamByDriver.size > 0 && (
           <button
