@@ -3,6 +3,8 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { S } from '../../lib/styles'
+import { withTimeout } from '../../lib/withTimeout'
+import { ErrorRetry } from '../../components/Loading'
 import StatusPill from './components/StatusPill'
 import UnderlyingLoanCard from './components/UnderlyingLoanCard'
 import DocumentsSection from './components/DocumentsSection'
@@ -78,6 +80,7 @@ export default function DriverPurchaseDetail() {
   const [equipment, setEquipment] = useState(null)
   const [unitActivity, setUnitActivity] = useState(null)  // v_dp_unit_activity row (resolved unit + who drives it)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(null)
   // ActivityFeed has its own Realtime subscription, so we don't need a
   // refresh-key bump on save. Modals just trigger load() to re-pull the
   // top-level summary/purchase rows.
@@ -99,30 +102,38 @@ export default function DriverPurchaseDetail() {
   // spinner — used after a payment save so the child sections (esp. Payment
   // history and its modals) stay mounted instead of unmounting/remounting.
   const load = useCallback(async ({ silent = false } = {}) => {
-    if (!silent) setLoading(true)
-    const [sumRes, pRes, actRes] = await Promise.all([
-      supabase.from('v_driver_purchase_summary').select('*').eq('id', id).maybeSingle(),
-      supabase.from('driver_purchases').select('*').eq('id', id).maybeSingle(),
-      supabase.from('v_dp_unit_activity').select('*').eq('dp_id', id).maybeSingle(),
-    ])
-    if (!sumRes.data || !pRes.data) { setLoading(false); return }
-    setUnitActivity(actRes.data || null)
+    if (!silent) { setLoading(true); setLoadError(null) }
+    try {
+      const [sumRes, pRes, actRes] = await Promise.all([
+        withTimeout(s => supabase.from('v_driver_purchase_summary').select('*').eq('id', id).maybeSingle().abortSignal(s)),
+        withTimeout(s => supabase.from('driver_purchases').select('*').eq('id', id).maybeSingle().abortSignal(s)),
+        withTimeout(s => supabase.from('v_dp_unit_activity').select('*').eq('dp_id', id).maybeSingle().abortSignal(s)),
+      ])
+      if (!sumRes.data || !pRes.data) { setLoading(false); return }
+      setUnitActivity(actRes.data || null)
 
-    const purchaseRow = pRes.data
-    const driverPromise = supabase.from('drivers').select('*').eq('id', purchaseRow.driver_id).maybeSingle()
-    const equipPromise = purchaseRow.equipment_id
-      ? supabase.from('loan_equipment')
-          .select('id, unit_number, vin, year, make, model, equipment_type, loan_id')
-          .eq('id', purchaseRow.equipment_id).maybeSingle()
-      : Promise.resolve({ data: null })
+      const purchaseRow = pRes.data
+      const driverPromise = withTimeout(s => supabase.from('drivers').select('*').eq('id', purchaseRow.driver_id).maybeSingle().abortSignal(s))
+      const equipPromise = purchaseRow.equipment_id
+        ? withTimeout(s => supabase.from('loan_equipment')
+            .select('id, unit_number, vin, year, make, model, equipment_type, loan_id')
+            .eq('id', purchaseRow.equipment_id).maybeSingle().abortSignal(s))
+        : Promise.resolve({ data: null })
 
-    const [drvRes, eqRes] = await Promise.all([driverPromise, equipPromise])
+      const [drvRes, eqRes] = await Promise.all([driverPromise, equipPromise])
 
-    setSummary(sumRes.data)
-    setPurchase(purchaseRow)
-    setDriver(drvRes.data || null)
-    setEquipment(eqRes.data || null)
-    if (!silent) setLoading(false)
+      setSummary(sumRes.data)
+      setPurchase(purchaseRow)
+      setDriver(drvRes.data || null)
+      setEquipment(eqRes.data || null)
+    } catch (e) {
+      console.error('Contract load failed:', e)
+      // On a silent refresh (after a save) keep the existing data on screen;
+      // only surface the full error state on an initial/explicit load.
+      if (!silent) setLoadError(e.message || 'Failed to load the contract')
+    } finally {
+      if (!silent) setLoading(false)
+    }
   }, [id])
 
   useEffect(() => { load() }, [load])
@@ -279,6 +290,16 @@ export default function DriverPurchaseDetail() {
 
   if (loading) {
     return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500" /></div>
+  }
+  if (loadError) {
+    return (
+      <div className="space-y-3">
+        <ErrorRetry message="Couldn't load this contract." onRetry={() => load()} />
+        <div className="text-center">
+          <Link to="/financial-controls/driver-purchases" className="text-orange-600 dark:text-orange-400 text-sm">← Back to Driver Purchases</Link>
+        </div>
+      </div>
+    )
   }
   if (!summary) {
     return (

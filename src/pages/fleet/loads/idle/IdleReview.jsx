@@ -5,6 +5,8 @@ import { supabase } from '../../../../lib/supabase'
 import { S } from '../../../../lib/styles'
 import { useAuth } from '../../../../contexts/AuthContext'
 import { useToast } from '../../../../contexts/ToastContext'
+import { withTimeout } from '../../../../lib/withTimeout'
+import { Skeleton, ErrorRetry } from '../../../../components/Loading'
 import CopyButton from '../../../../components/CopyButton'
 import ReviewFlagButton from '../../../../components/ReviewFlagButton'
 import PossiblyHomeChip from '../../PossiblyHomeChip'
@@ -453,7 +455,7 @@ export default function IdleReview() {
       // idle_bucketed is a drop-in for idle_subjects — same columns in the same
       // order, plus `bucket` and `revenue_foregone` for the breakdown section.
       // p_yard_radius is omitted so the server default (50 mi) applies.
-      const { data, error: err } = await supabase.rpc('idle_bucketed', { p_threshold: 3 })
+      const { data, error: err } = await withTimeout(signal => supabase.rpc('idle_bucketed', { p_threshold: 3 }).abortSignal(signal))
       if (err) throw err
       setRows(data || [])
     } catch (e) {
@@ -747,6 +749,10 @@ export default function IdleReview() {
 
   const loading = rows === null
   const resolvedView = view === 'resolved'
+  // Retry resets to the loading state (rows=null) so the skeleton shows again,
+  // then re-runs the load. load() itself doesn't reset rows (so reason/resolve
+  // edits don't flash the whole page back to a skeleton).
+  const retry = () => { setError(null); setRows(null); load() }
 
   return (
     <div className="space-y-4">
@@ -825,10 +831,10 @@ export default function IdleReview() {
         <button onClick={() => exportIdleExcel(viewGroups)} disabled={loading} className="ml-auto text-xs font-semibold px-3 py-1.5 rounded-lg border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-40" title="Export Drivers / Trucks / Trailers (current filters) to Excel">↓ Export Excel</button>
       </div>
 
-      {error && <div className={S.errorBox}>Couldn't load idle data: {error}</div>}
-
-      {loading ? (
-        <div className={`${S.card} p-12 text-center text-sm text-gray-500 dark:text-slate-500 animate-pulse`}>Finding idle subjects…</div>
+      {error ? (
+        <ErrorRetry message="Couldn't load idle data." onRetry={retry} />
+      ) : loading ? (
+        <IdleSkeleton />
       ) : (
         <>
           <IdleSection title="Drivers" kind="driver" rows={viewGroups.driver} reasons={DRIVER_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} homeBySubject={homeBySubject} behindBySubject={behindBySubject} reviewFlags={reviewFlags} canEdit={canEdit} onToggleReview={toggleReview} yardFlags={yardFlags} yardVerifierNames={yardVerifierNames} onOpenVerify={setVerifyModalRow} onUnverify={row => verifyAtYard(row, false)} />
@@ -846,6 +852,30 @@ export default function IdleReview() {
           onClose={() => { if (!verifyBusy) setVerifyModalRow(null) }}
         />
       )}
+    </div>
+  )
+}
+
+// Loading skeleton for the idle sections — a couple of card blocks that mirror
+// the Drivers/Trucks tables so data landing doesn't jump the layout.
+function IdleSkeleton() {
+  return (
+    <div className="space-y-4">
+      {[0, 1].map(s => (
+        <div key={s} className={`${S.card} overflow-hidden`}>
+          <div className="px-4 py-3 border-b border-gray-100 dark:border-white/5"><Skeleton className="h-4 w-28" /></div>
+          <div className="divide-y divide-gray-100 dark:divide-white/5">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-4 px-4 py-3">
+                <Skeleton className="h-4 w-40" />
+                <Skeleton className="h-4 w-12" />
+                <Skeleton className="h-4 flex-1" />
+                <Skeleton className="h-4 w-24" />
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   )
 }

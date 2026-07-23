@@ -4,6 +4,8 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
 import { S } from '../../lib/styles'
+import { withTimeout } from '../../lib/withTimeout'
+import { TableSkeleton, ErrorRetry, CardGridSkeleton } from '../../components/Loading'
 import { logEvent } from './utils/events'
 import { fmtDate, fmtMoney } from './utils/format'
 import { exportPurchasesXlsx } from './utils/exportPurchasesXlsx'
@@ -100,6 +102,7 @@ export default function DriverPurchasesPage() {
 
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
   const [showNew, setShowNew] = useState(false)
   const [exporting, setExporting] = useState(false)
 
@@ -194,20 +197,27 @@ export default function DriverPurchasesPage() {
   useEffect(() => { load() }, [])
 
   async function load() {
-    setLoading(true)
+    setLoading(true); setError(null)
     // v_dp_unit_activity is one small row per contract keyed by dp_id — pull
     // it alongside the summary and merge so the idle cell can follow whoever
     // actually drives the unit now (not just the purchaser).
     // under_review lives on driver_purchases (not the summary view), so pull
     // the one boolean per contract and merge it by id (= summary row id).
-    const [sumRes, actRes, urRes] = await Promise.all([
-      supabase.from('v_driver_purchase_summary').select('*').order('driver_name'),
-      supabase.from('v_dp_unit_activity').select('*'),
-      supabase.from('driver_purchases').select('id, under_review'),
-    ])
+    let sumRes, actRes, urRes
+    try {
+      [sumRes, actRes, urRes] = await Promise.all([
+        withTimeout(signal => supabase.from('v_driver_purchase_summary').select('*').order('driver_name').abortSignal(signal)),
+        withTimeout(signal => supabase.from('v_dp_unit_activity').select('*').abortSignal(signal)),
+        withTimeout(signal => supabase.from('driver_purchases').select('id, under_review').abortSignal(signal)),
+      ])
+    } catch (e) {
+      console.error('Driver purchases load timed out:', e)
+      setError(e.message || 'Failed to load'); setLoading(false)
+      return
+    }
     if (sumRes.error) {
       console.error('Driver purchases load error:', sumRes.error)
-      setRows([])
+      setError(sumRes.error.message || 'Failed to load')
       setLoading(false)
       return
     }
@@ -539,9 +549,12 @@ export default function DriverPurchasesPage() {
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center h-64">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500" />
+        <div className="space-y-5">
+          <CardGridSkeleton count={4} />
+          <TableSkeleton rows={8} cols={6} />
         </div>
+      ) : error ? (
+        <ErrorRetry message="Couldn't load driver purchases." onRetry={load} />
       ) : (
         <>
           <KpiCards rows={rows} />
