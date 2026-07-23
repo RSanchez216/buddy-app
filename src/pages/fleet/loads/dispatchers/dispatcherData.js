@@ -1,4 +1,5 @@
 import { supabase } from '../../../../lib/supabase'
+import { withTimeout } from '../../../../lib/withTimeout'
 
 // Dispatcher Scorecard — data + pure derivations. All aggregation lives in
 // three Postgres RPCs; this module only wraps the calls, does period math for
@@ -97,24 +98,11 @@ export const int = (n) => (n == null ? '—' : Number(n).toLocaleString('en-US')
 export const pct = (n) => (n == null ? null : `${n > 0 ? '+' : ''}${Number(n).toFixed(1)}%`)
 
 // ── queries ──────────────────────────────────────────────────────────────────
-// Comfortably above the slowest grain (year ~4s after the RPC was optimized) so
-// a cold query is never cut off, but bounded so a genuinely hung request
-// surfaces the retry UI instead of spinning forever (the browser fetch has no
-// timeout of its own).
-const RPC_TIMEOUT_MS = 20000
-
-// Run a PostgREST builder with an abort-based timeout. `build(signal)` should
-// return the builder with .abortSignal(signal) applied. Rejects on timeout.
-async function withTimeout(build, ms = RPC_TIMEOUT_MS) {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), ms)
-  try {
-    return await build(controller.signal)
-  } finally {
-    clearTimeout(timer)
-  }
-}
-
+// Timeout lives in the shared kit (src/lib/withTimeout), defaulting to 20s —
+// comfortably above the slowest grain (year ~4s) yet bounded so a hung request
+// surfaces the retry UI instead of spinning forever. The kit rejects at `ms`
+// even when the transport ignores the abort, so the hang-safe behavior stays in
+// one place. Call sites still pass `signal => builder.abortSignal(signal)`.
 export async function fetchScorecard(grain, anchorISO) {
   const { data, error } = await withTimeout(signal =>
     supabase.rpc('dispatcher_scorecard', { p_grain: grain, p_anchor: anchorForRpc(grain, anchorISO) }).abortSignal(signal))
