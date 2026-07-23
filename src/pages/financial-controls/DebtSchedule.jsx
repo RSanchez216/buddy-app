@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
+import { withTimeout } from '../../lib/withTimeout'
+import { ErrorRetry, TableSkeleton, CardGridSkeleton } from '../../components/Loading'
 import { useAuth } from '../../contexts/AuthContext'
 import { S } from '../../lib/styles'
 import Select from '../../components/Select'
@@ -108,6 +110,7 @@ export default function DebtSchedule() {
   const [equipmentTypes, setEquipmentTypes] = useState([])
   const [kpiSummary, setKpiSummary] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
   const [exporting, setExporting] = useState(false)
 
@@ -183,26 +186,39 @@ export default function DebtSchedule() {
 
   async function loadData() {
     setLoading(true)
-    const [loanRes, eqRes, entRes, lndRes, etRes, kpiRes] = await Promise.all([
-      supabase.from('v_loans_summary').select('*').order('next_due_date', { ascending: true, nullsFirst: false }),
-      supabase.from('loan_equipment').select('id, loan_id, unit_number, vin, equipment_type, make, model, year'),
-      supabase.from('loan_entities').select('id, name').eq('is_active', true).order('name'),
-      supabase.from('loan_lenders').select('id, name').eq('is_active', true).order('name'),
-      supabase.from('equipment_types').select('id, name, display_label, sort_order').eq('is_active', true).order('sort_order').order('display_label'),
-      supabase.rpc('debt_schedule_kpi_summary').single(),
-    ])
-    setLoans(loanRes.data || [])
-    const grouped = {}
-    for (const e of (eqRes.data || [])) {
-      if (!grouped[e.loan_id]) grouped[e.loan_id] = []
-      grouped[e.loan_id].push(e)
+    setError(false)
+    try {
+      const results = await withTimeout(signal => Promise.all([
+        supabase.from('v_loans_summary').select('*').order('next_due_date', { ascending: true, nullsFirst: false }).abortSignal(signal),
+        supabase.from('loan_equipment').select('id, loan_id, unit_number, vin, equipment_type, make, model, year').abortSignal(signal),
+        supabase.from('loan_entities').select('id, name').eq('is_active', true).order('name').abortSignal(signal),
+        supabase.from('loan_lenders').select('id, name').eq('is_active', true).order('name').abortSignal(signal),
+        supabase.from('equipment_types').select('id, name, display_label, sort_order').eq('is_active', true).order('sort_order').order('display_label').abortSignal(signal),
+        supabase.rpc('debt_schedule_kpi_summary').single().abortSignal(signal),
+      ]))
+      const [loanRes, eqRes, entRes, lndRes, etRes, kpiRes] = results
+      // supabase resolves a failed fetch as { error } — any error means real
+      // failure. Never fall through to a zeroed schedule ($0 debt reads as a
+      // clean bill of health when it's actually a broken query).
+      const firstErr = results.find(r => r?.error)
+      if (firstErr) throw firstErr.error
+      setLoans(loanRes.data || [])
+      const grouped = {}
+      for (const e of (eqRes.data || [])) {
+        if (!grouped[e.loan_id]) grouped[e.loan_id] = []
+        grouped[e.loan_id].push(e)
+      }
+      setEquipmentByLoan(grouped)
+      setEntities(entRes.data || [])
+      setLenders(lndRes.data || [])
+      setEquipmentTypes(etRes.data || [])
+      setKpiSummary(kpiRes?.data || null)
+    } catch (e) {
+      console.error('Debt schedule load failed:', e)
+      setError(true)
+    } finally {
+      setLoading(false)
     }
-    setEquipmentByLoan(grouped)
-    setEntities(entRes.data || [])
-    setLenders(lndRes.data || [])
-    setEquipmentTypes(etRes.data || [])
-    setKpiSummary(kpiRes?.data || null)
-    setLoading(false)
   }
 
   // Apply filters + global search; tag each loan with searchHit info
@@ -355,8 +371,28 @@ export default function DebtSchedule() {
     return Object.entries(map).sort(([a], [b]) => a.localeCompare(b))
   }, [sorted, groupByEntity])
 
-  if (loading) {
-    return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500" /></div>
+  // Loading / error share the page header so the shell stays stable. Error must
+  // never look like a clean $0 dashboard — show fixed copy + Retry, no KPIs.
+  if (loading || error) {
+    return (
+      <div className="space-y-5">
+        <div>
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-orange-600 dark:text-orange-400 mb-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-orange-500" />
+            Financial Controls
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Debt Schedule</h1>
+        </div>
+        {error ? (
+          <ErrorRetry message="Couldn't load the debt schedule." onRetry={loadData} />
+        ) : (
+          <>
+            <CardGridSkeleton count={3} className="grid grid-cols-1 sm:grid-cols-3 gap-3" height="h-24" />
+            <TableSkeleton rows={8} cols={10} />
+          </>
+        )}
+      </div>
+    )
   }
 
   return (

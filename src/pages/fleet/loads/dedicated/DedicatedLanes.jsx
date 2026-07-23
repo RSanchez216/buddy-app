@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { S } from '../../../../lib/styles'
+import { withTimeout } from '../../../../lib/withTimeout'
+import { ErrorRetry, CardGridSkeleton, Skeleton } from '../../../../components/Loading'
 import { useAuth } from '../../../../contexts/AuthContext'
 import { useToast } from '../../../../contexts/ToastContext'
 import { fmtMoney } from '../spotlight/spotlightShared'
@@ -83,20 +85,28 @@ export default function DedicatedLanes() {
   const [eventDefaults, setEventDefaults] = useState(null) // null = closed; object = Record-event open
   const [data, setData] = useState(null)
   const [mgmt, setMgmt] = useState(EMPTY_MGMT)
-  const [error, setError] = useState('')
+  const [error, setError] = useState(false)
 
   const load = useCallback(async () => {
+    setError(false)
     try {
-      const [d, m] = await Promise.all([fetchDedicatedLanes(), fetchLaneManagement()])
-      setData(d); setMgmt(m); setError('')
+      // fetchDedicatedLanes/fetchLaneManagement wrap their own supabase calls, so
+      // the abort signal isn't threaded — the shared withTimeout still rejects at
+      // 20s on a hang regardless (it races a timer, not just an abort).
+      const [d, m] = await withTimeout(() => Promise.all([fetchDedicatedLanes(), fetchLaneManagement()]))
+      setData(d); setMgmt(m)
     } catch (e) {
+      // Honesty rule: on failure show error + Retry, never a zeroed overview.
       console.error('[DedicatedLanes] load failed', e)
-      setError(e.message || 'Failed to load'); setData({ overview: {}, idle_split: {}, lanes: [] }); setMgmt(EMPTY_MGMT)
+      setError(true)
     }
   }, [])
   useEffect(() => { load() }, [load])
 
-  const loading = data === null
+  // Retry returns the page to loading, then re-runs the failed load in place.
+  const retry = useCallback(() => { setData(null); setMgmt(EMPTY_MGMT); load() }, [load])
+
+  const loading = data === null && !error
   const overview = data?.overview || {}
   const split = data?.idle_split || {}
   const homeYard = { ...HOME_YARD, count: split.true_idle_unassigned || 0 }
@@ -153,10 +163,13 @@ export default function DedicatedLanes() {
         )}
       </div>
 
-      {error && <div className={S.errorBox}>Couldn’t load dedicated lanes: {error}</div>}
-
-      {loading ? (
-        <div className={`${S.card} p-12 text-center text-sm text-gray-500 dark:text-slate-500 animate-pulse`}>Loading dedicated lanes…</div>
+      {error ? (
+        <ErrorRetry message="Couldn't load dedicated lanes." onRetry={retry} />
+      ) : loading ? (
+        <div className="space-y-4">
+          <CardGridSkeleton count={5} className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3" height="h-16" />
+          <Skeleton className="w-full h-[380px]" />
+        </div>
       ) : (
         <>
           {/* KPI band — bound to overview.* */}

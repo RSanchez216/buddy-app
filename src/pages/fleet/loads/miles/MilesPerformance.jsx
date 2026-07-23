@@ -1,6 +1,8 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { supabase } from '../../../../lib/supabase'
+import { withTimeout } from '../../../../lib/withTimeout'
+import { Skeleton } from '../../../../components/Loading'
 import { S } from '../../../../lib/styles'
 import { fmtMoney, fmtNum, fmtRpm } from '../spotlight/spotlightShared'
 
@@ -135,8 +137,12 @@ export default function MilesPerformance() {
   const [loads, setLoads] = useState(null)
   const [priorLoads, setPriorLoads] = useState(null)
   const [trend, setTrend] = useState(null)
+  const [loadsErr, setLoadsErr] = useState(false) // main table/totals panel
+  const [trendErr, setTrendErr] = useState(false) // rolling-trend chart panel
+  const [reloadKey, setReloadKey] = useState(0)    // bump to re-run the fetch (Retry)
   const chartRef = useRef(null)
   const [grain] = [TREND[timeframe][0]]
+  const retry = () => setReloadKey(k => k + 1)
 
   function pickTimeframe(tf) {
     setTimeframe(tf)
@@ -149,21 +155,32 @@ export default function MilesPerformance() {
 
   useEffect(() => {
     let stale = false
+    // Control change (period / timeframe) or Retry returns both panels to
+    // loading — never leave stale data on screen while refetching.
     setLoads(null); setPriorLoads(null); setTrend(null)
+    setLoadsErr(false); setTrendErr(false)
     const prior = shiftPeriod(range, timeframe, -1)
     const [g, periods] = TREND[timeframe]
-    Promise.all([
-      supabase.rpc('report_miles_loads', { p_start: range.from, p_end: range.to }),
-      supabase.rpc('report_miles_loads', { p_start: prior.from, p_end: prior.to }),
-      supabase.rpc('deadhead_trend', { p_grain: g, p_end: range.to, p_periods: periods }),
-    ]).then(([a, b, c]) => {
+    withTimeout(signal => Promise.all([
+      supabase.rpc('report_miles_loads', { p_start: range.from, p_end: range.to }).abortSignal(signal),
+      supabase.rpc('report_miles_loads', { p_start: prior.from, p_end: prior.to }).abortSignal(signal),
+      supabase.rpc('deadhead_trend', { p_grain: g, p_end: range.to, p_periods: periods }).abortSignal(signal),
+    ])).then(([a, b, c]) => {
       if (stale) return
-      setLoads(a.error ? [] : (a.data || []))
+      // Per-panel: a failed query becomes that panel's error state, never an
+      // empty "No loads" / "No trend data" render (which reads as a real empty
+      // period). Prior-period loads only drive the vs-prior delta — if it
+      // fails, drop the delta silently rather than erroring a whole panel.
+      if (a.error) { console.error('miles loads failed:', a.error); setLoadsErr(true) } else { setLoads(a.data || []) }
       setPriorLoads(b.error ? [] : (b.data || []))
-      setTrend(c.error ? [] : (c.data || []))
-    }).catch(() => { if (!stale) { setLoads([]); setPriorLoads([]); setTrend([]) } })
+      if (c.error) { console.error('deadhead trend failed:', c.error); setTrendErr(true) } else { setTrend(c.data || []) }
+    }).catch((e) => {
+      if (stale) return
+      console.error('Miles & performance load failed:', e)
+      setLoadsErr(true); setTrendErr(true)
+    })
     return () => { stale = true }
-  }, [range.from, range.to, timeframe])
+  }, [range.from, range.to, timeframe, reloadKey])
 
   const tabDef = TABS.find(t => t.key === tab)
   const rows = useMemo(() => (loads ? aggregate(loads, tabDef.keyField, tabDef.nameField) : []), [loads, tabDef])
@@ -254,8 +271,17 @@ export default function MilesPerformance() {
           <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Deadhead trend <span className="font-normal text-gray-400 dark:text-slate-500">· rolling {grain}s · selected period highlighted</span></h2>
         </div>
         <div className="h-56">
-          {trend && trendData.length > 0 ? <DeadheadChart data={trendData} /> : (
-            <div className="h-full grid place-items-center text-sm text-gray-400 dark:text-slate-500">{trend ? 'No trend data.' : 'Loading…'}</div>
+          {trendErr ? (
+            <div className="h-full flex flex-col items-center justify-center gap-3 text-center">
+              <p className="text-sm text-gray-600 dark:text-slate-400">Couldn't load the deadhead trend.</p>
+              <button onClick={retry} className={S.btnSecondary}>Retry</button>
+            </div>
+          ) : !trend ? (
+            <Skeleton className="w-full h-full" />
+          ) : trendData.length > 0 ? (
+            <DeadheadChart data={trendData} />
+          ) : (
+            <div className="h-full grid place-items-center text-sm text-gray-400 dark:text-slate-500">No trend data.</div>
           )}
         </div>
         <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-1">Low-volume edge buckets are muted so a partial period doesn’t skew the axis.</p>
@@ -274,8 +300,15 @@ export default function MilesPerformance() {
 
       {/* Summary table + accordion */}
       <div className={`${S.card} overflow-hidden`}>
-        {loading ? (
-          <div className="p-12 text-center"><div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500" /></div>
+        {loadsErr ? (
+          <div className="p-10 flex flex-col items-center gap-3 text-center">
+            <p className="text-sm text-gray-600 dark:text-slate-400">Couldn't load miles &amp; performance.</p>
+            <button onClick={retry} className={S.btnSecondary}>Retry</button>
+          </div>
+        ) : loading ? (
+          <div className="p-4 space-y-3">
+            {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="w-full h-8" />)}
+          </div>
         ) : sortedRows.length === 0 ? (
           <div className="p-10 text-center text-sm text-gray-400 dark:text-slate-500">No loads in this period.</div>
         ) : (

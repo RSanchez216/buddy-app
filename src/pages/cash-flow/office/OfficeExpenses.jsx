@@ -5,6 +5,8 @@ import { useToast } from '../../../contexts/ToastContext'
 import { useTheme } from '../../../contexts/ThemeContext'
 import { useExpenseCategories } from '../../../hooks/useExpenseCategories'
 import { S } from '../../../lib/styles'
+import { withTimeout } from '../../../lib/withTimeout'
+import { ErrorRetry, CardGridSkeleton, Skeleton, TableSkeleton } from '../../../components/Loading'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   LineChart, Line, ResponsiveContainer,
@@ -44,6 +46,7 @@ export default function OfficeExpenses() {
   const [windowExpenses, setWindowExpenses] = useState([]) // window expenses (charts + compare)
   const [transfersById, setTransfersById] = useState({})
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(false)
 
   const [showAdd, setShowAdd] = useState(false)
   const [showTransfer, setShowTransfer] = useState(false)
@@ -56,24 +59,31 @@ export default function OfficeExpenses() {
   const period = useMemo(() => periodRange(grain, anchor), [grain, anchor])
   const winFrom = useMemo(() => periodRange(grain, stepPeriod(grain, anchor, -(WINDOW - 1))).from, [grain, anchor])
 
-  // Offices once.
-  useEffect(() => {
-    listOffices().then(list => {
+  // Offices once. A failed offices load leaves officeId empty, so reload() below
+  // early-returns and the page would otherwise spin forever — surface it as the
+  // error state instead (with loading cleared so Retry is reachable).
+  const loadOffices = useCallback(() => {
+    setError(false)
+    withTimeout(() => listOffices()).then(list => {
       setOffices(list)
       if (list.length) setOfficeId(prev => prev || list[0].id)
-    }).catch(e => toast.error("Couldn't load offices", e))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+      else setLoading(false)
+    }).catch(e => { console.error('Office list load failed:', e); setError(true); setLoading(false) })
   }, [])
+  useEffect(() => { loadOffices() }, [loadOffices])
 
   const reload = useCallback(async () => {
     if (!officeId) return
     setLoading(true)
+    setError(false)
     try {
-      const [win, winExp, tfs] = await Promise.all([
+      // These helpers wrap their own supabase calls (no signal threaded); the
+      // shared withTimeout still rejects at 20s on a hang regardless.
+      const [win, winExp, tfs] = await withTimeout(() => Promise.all([
         periodStats(officeId, grain, winFrom, period.to),
         listExpenses(officeId, winFrom, period.to),
         listTransfers(officeId),
-      ])
+      ]))
       // period_start may arrive as a full timestamp — normalize to a date.
       const rows = (win || [])
         .map(r => ({ ...r, period_start: String(r.period_start).slice(0, 10) }))
@@ -87,13 +97,25 @@ export default function OfficeExpenses() {
       for (const t of tfs) tmap[t.id] = t
       setTransfersById(tmap)
     } catch (e) {
-      toast.error("Couldn't load office data", e)
+      // Never fall through to $0.00 stat cards + empty tables — that reads as a
+      // real, clean period when the query actually failed. Show error + Retry.
+      console.error('Office data load failed:', e)
+      setError(true)
     } finally {
       setLoading(false)
     }
-  }, [officeId, grain, winFrom, period.from, period.to, toast])
+  }, [officeId, grain, winFrom, period.from, period.to])
 
   useEffect(() => { reload() }, [reload])
+
+  // Retry re-runs whichever load failed: offices (no office selected yet) or the
+  // period data. Both return the page to loading first.
+  const retry = useCallback(() => {
+    setError(false)
+    setLoading(true)
+    if (officeId) reload()
+    else loadOffices()
+  }, [officeId, reload, loadOffices])
 
   // ── derived ────────────────────────────────────────────────────────────────
   const spentUsd = sel?.spent_usd ?? 0
@@ -260,8 +282,17 @@ export default function OfficeExpenses() {
         </div>
       </div>
 
-      {loading ? (
-        <div className="flex items-center justify-center h-48"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500" /></div>
+      {error ? (
+        <ErrorRetry message="Couldn't load office expenses." onRetry={retry} />
+      ) : loading ? (
+        <div className="space-y-5">
+          <CardGridSkeleton count={4} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" height="h-16" />
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className={`${S.card} p-4`}><Skeleton className="w-full h-[260px]" /></div>
+            <div className={`${S.card} p-4`}><Skeleton className="w-full h-[260px]" /></div>
+          </div>
+          <TableSkeleton rows={6} cols={6} />
+        </div>
       ) : (
         <>
           {/* Stat cards */}
