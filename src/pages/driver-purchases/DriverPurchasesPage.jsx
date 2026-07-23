@@ -94,6 +94,21 @@ const FILTERS = [
   { id: 'cancelled',        label: 'Cancelled' },
 ]
 
+// The default tab when the URL carries no `filter` param. Active is where the
+// day-to-day work is; the terminal statuses (fully paid / cancelled) are noise
+// on first load. Absence resolves to this at render time — the URL is never
+// rewritten to make it explicit (that would redirect / pollute history).
+const DEFAULT_FILTER = 'active'
+
+// Tab-scoped search match — driver name, unit number, or VIN. Shared by the
+// visible-list filter and the cross-tab match count so the "found N in All"
+// number can never disagree with what a switch to All would actually show.
+function rowMatchesQuery(r, q) {
+  return (r.driver_name || '').toLowerCase().includes(q) ||
+    (r.truck_number || '').toLowerCase().includes(q) ||
+    (r.vin || '').toLowerCase().includes(q)
+}
+
 export default function DriverPurchasesPage() {
   const navigate = useNavigate()
   const { profile, user } = useAuth()
@@ -133,10 +148,13 @@ export default function DriverPurchasesPage() {
   const rawDir = searchParams.get('dir')
   const sortKey = rawKey && SORT_DEFAULT_DIR[rawKey] ? rawKey : null
   const sortDir = rawDir === 'asc' || rawDir === 'desc' ? rawDir : (sortKey ? SORT_DEFAULT_DIR[sortKey] : 'desc')
-  // Filter is URL-derived with allowlist fallback. Bookmarks with
-  // unknown values gracefully default to 'all' instead of breaking.
+  // Filter is URL-derived with allowlist fallback. An absent param (and any
+  // unknown/typo value) resolves to Active — 'all' is now an explicit value
+  // (?filter=all), so absence no longer means All. Resolved purely at render
+  // time; the URL is never rewritten, so a bare URL stays bare and no history
+  // entry is added.
   const rawFilter = searchParams.get('filter')
-  const filter = FILTERS.some(f => f.id === rawFilter) ? rawFilter : 'all'
+  const filter = FILTERS.some(f => f.id === rawFilter) ? rawFilter : DEFAULT_FILTER
   const urlQ = searchParams.get('q') || ''
   // Local search state mirrors what's in the input so keystrokes filter
   // immediately. A debounced effect (below) syncs it to the URL.
@@ -166,9 +184,23 @@ export default function DriverPurchasesPage() {
   function setFilter(nextId) {
     setSearchParams(prev => {
       const next = new URLSearchParams(prev)
-      // 'all' is the implicit default — keep the URL tidy by omitting it.
-      if (nextId === 'all') next.delete('filter')
-      else next.set('filter', nextId)
+      // Every tab writes an explicit ?filter=<id> now — including 'all'. Absence
+      // resolves to Active, so omitting the param on an All click would render
+      // Active on the next load and make All unreachable by link.
+      next.set('filter', nextId)
+      return next
+    }, { replace: true })
+  }
+
+  // "Search all contracts" from the cross-tab empty-state hint: switch to All
+  // and carry the current search term (the debounced URL write may not have
+  // landed yet, so set q explicitly).
+  function searchAllContracts() {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      next.set('filter', 'all')
+      if (search.trim()) next.set('q', search.trim())
+      else next.delete('q')
       return next
     }, { replace: true })
   }
@@ -450,13 +482,7 @@ export default function DriverPurchasesPage() {
     else if (filter === 'title_pending') list = list.filter(r => r.title_release_pending)
 
     const q = search.trim().toLowerCase()
-    if (q) {
-      list = list.filter(r =>
-        (r.driver_name || '').toLowerCase().includes(q) ||
-        (r.truck_number || '').toLowerCase().includes(q) ||
-        (r.vin || '').toLowerCase().includes(q)
-      )
-    }
+    if (q) list = list.filter(r => rowMatchesQuery(r, q))
 
     // Apply sort. When no user sort is set, default to most-recently-
     // charged at the top with never-charged contracts at the bottom
@@ -472,6 +498,17 @@ export default function DriverPurchasesPage() {
     })
     return sorted
   }, [rows, filter, search, sortKey, sortDir])
+
+  // Cross-tab search reach: how many contracts match the current search term
+  // across ALL tabs (same matcher the tab-scoped search uses). Drives the
+  // "found N in All contracts" hint when the current tab returns nothing.
+  const allMatchCount = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    if (!q) return 0
+    return rows.filter(r => rowMatchesQuery(r, q)).length
+  }, [rows, search])
+
+  const currentFilterLabel = FILTERS.find(f => f.id === filter)?.label || 'this tab'
 
   const underwaterRows = useMemo(() => rows.filter(r => r.is_underwater), [rows])
 
@@ -506,12 +543,14 @@ export default function DriverPurchasesPage() {
   }, [rows])
 
   // Export the currently-visible set (active tab + search, all rows — the
-  // list isn't paginated, so `visible` is the whole filtered result).
+  // list isn't paginated, so `visible` is the whole filtered result). The
+  // active filter is stamped into the filename so a 25-row Active export can't
+  // be mistaken for "records vanished" now that Active is the default tab.
   async function handleExport() {
     if (exporting) return
     setExporting(true)
     try {
-      await exportPurchasesXlsx(visible)
+      await exportPurchasesXlsx(visible, { filterId: filter })
     } catch (e) {
       console.error('Driver purchases export failed:', e)
       toast.error("Couldn't export to Excel", e)
@@ -623,7 +662,21 @@ export default function DriverPurchasesPage() {
             inlineBusy={inlineBusy}
             onInlineReconcile={handleInlineReconcile}
             onToggleReview={handleToggleReview}
-            emptyMessage={filter === 'under_review' ? 'No contracts flagged for review yet.' : undefined}
+            emptyMessage={
+              // A tab-scoped search that finds nothing here but matches
+              // elsewhere would otherwise read as "record deleted" — surface
+              // the cross-tab reach + a one-click jump to All (keeping the term).
+              // Only when the current tab isn't already All and matches exist.
+              filter !== 'all' && search.trim() !== '' && visible.length === 0 && allMatchCount > 0 ? (
+                <div className="flex flex-col items-center gap-3">
+                  <p className="text-sm text-gray-500 dark:text-slate-400">
+                    No matches in <span className="font-semibold text-gray-700 dark:text-slate-200">{currentFilterLabel}</span>.
+                    {' '}Found <span className="font-semibold text-gray-700 dark:text-slate-200">{allMatchCount}</span> in All contracts.
+                  </p>
+                  <button onClick={searchAllContracts} className={S.btnSecondary}>Search all contracts</button>
+                </div>
+              ) : filter === 'under_review' ? 'No contracts flagged for review yet.' : undefined
+            }
           />
         </>
       )}

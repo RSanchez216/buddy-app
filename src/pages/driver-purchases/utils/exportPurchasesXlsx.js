@@ -30,7 +30,16 @@ function localToday() {
   return `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`
 }
 
-export async function exportPurchasesXlsx(rows = []) {
+// Slugify a filter id for the filename ('under_review' → 'under-review'); an
+// empty/unknown id falls back to 'all'. Keeps the export self-describing so a
+// short filtered export (e.g. the default Active tab, ~25 rows) can't be
+// mistaken for missing records.
+function filterSlug(filterId) {
+  const s = String(filterId || 'all').trim().toLowerCase().replace(/_/g, '-')
+  return s || 'all'
+}
+
+export async function exportPurchasesXlsx(rows = [], { filterId = 'all' } = {}) {
   const mod = await import('xlsx')
   const XLSX = mod && mod.utils ? mod : (mod.default ?? mod.namespace ?? mod)
   if (!XLSX || !XLSX.utils) throw new Error('xlsx library failed to load properly')
@@ -60,5 +69,5 @@ export async function exportPurchasesXlsx(rows = []) {
   const ws = XLSX.utils.json_to_sheet(sheet)
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, 'Driver Purchases')
-  XLSX.writeFile(wb, `driver-purchases-${localToday()}.xlsx`)
+  XLSX.writeFile(wb, `driver-purchases-${filterSlug(filterId)}-${localToday()}.xlsx`)
 }
