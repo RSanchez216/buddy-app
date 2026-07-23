@@ -15,6 +15,10 @@ export default function DriverProfileHeader({ driver, activity }) {
   const [metrics, setMetrics] = useState(null)
   const [loading, setLoading] = useState(true)
   const [homeInfo, setHomeInfo] = useState(null) // { driverId, ...driver_possibly_home row }
+  // Authoritative equipment (v_driver_equipment) — resolved from assignments
+  // with a flagged driver-import fallback. Replaces the drivers.*_raw strings
+  // so the header agrees with the detail page's Equipment section.
+  const [equip, setEquip] = useState(null)
 
   // When the driver is idle (not running), check whether their last delivery
   // was near home so the hero can show a "Possibly home" chip. Tag the result
@@ -28,6 +32,20 @@ export default function DriverProfileHeader({ driver, activity }) {
     return () => { cancelled = true }
   }, [driver?.id, idle])
   const currentHome = idle && homeInfo?.driverId === driver?.id ? homeInfo : null
+
+  // Equipment from the authoritative view (one row per driver, or none). Tag
+  // the result with driverId so a stale fetch never renders against a different
+  // driver — same guard the possibly-home lookup above uses.
+  useEffect(() => {
+    if (!driver?.id) return
+    let cancelled = false
+    supabase.from('v_driver_equipment')
+      .select('truck_unit, trailer_unit, truck_confirmed, trailer_confirmed, truck_assigned_since, trailer_assigned_since')
+      .eq('driver_id', driver.id)
+      .maybeSingle()
+      .then(({ data }) => { if (!cancelled) setEquip(data ? { ...data, driverId: driver.id } : { driverId: driver.id }) })
+    return () => { cancelled = true }
+  }, [driver?.id])
 
   // Driver-purchase contracts + behind status, for the cross-surface links.
   const { hasContract, isBehind, totalPastDue, purchasesHref, contractHref } = useDriverContracts(driver?.id)
@@ -76,8 +94,7 @@ export default function DriverProfileHeader({ driver, activity }) {
 
   const h = nameHue(driver?.full_name || '')
   const initialsGradient = `linear-gradient(135deg, hsl(${h} 62% 46%), hsl(${(h + 42) % 360} 68% 34%))`
-  const truckLabel = driver?.truck_assignment_raw || '—'
-  const trailerLabel = driver?.trailer_assignment_raw || 'no trailer'
+  const currentEquip = equip?.driverId === driver?.id ? equip : null
 
   // Status ring color
   const statusRingColor =
@@ -217,7 +234,7 @@ export default function DriverProfileHeader({ driver, activity }) {
           </div>
 
           <p className="text-slate-500 dark:text-slate-400" style={{ fontSize: '13px', margin: 0 }}>
-            Driver #{driver?.internal_id || '—'} · Unit {truckLabel} · {trailerLabel}
+            Driver #{driver?.internal_id || '—'} · Unit <EquipInline eq={currentEquip} field="truck" fallback="—" /> · <EquipInline eq={currentEquip} field="trailer" fallback="no trailer" />
             {driver?.carrier && ` · ${driver.carrier}`}
           </p>
 
@@ -250,6 +267,21 @@ export default function DriverProfileHeader({ driver, activity }) {
         </div>
       </div>
     </div>
+  )
+}
+
+// Inline truck/trailer label from v_driver_equipment. Confirmed → plain unit;
+// unconfirmed (driver-import fallback) → hollow dot + quiet "not yet confirmed"
+// tooltip; no unit → the caller's fallback text. Mirrors the Drivers list.
+function EquipInline({ eq, field, fallback }) {
+  const unit = eq?.[`${field}_unit`]
+  if (!unit) return <>{fallback}</>
+  if (eq[`${field}_confirmed`] === true) return <>{unit}</>
+  return (
+    <span className="inline-flex items-center gap-1" title="From driver import — not yet confirmed by an assignments import">
+      <span className="w-1.5 h-1.5 rounded-full border border-current inline-block shrink-0" aria-hidden="true" />
+      {unit}
+    </span>
   )
 }
 

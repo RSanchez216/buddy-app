@@ -42,6 +42,9 @@ export default function DriversList() {
   const [teamFilter, setTeamFilter] = useState(false)
   // driver_id → { count, href } for drivers who have a driver-purchase contract.
   const [purchaseByDriver, setPurchaseByDriver] = useState(() => new Map())
+  // driver_id → v_driver_equipment row (authoritative truck/trailer, resolved
+  // from equipment_assignments with a flagged driver-import fallback).
+  const [equipByDriver, setEquipByDriver] = useState(() => new Map())
 
   useEffect(() => { load() }, [])
 
@@ -60,6 +63,18 @@ export default function DriversList() {
         const teamByDriverId = new Map()
         for (const r of teamRows ?? []) teamByDriverId.set(r.driver_id, r) // one entry per member — primary AND co
         setTeamByDriver(teamByDriverId)
+      })
+
+    // Equipment overlay — authoritative truck/trailer per driver. The view
+    // already applies the rule (active assignment wins; ended → blank; else the
+    // driver-import value flagged unconfirmed), so the list just reads its
+    // columns. Joined in memory by driver_id, same as the team/purchase overlays.
+    supabase.from('v_driver_equipment')
+      .select('driver_id, truck_unit, trailer_unit, truck_source, trailer_source, truck_confirmed, trailer_confirmed, truck_assigned_since, trailer_assigned_since')
+      .then(({ data: eqRows }) => {
+        const byDriver = new Map()
+        for (const r of eqRows ?? []) byDriver.set(r.driver_id, r)
+        setEquipByDriver(byDriver)
       })
 
     // Lease-to-purchase overlay — which drivers have a driver-purchase contract.
@@ -139,15 +154,18 @@ export default function DriversList() {
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase()
     const base = statusFilter === 'all' ? rows : rows.filter(r => r.current_status === statusFilter)
-    let result = q ? base.filter(r =>
-      (r.internal_id || '').toLowerCase().includes(q) ||
-      (r.full_name || '').toLowerCase().includes(q) ||
-      (r.phone || '').toLowerCase().includes(q) ||
-      (r.email || '').toLowerCase().includes(q) ||
-      (r.truck_assignment_raw || '').toLowerCase().includes(q) ||
-      (r.trailer_assignment_raw || '').toLowerCase().includes(q) ||
-      (r.carrier || '').toLowerCase().includes(q)
-    ) : base
+    let result = q ? base.filter(r => {
+      // Truck/trailer search reads the authoritative view units, not the raw
+      // import strings, so search agrees with what the columns display.
+      const eq = equipByDriver.get(r.id)
+      return (r.internal_id || '').toLowerCase().includes(q) ||
+        (r.full_name || '').toLowerCase().includes(q) ||
+        (r.phone || '').toLowerCase().includes(q) ||
+        (r.email || '').toLowerCase().includes(q) ||
+        (eq?.truck_unit || '').toLowerCase().includes(q) ||
+        (eq?.trailer_unit || '').toLowerCase().includes(q) ||
+        (r.carrier || '').toLowerCase().includes(q)
+    }) : base
 
     if (photoFilter === 'missing') {
       result = result.filter(r => !r.photo_path)
@@ -180,7 +198,7 @@ export default function DriversList() {
       if (va > vb) return  1 * dir
       return 0
     })
-  }, [rows, filter, statusFilter, photoFilter, missingCompFilter, teamFilter, teamByDriver, sortField, sortDir])
+  }, [rows, filter, statusFilter, photoFilter, missingCompFilter, teamFilter, teamByDriver, equipByDriver, sortField, sortDir])
 
   // Team drivers within the current status base (drives the filter-chip count).
   const teamCount = useMemo(() => {
@@ -351,8 +369,8 @@ export default function DriversList() {
                   </td>
                   <td className={S.td}><DriverTypePill type={r.driver_type} short /></td>
                   <td className={`${S.td} text-gray-600 dark:text-slate-400 text-xs`}>{r.carrier || '—'}</td>
-                  <td className={`${S.td} text-gray-600 dark:text-slate-400 font-mono text-xs`}>{r.truck_assignment_raw || '—'}</td>
-                  <td className={`${S.td} text-gray-600 dark:text-slate-400 font-mono text-xs`}>{r.trailer_assignment_raw || '—'}</td>
+                  <td className={`${S.td} text-gray-600 dark:text-slate-400 font-mono text-xs`}><EquipmentCell eq={equipByDriver.get(r.id)} field="truck" /></td>
+                  <td className={`${S.td} text-gray-600 dark:text-slate-400 font-mono text-xs`}><EquipmentCell eq={equipByDriver.get(r.id)} field="trailer" /></td>
                   <td className={`${S.td} text-gray-600 dark:text-slate-400 text-xs`}>{fmtCompensation(r)}</td>
                   <td className={S.td}><DriverStatusPill status={r.current_status} /></td>
                   <td className={`${S.td} text-gray-500 dark:text-slate-400 text-xs whitespace-nowrap`}>{r.phone || '—'}</td>
@@ -427,6 +445,40 @@ function SortableTh({ field, label, sortField, sortDir, onToggle, minW }) {
         {active && <span className="text-[10px]">{sortDir === 'asc' ? '▲' : '▼'}</span>}
       </button>
     </th>
+  )
+}
+
+// Date-only 'YYYY-MM-DD' → "Jul 15, 2026" without a UTC day-shift.
+function fmtAssignedSince(iso) {
+  if (!iso) return null
+  const [y, m, d] = String(iso).split('-').map(Number)
+  if (!y || !m || !d) return null
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+// Truck / trailer cell backed by v_driver_equipment. The three-case rule lives
+// in the view — this only styles the outcome:
+//   confirmed (live assignment) → plain unit, "Assigned since …" tooltip
+//   unconfirmed (driver_import) → muted + hollow dot + explainer tooltip (a
+//                                 quiet hint, not a warning)
+//   no unit                     → the existing em-dash placeholder
+function EquipmentCell({ eq, field }) {
+  const unit = eq?.[`${field}_unit`]
+  // Blank — inherits the cell's own color so it matches the pre-existing dash.
+  if (!unit) return '—'
+  const since = fmtAssignedSince(eq[`${field}_assigned_since`])
+  if (eq[`${field}_confirmed`] === true) {
+    return <span title={since ? `Assigned since ${since}` : undefined}>{unit}</span>
+  }
+  // driver-import fallback — no assignment row has ever existed for this unit.
+  return (
+    <span
+      className="inline-flex items-center gap-1 text-gray-400 dark:text-slate-500"
+      title="From driver import — not yet confirmed by an assignments import"
+    >
+      <span className="w-1.5 h-1.5 rounded-full border border-current inline-block shrink-0" aria-hidden="true" />
+      {unit}
+    </span>
   )
 }
 
