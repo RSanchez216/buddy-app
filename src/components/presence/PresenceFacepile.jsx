@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { usePresence } from '../../hooks/usePresence'
+import { usePresenceContext } from '../../contexts/PresenceProvider'
 import { avatarColor, initials } from '../../lib/presenceColor'
 
 const MAX_VISIBLE = 3
@@ -55,8 +55,8 @@ function Avatar({ user, overlap }) {
   )
 }
 
-export default function PresenceFacepile() {
-  const { roster } = usePresence()
+export default function PresenceFacepile({ onOpen }) {
+  const { roster } = usePresenceContext()
   if (roster.length === 0) return null
 
   // People on my page first, then active, then the rest.
@@ -70,20 +70,28 @@ export default function PresenceFacepile() {
   const overflow = sorted.length - visible.length
 
   return (
-    <div className="flex items-center" aria-label={`${roster.length} people online`}>
-      {visible.map((u, i) => (
-        <Avatar key={u.user_id} user={u} overlap={i > 0} />
-      ))}
-      {overflow > 0 && (
-        <div
-          className="flex h-[30px] w-[30px] items-center justify-center rounded-full border-2 border-white bg-gray-100 text-[11px] font-medium text-gray-500 dark:border-[#0d0d1f] dark:bg-white/10 dark:text-slate-400"
-          style={{ marginLeft: -8 }}
-        >
-          +{overflow}
-        </div>
-      )}
+    <div className="flex items-center">
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex items-center rounded-full py-0.5 pl-0.5 pr-2 hover:bg-gray-100 dark:hover:bg-white/5 transition-colors"
+        aria-label={`${roster.length} people online — open list`}
+      >
+        {visible.map((u, i) => (
+          <Avatar key={u.user_id} user={u} overlap={i > 0} />
+        ))}
+        {overflow > 0 && (
+          <div
+            className="flex h-[30px] w-[30px] items-center justify-center rounded-full border-2 border-white bg-gray-100 text-[11px] font-medium text-gray-500 dark:border-[#0d0d1f] dark:bg-white/10 dark:text-slate-400"
+            style={{ marginLeft: -8 }}
+          >
+            +{overflow}
+          </div>
+        )}
+        <span className="ml-2 text-xs font-medium text-gray-500 dark:text-slate-400 tabular-nums">{roster.length}</span>
+      </button>
       {/* Divider lives with the facepile so it vanishes too when nobody's online. */}
-      <div className="h-[22px] w-px bg-gray-200 dark:bg-white/10 ml-2.5 mr-1" />
+      <div className="h-[22px] w-px bg-gray-200 dark:bg-white/10 ml-1.5 mr-1" />
     </div>
   )
 }

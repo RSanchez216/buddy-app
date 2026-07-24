@@ -8,6 +8,7 @@ import { BuddyLogoSmall } from '../components/BuddyLogo'
 import NotificationBell from './NotificationBell'
 import UserMenu from './UserMenu'
 import PresenceFacepile from './presence/PresenceFacepile'
+import PresenceDrawer from './presence/PresenceDrawer'
 import ManageSimpleViewModal from './ManageSimpleViewModal'
 
 // ── Icons ──────────────────────────────────────────────────────────────────
@@ -154,6 +155,7 @@ export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [navMode, setNavMode] = useState('simple') // 'simple' | 'advanced' — mirrors users.nav_mode
   const [showManage, setShowManage] = useState(false)
+  const [presenceOpen, setPresenceOpen] = useState(false) // "who's online" drawer
   const [openTaskCount, setOpenTaskCount] = useState(0) // non-closed tasks → nav bubble
 
   const close = () => setSidebarOpen(false)
@@ -328,7 +330,7 @@ export default function Layout() {
 
           {/* Right cluster: presence facepile + bell + user menu */}
           <div className="flex items-center gap-1">
-            <PresenceFacepile />
+            <PresenceFacepile onOpen={() => setPresenceOpen(true)} />
             <NotificationBell />
             <UserMenu />
           </div>
@@ -346,6 +348,8 @@ export default function Layout() {
         onToggle={toggleBookmark}
         onReset={resetBookmarks}
       />
+
+      <PresenceDrawer open={presenceOpen} onClose={() => setPresenceOpen(false)} />
     </div>
   )
 }
