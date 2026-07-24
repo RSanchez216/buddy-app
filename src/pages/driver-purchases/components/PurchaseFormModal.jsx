@@ -9,6 +9,9 @@ import VinMatch from './VinMatch'
 import { logEvent, diffFields } from '../utils/events'
 import { formatEquipmentLabel } from '../../../hooks/useEquipmentTypes'
 import { useToast } from '../../../contexts/ToastContext'
+import { usePresenceContext } from '../../../contexts/PresenceProvider'
+import { useContractPresence } from '../../../hooks/useContractPresence'
+import EditLockBanner from '../../../components/presence/EditLockBanner'
 
 const PURCHASE_TYPES = [
   { v: 'cash',              l: 'Cash' },
@@ -48,8 +51,15 @@ function emptyForm(defaultStatusId) {
 // driver_purchases) for edit mode; omit for new.
 export default function PurchaseFormModal({ open, onClose, purchase, onSaved }) {
   const { user } = useAuth()
+  const { me } = usePresenceContext()
   const toast = useToast()
   const isEdit = !!purchase
+
+  // Edit-collision signal: broadcast on this contract's presence channel only
+  // while genuinely editing (open, edit mode, not viewing-only). Advisory —
+  // it warns, it does not block the save.
+  const [readOnly, setReadOnly] = useState(false)
+  const editors = useContractPresence(purchase?.id, me, open && isEdit && !readOnly)
 
   const [statuses, setStatuses] = useState([])
   const [entities, setEntities] = useState([])
@@ -342,6 +352,9 @@ export default function PurchaseFormModal({ open, onClose, purchase, onSaved }) 
       <div className={`${S.modalBody} space-y-5`}>
         {error && <div className={S.errorBox}>{error}</div>}
 
+        <EditLockBanner editors={editors} onViewOnly={() => setReadOnly(true)} />
+
+        <fieldset disabled={readOnly} className="space-y-5 min-w-0 border-0 p-0 m-0 disabled:opacity-60">
         <Section title="Driver">
           <DriverPicker
             value={form.driver_id}
@@ -548,15 +561,21 @@ export default function PurchaseFormModal({ open, onClose, purchase, onSaved }) 
           </div>
         </Section>
 
+        </fieldset>
+
         <div className={S.modalFooter}>
-          <button onClick={onClose} className={S.btnCancel}>Cancel</button>
-          <button
-            onClick={save}
-            disabled={saving || (!isEdit && (form.sale_price === '' || form.sale_price == null))}
-            className={S.btnSave}
-          >
-            {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Create purchase'}
-          </button>
+          <button onClick={onClose} className={S.btnCancel}>{readOnly ? 'Close' : 'Cancel'}</button>
+          {readOnly ? (
+            <button onClick={() => setReadOnly(false)} className={S.btnSave}>Edit anyway</button>
+          ) : (
+            <button
+              onClick={save}
+              disabled={saving || (!isEdit && (form.sale_price === '' || form.sale_price == null))}
+              className={S.btnSave}
+            >
+              {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Create purchase'}
+            </button>
+          )}
         </div>
       </div>
     </Modal>
