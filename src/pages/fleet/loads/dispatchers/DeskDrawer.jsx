@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { S } from '../../../../lib/styles'
-import { fetchDeskDrivers, deskRead, readChips, deskKeyOf, money, perDriver, rpm, int } from './dispatcherData'
+import { fetchDeskDrivers, deskRead, readChips, deskKeyOf, money, perDriver, rpm, int, periodBounds, todayISO } from './dispatcherData'
 
 // Slide-in drawer for one desk. Roster data (dispatcher_desk_drivers) is
 // fetched on open so the leaderboard never waits on it. Left border + pill +
@@ -13,10 +13,36 @@ const TONE = {
   green: { border: 'border-l-emerald-500', pill: 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/20', chip: 'text-emerald-600 dark:text-emerald-400' },
 }
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-function fmtLeft(iso) {
+// 'YYYY-MM-DD' → "Mon D" (no year), no UTC shift.
+function fmtMD(iso) {
   if (!iso) return ''
   const [, m, d] = String(iso).split('-').map(Number)
   return `${MON[m - 1]} ${d}`
+}
+
+// Whole days from aISO to bISO (b - a); null if either is unparseable.
+function daysBetween(aISO, bISO) {
+  const p = (s) => { const [y, m, d] = String(s || '').split('-').map(Number); return (y && m && d) ? Date.UTC(y, m - 1, d) : null }
+  const a = p(aISO), b = p(bISO)
+  return (a == null || b == null) ? null : Math.round((b - a) / 86400000)
+}
+// Human tenure: today · N days · N weeks · N months.
+function humanDuration(fromISO, toISO) {
+  const days = daysBetween(fromISO, toISO)
+  if (days == null) return ''
+  if (days <= 0) return 'today'
+  if (days < 7) return `${days} day${days === 1 ? '' : 's'}`
+  if (days < 56) { const w = Math.round(days / 7); return `${w} week${w === 1 ? '' : 's'}` }
+  const mo = Math.round(days / 30.44)
+  return `${mo} month${mo === 1 ? '' : 's'}`
+}
+// Last calendar day of a period given its half-open end ('YYYY-MM-01' of the
+// next window) — the day before it.
+function lastDayISO(endExclusiveISO) {
+  const [y, m, d] = String(endExclusiveISO).split('-').map(Number)
+  const dt = new Date(Date.UTC(y, m - 1, d - 1))
+  const p = (n) => String(n).padStart(2, '0')
+  return `${dt.getUTCFullYear()}-${p(dt.getUTCMonth() + 1)}-${p(dt.getUTCDate())}`
 }
 
 export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgress = false, monthly = false, review, reviewerName, canEdit = false, monthLabel, onSaveReview, onClose }) {
@@ -47,8 +73,11 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgre
   const tone = TONE[read.tone] || TONE.green
   const chips = readChips(desk, floors)
   const active = (rows || []).filter(r => r.status === 'active').sort((a, b) => Number(b.gross) - Number(a.gross))
-  const left = (rows || []).filter(r => r.status === 'left')
-    .sort((a, b) => String(a.last_load_date).localeCompare(String(b.last_load_date))) // oldest → newest
+  const left = (rows || []).filter(r => r.status === 'left') // RPC already orders — don't re-sort
+  const today = todayISO()
+  const bounds = periodBounds(grain, anchor)
+  // Quiet-flag reference: today for an in-progress period, else the period's last day.
+  const quietRef = inProgress ? today : lastDayISO(bounds.end)
 
   return createPortal(
     <div className="fixed inset-0 z-[90] flex justify-end" onMouseDown={e => e.stopPropagation()}>
@@ -73,7 +102,7 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgre
           <div className="grid grid-cols-4 gap-2">
             <Recap label="Gross" value={money(desk.gross)} />
             <Recap label="$/drv·mo" value={perDriver(desk.per_driver_month)} />
-            <Recap label="Turnover" value={int(desk.turnover)} />
+            <Recap label="Departed" value={int(desk.turnover)} />
             <Recap label="RPM" value={rpm(desk.rpm)} />
           </div>
 
@@ -114,6 +143,11 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgre
               {/* On the desk now */}
               <section>
                 <h4 className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide mb-2">On the desk now ({active.length})</h4>
+                {/* Explain the two most-misread numbers, permanently — not a hover. */}
+                <p className="text-[11px] text-gray-500 dark:text-slate-500 leading-relaxed mb-2">
+                  <strong className="font-semibold text-gray-600 dark:text-slate-400">Since</strong> = first load booked by this desk.{' '}
+                  <strong className="font-semibold text-gray-600 dark:text-slate-400">Share</strong> = portion of this driver&apos;s freight that came through this desk over the last 56 days.
+                </p>
                 <div className={`${S.card} overflow-hidden`}>
                   <table className="w-full text-sm">
                     <thead className={S.tableHead}>
@@ -127,49 +161,91 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgre
                     <tbody>
                       {active.length === 0 ? (
                         <tr><td colSpan={4} className="px-4 py-6 text-center text-gray-400 dark:text-slate-600">No active drivers</td></tr>
-                      ) : active.map(r => (
-                        <tr key={r.driver_id} className={S.tableRow}>
-                          <td className={`${S.td} text-gray-900 dark:text-slate-200`}>
-                            {r.driver_name}
-                            <span className="ml-2 inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20 align-middle">active</span>
-                            {r.home_share != null && <span className="ml-2 text-[11px] text-gray-400 dark:text-slate-500">{r.home_share}% on desk</span>}
-                          </td>
-                          <td className={`${S.td} text-right tabular-nums text-gray-600 dark:text-slate-400`}>{int(r.loads)}</td>
-                          <td className={`${S.td} text-right tabular-nums text-gray-900 dark:text-slate-200`}>{money(r.gross)}</td>
-                          <td className={`${S.td} text-right tabular-nums text-gray-600 dark:text-slate-400`}>{rpm(r.rpm)}</td>
-                        </tr>
-                      ))}
+                      ) : active.map(r => {
+                        // New = first load on this desk lands inside the selected period.
+                        const isNew = r.first_load_on_desk && r.first_load_on_desk >= bounds.start && r.first_load_on_desk < bounds.end
+                        // Quiet = no load in >10 days before the period end (or today).
+                        const quietDays = r.last_load_date ? daysBetween(r.last_load_date, quietRef) : null
+                        const quiet = quietDays != null && quietDays > 10
+                        return (
+                          <tr key={r.driver_id} className={`${S.tableRow} align-top`}>
+                            <td className={`${S.td} text-gray-900 dark:text-slate-200`}>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-medium">{r.driver_name}</span>
+                                <span className="inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">active</span>
+                                {r.home_share != null && (
+                                  <span
+                                    title="Share of this driver's freight booked through this desk (last 56 days)"
+                                    className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full border ${isNew ? 'bg-cyan-50 dark:bg-cyan-500/10 text-cyan-700 dark:text-cyan-400 border-cyan-200 dark:border-cyan-500/20' : 'bg-gray-100 dark:bg-white/5 text-gray-600 dark:text-slate-400 border-gray-200 dark:border-white/10'}`}
+                                  >
+                                    {isNew ? `new · ${r.home_share}%` : `${r.home_share}%`}
+                                  </span>
+                                )}
+                              </div>
+                              {r.first_load_on_desk && (
+                                <div className="text-[11px] text-gray-500 dark:text-slate-500 mt-0.5">Since {fmtMD(r.first_load_on_desk)} · {humanDuration(r.first_load_on_desk, today)}</div>
+                              )}
+                              {r.previous_desk && (
+                                <div className="text-[11px] text-cyan-600 dark:text-cyan-400 mt-0.5">↗ moved here from {r.previous_desk}</div>
+                              )}
+                              {isNew && (
+                                <div className="text-[11px] text-gray-400 dark:text-slate-500 mt-0.5">First load {fmtMD(r.first_load_on_desk)} — partial period, judge next period.</div>
+                              )}
+                              {quiet && (
+                                <div className="text-[11px] text-amber-600 dark:text-amber-400 mt-0.5">⚠ no load in {quietDays} days</div>
+                              )}
+                            </td>
+                            <td className={`${S.td} text-right tabular-nums text-gray-600 dark:text-slate-400`}>{int(r.loads)}</td>
+                            <td className={`${S.td} text-right tabular-nums text-gray-900 dark:text-slate-200`}>{money(r.gross)}</td>
+                            <td className={`${S.td} text-right tabular-nums text-gray-600 dark:text-slate-400`}>{rpm(r.rpm)}</td>
+                          </tr>
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>
               </section>
 
-              {/* Left this period */}
+              {/* Departed this period — the run (whole-stretch) figures are what
+                  the desk lost; period figures are often 0 (final load elsewhere). */}
               {left.length > 0 && (
                 <section>
-                  <h4 className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide mb-2">Left this period — by last-load date ({left.length})</h4>
-                  <div className={`${S.card} overflow-hidden`}>
-                    <table className="w-full text-sm">
-                      <thead className={S.tableHead}>
-                        <tr>
-                          <th className={S.th}>Driver</th>
-                          <th className={`${S.th} text-right`}>Loads</th>
-                          <th className={`${S.th} text-right`}>Gross while here</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {left.map(r => (
-                          <tr key={r.driver_id} className={S.tableRow}>
-                            <td className={`${S.td} text-gray-900 dark:text-slate-200`}>
-                              {r.driver_name}
-                              <span className="ml-2 inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-500/20 align-middle">left · {fmtLeft(r.last_load_date)}</span>
-                            </td>
-                            <td className={`${S.td} text-right tabular-nums text-gray-600 dark:text-slate-400`}>{int(r.loads)}</td>
-                            <td className={`${S.td} text-right tabular-nums text-gray-900 dark:text-slate-200`}>{money(r.gross)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                  <h4 className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide mb-2">Departed this period ({left.length})</h4>
+                  <div className="space-y-2">
+                    {left.map(r => {
+                      const iid = r.internal_id ?? r.driver_internal_id
+                      // Losing an above-desk-average driver is a different story.
+                      const aboveDesk = r.run_rpm != null && desk.rpm != null && Number(r.run_rpm) >= Number(desk.rpm)
+                      const agoDays = daysBetween(r.terminated_at, today)
+                      return (
+                        <div key={r.driver_id} className={`${S.card} p-3`}>
+                          <div className="flex items-start justify-between gap-2 flex-wrap">
+                            <div className="min-w-0">
+                              <span className="font-medium text-gray-900 dark:text-slate-200">{r.driver_name}</span>
+                              {iid != null && <span className="ml-1.5 text-[11px] text-gray-400 dark:text-slate-500">· #{iid}</span>}
+                            </div>
+                            {r.terminated_at && (
+                              <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-500/20">
+                                terminated {fmtMD(r.terminated_at)}{agoDays != null ? ` · ${agoDays}d ago` : ''}
+                              </span>
+                            )}
+                          </div>
+                          <div className="grid grid-cols-3 gap-2 mt-2">
+                            <RunFig label="Loads here" value={int(r.run_loads)} />
+                            <RunFig label="Gross here" value={money(r.run_gross)} />
+                            <RunFig label="RPM here" value={rpm(r.run_rpm)} tone={aboveDesk ? 'up' : 'muted'} />
+                          </div>
+                          <p className="text-[11px] text-gray-500 dark:text-slate-500 mt-2">
+                            Ran this desk {fmtMD(r.first_load_on_desk)} – {fmtMD(r.last_load_date)}{r.previous_desk ? ` · came from ${r.previous_desk}` : ''}
+                          </p>
+                          {Number(r.loads) === 0 && (
+                            <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1 italic">
+                              Counted here because this desk booked most of their recent freight, even though their final load went elsewhere.
+                            </p>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
                 </section>
               )}
@@ -252,6 +328,22 @@ function Recap({ label, value }) {
     <div className="rounded-xl border border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-white/5 px-2 py-2 text-center">
       <div className="text-[10px] uppercase tracking-wide text-gray-500 dark:text-slate-500">{label}</div>
       <div className="text-sm font-bold text-gray-900 dark:text-white tabular-nums mt-0.5">{value}</div>
+    </div>
+  )
+}
+
+// One run-total figure in the departed card. tone 'up' = above the desk's RPM
+// (a loss that stings), 'muted' = at/below (default neutral for loads/gross).
+function RunFig({ label, value, tone }) {
+  const valCls = tone === 'up'
+    ? 'text-emerald-600 dark:text-emerald-400'
+    : tone === 'muted'
+      ? 'text-gray-500 dark:text-slate-400'
+      : 'text-gray-900 dark:text-slate-200'
+  return (
+    <div className="rounded-lg border border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-white/5 px-2 py-1.5 text-center">
+      <div className="text-[9px] uppercase tracking-wide text-gray-500 dark:text-slate-500">{label}</div>
+      <div className={`text-sm font-bold tabular-nums mt-0.5 ${valCls}`}>{value}</div>
     </div>
   )
 }

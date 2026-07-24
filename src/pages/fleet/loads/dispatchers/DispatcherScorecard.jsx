@@ -246,7 +246,7 @@ export default function DispatcherScorecard() {
       doc.text(`Dispatcher Scorecard — ${periodTitle}`, M, 40)
       doc.setFontSize(10); doc.setTextColor(110)
       doc.text(
-        `Total Gross: ${money(company.totalGross)}      Active Desks: ${int(company.activeDesks)}      Blended RPM: ${rpm(company.blendedRpm)}      Total Turnover: ${int(company.totalTurn)}`,
+        `Total Gross: ${money(company.totalGross)}      Active Desks: ${int(company.activeDesks)}      Blended RPM: ${rpm(company.blendedRpm)}      Total Departed: ${int(company.totalTurn)}`,
         M, 60,
       )
 
@@ -269,7 +269,7 @@ export default function DispatcherScorecard() {
       const reportDesks = [...desks].sort((a, b) => Number(b.gross) - Number(a.gross))
       autoTable(doc, {
         startY: y + 8,
-        head: [['Desk', 'Gross', '$/drv·mo', 'Turnover', 'RPM', 'Read', 'Reviewed', 'Notes']],
+        head: [['Desk', 'Gross', '$/drv·mo', 'Departed', 'RPM', 'Read', 'Reviewed', 'Notes']],
         body: reportDesks.map(d => {
           const base = [
             d.desk_name, money(d.gross), perDriver(d.per_driver_month), int(d.turnover), rpm(d.rpm),
@@ -379,7 +379,7 @@ export default function DispatcherScorecard() {
               <Kpi label="Total gross" value={money(company.totalGross)} delta={company.grossDelta} sub={inProgress ? `${periodLabel(grain, anchor).replace(/ ·.*/, '')} to date` : undefined} accent="orange" />
               <Kpi label="Active desks" value={int(company.activeDesks)} />
               <Kpi label="Blended RPM" value={rpm(company.blendedRpm)} sub={`floor ${rpm(company.floorRpm)}`} />
-              <Kpi label="Total turnover" value={int(company.totalTurn)} sub="drivers left" />
+              <Kpi label="Total departed" value={int(company.totalTurn)} sub="drivers left" />
             </div>
           )}
 
@@ -400,7 +400,7 @@ export default function DispatcherScorecard() {
                       <Metric label="Gross" value={money(c.desk.gross)} />
                       <Metric label="$/drv·mo" value={perDriver(c.desk.per_driver_month)} />
                       <Metric label="RPM" value={rpm(c.desk.rpm)} />
-                      <Metric label="Turnover" value={int(c.desk.turnover)} />
+                      <Metric label="Departed" value={int(c.desk.turnover)} />
                     </div>
                   </button>
                 ))}
@@ -439,7 +439,7 @@ export default function DispatcherScorecard() {
                       <Th onClick={() => toggleSort('desk')} arrow={arrow('desk')}>Desk</Th>
                       <Th onClick={() => toggleSort('gross')} arrow={arrow('gross')} right>Gross</Th>
                       <Th onClick={() => toggleSort('per_driver_month')} arrow={arrow('per_driver_month')} right>$/driver·mo</Th>
-                      <Th onClick={() => toggleSort('turnover')} arrow={arrow('turnover')} right>Turnover</Th>
+                      <Th onClick={() => toggleSort('turnover')} arrow={arrow('turnover')} right>Departed</Th>
                       <Th onClick={() => toggleSort('rpm')} arrow={arrow('rpm')} right>RPM</Th>
                       <th className={S.th}>Read</th>
                       <Th onClick={() => toggleSort('reviewed')} arrow={arrow('reviewed')}>Reviewed</Th>
@@ -496,14 +496,14 @@ export default function DispatcherScorecard() {
           {/* Amazon Team card */}
           {amazon && <AmazonCard amazon={amazon} bookers={bookers} inProgress={inProgress} />}
 
-          {/* How turnover is counted */}
+          {/* How departures are counted */}
           <section className={`${S.card} p-5`}>
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-2">How turnover is counted</h3>
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-2">How departures are counted</h3>
             <p className="text-sm text-gray-600 dark:text-slate-400 leading-relaxed max-w-3xl">
-              Every driver is matched to one home desk — the desk that runs most of their loads. A departure is charged to that
-              home desk on a last-load basis: when a driver&apos;s final load in the period was with a desk and they don&apos;t come back,
-              it counts against that desk. A day-or-two fill-in on another desk doesn&apos;t count — only the home desk wears the
-              turnover.
+              A departure is a driver actually terminated during the period (from their termination date, falling back to status
+              history) — not inferred from load silence, so a driver on vacation no longer counts. Each departure is charged to one
+              home desk: the desk that booked most of their recent freight. That desk wears it even if the driver&apos;s final load
+              happened to run on another desk.
             </p>
           </section>
 
