@@ -29,26 +29,64 @@ function toInt(v) {
   const n = Number(v)
   return Number.isFinite(n) ? Math.round(n) : null
 }
-// Wrap the first standalone occurrence of each highlight's value in a coloured
-// span, leaving the RPC's prose untouched. Numbers glued to letters (188k) or
-// other digits are skipped so only whole standalone figures colour.
-function highlightNumbers(detail, highlights) {
+// Normalise veteran_names (a JS array, a "a, b" string, or a PG '{a,b}' literal)
+// into a plain list of names.
+function toNames(v) {
+  if (Array.isArray(v)) return v.map(s => String(s).trim()).filter(Boolean)
+  if (typeof v === 'string') {
+    const inner = v.trim().replace(/^\{|\}$/g, '')
+    return inner ? inner.split(',').map(x => x.trim().replace(/^"|"$/g, '')).filter(Boolean) : []
+  }
+  return []
+}
+// Split a string on every occurrence of `needle`, wrapping each hit in a span.
+function splitOn(text, needle, className) {
+  const out = []
+  let from = 0, idx
+  while ((idx = text.indexOf(needle, from)) !== -1) {
+    if (idx > from) out.push(text.slice(from, idx))
+    out.push(<span className={className}>{needle}</span>)
+    from = idx + needle.length
+  }
+  out.push(text.slice(from))
+  return out
+}
+// Colour the RPC's detail sentence in place — veteran names + count in red,
+// the within-60-days count in amber — without rewriting the prose. Names are
+// carved out first (red), then the two standalone figures are wrapped. Numbers
+// glued to letters ("188k") are skipped so only whole figures colour.
+function renderDetail(detail, { early, veteran, names }) {
   if (!detail) return null
-  const parts = String(detail).split(/(\d+)/)
+  const RED = 'font-semibold text-red-600 dark:text-red-400'
+  const AMBER = 'font-semibold text-amber-600 dark:text-amber-400'
+  const nameList = (names || []).filter(Boolean).sort((a, b) => b.length - a.length)
+
+  let segs = [detail]
+  for (const name of nameList) {
+    segs = segs.flatMap(seg => (typeof seg === 'string' ? splitOn(seg, name, RED) : [seg]))
+  }
+
+  const figures = [
+    { key: 'early', value: early, className: AMBER },
+    { key: 'veteran', value: veteran, className: RED },
+  ]
   const used = new Set()
-  return parts.map((part, i) => {
-    if (!/^\d+$/.test(part)) return part
-    const prev = parts[i - 1] || ''
-    const next = parts[i + 1] || ''
-    if (/[A-Za-z]$/.test(prev) || /^[A-Za-z]/.test(next)) return part // e.g. "188k"
-    const n = Number(part)
-    for (const h of highlights) {
-      if (used.has(h.key) || h.value == null || n !== h.value) continue
-      used.add(h.key)
-      return <span key={i} className={h.className}>{part}</span>
-    }
-    return part
-  })
+  const nodes = []
+  for (const seg of segs) {
+    if (typeof seg !== 'string') { nodes.push(seg); continue }
+    const parts = seg.split(/(\d+)/)
+    parts.forEach((part, i) => {
+      if (!/^\d+$/.test(part)) { nodes.push(part); return }
+      const prev = parts[i - 1] || ''
+      const next = parts[i + 1] || ''
+      if (/[A-Za-z]$/.test(prev) || /^[A-Za-z]/.test(next)) { nodes.push(part); return } // e.g. "188k"
+      const n = Number(part)
+      const hit = figures.find(f => !used.has(f.key) && f.value != null && n === f.value)
+      if (hit) { used.add(hit.key); nodes.push(<span className={hit.className}>{part}</span>) }
+      else nodes.push(part)
+    })
+  }
+  return nodes.map((node, i) => (typeof node === 'string' ? node : <span key={i} className={node.props.className}>{node.props.children}</span>))
 }
 const rowKey = (r) => `${r.driver_internal_id ?? r.driver_name}-${r.desk_id ?? r.desk_name}`
 
@@ -270,29 +308,27 @@ export default function DeparturesModal({ open, grain, anchor, onClose }) {
   )
 }
 
+// Card tint by how the departure rate compares to normal — a high month reads
+// as a warning the moment the modal opens; typical stays soft/informative.
+const BAND = {
+  high: 'bg-red-50 border-red-200 dark:bg-red-500/[0.08] dark:border-red-500/25',
+  typical: 'bg-gray-50 border-gray-200 dark:bg-white/[0.04] dark:border-white/10',
+  low: 'bg-emerald-50 border-emerald-200 dark:bg-emerald-500/[0.08] dark:border-emerald-500/25',
+}
 function InterpBanner({ interp }) {
-  // Leading-dot tint by how the departure rate compares to normal.
-  const dot = interp.rate_band === 'high'
-    ? 'bg-red-500'
-    : interp.rate_band === 'low'
-      ? 'bg-emerald-500'
-      : 'bg-gray-400 dark:bg-slate-500'
-  // Veteran churn (expensive) → red; early churn (onboarding/fit) → amber.
-  const highlights = [
-    { key: 'early', value: toInt(interp.gone_within_60d), className: 'font-semibold text-amber-600 dark:text-amber-400' },
-    { key: 'vet', value: toInt(interp.veterans), className: 'font-semibold text-red-600 dark:text-red-400' },
-  ]
+  const band = BAND[interp.rate_band] || BAND.typical
   return (
-    <div className="space-y-1">
+    <div className={`rounded-xl border p-3.5 ${band}`}>
       {interp.headline && (
-        <p className="flex items-start gap-2 text-sm font-semibold text-gray-900 dark:text-white">
-          <span className={`mt-[0.4rem] h-2 w-2 shrink-0 rounded-full ${dot}`} aria-hidden="true" />
-          <span>{interp.headline}</span>
-        </p>
+        <p className="text-[15px] font-semibold text-gray-900 dark:text-white leading-snug">{interp.headline}</p>
       )}
       {interp.detail && (
-        <p className="pl-4 text-xs leading-relaxed text-gray-600 dark:text-slate-400">
-          {highlightNumbers(interp.detail, highlights)}
+        <p className="mt-1 text-xs leading-relaxed text-gray-600 dark:text-slate-300">
+          {renderDetail(interp.detail, {
+            early: toInt(interp.gone_within_60d),
+            veteran: toInt(interp.veterans),
+            names: toNames(interp.veteran_names),
+          })}
         </p>
       )}
     </div>
@@ -316,6 +352,14 @@ function Row({ r, muted }) {
       <td className={S.td}>
         <span className={muted ? 'text-gray-600 dark:text-slate-400' : 'font-medium text-gray-900 dark:text-slate-200'}>{r.driver_name}</span>
         {r.driver_internal_id != null && <span className="ml-1.5 text-[11px] text-gray-400 dark:text-slate-600 tabular-nums">#{r.driver_internal_id}</span>}
+        {/* Tags tie the row back to the interpretation sentence — derived from
+            the RPC's booleans, not from recomputed thresholds. */}
+        {r.is_veteran && (
+          <span className="ml-1.5 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-red-50 text-red-600 dark:bg-red-500/15 dark:text-red-400 align-middle">veteran</span>
+        )}
+        {r.is_early_churn && (
+          <span className="ml-1.5 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400 align-middle whitespace-nowrap">&lt; 60 days</span>
+        )}
       </td>
       <td className={`${S.td} text-gray-600 dark:text-slate-400`}>{r.desk_name}</td>
       <td className={`${S.td} whitespace-nowrap text-gray-600 dark:text-slate-400 tabular-nums`}>{fmtMD(r.terminated_at)}</td>
