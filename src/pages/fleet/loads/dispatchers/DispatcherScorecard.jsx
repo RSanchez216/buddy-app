@@ -4,6 +4,7 @@ import { S } from '../../../../lib/styles'
 import { useAuth } from '../../../../contexts/AuthContext'
 import { useToast } from '../../../../contexts/ToastContext'
 import DeskDrawer from './DeskDrawer'
+import DeparturesModal from './DeparturesModal'
 import {
   fetchScorecard, fetchAmazonBookers, computeFloors, deskRead, surfaceFocus, bookerTier,
   periodLabel, stepAnchor, isCurrentPeriod, anchorForRpc, todayISO,
@@ -43,6 +44,7 @@ export default function DispatcherScorecard() {
   const [error, setError] = useState('')
   const [reloadTick, setReloadTick] = useState(0) // bumped by Retry to re-run the fetch
   const [selectedDesk, setSelectedDesk] = useState(null)
+  const [showDepartures, setShowDepartures] = useState(false)
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState({ key: 'gross', dir: 'desc' })
   // Monthly review sign-offs — interactive on the Monthly grain.
@@ -379,7 +381,7 @@ export default function DispatcherScorecard() {
               <Kpi label="Total gross" value={money(company.totalGross)} delta={company.grossDelta} sub={inProgress ? `${periodLabel(grain, anchor).replace(/ ·.*/, '')} to date` : undefined} accent="orange" />
               <Kpi label="Active desks" value={int(company.activeDesks)} />
               <Kpi label="Blended RPM" value={rpm(company.blendedRpm)} sub={`floor ${rpm(company.floorRpm)}`} />
-              <Kpi label="Total departed" value={int(company.totalTurn)} sub="drivers left" />
+              <Kpi label="Total departed" value={int(company.totalTurn)} sub="drivers left" onClick={() => setShowDepartures(true)} hint="See who left" />
             </div>
           )}
 
@@ -454,7 +456,7 @@ export default function DispatcherScorecard() {
                       const rev = reviews[deskKeyOf(d)]
                       const ru = isMonthly ? null : deskRollup(d)
                       return (
-                        <tr key={d.desk_id} onClick={() => setSelectedDesk(d)}
+                        <tr key={d.desk_id} onClick={e => { e.currentTarget.focus(); setSelectedDesk(d) }}
                           tabIndex={0} role="button" aria-label={`Open ${d.desk_name} desk detail`}
                           onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedDesk(d) } }}
                           className={`${S.tableRow} cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50 focus-visible:ring-inset`}>
@@ -534,6 +536,13 @@ export default function DispatcherScorecard() {
         monthLabel={periodLabel('month', anchor)}
         onSaveReview={saveReview}
         onClose={() => setSelectedDesk(null)}
+      />
+
+      <DeparturesModal
+        open={showDepartures}
+        grain={grain}
+        anchor={anchor}
+        onClose={() => setShowDepartures(false)}
       />
     </div>
   )
@@ -640,18 +649,38 @@ function AmazonCard({ amazon, bookers, inProgress }) {
 
 // ── small presentational bits ─────────────────────────────────────────────────
 const KPI_ACCENT = { orange: 'border-l-4 border-l-orange-500', blue: 'border-l-4 border-l-blue-500', green: 'border-l-4 border-l-emerald-500' }
-function Kpi({ label, value, sub, delta, accent }) {
+function Kpi({ label, value, sub, delta, accent, onClick, hint }) {
   const showDelta = delta != null && Number.isFinite(Number(delta))
-  return (
-    <div className={`${S.card} ${accent ? KPI_ACCENT[accent] : ''} p-4`}>
-      <div className="text-xs font-medium text-gray-500 dark:text-slate-500 uppercase tracking-wide">{label}</div>
+  const clickable = typeof onClick === 'function'
+  const inner = (
+    <>
+      <div className="flex items-center gap-1.5">
+        <div className="text-xs font-medium text-gray-500 dark:text-slate-500 uppercase tracking-wide">{label}</div>
+        {clickable && (
+          <svg className="w-3.5 h-3.5 text-gray-300 dark:text-slate-600" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7 5l6 5-6 5" /></svg>
+        )}
+      </div>
       <div className="text-2xl font-bold text-gray-900 dark:text-white mt-1 tabular-nums">{value}</div>
       <div className="flex items-center gap-2 mt-1 min-h-[1rem]">
         {sub && <span className="text-[11px] text-gray-400 dark:text-slate-500 tabular-nums">{sub}</span>}
         {showDelta && <span className={`text-[11px] font-medium tabular-nums ${Number(delta) >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>{pct(delta)}</span>}
+        {clickable && hint && <span className="text-[11px] text-orange-500/80 dark:text-orange-400/70">{hint}</span>}
       </div>
-    </div>
+    </>
   )
+  const base = `${S.card} ${accent ? KPI_ACCENT[accent] : ''} p-4`
+  if (clickable) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className={`${base} text-left w-full cursor-pointer transition-colors hover:border-orange-400 dark:hover:border-orange-500/40 hover:bg-orange-50/40 dark:hover:bg-orange-500/[0.04] focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50`}
+      >
+        {inner}
+      </button>
+    )
+  }
+  return <div className={base}>{inner}</div>
 }
 function Metric({ label, value }) {
   return (

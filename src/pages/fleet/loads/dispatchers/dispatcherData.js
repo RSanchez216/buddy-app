@@ -121,6 +121,14 @@ export async function fetchAmazonBookers(grain, anchorISO) {
   if (error) throw error
   return data || []
 }
+// Every driver terminated in the period, with the run they booked through their
+// desk. One call for the whole period — do NOT loop dispatcher_desk_drivers.
+export async function fetchDepartures(grain, anchorISO) {
+  const { data, error } = await withTimeout(signal =>
+    supabase.rpc('dispatcher_departures', { p_grain: grain, p_anchor: anchorForRpc(grain, anchorISO) }).abortSignal(signal))
+  if (error) throw error
+  return data || []
+}
 
 // ── monthly review sign-off (dispatcher_reviews) ─────────────────────────────
 // desk_key convention: desk_id::text for normal desks, the literal 'amazon' for

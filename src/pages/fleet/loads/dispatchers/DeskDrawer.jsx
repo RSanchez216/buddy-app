@@ -103,8 +103,8 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgre
   const quietRef = inProgress ? today : lastDayISO(bounds.end)
 
   return createPortal(
-    <div className="fixed inset-0 z-[90] flex items-center justify-center p-3 sm:p-6" onMouseDown={e => e.stopPropagation()}>
-      <div className="absolute inset-0 bg-black/40 dark:bg-black/60" onClick={onClose} />
+    <div className="fixed inset-0 z-[90] flex items-center justify-center p-3 sm:p-6" onMouseDown={e => e.stopPropagation()} onClick={onClose}>
+      <div className="absolute inset-0 bg-black/40 dark:bg-black/60" />
 
       <div
         ref={panelRef}
@@ -112,6 +112,7 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgre
         role="dialog"
         aria-modal="true"
         aria-label={`${desk.desk_name} — desk detail`}
+        onClick={e => e.stopPropagation()}
         className={`relative flex flex-col w-[min(1140px,94vw)] max-h-[88vh] bg-white dark:bg-[#0d0d1f] border-l-4 ${tone.border} rounded-xl shadow-2xl focus:outline-none`}
       >
         {/* Header */}
