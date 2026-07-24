@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { supabase } from '../../../../lib/supabase'
 import { S } from '../../../../lib/styles'
 import { useAuth } from '../../../../contexts/AuthContext'
@@ -131,6 +131,31 @@ function fmtShort(s) {
   return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 const money0 = (v) => `$${Math.round(Number(v) || 0).toLocaleString('en-US')}`
+
+// ── search ─────────────────────────────────────────────────────────────────
+// Unit numbers are stored with a leading '#' (#532346, #SL24014); strip it from
+// both the value and the query so "532346", "#532346", and "sl24014" all match.
+const stripHashLower = (s) => String(s ?? '').replace(/^#+/, '').toLowerCase()
+
+// Idle row (idle_bucketed) — case-insensitive substring against unit number
+// (label / held truck / held trailer, '#'-normalised), driver name (label /
+// assigned-driver), the underlying (unrendered) driver internal id, and the
+// last load number. `q` is already trimmed, lowercased, and leading-'#'-stripped.
+function idleRowMatchesQuery(r, q) {
+  for (const u of [r.label, r.truck_unit, r.trailer_unit]) if (u && stripHashLower(u).includes(q)) return true
+  for (const t of [r.label, r.extra, r.internal_id, r.driver_internal_id, r.last_load_number]) {
+    if (t != null && String(t).toLowerCase().includes(q)) return true
+  }
+  return false
+}
+// Terminated-queue row — same idea over its own fields.
+function heldRowMatchesQuery(r, q) {
+  if (r.unit_number && stripHashLower(r.unit_number).includes(q)) return true
+  for (const t of [r.driver_name, r.driver_internal_id, r.last_load_number]) {
+    if (t != null && String(t).toLowerCase().includes(q)) return true
+  }
+  return false
+}
 
 // ── Idle breakdown buckets (idle_bucketed.bucket) ──────────────────────────
 // Where each idle subject physically is. All five always render — rows sort by
@@ -440,6 +465,10 @@ export default function IdleReview() {
   // dataset from idle_bucketed (these read as staffed, so they never surface as
   // idle). Trigger is the termination, not the idle threshold.
   const [heldRows, setHeldRows] = useState([])
+  // Client-side search, persisted as ?q= (same convention as /fleet/drivers).
+  const [searchParams, setSearchParams] = useSearchParams()
+  const urlQ = searchParams.get('q') || ''
+  const [search, setSearch] = useState(urlQ)
 
   const { profile, user } = useAuth()
   const toast = useToast()
@@ -473,8 +502,11 @@ export default function IdleReview() {
       .catch(() => {})
     // Equipment still held by terminated drivers (separate dataset — already
     // sorted MANAS-exposure-first, then by monthly cost desc; don't re-sort).
+    // MANAS equipment only — a driver's own truck isn't our equipment to recover
+    // or pay for, so it's noise here. Read the RPC's manas_exposure boolean
+    // (company_owned / company_leased); never re-derive it from ownership_stage.
     supabase.rpc('terminated_drivers_holding_equipment')
-      .then(({ data }) => setHeldRows(data || []))
+      .then(({ data }) => setHeldRows((data || []).filter(r => r.manas_exposure)))
       .catch(() => {})
     // Driverless units last dropped far from the Aurora yard — a location-verify flag.
     supabase.rpc('idle_far_from_yard')
@@ -506,6 +538,22 @@ export default function IdleReview() {
   }
 
   useEffect(() => { load() }, [])
+
+  // Keep ?q= in sync both ways: back/forward updates the field; typing writes
+  // the URL (debounced, replace — no history spam).
+  useEffect(() => { setSearch(urlQ) }, [urlQ])
+  useEffect(() => {
+    if (search === urlQ) return
+    const t = setTimeout(() => {
+      setSearchParams(prev => {
+        const next = new URLSearchParams(prev)
+        const v = search.trim()
+        if (v) next.set('q', v); else next.delete('q')
+        return next
+      }, { replace: true })
+    }, 250)
+    return () => clearTimeout(t)
+  }, [search, urlQ, setSearchParams])
 
   // "Possibly home" per idle driver/team row. Driver rows key off subject_id;
   // team rows resolve to their primary member's driver_id. All drivers are
@@ -774,6 +822,24 @@ export default function IdleReview() {
     return { count: heldRows.length, unitsExposed: exposed.length, monthly, driverOwned: heldRows.length - exposed.length }
   }, [heldRows])
 
+  // Search narrows whatever the chips/tabs/financing already selected — a lone
+  // '#' (which strips to empty) is treated as no search.
+  const searchQ = search.trim().replace(/^#+/, '').toLowerCase()
+  const searching = searchQ.length > 0
+  const searchedGroups = useMemo(() => (
+    searching
+      ? {
+          driver: viewGroups.driver.filter(r => idleRowMatchesQuery(r, searchQ)),
+          truck: viewGroups.truck.filter(r => idleRowMatchesQuery(r, searchQ)),
+          trailer: viewGroups.trailer.filter(r => idleRowMatchesQuery(r, searchQ)),
+        }
+      : viewGroups
+  ), [viewGroups, searching, searchQ])
+  const searchedHeld = useMemo(() => (
+    searching ? heldRows.filter(r => heldRowMatchesQuery(r, searchQ)) : heldRows
+  ), [heldRows, searching, searchQ])
+  const searchedIdleTotal = searchedGroups.driver.length + searchedGroups.truck.length + searchedGroups.trailer.length
+
   // After an assignment is ended: drop the row and refresh the idle data — the
   // freed unit now counts as idle, so those numbers move (correctly).
   const onAssignmentEnded = (assignmentId) => {
@@ -882,7 +948,25 @@ export default function IdleReview() {
             <span className="sr-only">Clear bucket filter</span>
           </button>
         )}
-        <button onClick={() => exportIdleExcel(viewGroups)} disabled={loading} className="ml-auto text-xs font-semibold px-3 py-1.5 rounded-lg border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-40" title="Export Drivers / Trucks / Trailers (current filters) to Excel">↓ Export Excel</button>
+        <div className="ml-auto relative">
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Escape') setSearch('') }}
+            placeholder="Search unit, driver, ID, load #…"
+            aria-label="Search idle records"
+            className="text-xs rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800/80 pl-2.5 pr-7 py-1.5 w-56 text-gray-800 dark:text-slate-200 placeholder-gray-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-orange-500/40"
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              aria-label="Clear search"
+              className="absolute right-1 top-1/2 -translate-y-1/2 w-5 h-5 inline-flex items-center justify-center rounded text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-white/10"
+            >✕</button>
+          )}
+        </div>
+        <button onClick={() => exportIdleExcel(searchedGroups)} disabled={loading} className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-40" title="Export Drivers / Trucks / Trailers (current filters) to Excel">↓ Export Excel</button>
       </div>
 
       {error ? (
@@ -890,12 +974,25 @@ export default function IdleReview() {
       ) : loading ? (
         <IdleSkeleton />
       ) : reviewFilter === 'terminated' ? (
-        <TerminatedHeldSection rows={heldRows} canEdit={canEdit} onEnded={onAssignmentEnded} />
+        searching && searchedHeld.length === 0
+          ? <IdleSearchEmpty query={search.trim()} onClear={() => setSearch('')} />
+          : <TerminatedHeldSection rows={searchedHeld} canEdit={canEdit} onEnded={onAssignmentEnded} />
+      ) : searching && searchedIdleTotal === 0 ? (
+        // One page-level empty state, not three repeated under each header.
+        <IdleSearchEmpty query={search.trim()} onClear={() => setSearch('')} />
       ) : (
         <>
-          <IdleSection title="Drivers" kind="driver" rows={viewGroups.driver} reasons={DRIVER_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} homeBySubject={homeBySubject} behindBySubject={behindBySubject} reviewFlags={reviewFlags} canEdit={canEdit} onToggleReview={toggleReview} yardFlags={yardFlags} yardVerifierNames={yardVerifierNames} onOpenVerify={setVerifyModalRow} onUnverify={row => verifyAtYard(row, false)} />
-          <IdleSection title="Trucks" kind="unit" rows={viewGroups.truck} reasons={UNIT_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} farBySubject={farFromYard} reviewFlags={reviewFlags} canEdit={canEdit} onToggleReview={toggleReview} yardFlags={yardFlags} yardVerifierNames={yardVerifierNames} onOpenVerify={setVerifyModalRow} onUnverify={row => verifyAtYard(row, false)} />
-          <IdleSection title="Trailers" kind="unit" rows={viewGroups.trailer} reasons={UNIT_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} farBySubject={farFromYard} reviewFlags={reviewFlags} canEdit={canEdit} onToggleReview={toggleReview} yardFlags={yardFlags} yardVerifierNames={yardVerifierNames} onOpenVerify={setVerifyModalRow} onUnverify={row => verifyAtYard(row, false)} />
+          {/* While searching, hide sections with no matches (so an empty group
+              doesn't read as "none idle"); with no search, show all three. */}
+          {(!searching || searchedGroups.driver.length > 0) && (
+            <IdleSection title="Drivers" kind="driver" rows={searchedGroups.driver} reasons={DRIVER_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} homeBySubject={homeBySubject} behindBySubject={behindBySubject} reviewFlags={reviewFlags} canEdit={canEdit} onToggleReview={toggleReview} yardFlags={yardFlags} yardVerifierNames={yardVerifierNames} onOpenVerify={setVerifyModalRow} onUnverify={row => verifyAtYard(row, false)} />
+          )}
+          {(!searching || searchedGroups.truck.length > 0) && (
+            <IdleSection title="Trucks" kind="unit" rows={searchedGroups.truck} reasons={UNIT_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} farBySubject={farFromYard} reviewFlags={reviewFlags} canEdit={canEdit} onToggleReview={toggleReview} yardFlags={yardFlags} yardVerifierNames={yardVerifierNames} onOpenVerify={setVerifyModalRow} onUnverify={row => verifyAtYard(row, false)} />
+          )}
+          {(!searching || searchedGroups.trailer.length > 0) && (
+            <IdleSection title="Trailers" kind="unit" rows={searchedGroups.trailer} reasons={UNIT_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} farBySubject={farFromYard} reviewFlags={reviewFlags} canEdit={canEdit} onToggleReview={toggleReview} yardFlags={yardFlags} yardVerifierNames={yardVerifierNames} onOpenVerify={setVerifyModalRow} onUnverify={row => verifyAtYard(row, false)} />
+          )}
         </>
       )}
 
@@ -1148,7 +1245,8 @@ function heldCostLabel(r) {
   return r.monthly_cost == null ? 'not priced' : `${money0(r.monthly_cost)}/mo`
 }
 
-// KPI card — headline is MANAS exposure only; driver-owned in the subtitle.
+// KPI card — MANAS exposure only (the list is now MANAS-only, so there's no
+// driver-owned subtitle to count).
 function TerminatedHeldCard({ summary, active, onClick }) {
   const unitWord = summary.unitsExposed === 1 ? 'unit' : 'units'
   return (
@@ -1163,10 +1261,21 @@ function TerminatedHeldCard({ summary, active, onClick }) {
         <span className="text-3xl font-mono font-bold leading-none text-red-600 dark:text-red-400">{summary.unitsExposed}</span>
         <span className="text-sm text-gray-700 dark:text-slate-300">{unitWord} · <span className="font-mono font-semibold">{money0(summary.monthly)}</span>/mo</span>
       </div>
-      <div className="text-[11px] text-gray-500 dark:text-slate-400 mt-0.5">
-        {summary.driverOwned > 0 ? `${summary.driverOwned} more driver-owned` : 'company owned / leased'}
-      </div>
     </button>
+  )
+}
+
+// Single page-level empty state for a search that matches nothing anywhere.
+function IdleSearchEmpty({ query, onClear }) {
+  return (
+    <div className={`${S.card} p-10 text-center`}>
+      <p className="text-sm text-gray-500 dark:text-slate-400">No idle records match &ldquo;{query}&rdquo;.</p>
+      <button
+        type="button"
+        onClick={onClear}
+        className="mt-3 text-xs font-semibold px-3 py-1.5 rounded-lg border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5"
+      >Clear search</button>
+    </div>
   )
 }
 
