@@ -1200,7 +1200,8 @@ export default function LaneFlowMap() {
             note={agg.totals.tonuLoads > 0 ? `+ ${fmtNum(agg.totals.tonuLoads)} TONU` : undefined} />
           <Kpi label="Revenue" value={fmtMoney(agg.totals.revenue)} sub={`${fmtNum(agg.totals.miles)} mi`} />
           <Kpi label="$/mile" value={agg.totals.rpm == null ? '—' : `${fmtRpm(agg.totals.rpm)}/mi`} sub="all lanes" />
-          <Kpi label="Map coverage" value={agg.coverage == null ? '—' : `${Math.round(agg.coverage * 100)}%`} sub="of loads geocoded" />
+          <Kpi label="Map coverage" value={agg.coverage == null ? '—' : `${Math.round(agg.coverage * 100)}%`} sub="of loads geocoded"
+            note={agg.coverageMissing > 0 ? `${fmtNum(agg.coverageMissing)} load${agg.coverageMissing === 1 ? '' : 's'} missing coordinates` : undefined} />
         </div>
       )}
 

@@ -113,12 +113,62 @@ function formatFull(value, metric) {
   return fmtMoney(value)
 }
 
+// 'YYYY-MM-DD' (or timestamp) → "MM-DD-YYYY", the TMS-style date on the list.
+function fmtMDY(s) {
+  const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})/)
+  return m ? `${m[2]}-${m[3]}-${m[1]}` : '—'
+}
+
+// Inline panel listing the loads that fell off the choropleth. Raw location
+// strings are shown exactly as stored — that's what someone recognises in the
+// TMS to fix it at the source.
+function UnplacedList({ rows, basis, onClose }) {
+  return (
+    <div className="mb-3 rounded-lg border border-gray-200 dark:border-white/10 bg-gray-50/70 dark:bg-white/[0.03] overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100 dark:border-white/5">
+        <span className="text-[11px] font-semibold text-gray-700 dark:text-slate-300">
+          {rows.length} load{rows.length === 1 ? '' : 's'} not placed — no state on the {basis === 'origin' ? 'pickup' : 'delivery'}
+        </span>
+        <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 text-sm leading-none">✕</button>
+      </div>
+      <div className="max-h-64 overflow-y-auto">
+        <table className="w-full text-[11px]">
+          <thead className="sticky top-0 bg-gray-50 dark:bg-[#0d0d1f] text-gray-500 dark:text-slate-400">
+            <tr>
+              <th className="px-3 py-1.5 text-left font-semibold">Load #</th>
+              <th className="px-3 py-1.5 text-left font-semibold">Lane as recorded</th>
+              <th className="px-3 py-1.5 text-left font-semibold">Date</th>
+              <th className="px-3 py-1.5 text-right font-semibold">Revenue</th>
+              <th className="px-3 py-1.5 text-left font-semibold">Dispatcher</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={r.leg_id ?? i} className="border-t border-gray-100 dark:border-white/5">
+                <td className="px-3 py-1.5 font-mono text-gray-700 dark:text-slate-300 whitespace-nowrap">{r.load_number || '—'}</td>
+                <td className="px-3 py-1.5 text-gray-600 dark:text-slate-400">
+                  <span className="font-mono">{r.origin || '(blank)'}</span> <span className="text-gray-400 dark:text-slate-500">→</span> <span className="font-mono">{r.destination || '(blank)'}</span>
+                </td>
+                <td className="px-3 py-1.5 text-gray-600 dark:text-slate-400 whitespace-nowrap">{fmtMDY(r.date)}</td>
+                <td className="px-3 py-1.5 text-right font-mono text-gray-700 dark:text-slate-300 whitespace-nowrap">{fmtMoney(r.revenue)}</td>
+                <td className="px-3 py-1.5 text-gray-600 dark:text-slate-400 whitespace-nowrap">{r.dispatcher_name || '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 export default function GeoHeatMap({ range, phases }) {
   const [view, setView] = useState('region') // region | state
   const [colorBy, setColorBy] = useState('gross') // loads | gross | avg | rpm
   const [basis, setBasis] = useState('origin') // origin | destination
   const [trailerType, setTrailerType] = useState(null) // null = all types; single-select
   const [data, setData] = useState(null)
+  const [unplaced, setUnplaced] = useState([]) // legs off the choropleth (no region on the basis end)
+  const [showUnplaced, setShowUnplaced] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [reloadKey, setReloadKey] = useState(0)
@@ -137,7 +187,7 @@ export default function GeoHeatMap({ range, phases }) {
 
     async function fetchData() {
       try {
-        const rows = await fetchLaneGeoRollup({
+        const { rows, unplaced: off } = await fetchLaneGeoRollup({
           from: range.from,
           to: range.to,
           basis,
@@ -159,12 +209,14 @@ export default function GeoHeatMap({ range, phases }) {
             })
           }
           setData(lookup)
+          setUnplaced(off || [])
         }
       } catch (err) {
         if (!stale) {
           console.error('Failed to fetch geo data:', err)
           setError(err.message || 'Failed to load data')
           setData(new Map())
+          setUnplaced([])
         }
       } finally {
         if (!stale) setLoading(false)
@@ -240,6 +292,10 @@ export default function GeoHeatMap({ range, phases }) {
     rpm: 'RPM',
   }[colorBy]
 
+  // Revenue of the off-choropleth legs — reconciles: placed region totals +
+  // this = the panel's expected total.
+  const notShownRev = useMemo(() => unplaced.reduce((s, u) => s + (Number(u.revenue) || 0), 0), [unplaced])
+
   return (
     <div className={`${S.card} p-5 space-y-4`}>
       <div>
@@ -312,10 +368,28 @@ export default function GeoHeatMap({ range, phases }) {
         </div>
 
         {/* Caption */}
-        <p className="text-[11px] text-gray-700 dark:text-gray-200 mb-3">
+        <p className="text-[11px] text-gray-700 dark:text-gray-200 mb-1">
           {basis === 'origin' ? 'Origin' : 'Destination'} basis · {Array.from(phases).sort().map(p => p === 'in_transit' ? 'In transit' : p.charAt(0).toUpperCase() + p.slice(1)).join(' + ')} ·{' '}
           {range.from} to {range.to} · hover a state for full detail
+          {/* Off-choropleth loads — only when there are any. Muted; an
+              explanation, not an alarm. Clickable to list them for fixing. */}
+          {!loading && unplaced.length > 0 && (
+            <>
+              {' · '}
+              <button
+                type="button"
+                onClick={() => setShowUnplaced(v => !v)}
+                title="Loads with no parseable state on the basis end — not placed on the map. Click to list them."
+                className="text-gray-500 dark:text-gray-400 underline decoration-dotted underline-offset-2 hover:text-gray-700 dark:hover:text-gray-200"
+              >
+                {unplaced.length} load{unplaced.length === 1 ? '' : 's'} ({fmtMoney(notShownRev)}) not shown — no state on the {basis === 'origin' ? 'pickup' : 'delivery'}
+              </button>
+            </>
+          )}
         </p>
+        {!loading && showUnplaced && unplaced.length > 0 && (
+          <UnplacedList rows={unplaced} basis={basis} onClose={() => setShowUnplaced(false)} />
+        )}
       </div>
 
       {/* Map area */}

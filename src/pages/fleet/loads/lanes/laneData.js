@@ -80,11 +80,17 @@ export async function fetchLaneGeoRollup({ from, to, basis = 'origin', grain = '
     ? (basis === 'destination' ? 'dest_state' : 'origin_state')
     : (basis === 'destination' ? 'dest_region' : 'origin_region')
 
+  // The basis end's REGION drives placement on the choropleth. A state always
+  // resolves a region, so a null region == no parseable state (nothing to
+  // place). Detect off-choropleth legs on this same column, basis-aware.
+  const regionCol = basis === 'destination' ? 'dest_region' : 'origin_region'
+
   const rows = []
   for (let page = 0; ; page++) {
     const { data, error } = await withTimeout(signal => {
       let query = supabase.from('v_lane_geo')
-        .select(`${unitCol}, leg_id, leg_revenue, leg_total_miles`)
+        // Region/state for placement + raw fields for the "not shown" list.
+        .select('origin_region, dest_region, origin_state, dest_state, leg_id, load_number, origin, destination, pickup_date, delivery_date, leg_revenue, leg_total_miles, dispatcher_name')
         .in('load_phase', phases)
         // coalesce(delivery_date, pickup_date) BETWEEN from AND to
         .or(`and(delivery_date.gte.${from},delivery_date.lte.${to}),and(delivery_date.is.null,pickup_date.gte.${from},pickup_date.lte.${to})`)
@@ -98,7 +104,19 @@ export async function fetchLaneGeoRollup({ from, to, basis = 'origin', grain = '
   }
 
   const acc = new Map()
+  const unplaced = [] // legs that fall off the choropleth (no region on the basis end)
   for (const r of rows) {
+    if (r[regionCol] == null) {
+      unplaced.push({
+        leg_id: r.leg_id,
+        load_number: r.load_number,
+        origin: r.origin,            // raw location strings, shown as stored
+        destination: r.destination,
+        date: r.delivery_date || r.pickup_date || null,
+        revenue: Number(r.leg_revenue) || 0,
+        dispatcher_name: r.dispatcher_name || null,
+      })
+    }
     const unit = r[unitCol]
     if (unit == null) continue // genuinely no state/region → excluded (as the RPC did)
     let a = acc.get(unit)
@@ -109,13 +127,16 @@ export async function fetchLaneGeoRollup({ from, to, basis = 'origin', grain = '
     a.gross += rev
     if (mi > 0) { a.miles += mi; a.milesRev += rev }
   }
-  return [...acc.values()].map(a => ({
-    unit: a.unit,
-    legs: a.legs,
-    gross: Math.round(a.gross),
-    avg_rev_per_load: a.legs ? Math.round(a.gross / a.legs) : null,
-    rpm: a.miles > 0 ? Math.round((a.milesRev / a.miles) * 100) / 100 : null,
-  }))
+  return {
+    rows: [...acc.values()].map(a => ({
+      unit: a.unit,
+      legs: a.legs,
+      gross: Math.round(a.gross),
+      avg_rev_per_load: a.legs ? Math.round(a.gross / a.legs) : null,
+      rpm: a.miles > 0 ? Math.round((a.milesRev / a.miles) * 100) / 100 : null,
+    })),
+    unplaced,
+  }
 }
 
 // ── Trailer types ───────────────────────────────────────────────────────
@@ -318,6 +339,9 @@ export function aggregateLanes(allLegs, phaseOrView, { byType = false } = {}) {
       tonuLoads,
     },
     coverage: legs.length > 0 ? geocodedLegs / legs.length : null,
+    // Legs that couldn't be placed on the heat map — either end's city isn't in
+    // geo_places (drives the MAP COVERAGE subtitle). 0 when fully geocoded.
+    coverageMissing: legs.length - geocodedLegs,
   }
 }
 
