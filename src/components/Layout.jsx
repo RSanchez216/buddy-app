@@ -7,6 +7,7 @@ import { usePageAccess } from '../contexts/PageAccessContext'
 import { BuddyLogoSmall } from '../components/BuddyLogo'
 import NotificationBell from './NotificationBell'
 import UserMenu from './UserMenu'
+import PresenceFacepile from './presence/PresenceFacepile'
 import ManageSimpleViewModal from './ManageSimpleViewModal'
 
 // ── Icons ──────────────────────────────────────────────────────────────────
@@ -325,8 +326,9 @@ export default function Layout() {
               components can fill it via a portal in a future PR. */}
           <div className="flex-1" />
 
-          {/* Right cluster: bell + user menu */}
+          {/* Right cluster: presence facepile + bell + user menu */}
           <div className="flex items-center gap-1">
+            <PresenceFacepile />
             <NotificationBell />
             <UserMenu />
           </div>
