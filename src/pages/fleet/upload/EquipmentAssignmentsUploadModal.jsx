@@ -18,6 +18,8 @@ import { supabase } from '../../../lib/supabase'
 import { S } from '../../../lib/styles'
 import Modal from '../../../components/Modal'
 import ErrorBoundary from '../../../components/ErrorBoundary'
+import TerminatedDriverWarning from '../../../components/TerminatedDriverWarning'
+import { fetchTerminatedDrivers } from '../../../lib/terminatedDrivers'
 import { parseEquipmentAssignmentsWorkbook } from './equipmentAssignmentsParser'
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024
@@ -57,12 +59,14 @@ export default function EquipmentAssignmentsUploadModal({ open, equipmentType, o
   const [approved, setApproved] = useState(() => new Set()) // approved row_index set
   const [applying, setApplying] = useState(false)
   const [applyResult, setApplyResult] = useState(null) // { applied }
+  const [terminatedEntries, setTerminatedEntries] = useState([]) // driver terminated before this assignment
 
   useEffect(() => {
     if (!open) {
       setStage('pick'); setFileName(''); setParsing(false)
       setParseErrors([]); setPreviewError(''); setPreview([])
       setApproved(new Set()); setApplying(false); setApplyResult(null)
+      setTerminatedEntries([])
     }
   }, [open])
 
@@ -91,6 +95,16 @@ export default function EquipmentAssignmentsUploadModal({ open, equipmentType, o
       // categories (ended / end_date_fix) default on too; manual conflicts
       // start OFF (keep the system value) until explicitly chosen.
       setApproved(new Set(rows.filter(r => r.category === 'new' || r.category === 'reassignment' || END_ACTIONS.has(r.category)).map(r => r.row_index)))
+      // Terminated-driver check — rows that assign a driver (new / reassignment /
+      // manual conflict). Warning only; the assignment still applies if approved.
+      const assigning = rows.filter(r => ACTIONABLE.has(r.category) && r.tms_driver_id)
+      const termMap = await fetchTerminatedDrivers(assigning.map(r => r.tms_driver_id))
+      setTerminatedEntries(assigning
+        .filter(r => termMap.has(r.tms_driver_id))
+        .map(r => {
+          const d = termMap.get(r.tms_driver_id)
+          return { unit: r.unit, id: r.tms_driver_id, name: r.tms_driver_name || d.full_name, internalId: r.tms_driver_code ?? d.internal_id, terminatedAt: d.terminated_at }
+        }))
       setStage('review')
     } catch (e) {
       console.error('[EquipmentAssignmentsUploadModal] preview failed', e)
@@ -219,6 +233,7 @@ export default function EquipmentAssignmentsUploadModal({ open, equipmentType, o
               applying={applying}
               onApply={doApply}
               onCancel={onClose}
+              terminatedEntries={terminatedEntries}
             />
           </ErrorBoundary>
         )}
@@ -245,10 +260,11 @@ export default function EquipmentAssignmentsUploadModal({ open, equipmentType, o
   )
 }
 
-function ReviewScreen({ fileName, unitNoun, groups, totalRows, approved, onToggle, decisionCount, applying, onApply, onCancel }) {
+function ReviewScreen({ fileName, unitNoun, groups, totalRows, approved, onToggle, decisionCount, applying, onApply, onCancel, terminatedEntries = [] }) {
   const actionableTotal = groups.new.length + groups.reassignment.length + groups.conflict_manual.length + groups.ended.length + groups.end_date_fix.length
   return (
     <>
+      <TerminatedDriverWarning entries={terminatedEntries} variant="assignment" />
       <div className={`${S.card} p-4 space-y-3`}>
         <p className="text-sm font-semibold text-gray-700 dark:text-slate-300">
           {fileName} <span className="font-normal text-gray-500 dark:text-slate-500">· {unitNoun} assignments · nothing written until you Apply</span>

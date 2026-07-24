@@ -3,6 +3,8 @@ import * as XLSX from 'xlsx'
 import { useAuth } from '../../../contexts/AuthContext'
 import { useToast } from '../../../contexts/ToastContext'
 import { S } from '../../../lib/styles'
+import TerminatedDriverWarning from '../../../components/TerminatedDriverWarning'
+import { fetchTerminatedDrivers } from '../../../lib/terminatedDrivers'
 import { parseSettlementWorkbook, matchDrivers, commitSettlements, loadRecentSettlements, getSettlementCount } from './settlementImportData'
 
 const PAY_SCHEDULES = ['Saturday–Friday', 'Tuesday–Monday', 'Monday–Sunday']
@@ -40,6 +42,7 @@ export default function SettlementsImport() {
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState({ current: 0, total: 0 })
   const [recent, setRecent] = useState([])
+  const [terminatedEntries, setTerminatedEntries] = useState([]) // drivers in this file who are terminated
 
   useEffect(() => {
     loadRecentSettlements(5).then(setRecent).catch(err => console.error('Error loading recent imports:', err))
@@ -63,6 +66,19 @@ export default function SettlementsImport() {
       // Match drivers
       const matched = await matchDrivers(parsed)
       setRows(matched)
+      // Terminated-driver check (warning only) — group by the already-resolved
+      // driverId so a driver with several rows is one line.
+      const termMap = await fetchTerminatedDrivers(matched.map(r => r.driverId))
+      const byDriver = new Map()
+      for (const r of matched) {
+        if (!r.driverId || !termMap.has(r.driverId)) continue
+        const cur = byDriver.get(r.driverId) || { id: r.driverId, count: 0, d: termMap.get(r.driverId) }
+        cur.count += 1
+        byDriver.set(r.driverId, cur)
+      }
+      setTerminatedEntries([...byDriver.values()].map(x => ({
+        id: x.id, name: x.d.full_name, internalId: x.d.internal_id, terminatedAt: x.d.terminated_at, count: x.count,
+      })))
       setFileName(file.name)
       setStep('configure')
     } catch (err) {
@@ -117,6 +133,7 @@ export default function SettlementsImport() {
         setStep('upload')
         setRows([])
         setFileName('')
+        setTerminatedEntries([])
         setPayPeriodStart('')
         setPayPeriodEnd('')
         setPaySchedule('')
@@ -216,6 +233,7 @@ export default function SettlementsImport() {
               onClick={() => {
                 setRows([])
                 setFileName('')
+                setTerminatedEntries([])
                 setStep('upload')
               }}
               className="px-3 py-1.5 text-sm border border-gray-300 dark:border-slate-700 rounded-lg text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5"
@@ -235,6 +253,7 @@ export default function SettlementsImport() {
       {/* Preview Step */}
       {step === 'preview' && (
         <div className="space-y-4">
+          <TerminatedDriverWarning entries={terminatedEntries} noun="settlements" />
           <div className={`${S.card} p-4`}>
             <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Preview & match status</h2>
             <div className="grid grid-cols-3 gap-3 mb-4 text-xs">

@@ -6,6 +6,8 @@ import { S } from '../../../lib/styles'
 import ComboBox from '../../../components/ComboBox'
 import CopyButton from '../../../components/CopyButton'
 import LoadsFreshness from '../../../components/LoadsFreshness'
+import TerminatedDriverWarning from '../../../components/TerminatedDriverWarning'
+import { fetchTerminatedDrivers } from '../../../lib/terminatedDrivers'
 import { parseLoadsWorkbook } from './loadsParse'
 import { buildPlan } from './loadsPlan'
 import { stageBatch, loadPendingBatch, applyBatch, discardBatch, loadRecentBatches, linkKey } from './loadsApply'
@@ -211,6 +213,9 @@ export default function LoadsImport() {
   const [batch, setBatch] = useState(null)
   const [plan, setPlan] = useState([])
   const [counts, setCounts] = useState({})
+  // Drivers referenced by the staged plan who are currently terminated (warning
+  // only — grouped by driver, counted by distinct loads).
+  const [terminatedEntries, setTerminatedEntries] = useState([])
   // Per-updated-load approve/skip + per-unmatched-entity link choices.
   const [decisions, setDecisions] = useState(() => new Map())
   const [links, setLinks] = useState(() => new Map())
@@ -446,6 +451,34 @@ export default function LoadsImport() {
     fetchDriverInternalIds()
     return () => { cancelled = true }
   }, [needsReviewLoads])
+
+  // Terminated-driver check — every staged leg references a resolved driver;
+  // flag any whose current_status = 'terminated', grouped by driver and counted
+  // by distinct loads. Warning only; the import path is unchanged.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const byDriver = new Map() // driver_id → Set(load_number)
+      for (const p of plan) {
+        for (const l of (p.legs || [])) {
+          const id = l.resolved?.driver?.id
+          if (!id) continue
+          if (!byDriver.has(id)) byDriver.set(id, new Set())
+          byDriver.get(id).add(p.load_number)
+        }
+      }
+      if (byDriver.size === 0) { if (!cancelled) setTerminatedEntries([]); return }
+      const termMap = await fetchTerminatedDrivers([...byDriver.keys()])
+      if (cancelled) return
+      const entries = []
+      for (const [id, loads] of byDriver) {
+        const d = termMap.get(id)
+        if (d) entries.push({ id, name: d.full_name, internalId: d.internal_id, terminatedAt: d.terminated_at, count: loads.size })
+      }
+      setTerminatedEntries(entries)
+    })()
+    return () => { cancelled = true }
+  }, [plan])
 
   const unchangedCount = useMemo(() => plan.filter(p => p.classification === 'unchanged').length, [plan])
   // Canceled/TONU split: genuine flips (status changed on an existing load)
@@ -766,6 +799,8 @@ export default function LoadsImport() {
             <Stat label="New dispatchers" value={counts.new_dispatchers ?? 0} tone="cyan" />
             <Stat label="Unmatched" value={counts.unmatched ?? 0} tone={(counts.unmatched ?? 0) > 0 ? 'red' : 'slate'} />
           </div>
+
+          <TerminatedDriverWarning entries={terminatedEntries} noun="loads" />
 
           {(statusFlag.flips + statusFlag.arriving) > 0 && (() => {
             const { flips, arriving } = statusFlag
