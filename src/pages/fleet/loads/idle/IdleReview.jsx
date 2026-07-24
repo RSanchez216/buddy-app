@@ -436,6 +436,10 @@ export default function IdleReview() {
   const [yardVerifierNames, setYardVerifierNames] = useState({}) // user_id → name
   const [verifyModalRow, setVerifyModalRow] = useState(null)     // row awaiting at-yard confirmation
   const [verifyBusy, setVerifyBusy] = useState(false)
+  // Open equipment assignments still held by terminated drivers — a separate
+  // dataset from idle_bucketed (these read as staffed, so they never surface as
+  // idle). Trigger is the termination, not the idle threshold.
+  const [heldRows, setHeldRows] = useState([])
 
   const { profile, user } = useAuth()
   const toast = useToast()
@@ -466,6 +470,11 @@ export default function IdleReview() {
     // Top-card money summary (equipment carrying cost + driver revenue foregone).
     supabase.rpc('idle_page_summary')
       .then(({ data }) => { if (data) setPageSummary(data) })
+      .catch(() => {})
+    // Equipment still held by terminated drivers (separate dataset — already
+    // sorted MANAS-exposure-first, then by monthly cost desc; don't re-sort).
+    supabase.rpc('terminated_drivers_holding_equipment')
+      .then(({ data }) => setHeldRows(data || []))
       .catch(() => {})
     // Driverless units last dropped far from the Aurora yard — a location-verify flag.
     supabase.rpc('idle_far_from_yard')
@@ -754,6 +763,28 @@ export default function IdleReview() {
   // edits don't flash the whole page back to a skeleton).
   const retry = () => { setError(null); setRows(null); load() }
 
+  // Terminated-held summary. Headline count + dollars cover MANAS exposure only
+  // (manas_exposure = true → company owned/leased); driver-owned units go in the
+  // subtitle. Read the column — never re-derive exposure in JS. Unpriced exposed
+  // units (a real lease with no cost loaded) are excluded from the $ sum, not
+  // rendered as $0.
+  const heldSummary = useMemo(() => {
+    const exposed = heldRows.filter(r => r.manas_exposure)
+    const monthly = exposed.reduce((s, r) => s + (Number(r.monthly_cost) || 0), 0)
+    return { count: heldRows.length, unitsExposed: exposed.length, monthly, driverOwned: heldRows.length - exposed.length }
+  }, [heldRows])
+
+  // After an assignment is ended: drop the row and refresh the idle data — the
+  // freed unit now counts as idle, so those numbers move (correctly).
+  const onAssignmentEnded = (assignmentId) => {
+    setHeldRows(prev => prev.filter(r => r.assignment_id !== assignmentId))
+    load()
+  }
+  // Keep the warning view from stranding on an empty list once the queue clears.
+  useEffect(() => {
+    if (reviewFilter === 'terminated' && heldRows.length === 0) setReviewFilter('all')
+  }, [reviewFilter, heldRows.length])
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -785,10 +816,15 @@ export default function IdleReview() {
 
       {/* Cost-of-idle summary cards — equipment carrying cost (cash spent) and
           driver revenue foregone (opportunity) kept separate, never summed. */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className={`grid grid-cols-1 gap-3 ${heldSummary.count > 0 ? 'sm:grid-cols-2 lg:grid-cols-4' : 'sm:grid-cols-3'}`}>
         <EquipIdleCard label="Idle trucks" count={pageSummary?.idle_trucks} lost={pageSummary?.trucks_lost} monthly={pageSummary?.trucks_monthly} loading={!pageSummary} />
         <EquipIdleCard label="Idle trailers" count={pageSummary?.idle_trailers} lost={pageSummary?.trailers_lost} monthly={pageSummary?.trailers_monthly} loading={!pageSummary} />
         <DriverIdleCard ps={pageSummary} loading={!pageSummary} />
+        {/* Only when there's something held — a permanent zero card trains people to ignore it. */}
+        {heldSummary.count > 0 && (
+          <TerminatedHeldCard summary={heldSummary} active={reviewFilter === 'terminated'}
+            onClick={() => setReviewFilter(reviewFilter === 'terminated' ? 'all' : 'terminated')} />
+        )}
       </div>
 
       {/* Where the idle equipment sits — and a drill-down into the list below. */}
@@ -808,6 +844,24 @@ export default function IdleReview() {
             <button key={k} onClick={() => setReviewFilter(k)} className={`px-3 py-1.5 whitespace-nowrap ${reviewFilter === k ? 'bg-orange-500 text-slate-900 font-semibold' : 'text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5'}`}>{lbl}</button>
           ))}
         </div>
+        {/* Terminated-drivers queue — a warning chip, not a neutral one: this is
+            money leaving, not a review backlog. Only shown when there's a hit. */}
+        {heldRows.length > 0 && (
+          <button
+            onClick={() => setReviewFilter(reviewFilter === 'terminated' ? 'all' : 'terminated')}
+            title="Company equipment whose assignment never closed when the driver was terminated"
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors whitespace-nowrap ${
+              reviewFilter === 'terminated'
+                ? 'bg-red-500 text-white border-red-500'
+                : 'bg-red-50 dark:bg-red-500/10 border-red-300 dark:border-red-500/40 text-red-700 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-500/20'
+            }`}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.5M12 16h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+            </svg>
+            Terminated · holding equipment ({heldRows.length})
+          </button>
+        )}
         {/* Financing — orthogonal axis (equipment only). Labeled to set it apart. */}
         <div className="flex items-center gap-1.5">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">Financing</span>
@@ -835,6 +889,8 @@ export default function IdleReview() {
         <ErrorRetry message="Couldn't load idle data." onRetry={retry} />
       ) : loading ? (
         <IdleSkeleton />
+      ) : reviewFilter === 'terminated' ? (
+        <TerminatedHeldSection rows={heldRows} canEdit={canEdit} onEnded={onAssignmentEnded} />
       ) : (
         <>
           <IdleSection title="Drivers" kind="driver" rows={viewGroups.driver} reasons={DRIVER_REASONS} resolvedView={resolvedView} reviewFilter={reviewFilter} financeFilter={financeFilter} onSetReason={setReason} onResolve={resolve} onReopen={reopen} homeBySubject={homeBySubject} behindBySubject={behindBySubject} reviewFlags={reviewFlags} canEdit={canEdit} onToggleReview={toggleReview} yardFlags={yardFlags} yardVerifierNames={yardVerifierNames} onOpenVerify={setVerifyModalRow} onUnverify={row => verifyAtYard(row, false)} />
@@ -1060,6 +1116,163 @@ function DriverIdleCard({ ps, loading }) {
         </div>
       </div>
     </div>
+  )
+}
+
+// ── Held by terminated drivers ─────────────────────────────────────────────
+const OWNERSHIP_BADGE = {
+  company_owned:  { label: 'company owned', cls: 'bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-500/25' },
+  company_leased: { label: 'leased',        cls: 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-500/25' },
+  driver_owned:   { label: 'driver owned',  cls: 'bg-gray-100 dark:bg-slate-700/40 text-gray-600 dark:text-slate-400 border border-gray-200 dark:border-white/10' },
+}
+// Days-since-termination escalation — 49 days must read worse than 3.
+function termDaysClass(d) {
+  const n = Number(d) || 0
+  if (n >= 30) return 'text-red-700 dark:text-red-300 font-bold'
+  if (n >= 14) return 'text-red-600 dark:text-red-400 font-semibold'
+  if (n >= 7)  return 'text-amber-700 dark:text-amber-400 font-semibold'
+  return 'text-amber-600 dark:text-amber-400 font-medium'
+}
+// Whole days between two 'YYYY-MM-DD' dates (local, no UTC shift). null if unparseable.
+function ymdDiffDays(fromYmd, toYmd) {
+  const p = (s) => { const [y, m, d] = String(s || '').split('-').map(Number); return (y && m && d) ? new Date(y, m - 1, d) : null }
+  const a = p(fromYmd), b = p(toYmd)
+  if (!a || !b) return null
+  return Math.round((b - a) / 86400000)
+}
+// Cost cell: driver-owned carries no MANAS cost (—); company owned/leased shows
+// the priced monthly, or "not priced" when null (a real bill with no cost
+// loaded — never render it as $0, which would hide it).
+function heldCostLabel(r) {
+  if (!r.manas_exposure) return '—'
+  return r.monthly_cost == null ? 'not priced' : `${money0(r.monthly_cost)}/mo`
+}
+
+// KPI card — headline is MANAS exposure only; driver-owned in the subtitle.
+function TerminatedHeldCard({ summary, active, onClick }) {
+  const unitWord = summary.unitsExposed === 1 ? 'unit' : 'units'
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title="Show the equipment held by terminated drivers"
+      className={`${S.card} px-4 py-2.5 text-left border-red-200 dark:border-red-500/25 transition-shadow hover:shadow-md ${active ? 'ring-2 ring-red-500/50' : ''}`}
+    >
+      <div className="text-[10px] font-semibold uppercase tracking-widest text-red-700 dark:text-red-400">Held by terminated drivers</div>
+      <div className="mt-1 flex items-baseline gap-2">
+        <span className="text-3xl font-mono font-bold leading-none text-red-600 dark:text-red-400">{summary.unitsExposed}</span>
+        <span className="text-sm text-gray-700 dark:text-slate-300">{unitWord} · <span className="font-mono font-semibold">{money0(summary.monthly)}</span>/mo</span>
+      </div>
+      <div className="text-[11px] text-gray-500 dark:text-slate-400 mt-0.5">
+        {summary.driverOwned > 0 ? `${summary.driverOwned} more driver-owned` : 'company owned / leased'}
+      </div>
+    </button>
+  )
+}
+
+function TerminatedHeldSection({ rows, canEdit, onEnded }) {
+  if (!rows || rows.length === 0) {
+    return <div className={`${S.card} p-8 text-center text-sm text-gray-500 dark:text-slate-400`}>No equipment is held by terminated drivers.</div>
+  }
+  return (
+    <div className={`${S.card} overflow-hidden`}>
+      <div className="px-4 py-3 border-b border-gray-100 dark:border-white/5">
+        <h2 className="text-sm font-bold text-gray-900 dark:text-white">Held by terminated drivers <span className="font-normal text-gray-500 dark:text-slate-500">({rows.length})</span></h2>
+        <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-0.5">
+          Open equipment assignments whose driver has left — these read as staffed, so they never surface as idle. Ending an assignment frees the unit and it starts counting as idle.
+        </p>
+      </div>
+      <ul className="divide-y divide-gray-100 dark:divide-white/[0.04]">
+        {rows.map(r => <TerminatedHeldRow key={r.assignment_id} row={r} canEdit={canEdit} onEnded={onEnded} />)}
+      </ul>
+    </div>
+  )
+}
+
+function TerminatedHeldRow({ row, canEdit, onEnded }) {
+  const [confirming, setConfirming] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(null)
+
+  const own = OWNERSHIP_BADGE[row.ownership_stage] || OWNERSHIP_BADGE.driver_owned
+  const eqLabel = `${row.equipment_type} ${unitTag(row.unit_number)}`
+  const nameToDriver = `${row.equipment_type} ${unitTag(row.unit_number)}'s assignment to ${row.driver_name}`
+  // Assignment created AFTER termination — a different problem (an import made it
+  // after the driver left) than one that simply never closed.
+  const afterTermDays = (row.assigned_since && row.terminated_at && String(row.assigned_since) > String(row.terminated_at))
+    ? ymdDiffDays(row.terminated_at, row.assigned_since) : null
+
+  async function end() {
+    setBusy(true); setErr(null)
+    const { error } = await supabase.rpc('end_equipment_assignment', { p_assignment: row.assignment_id })
+    setBusy(false)
+    if (error) { setErr(error.message || 'Something went wrong — try again.'); return }
+    onEnded(row.assignment_id)
+  }
+
+  return (
+    <li className="px-4 py-3">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="min-w-0 space-y-1">
+          {/* Equipment first, with ownership badge + cost. */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-semibold text-gray-900 dark:text-white">{eqLabel}</span>
+            <span className={`text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full ${own.cls}`}>{own.label}</span>
+            <span className={`text-xs font-mono ${row.monthly_cost == null && row.manas_exposure ? 'text-amber-600 dark:text-amber-400 font-semibold' : 'text-gray-600 dark:text-slate-400'}`}>{heldCostLabel(row)}</span>
+          </div>
+          {/* Last known location + date — the recovery question, given prominence. */}
+          <div className="text-sm text-gray-700 dark:text-slate-300">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500 mr-1.5">Last seen</span>
+            {row.last_known_location || '—'}{row.last_delivery ? <span className="text-gray-500 dark:text-slate-400"> · {fmtShort(row.last_delivery)}</span> : null}
+            {row.last_load_number && <span className="text-[11px] text-gray-400 dark:text-slate-500"> · {unitTag(row.last_load_number)}</span>}
+          </div>
+          {/* Driver + termination (escalating days) + assignment provenance. */}
+          <div className="flex items-center gap-2 flex-wrap text-[11px] text-gray-500 dark:text-slate-400">
+            {row.driver_id ? (
+              <Link to={`/fleet/drivers/${row.driver_id}`} className="font-medium text-gray-700 dark:text-slate-300 hover:text-orange-600 dark:hover:text-orange-400">
+                {row.driver_name} <span className="text-gray-400 dark:text-slate-500">#{row.driver_internal_id}</span>
+              </Link>
+            ) : <span className="font-medium text-gray-700 dark:text-slate-300">{row.driver_name}</span>}
+            <span className="text-gray-300 dark:text-slate-600">·</span>
+            <span>Terminated {fmtShort(row.terminated_at)} · <span className={termDaysClass(row.days_since_term)}>{Number(row.days_since_term) || 0} {Number(row.days_since_term) === 1 ? 'day' : 'days'} ago</span></span>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap text-[11px] text-gray-400 dark:text-slate-500">
+            <span>Assigned since {fmtShort(row.assigned_since)}{row.assignment_source ? ` · ${row.assignment_source}` : ''}</span>
+            {afterTermDays != null && (
+              <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-500/15 text-amber-800 dark:text-amber-300 border border-amber-300/70 dark:border-amber-500/30">
+                ⚠ Assigned {afterTermDays} {afterTermDays === 1 ? 'day' : 'days'} after termination
+              </span>
+            )}
+          </div>
+        </div>
+        {canEdit && !confirming && (
+          <button type="button" onClick={() => { setErr(null); setConfirming(true) }}
+            className="shrink-0 text-[11px] font-semibold px-2.5 py-1.5 rounded-lg border border-red-300 dark:border-red-500/40 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors">
+            End assignment
+          </button>
+        )}
+      </div>
+
+      {confirming && (
+        <div className="mt-2 rounded-lg border border-red-200 dark:border-red-500/25 bg-red-50/60 dark:bg-red-500/[0.06] px-3 py-2.5">
+          <p className="text-xs text-gray-700 dark:text-slate-300">
+            End {nameToDriver}? This frees the {row.equipment_type} and it will start counting as idle.
+          </p>
+          <div className="mt-2 flex items-center gap-2">
+            <button type="button" disabled={busy} onClick={end}
+              className="text-[11px] px-2.5 py-1 rounded-md text-white font-medium bg-red-500 hover:bg-red-600 disabled:opacity-50">{busy ? 'Ending…' : 'End assignment'}</button>
+            <button type="button" disabled={busy} onClick={() => { setConfirming(false); setErr(null) }}
+              className="text-[11px] px-2.5 py-1 rounded-md text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-white/5 disabled:opacity-50">Cancel</button>
+          </div>
+          {err && (
+            <div className="mt-2 flex items-center gap-2 text-[11px] text-red-700 dark:text-red-300">
+              <span>Couldn't end the assignment.</span>
+              <button type="button" onClick={end} disabled={busy} className="font-semibold underline hover:no-underline disabled:opacity-50">Retry</button>
+            </div>
+          )}
+        </div>
+      )}
+    </li>
   )
 }
 
