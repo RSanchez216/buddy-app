@@ -7,7 +7,7 @@ import ComboBox from '../../../components/ComboBox'
 import CopyButton from '../../../components/CopyButton'
 import LoadsFreshness from '../../../components/LoadsFreshness'
 import TerminatedDriverWarning from '../../../components/TerminatedDriverWarning'
-import { fetchTerminatedDrivers } from '../../../lib/terminatedDrivers'
+import { fetchTerminatedDrivers, classifyLoad as classifyLoadByDate } from '../../../lib/terminatedDrivers'
 import { parseLoadsWorkbook } from './loadsParse'
 import { buildPlan } from './loadsPlan'
 import { stageBatch, loadPendingBatch, applyBatch, discardBatch, loadRecentBatches, linkKey } from './loadsApply'
@@ -458,13 +458,15 @@ export default function LoadsImport() {
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      const byDriver = new Map() // driver_id → Set(load_number)
+      // Per driver, the distinct loads they're on with that load's file dates.
+      const byDriver = new Map() // driver_id → Map(load_number → {pickup, delivery})
       for (const p of plan) {
-        for (const l of (p.legs || [])) {
-          const id = l.resolved?.driver?.id
-          if (!id) continue
-          if (!byDriver.has(id)) byDriver.set(id, new Set())
-          byDriver.get(id).add(p.load_number)
+        const pickup = p.header?.pickup_date || null
+        const delivery = p.header?.delivery_date || null
+        const ids = new Set((p.legs || []).map(l => l.resolved?.driver?.id).filter(Boolean))
+        for (const id of ids) {
+          if (!byDriver.has(id)) byDriver.set(id, new Map())
+          byDriver.get(id).set(p.load_number, { pickup, delivery })
         }
       }
       if (byDriver.size === 0) { if (!cancelled) setTerminatedEntries([]); return }
@@ -473,7 +475,16 @@ export default function LoadsImport() {
       const entries = []
       for (const [id, loads] of byDriver) {
         const d = termMap.get(id)
-        if (d) entries.push({ id, name: d.full_name, internalId: d.internal_id, terminatedAt: d.terminated_at, count: loads.size })
+        if (!d) continue
+        // Classify each load by the file's pickup/delivery vs terminated_at.
+        let before = 0, inTransit = 0, after = 0
+        for (const { pickup, delivery } of loads.values()) {
+          const bucket = classifyLoadByDate(pickup, delivery, d.terminated_at)
+          if (bucket === 'after') after++
+          else if (bucket === 'in_transit') inTransit++
+          else before++
+        }
+        entries.push({ id, name: d.full_name, internalId: d.internal_id, terminatedAt: d.terminated_at, count: loads.size, before, inTransit, after })
       }
       setTerminatedEntries(entries)
     })()

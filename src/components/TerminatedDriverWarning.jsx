@@ -2,8 +2,13 @@ import { Link } from 'react-router-dom'
 
 // Shared pre-import warning: flag staged rows that reference a terminated
 // driver. Warning only — never blocks, never auto-fixes. Used by the Loads,
-// Settlement, and Equipment-Assignment importers. The status lookup lives in
-// lib/terminatedDrivers (fetchTerminatedDrivers).
+// Settlement, and Equipment-Assignment importers. The status lookup + date
+// classification live in lib/terminatedDrivers.
+//
+// For loads/assignments the caller classifies each staged row against the
+// driver's termination date (using the FILE's dates) and passes the tallies —
+// this component only renders the verdict. Settlements have no per-row dates,
+// so they pass plain counts and get the count table.
 
 // 'YYYY-MM-DD' (or timestamp) → "Jun 5, 2026", no UTC day-shift for date-only.
 function fmtTermDate(s) {
@@ -15,6 +20,11 @@ function fmtTermDate(s) {
     : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+const AMBER_BOX = 'rounded-xl border border-amber-300 dark:border-amber-500/30 bg-amber-50/80 dark:bg-amber-500/[0.08] px-4 py-3 text-amber-900 dark:text-amber-200'
+const CALM_BOX = 'rounded-xl border border-gray-200 dark:border-white/10 bg-gray-50/70 dark:bg-white/[0.03] px-4 py-3 text-gray-700 dark:text-slate-300'
+
+const nounOne = (noun) => noun.replace(/s$/, '')
+
 // Link to the driver record — opens in a new tab so correcting the status
 // doesn't discard the staged import.
 function DriverLink({ id, name, internalId }) {
@@ -22,31 +32,50 @@ function DriverLink({ id, name, internalId }) {
   if (!id) return <span className="font-medium">{label}</span>
   return (
     <Link to={`/fleet/drivers/${id}`} target="_blank" rel="noopener noreferrer"
-      className="font-medium underline decoration-amber-400/50 hover:decoration-amber-500">
+      className="font-medium underline decoration-dotted underline-offset-2 hover:decoration-solid">
       {label}
     </Link>
   )
 }
 
-// entries (grouped by driver): { id, name, internalId, terminatedAt, count, unit? }.
-// variant 'assignment' → the "handing equipment to someone who left" wording
-// (a new open assignment is more serious than a historical load); the `unit`
-// on each entry is shown. variant 'load' (default) → the grouped-by-driver
-// table with a per-driver row count; `noun` labels that count ("loads",
-// "settlements", "rows").
+// Per-driver verdict line for the load variant, from the before/inTransit/after
+// tallies. "After" escalates (red); a mix reads plainly; all-before reassures.
+function LoadVerdict({ e }) {
+  if (e.after > 0) {
+    return (
+      <span className="text-red-700 dark:text-red-300 font-medium">
+        ⚠ {e.after} of {e.count} picked up <strong>after</strong> termination — driver may still be active
+      </span>
+    )
+  }
+  if (e.inTransit > 0) {
+    const parts = []
+    if (e.before > 0) parts.push(`${e.before} delivered before termination`)
+    parts.push(`${e.inTransit} in transit at termination`)
+    return <span className="text-amber-700 dark:text-amber-300">{parts.join(' · ')}</span>
+  }
+  return <span className="text-emerald-600/90 dark:text-emerald-400/90">✓ All {e.count} delivered before termination</span>
+}
+
 export default function TerminatedDriverWarning({ entries, variant = 'load', noun = 'rows', className = '' }) {
   if (!entries || entries.length === 0) return null
-  const box = `rounded-xl border border-amber-200 dark:border-amber-500/20 bg-amber-50/70 dark:bg-amber-500/[0.06] px-4 py-3 text-amber-800 dark:text-amber-300 ${className}`
 
+  // ── Assignments: one line per unit, each with a date verdict ──────────────
   if (variant === 'assignment') {
+    const sorted = [...entries].sort((a, b) => (b.startsAfter ? 1 : 0) - (a.startsAfter ? 1 : 0))
+    const anyAfter = entries.some(e => e.startsAfter)
     return (
-      <div className={box} role="alert">
+      <div className={`${anyAfter ? AMBER_BOX : CALM_BOX} ${className}`} role="alert">
         <p className="text-sm font-semibold mb-1">⚠️ You&apos;re assigning equipment to a terminated driver.</p>
-        <ul className="text-xs space-y-1 mt-1.5">
-          {entries.map((e, i) => (
+        <ul className="text-xs space-y-1.5 mt-1.5">
+          {sorted.map((e, i) => (
             <li key={i} className="leading-relaxed">
-              <span className="font-mono font-semibold">{e.unit}</span> →{' '}
-              <DriverLink id={e.id} name={e.name} internalId={e.internalId} />, terminated {fmtTermDate(e.terminatedAt)}.
+              <div><span className="font-mono font-semibold">{e.unit}</span> → <DriverLink id={e.id} name={e.name} internalId={e.internalId} />, terminated {fmtTermDate(e.terminatedAt)}.</div>
+              <div className="mt-0.5">
+                {e.startsAfter
+                  ? <span className="text-red-700 dark:text-red-300 font-medium">⚠ Assignment starts {e.afterDays} {e.afterDays === 1 ? 'day' : 'days'} after termination</span>
+                  : <span className="text-gray-500 dark:text-slate-400">Assignment predates termination</span>}
+              </div>
             </li>
           ))}
         </ul>
@@ -57,10 +86,37 @@ export default function TerminatedDriverWarning({ entries, variant = 'load', nou
     )
   }
 
-  const rowWord = entries.length === 1 ? 'row references' : 'rows reference'
+  // ── Loads (date-aware): verdict line per driver, after-rows sorted first ───
+  const dated = entries.some(e => typeof e.after === 'number')
+  if (dated) {
+    const sorted = [...entries].sort((a, b) => (b.after > 0 ? 1 : 0) - (a.after > 0 ? 1 : 0))
+    const afterDrivers = entries.filter(e => e.after > 0).length
+    const escalated = afterDrivers > 0
+    const header = escalated
+      ? `⚠ ${afterDrivers} ${afterDrivers === 1 ? 'driver has' : 'drivers have'} loads picked up after their termination date`
+      : `${entries.length} ${entries.length === 1 ? 'row references' : 'rows reference'} terminated drivers — all loads predate termination`
+    return (
+      <div className={`${escalated ? AMBER_BOX : CALM_BOX} ${className}`} role="alert">
+        <p className="text-sm font-semibold mb-2">{header}</p>
+        <ul className="space-y-2">
+          {sorted.map((e, i) => (
+            <li key={i} className="text-xs leading-relaxed">
+              <div>
+                <DriverLink id={e.id} name={e.name} internalId={e.internalId} />
+                <span className="text-gray-500 dark:text-slate-400"> · Terminated {fmtTermDate(e.terminatedAt)} · {e.count} {e.count === 1 ? nounOne(noun) : noun}</span>
+              </div>
+              <div className="mt-0.5"><LoadVerdict e={e} /></div>
+            </li>
+          ))}
+        </ul>
+      </div>
+    )
+  }
+
+  // ── Plain count table (no per-row dates, e.g. Settlements) ────────────────
   return (
-    <div className={box} role="alert">
-      <p className="text-sm font-semibold mb-0.5">⚠️ {entries.length} {rowWord} terminated drivers</p>
+    <div className={`${AMBER_BOX} ${className}`} role="alert">
+      <p className="text-sm font-semibold mb-0.5">⚠️ {entries.length} {entries.length === 1 ? 'row references' : 'rows reference'} terminated drivers</p>
       <p className="text-xs mb-2">These will still import. Check whether the driver&apos;s status needs updating first.</p>
       <table className="text-xs">
         <thead>
@@ -75,7 +131,7 @@ export default function TerminatedDriverWarning({ entries, variant = 'load', nou
             <tr key={i} className="align-top">
               <td className="pr-6 py-1"><DriverLink id={e.id} name={e.name} internalId={e.internalId} /></td>
               <td className="pr-6 py-1 whitespace-nowrap">{fmtTermDate(e.terminatedAt)}</td>
-              <td className="py-1 whitespace-nowrap">{e.count} {e.count === 1 ? noun.replace(/s$/, '') : noun}</td>
+              <td className="py-1 whitespace-nowrap">{e.count} {e.count === 1 ? nounOne(noun) : noun}</td>
             </tr>
           ))}
         </tbody>

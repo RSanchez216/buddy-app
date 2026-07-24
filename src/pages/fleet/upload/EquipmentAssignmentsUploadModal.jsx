@@ -19,7 +19,7 @@ import { S } from '../../../lib/styles'
 import Modal from '../../../components/Modal'
 import ErrorBoundary from '../../../components/ErrorBoundary'
 import TerminatedDriverWarning from '../../../components/TerminatedDriverWarning'
-import { fetchTerminatedDrivers } from '../../../lib/terminatedDrivers'
+import { fetchTerminatedDrivers, daysAfterTermination } from '../../../lib/terminatedDrivers'
 import { parseEquipmentAssignmentsWorkbook } from './equipmentAssignmentsParser'
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024
@@ -103,7 +103,10 @@ export default function EquipmentAssignmentsUploadModal({ open, equipmentType, o
         .filter(r => termMap.has(r.tms_driver_id))
         .map(r => {
           const d = termMap.get(r.tms_driver_id)
-          return { unit: r.unit, id: r.tms_driver_id, name: r.tms_driver_name || d.full_name, internalId: r.tms_driver_code ?? d.internal_id, terminatedAt: d.terminated_at }
+          // Start Date is the pickup-equivalent: an assignment starting after
+          // termination is the serious case (mirrors the Idle-queue flag).
+          const afterDays = daysAfterTermination(r.start_date, d.terminated_at)
+          return { unit: r.unit, id: r.tms_driver_id, name: r.tms_driver_name || d.full_name, internalId: r.tms_driver_code ?? d.internal_id, terminatedAt: d.terminated_at, startsAfter: afterDays != null, afterDays }
         }))
       setStage('review')
     } catch (e) {
