@@ -454,7 +454,10 @@ export default function DispatcherScorecard() {
                       const rev = reviews[deskKeyOf(d)]
                       const ru = isMonthly ? null : deskRollup(d)
                       return (
-                        <tr key={d.desk_id} onClick={() => setSelectedDesk(d)} className={`${S.tableRow} cursor-pointer`}>
+                        <tr key={d.desk_id} onClick={() => setSelectedDesk(d)}
+                          tabIndex={0} role="button" aria-label={`Open ${d.desk_name} desk detail`}
+                          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedDesk(d) } }}
+                          className={`${S.tableRow} cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50 focus-visible:ring-inset`}>
                           <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>{d.desk_name}</td>
                           <td className={`${S.td} text-right tabular-nums text-gray-900 dark:text-slate-200`}>
                             {money(d.gross)}
@@ -593,7 +596,7 @@ function AmazonCard({ amazon, bookers, inProgress }) {
         <Kpi label="Team gross" value={money(amazon.gross)} delta={inProgress ? null : amazon.gross_delta_pct} sub={inProgress ? 'to date' : undefined} accent="blue" />
         <Kpi label="RPM" value={rpm(amazon.rpm)} />
         <Kpi label="Loads" value={int(amazon.loads)} />
-        <Kpi label="Turnover" value={int(amazon.turnover)} sub="drivers left" />
+        <Kpi label="Departed" value={int(amazon.turnover)} sub="drivers left" />
       </div>
       <h4 className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide mb-2">Who books well</h4>
       <div className={`${S.card} overflow-hidden`}>

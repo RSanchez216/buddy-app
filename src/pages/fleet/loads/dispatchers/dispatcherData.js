@@ -234,7 +234,7 @@ export function readChips(d, floors) {
   const turn = churnRate(d) * 100
   return [
     { label: 'RPM vs floor', value: `${rpmDelta >= 0 ? '+' : '−'}$${Math.abs(rpmDelta).toFixed(2)}`, tone: rpmDelta >= 0 ? 'green' : 'red' },
-    { label: 'Turnover rate', value: `${Math.round(turn)}%`, tone: turn <= 40 ? 'green' : turn <= 80 ? 'amber' : 'red' },
+    { label: 'Departure rate', value: `${Math.round(turn)}%`, tone: turn <= 40 ? 'green' : turn <= 80 ? 'amber' : 'red' },
     { label: '$/driver·mo', value: perDriver(d.per_driver_month), tone: Number(d.per_driver_month || 0) >= floors.floorPd ? 'green' : 'amber' },
   ]
 }

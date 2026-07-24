@@ -1,11 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { S } from '../../../../lib/styles'
-import { fetchDeskDrivers, deskRead, readChips, deskKeyOf, money, perDriver, rpm, int, periodBounds, todayISO } from './dispatcherData'
+import { fetchDeskDrivers, deskRead, readChips, deskKeyOf, money, perDriver, rpm, int, periodBounds, periodLabel, todayISO } from './dispatcherData'
 
-// Slide-in drawer for one desk. Roster data (dispatcher_desk_drivers) is
-// fetched on open so the leaderboard never waits on it. Left border + pill +
-// chips are colored by the desk's read severity.
+// Centered modal for one desk — the content is wide-shaped (roster + departed
+// side by side), so it gets width, not a narrow drawer column. Roster data
+// (dispatcher_desk_drivers) is fetched on open so the leaderboard never waits.
+// Below ~900px it collapses to a single column. Left border + pill + chips are
+// colored by the desk's read severity.
 
 const TONE = {
   red:   { border: 'border-l-red-500',     pill: 'bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400 border-red-200 dark:border-red-500/20',           chip: 'text-red-600 dark:text-red-400' },
@@ -49,6 +51,10 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgre
   const [rows, setRows] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const panelRef = useRef(null)
+  const restoreFocusRef = useRef(null)
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
 
   useEffect(() => {
     if (!open || !desk?.desk_id) return
@@ -67,100 +73,127 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgre
     return () => { cancelled = true }
   }, [open, desk?.desk_id, grain, anchor])
 
+  // On open: capture the originating element, move focus into the modal, and
+  // listen for Escape. On close: return focus to where it came from (the row).
+  useEffect(() => {
+    if (!open) return
+    restoreFocusRef.current = document.activeElement
+    panelRef.current?.focus()
+    const onKey = (e) => { if (e.key === 'Escape') onCloseRef.current?.() }
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      const el = restoreFocusRef.current
+      if (el && typeof el.focus === 'function') el.focus()
+    }
+  }, [open])
+
   if (!open || !desk) return null
 
   const read = deskRead(desk, floors, { inProgress })
   const tone = TONE[read.tone] || TONE.green
   const chips = readChips(desk, floors)
   const active = (rows || []).filter(r => r.status === 'active').sort((a, b) => Number(b.gross) - Number(a.gross))
-  const left = (rows || []).filter(r => r.status === 'left') // RPC already orders — don't re-sort
+  // Biggest loss first — a $117k departure should read above a $45k one.
+  const left = (rows || []).filter(r => r.status === 'left').sort((a, b) => Number(b.run_gross || 0) - Number(a.run_gross || 0))
+  const hasLeft = left.length > 0
   const today = todayISO()
   const bounds = periodBounds(grain, anchor)
   // Quiet-flag reference: today for an in-progress period, else the period's last day.
   const quietRef = inProgress ? today : lastDayISO(bounds.end)
 
   return createPortal(
-    <div className="fixed inset-0 z-[90] flex justify-end" onMouseDown={e => e.stopPropagation()}>
+    <div className="fixed inset-0 z-[90] flex items-center justify-center p-3 sm:p-6" onMouseDown={e => e.stopPropagation()}>
       <div className="absolute inset-0 bg-black/40 dark:bg-black/60" onClick={onClose} />
 
-      <div className={`relative w-full max-w-lg bg-white dark:bg-[#0d0d1f] border-l-4 ${tone.border} shadow-2xl overflow-y-auto`}>
+      <div
+        ref={panelRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${desk.desk_name} — desk detail`}
+        className={`relative flex flex-col w-[min(1140px,94vw)] max-h-[88vh] bg-white dark:bg-[#0d0d1f] border-l-4 ${tone.border} rounded-xl shadow-2xl focus:outline-none`}
+      >
         {/* Header */}
-        <div className="flex items-start justify-between p-4 border-b border-gray-100 dark:border-white/5">
+        <div className="flex items-start justify-between gap-3 p-4 border-b border-gray-100 dark:border-white/5 shrink-0">
           <div className="min-w-0">
-            <h3 className="text-lg font-bold text-gray-900 dark:text-white truncate">{desk.desk_name}</h3>
-            <p className="text-xs text-gray-500 dark:text-slate-500">Dispatch desk · booking + home-desk retention</p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="text-lg font-bold text-gray-900 dark:text-white truncate">{desk.desk_name}</h3>
+              <span className={`shrink-0 text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full border ${tone.pill}`}>{read.label}</span>
+            </div>
+            <p className="text-xs text-gray-500 dark:text-slate-500 mt-0.5">Dispatch desk · booking + home-desk retention · {periodLabel(grain, anchor)}</p>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 shrink-0">
+          <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 shrink-0">
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
         </div>
 
-        <div className="p-4 space-y-4">
+        {/* Body — the only scroll region */}
+        <div className="overflow-y-auto p-4 space-y-4">
           {/* Recap strip */}
-          <div className="grid grid-cols-4 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             <Recap label="Gross" value={money(desk.gross)} />
             <Recap label="$/drv·mo" value={perDriver(desk.per_driver_month)} />
             <Recap label="Departed" value={int(desk.turnover)} />
             <Recap label="RPM" value={rpm(desk.rpm)} />
           </div>
 
-          {/* Why this read */}
-          <div className={`${S.card} border-l-4 ${tone.border} p-4 space-y-3`}>
-            <div className="flex items-center gap-2">
-              <span className={`text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full border ${tone.pill}`}>{read.label}</span>
+          {/* Why this read | Monthly review */}
+          <div className={`grid grid-cols-1 gap-4 ${monthly ? 'min-[900px]:grid-cols-2' : ''}`}>
+            <div className={`${S.card} border-l-4 ${tone.border} p-4 space-y-3`}>
               <span className="text-[11px] uppercase tracking-wider font-semibold text-gray-400 dark:text-slate-500">Why this read</span>
+              <p className="text-sm text-gray-700 dark:text-slate-300 leading-relaxed">{read.analysis}</p>
+              <div className="flex flex-wrap gap-2">
+                {chips.map(c => (
+                  <span key={c.label} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-xs">
+                    <span className="text-gray-500 dark:text-slate-400">{c.label}</span>
+                    <span className={`font-semibold tabular-nums ${TONE[c.tone].chip}`}>{c.value}</span>
+                  </span>
+                ))}
+              </div>
             </div>
-            <p className="text-sm text-gray-700 dark:text-slate-300 leading-relaxed">{read.analysis}</p>
-            <div className="flex flex-wrap gap-2">
-              {chips.map(c => (
-                <span key={c.label} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-xs">
-                  <span className="text-gray-500 dark:text-slate-400">{c.label}</span>
-                  <span className={`font-semibold tabular-nums ${TONE[c.tone].chip}`}>{c.value}</span>
-                </span>
-              ))}
-            </div>
+            {monthly && (
+              <MonthlyReviewPanel
+                deskKey={deskKeyOf(desk)}
+                review={review}
+                reviewerName={reviewerName}
+                canEdit={canEdit}
+                monthLabel={monthLabel}
+                onSave={onSaveReview}
+              />
+            )}
           </div>
-
-          {/* Monthly review — same record the leaderboard checkmark/notes read. */}
-          {monthly && (
-            <MonthlyReviewPanel
-              deskKey={deskKeyOf(desk)}
-              review={review}
-              reviewerName={reviewerName}
-              canEdit={canEdit}
-              monthLabel={monthLabel}
-              onSave={onSaveReview}
-            />
-          )}
 
           {error && <div className={S.errorBox}>{error}</div>}
           {loading && <div className="flex items-center justify-center h-24"><div className="animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500" /></div>}
 
           {!loading && rows && (
-            <>
-              {/* On the desk now */}
-              <section>
+            <div className={`grid grid-cols-1 gap-4 ${hasLeft ? 'min-[900px]:grid-cols-5' : ''}`}>
+              {/* On the desk now — ~60% */}
+              <section className={hasLeft ? 'min-[900px]:col-span-3' : ''}>
                 <h4 className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide mb-2">On the desk now ({active.length})</h4>
                 {/* Explain the two most-misread numbers, permanently — not a hover. */}
                 <p className="text-[11px] text-gray-500 dark:text-slate-500 leading-relaxed mb-2">
                   <strong className="font-semibold text-gray-600 dark:text-slate-400">Since</strong> = first load booked by this desk.{' '}
                   <strong className="font-semibold text-gray-600 dark:text-slate-400">Share</strong> = portion of this driver&apos;s freight that came through this desk over the last 56 days.
                 </p>
-                <div className={`${S.card} overflow-hidden`}>
+                <div className={`${S.card} overflow-x-auto`}>
                   <table className="w-full text-sm">
                     <thead className={S.tableHead}>
                       <tr>
                         <th className={S.th}>Driver</th>
+                        <th className={S.th}>Since</th>
                         <th className={`${S.th} text-right`}>Loads</th>
                         <th className={`${S.th} text-right`}>Gross</th>
                         <th className={`${S.th} text-right`}>RPM</th>
+                        <th className={`${S.th} text-right`}>Share</th>
                       </tr>
                     </thead>
                     <tbody>
                       {active.length === 0 ? (
-                        <tr><td colSpan={4} className="px-4 py-6 text-center text-gray-400 dark:text-slate-600">No active drivers</td></tr>
+                        <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-400 dark:text-slate-600">No active drivers</td></tr>
                       ) : active.map(r => {
                         // New = first load on this desk lands inside the selected period.
                         const isNew = r.first_load_on_desk && r.first_load_on_desk >= bounds.start && r.first_load_on_desk < bounds.end
@@ -170,34 +203,29 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgre
                         return (
                           <tr key={r.driver_id} className={`${S.tableRow} align-top`}>
                             <td className={`${S.td} text-gray-900 dark:text-slate-200`}>
-                              <div className="flex items-center gap-2 flex-wrap">
+                              <div className="flex items-center gap-1.5 flex-wrap">
                                 <span className="font-medium">{r.driver_name}</span>
-                                <span className="inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">active</span>
-                                {r.home_share != null && (
+                                {isNew && (
                                   <span
-                                    title="Share of this driver's freight booked through this desk (last 56 days)"
-                                    className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full border ${isNew ? 'bg-cyan-50 dark:bg-cyan-500/10 text-cyan-700 dark:text-cyan-400 border-cyan-200 dark:border-cyan-500/20' : 'bg-gray-100 dark:bg-white/5 text-gray-600 dark:text-slate-400 border-gray-200 dark:border-white/10'}`}
-                                  >
-                                    {isNew ? `new · ${r.home_share}%` : `${r.home_share}%`}
-                                  </span>
+                                    title={`First load ${fmtMD(r.first_load_on_desk)} — partial period, judge next period.`}
+                                    className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-cyan-50 dark:bg-cyan-500/10 text-cyan-700 dark:text-cyan-400 border border-cyan-200 dark:border-cyan-500/20"
+                                  >new</span>
                                 )}
+                                {quiet && <span className="text-[11px] font-medium text-amber-600 dark:text-amber-400 whitespace-nowrap">⚠ no load in {quietDays} days</span>}
                               </div>
-                              {r.first_load_on_desk && (
-                                <div className="text-[11px] text-gray-500 dark:text-slate-500 mt-0.5">Since {fmtMD(r.first_load_on_desk)} · {humanDuration(r.first_load_on_desk, today)}</div>
-                              )}
                               {r.previous_desk && (
-                                <div className="text-[11px] text-cyan-600 dark:text-cyan-400 mt-0.5">↗ moved here from {r.previous_desk}</div>
+                                <div className="text-[11px] text-cyan-600 dark:text-cyan-400 mt-0.5">↗ from {r.previous_desk}</div>
                               )}
-                              {isNew && (
-                                <div className="text-[11px] text-gray-400 dark:text-slate-500 mt-0.5">First load {fmtMD(r.first_load_on_desk)} — partial period, judge next period.</div>
-                              )}
-                              {quiet && (
-                                <div className="text-[11px] text-amber-600 dark:text-amber-400 mt-0.5">⚠ no load in {quietDays} days</div>
-                              )}
+                            </td>
+                            <td className={`${S.td} whitespace-nowrap text-gray-600 dark:text-slate-400`}>
+                              {r.first_load_on_desk ? (
+                                <>{fmtMD(r.first_load_on_desk)}<span className="text-[10px] text-gray-400 dark:text-slate-500"> · {humanDuration(r.first_load_on_desk, today)}</span></>
+                              ) : '—'}
                             </td>
                             <td className={`${S.td} text-right tabular-nums text-gray-600 dark:text-slate-400`}>{int(r.loads)}</td>
                             <td className={`${S.td} text-right tabular-nums text-gray-900 dark:text-slate-200`}>{money(r.gross)}</td>
                             <td className={`${S.td} text-right tabular-nums text-gray-600 dark:text-slate-400`}>{rpm(r.rpm)}</td>
+                            <td className={`${S.td} text-right tabular-nums text-gray-600 dark:text-slate-400`}>{r.home_share != null ? `${r.home_share}%` : '—'}</td>
                           </tr>
                         )
                       })}
@@ -206,10 +234,10 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgre
                 </div>
               </section>
 
-              {/* Departed this period — the run (whole-stretch) figures are what
-                  the desk lost; period figures are often 0 (final load elsewhere). */}
-              {left.length > 0 && (
-                <section>
+              {/* Departed this period — ~40%. The run (whole-stretch) figures are
+                  what the desk lost; period figures are often 0 (final load elsewhere). */}
+              {hasLeft && (
+                <section className="min-[900px]:col-span-2">
                   <h4 className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide mb-2">Departed this period ({left.length})</h4>
                   <div className="space-y-2">
                     {left.map(r => {
@@ -247,9 +275,13 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgre
                       )
                     })}
                   </div>
+                  {/* Condensed explainer, next to the number it explains. */}
+                  <p className="text-[11px] text-gray-500 dark:text-slate-500 leading-relaxed mt-3">
+                    A <strong className="font-semibold text-gray-600 dark:text-slate-400">departure</strong> is a driver terminated during the period — read from their termination date, not inferred from load silence. A driver on vacation doesn&apos;t count.
+                  </p>
                 </section>
               )}
-            </>
+            </div>
           )}
         </div>
       </div>
