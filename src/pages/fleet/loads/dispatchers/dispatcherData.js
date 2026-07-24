@@ -129,6 +129,14 @@ export async function fetchDepartures(grain, anchorISO) {
   if (error) throw error
   return data || []
 }
+// One-row read of the departures: pre-written headline + detail sentences plus
+// the raw figures (veterans, gone_within_60d, …) the UI colours in place.
+export async function fetchDeparturesInterpretation(grain, anchorISO) {
+  const { data, error } = await withTimeout(signal =>
+    supabase.rpc('dispatcher_departures_interpretation', { p_grain: grain, p_anchor: anchorForRpc(grain, anchorISO) }).abortSignal(signal))
+  if (error) throw error
+  return Array.isArray(data) ? (data[0] || null) : (data || null)
+}
 
 // ── monthly review sign-off (dispatcher_reviews) ─────────────────────────────
 // desk_key convention: desk_id::text for normal desks, the literal 'amazon' for

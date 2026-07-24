@@ -103,8 +103,10 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgre
   const quietRef = inProgress ? today : lastDayISO(bounds.end)
 
   return createPortal(
-    <div className="fixed inset-0 z-[90] flex items-center justify-center p-3 sm:p-6" onMouseDown={e => e.stopPropagation()} onClick={onClose}>
-      <div className="absolute inset-0 bg-black/40 dark:bg-black/60" />
+    <div className="fixed inset-0 z-[90] flex items-center justify-center p-3 sm:p-6" onMouseDown={e => e.stopPropagation()}>
+      {/* The backdrop is the topmost element at any click outside the panel, so it
+          owns the close handler directly (bubbling to the overlay isn't reliable here). */}
+      <div className="absolute inset-0 bg-black/40 dark:bg-black/60" onClick={onClose} />
 
       <div
         ref={panelRef}

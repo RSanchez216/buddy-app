@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { S } from '../../../../lib/styles'
 import { SpinnerBox, ErrorRetry } from '../../../../components/Loading'
-import { fetchDepartures, money, int, periodLabel } from './dispatcherData'
+import { fetchDepartures, fetchDeparturesInterpretation, money, int, periodLabel } from './dispatcherData'
 
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -24,10 +24,37 @@ function fmtRun(days) {
 function firstWord(s) {
   return String(s || '').trim().split(/\s+/)[0] || ''
 }
+function toInt(v) {
+  if (v == null) return null
+  const n = Number(v)
+  return Number.isFinite(n) ? Math.round(n) : null
+}
+// Wrap the first standalone occurrence of each highlight's value in a coloured
+// span, leaving the RPC's prose untouched. Numbers glued to letters (188k) or
+// other digits are skipped so only whole standalone figures colour.
+function highlightNumbers(detail, highlights) {
+  if (!detail) return null
+  const parts = String(detail).split(/(\d+)/)
+  const used = new Set()
+  return parts.map((part, i) => {
+    if (!/^\d+$/.test(part)) return part
+    const prev = parts[i - 1] || ''
+    const next = parts[i + 1] || ''
+    if (/[A-Za-z]$/.test(prev) || /^[A-Za-z]/.test(next)) return part // e.g. "188k"
+    const n = Number(part)
+    for (const h of highlights) {
+      if (used.has(h.key) || h.value == null || n !== h.value) continue
+      used.add(h.key)
+      return <span key={i} className={h.className}>{part}</span>
+    }
+    return part
+  })
+}
 const rowKey = (r) => `${r.driver_internal_id ?? r.driver_name}-${r.desk_id ?? r.desk_name}`
 
 export default function DeparturesModal({ open, grain, anchor, onClose }) {
   const [rows, setRows] = useState(null)
+  const [interp, setInterp] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [copied, setCopied] = useState(false)
@@ -41,10 +68,15 @@ export default function DeparturesModal({ open, grain, anchor, onClose }) {
     if (!open) return
     let cancelled = false
     ;(async () => {
-      setLoading(true); setError(''); setRows(null)
+      setLoading(true); setError(''); setRows(null); setInterp(null)
       try {
-        const d = await fetchDepartures(grain, anchor)
-        if (!cancelled) setRows(d)
+        // Departures are required; the interpretation is an enhancement — if it
+        // fails, still show the list rather than blanking the whole modal.
+        const [d, ip] = await Promise.all([
+          fetchDepartures(grain, anchor),
+          fetchDeparturesInterpretation(grain, anchor).catch(() => null),
+        ])
+        if (!cancelled) { setRows(d); setInterp(ip) }
       } catch (e) {
         if (!cancelled) setError(e?.message || 'Failed to load departures')
       } finally {
@@ -86,6 +118,8 @@ export default function DeparturesModal({ open, grain, anchor, onClose }) {
   function telegramText() {
     const L = []
     L.push(`Departures — ${period}`)
+    if (interp?.headline) L.push(interp.headline)
+    if (interp?.detail) L.push(interp.detail)
     L.push(`${counted.length} drivers · ${money(summary.booked)} booked · ~${money(summary.runrate)}/mo run-rate`)
     L.push('')
     for (const r of counted) {
@@ -115,9 +149,10 @@ export default function DeparturesModal({ open, grain, anchor, onClose }) {
     <div
       className="fixed inset-0 z-[95] flex items-center justify-center p-3 sm:p-6"
       onMouseDown={e => e.stopPropagation()}
-      onClick={onClose}
     >
-      <div className="absolute inset-0 bg-black/40 dark:bg-black/60" />
+      {/* Backdrop owns the close handler directly — it's the topmost element at
+          any click outside the panel. */}
+      <div className="absolute inset-0 bg-black/40 dark:bg-black/60" onClick={onClose} />
       <div
         ref={panelRef}
         tabIndex={-1}
@@ -168,6 +203,9 @@ export default function DeparturesModal({ open, grain, anchor, onClose }) {
           {!loading && error && <ErrorRetry message={error} onRetry={() => setReloadKey(k => k + 1)} />}
           {!loading && !error && rows && (
             <>
+              {/* Interpretation — how to read the number: rate band + veteran/early split */}
+              {interp && <InterpBanner interp={interp} />}
+
               {/* Summary tiles — counted rows only */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <Tile label="Booked by these drivers" value={money(summary.booked)} sub="total, across their runs" />
@@ -229,6 +267,35 @@ export default function DeparturesModal({ open, grain, anchor, onClose }) {
       </div>
     </div>,
     document.body,
+  )
+}
+
+function InterpBanner({ interp }) {
+  // Leading-dot tint by how the departure rate compares to normal.
+  const dot = interp.rate_band === 'high'
+    ? 'bg-red-500'
+    : interp.rate_band === 'low'
+      ? 'bg-emerald-500'
+      : 'bg-gray-400 dark:bg-slate-500'
+  // Veteran churn (expensive) → red; early churn (onboarding/fit) → amber.
+  const highlights = [
+    { key: 'early', value: toInt(interp.gone_within_60d), className: 'font-semibold text-amber-600 dark:text-amber-400' },
+    { key: 'vet', value: toInt(interp.veterans), className: 'font-semibold text-red-600 dark:text-red-400' },
+  ]
+  return (
+    <div className="space-y-1">
+      {interp.headline && (
+        <p className="flex items-start gap-2 text-sm font-semibold text-gray-900 dark:text-white">
+          <span className={`mt-[0.4rem] h-2 w-2 shrink-0 rounded-full ${dot}`} aria-hidden="true" />
+          <span>{interp.headline}</span>
+        </p>
+      )}
+      {interp.detail && (
+        <p className="pl-4 text-xs leading-relaxed text-gray-600 dark:text-slate-400">
+          {highlightNumbers(interp.detail, highlights)}
+        </p>
+      )}
+    </div>
   )
 }
 
