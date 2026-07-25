@@ -121,7 +121,7 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgre
         aria-modal="true"
         aria-label={`${desk.desk_name} — desk detail`}
         onClick={e => e.stopPropagation()}
-        className={`relative flex flex-col w-[min(1440px,95vw)] max-w-[95vw] max-h-[88vh] bg-white dark:bg-[#0d0d1f] border-l-4 ${tone.border} rounded-xl shadow-2xl focus:outline-none`}
+        className={`relative flex flex-col w-[min(1600px,96vw)] max-w-[96vw] max-h-[88vh] bg-white dark:bg-[#0d0d1f] border-l-4 ${tone.border} rounded-xl shadow-2xl focus:outline-none`}
       >
         {/* Header */}
         <div className="flex items-start justify-between gap-3 p-4 border-b border-gray-100 dark:border-white/5 shrink-0">
