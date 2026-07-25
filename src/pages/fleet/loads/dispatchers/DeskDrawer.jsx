@@ -188,15 +188,17 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgre
                       <tr>
                         <th className={S.th}>Driver</th>
                         <th className={S.th}>Since</th>
+                        <th className={S.th}>Trailer</th>
                         <th className={`${S.th} text-right`}>Loads</th>
                         <th className={`${S.th} text-right`}>Gross</th>
                         <th className={`${S.th} text-right`}>RPM</th>
                         <th className={`${S.th} text-right`}>Share</th>
+                        <th className={`${S.th} text-right`}>Worked / off</th>
                       </tr>
                     </thead>
                     <tbody>
                       {active.length === 0 ? (
-                        <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-400 dark:text-slate-600">No active drivers</td></tr>
+                        <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-400 dark:text-slate-600">No active drivers</td></tr>
                       ) : active.map(r => {
                         // New = first load on this desk lands inside the selected period.
                         const isNew = r.first_load_on_desk && r.first_load_on_desk >= bounds.start && r.first_load_on_desk < bounds.end
@@ -225,10 +227,19 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgre
                                 <>{fmtMD(r.first_load_on_desk)}<span className="text-[10px] text-gray-400 dark:text-slate-500"> · {humanDuration(r.first_load_on_desk, today)}</span></>
                               ) : '—'}
                             </td>
+                            <td className={`${S.td} whitespace-nowrap`}>
+                              {r.trailer_type
+                                ? <span className="text-xs px-1.5 py-0.5 rounded-full border border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-white/5 text-gray-700 dark:text-slate-300">{r.trailer_type}</span>
+                                : <span className="text-gray-400 dark:text-slate-500">—</span>}
+                            </td>
                             <td className={`${S.td} text-right tabular-nums text-gray-600 dark:text-slate-400`}>{int(r.loads)}</td>
                             <td className={`${S.td} text-right tabular-nums text-gray-900 dark:text-slate-200`}>{money(r.gross)}</td>
                             <td className={`${S.td} text-right tabular-nums text-gray-600 dark:text-slate-400`}>{rpm(r.rpm)}</td>
                             <td className={`${S.td} text-right tabular-nums text-gray-600 dark:text-slate-400`}>{r.home_share != null ? `${r.home_share}%` : '—'}</td>
+                            <td className={`${S.td} text-right whitespace-nowrap tabular-nums`}>
+                              <span className="font-medium text-gray-900 dark:text-slate-200">{r.worked_days}</span>{' '}
+                              <span className={Number(r.off_days) >= 7 ? 'text-amber-600 dark:text-amber-400' : 'text-gray-400 dark:text-slate-500'}>/ {r.off_days} off</span>
+                            </td>
                           </tr>
                         )
                       })}
