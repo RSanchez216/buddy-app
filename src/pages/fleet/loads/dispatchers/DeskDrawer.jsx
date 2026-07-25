@@ -102,6 +102,12 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgre
   // Quiet-flag reference: today for an in-progress period, else the period's last day.
   const quietRef = inProgress ? today : lastDayISO(bounds.end)
 
+  // Tighter horizontal padding for the short columns so all 8 fit the panel
+  // without a horizontal scroll on narrower viewports. Derived from S so styling
+  // stays in sync.
+  const thTight = S.th.replace('px-4', 'px-2')
+  const tdTight = S.td.replace('px-4', 'px-2')
+
   return createPortal(
     <div className="fixed inset-0 z-[90] flex items-center justify-center p-3 sm:p-6" onMouseDown={e => e.stopPropagation()}>
       {/* The backdrop is the topmost element at any click outside the panel, so it
@@ -115,7 +121,7 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgre
         aria-modal="true"
         aria-label={`${desk.desk_name} — desk detail`}
         onClick={e => e.stopPropagation()}
-        className={`relative flex flex-col w-[min(1140px,94vw)] max-h-[88vh] bg-white dark:bg-[#0d0d1f] border-l-4 ${tone.border} rounded-xl shadow-2xl focus:outline-none`}
+        className={`relative flex flex-col w-[min(1440px,95vw)] max-w-[95vw] max-h-[88vh] bg-white dark:bg-[#0d0d1f] border-l-4 ${tone.border} rounded-xl shadow-2xl focus:outline-none`}
       >
         {/* Header */}
         <div className="flex items-start justify-between gap-3 p-4 border-b border-gray-100 dark:border-white/5 shrink-0">
@@ -188,12 +194,12 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgre
                       <tr>
                         <th className={S.th}>Driver</th>
                         <th className={S.th}>Since</th>
-                        <th className={S.th}>Trailer</th>
-                        <th className={`${S.th} text-right`}>Loads</th>
-                        <th className={`${S.th} text-right`}>Gross</th>
-                        <th className={`${S.th} text-right`}>RPM</th>
-                        <th className={`${S.th} text-right`}>Share</th>
-                        <th className={`${S.th} text-right`}>Worked / off</th>
+                        <th className={thTight}>Trailer</th>
+                        <th className={`${thTight} text-right`}>Loads</th>
+                        <th className={`${thTight} text-right`}>Gross</th>
+                        <th className={`${thTight} text-right`}>RPM</th>
+                        <th className={`${thTight} text-right`}>Share</th>
+                        <th className={`${thTight} text-right`}>Worked / off</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -227,16 +233,16 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgre
                                 <>{fmtMD(r.first_load_on_desk)}<span className="text-[10px] text-gray-400 dark:text-slate-500"> · {humanDuration(r.first_load_on_desk, today)}</span></>
                               ) : '—'}
                             </td>
-                            <td className={`${S.td} whitespace-nowrap`}>
+                            <td className={`${tdTight} whitespace-nowrap`}>
                               {r.trailer_type
                                 ? <span className="text-xs px-1.5 py-0.5 rounded-full border border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-white/5 text-gray-700 dark:text-slate-300">{r.trailer_type}</span>
                                 : <span className="text-gray-400 dark:text-slate-500">—</span>}
                             </td>
-                            <td className={`${S.td} text-right tabular-nums text-gray-600 dark:text-slate-400`}>{int(r.loads)}</td>
-                            <td className={`${S.td} text-right tabular-nums text-gray-900 dark:text-slate-200`}>{money(r.gross)}</td>
-                            <td className={`${S.td} text-right tabular-nums text-gray-600 dark:text-slate-400`}>{rpm(r.rpm)}</td>
-                            <td className={`${S.td} text-right tabular-nums text-gray-600 dark:text-slate-400`}>{r.home_share != null ? `${r.home_share}%` : '—'}</td>
-                            <td className={`${S.td} text-right whitespace-nowrap tabular-nums`}>
+                            <td className={`${tdTight} text-right tabular-nums text-gray-600 dark:text-slate-400`}>{int(r.loads)}</td>
+                            <td className={`${tdTight} text-right tabular-nums text-gray-900 dark:text-slate-200`}>{money(r.gross)}</td>
+                            <td className={`${tdTight} text-right tabular-nums text-gray-600 dark:text-slate-400`}>{rpm(r.rpm)}</td>
+                            <td className={`${tdTight} text-right tabular-nums text-gray-600 dark:text-slate-400`}>{r.home_share != null ? `${r.home_share}%` : '—'}</td>
+                            <td className={`${tdTight} text-right whitespace-nowrap tabular-nums`}>
                               <span className="font-medium text-gray-900 dark:text-slate-200">{r.worked_days}</span>{' '}
                               <span className={Number(r.off_days) >= 7 ? 'text-amber-600 dark:text-amber-400' : 'text-gray-400 dark:text-slate-500'}>/ {r.off_days} off</span>
                             </td>
