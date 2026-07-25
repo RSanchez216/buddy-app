@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom'
 import { S } from '../../../../lib/styles'
 import { SpinnerBox, ErrorRetry } from '../../../../components/Loading'
 import { fetchDepartures, fetchDeparturesInterpretation, money, int, periodLabel } from './dispatcherData'
+import { BAND_CHIP } from './tenureBand'
+import BandPill from './BandPill'
 
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -290,13 +292,6 @@ const BAND = {
   typical: 'bg-gray-50 border-gray-200 dark:bg-white/[0.04] dark:border-white/10',
   low: 'bg-emerald-50 border-emerald-200 dark:bg-emerald-500/[0.08] dark:border-emerald-500/25',
 }
-// Three tenure bands, each its own problem: veteran (6+ mo, retention) → red;
-// established (mid-tenure) → blue; new (≤60d, onboarding/fit) → amber.
-const BAND_CHIP = {
-  veteran: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-500/15 dark:text-red-400 dark:border-red-500/25',
-  established: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-500/15 dark:text-blue-400 dark:border-blue-500/25',
-  new: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/15 dark:text-amber-400 dark:border-amber-500/25',
-}
 function InterpBanner({ interp }) {
   const band = BAND[interp.rate_band] || BAND.typical
   // Only bands with a non-zero count, so a clean period isn't three empty chips.
@@ -334,18 +329,6 @@ function InterpBanner({ interp }) {
   )
 }
 
-// Per-departure tenure tag. Null tenure_band (no run resolved) → no tag.
-const BAND_LABEL = { veteran: 'Veteran', established: 'Established', new: 'New' }
-function BandTag({ band }) {
-  const label = BAND_LABEL[band]
-  if (!label) return null
-  return (
-    <span className={`ml-1.5 inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-medium align-middle ${BAND_CHIP[band]}`}>
-      {label}
-    </span>
-  )
-}
-
 function Tile({ label, value, sub }) {
   return (
     <div className={`${S.card} p-3`}>
@@ -365,7 +348,7 @@ function Row({ r, muted }) {
         {r.driver_internal_id != null && <span className="ml-1.5 text-[11px] text-gray-400 dark:text-slate-600 tabular-nums">#{r.driver_internal_id}</span>}
         {/* Tenure band ties the row to the interpretation chips — read straight
             from the RPC's tenure_band, no client-side thresholds. */}
-        <BandTag band={r.tenure_band} />
+        <BandPill band={r.tenure_band} className="ml-1.5" />
       </td>
       <td className={`${S.td} text-gray-600 dark:text-slate-400`}>{r.desk_name}</td>
       <td className={`${S.td} whitespace-nowrap text-gray-600 dark:text-slate-400 tabular-nums`}>{fmtMD(r.terminated_at)}</td>

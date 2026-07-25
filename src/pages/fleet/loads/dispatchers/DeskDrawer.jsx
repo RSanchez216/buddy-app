@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { S } from '../../../../lib/styles'
 import { fetchDeskDrivers, deskRead, readChips, deskKeyOf, money, perDriver, rpm, int, periodBounds, periodLabel, todayISO } from './dispatcherData'
+import BandPill from './BandPill'
 
 // Centered modal for one desk — the content is wide-shaped (roster + departed
 // side by side), so it gets width, not a narrow drawer column. Roster data
@@ -271,6 +272,7 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgre
                             <div className="min-w-0">
                               <span className="font-medium text-gray-900 dark:text-slate-200">{r.driver_name}</span>
                               {iid != null && <span className="ml-1.5 text-[11px] text-gray-400 dark:text-slate-500">· #{iid}</span>}
+                              <BandPill band={r.tenure_band} className="ml-1.5" />
                             </div>
                             {r.terminated_at && (
                               <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-500/20">
