@@ -51,42 +51,17 @@ function splitOn(text, needle, className) {
   out.push(text.slice(from))
   return out
 }
-// Colour the RPC's detail sentence in place — veteran names + count in red,
-// the within-60-days count in amber — without rewriting the prose. Names are
-// carved out first (red), then the two standalone figures are wrapped. Numbers
-// glued to letters ("188k") are skipped so only whole figures colour.
-function renderDetail(detail, { early, veteran, names }) {
+// Render the RPC's detail sentence verbatim, colouring only the veteran names
+// red. The band counts are shown as chips above, so numbers are left plain here.
+function renderDetail(detail, names) {
   if (!detail) return null
   const RED = 'font-semibold text-red-600 dark:text-red-400'
-  const AMBER = 'font-semibold text-amber-600 dark:text-amber-400'
   const nameList = (names || []).filter(Boolean).sort((a, b) => b.length - a.length)
-
   let segs = [detail]
   for (const name of nameList) {
     segs = segs.flatMap(seg => (typeof seg === 'string' ? splitOn(seg, name, RED) : [seg]))
   }
-
-  const figures = [
-    { key: 'early', value: early, className: AMBER },
-    { key: 'veteran', value: veteran, className: RED },
-  ]
-  const used = new Set()
-  const nodes = []
-  for (const seg of segs) {
-    if (typeof seg !== 'string') { nodes.push(seg); continue }
-    const parts = seg.split(/(\d+)/)
-    parts.forEach((part, i) => {
-      if (!/^\d+$/.test(part)) { nodes.push(part); return }
-      const prev = parts[i - 1] || ''
-      const next = parts[i + 1] || ''
-      if (/[A-Za-z]$/.test(prev) || /^[A-Za-z]/.test(next)) { nodes.push(part); return } // e.g. "188k"
-      const n = Number(part)
-      const hit = figures.find(f => !used.has(f.key) && f.value != null && n === f.value)
-      if (hit) { used.add(hit.key); nodes.push(<span className={hit.className}>{part}</span>) }
-      else nodes.push(part)
-    })
-  }
-  return nodes.map((node, i) => (typeof node === 'string' ? node : <span key={i} className={node.props.className}>{node.props.children}</span>))
+  return segs.map((node, i) => (typeof node === 'string' ? node : <span key={i} className={node.props.className}>{node.props.children}</span>))
 }
 const rowKey = (r) => `${r.driver_internal_id ?? r.driver_name}-${r.desk_id ?? r.desk_name}`
 
@@ -315,23 +290,53 @@ const BAND = {
   typical: 'bg-gray-50 border-gray-200 dark:bg-white/[0.04] dark:border-white/10',
   low: 'bg-emerald-50 border-emerald-200 dark:bg-emerald-500/[0.08] dark:border-emerald-500/25',
 }
+// Three tenure bands, each its own problem: veteran (6+ mo, retention) → red;
+// established (mid-tenure) → blue; new (≤60d, onboarding/fit) → amber.
+const BAND_CHIP = {
+  veteran: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-500/15 dark:text-red-400 dark:border-red-500/25',
+  established: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-500/15 dark:text-blue-400 dark:border-blue-500/25',
+  new: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/15 dark:text-amber-400 dark:border-amber-500/25',
+}
 function InterpBanner({ interp }) {
   const band = BAND[interp.rate_band] || BAND.typical
+  // Only bands with a non-zero count, so a clean period isn't three empty chips.
+  const chips = [
+    { key: 'veteran', label: 'Veteran', n: toInt(interp.veterans) },
+    { key: 'established', label: 'Established', n: toInt(interp.established) },
+    { key: 'new', label: 'New', n: toInt(interp.gone_within_60d) },
+  ].filter(c => c.n != null && c.n > 0)
   return (
     <div className={`rounded-xl border p-3.5 ${band}`}>
       {interp.headline && (
         <p className="text-[15px] font-semibold text-gray-900 dark:text-white leading-snug">{interp.headline}</p>
       )}
+      {chips.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {chips.map(c => (
+            <span key={c.key} className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${BAND_CHIP[c.key]}`}>
+              {c.label} {c.n}
+            </span>
+          ))}
+        </div>
+      )}
       {interp.detail && (
-        <p className="mt-1 text-xs leading-relaxed text-gray-600 dark:text-slate-300">
-          {renderDetail(interp.detail, {
-            early: toInt(interp.gone_within_60d),
-            veteran: toInt(interp.veterans),
-            names: toNames(interp.veteran_names),
-          })}
+        <p className="mt-2 text-xs leading-relaxed text-gray-600 dark:text-slate-300">
+          {renderDetail(interp.detail, toNames(interp.veteran_names))}
         </p>
       )}
     </div>
+  )
+}
+
+// Per-departure tenure tag. Null tenure_band (no run resolved) → no tag.
+const BAND_LABEL = { veteran: 'Veteran', established: 'Established', new: 'New' }
+function BandTag({ band }) {
+  const label = BAND_LABEL[band]
+  if (!label) return null
+  return (
+    <span className={`ml-1.5 inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-medium align-middle ${BAND_CHIP[band]}`}>
+      {label}
+    </span>
   )
 }
 
@@ -352,14 +357,9 @@ function Row({ r, muted }) {
       <td className={S.td}>
         <span className={muted ? 'text-gray-600 dark:text-slate-400' : 'font-medium text-gray-900 dark:text-slate-200'}>{r.driver_name}</span>
         {r.driver_internal_id != null && <span className="ml-1.5 text-[11px] text-gray-400 dark:text-slate-600 tabular-nums">#{r.driver_internal_id}</span>}
-        {/* Tags tie the row back to the interpretation sentence — derived from
-            the RPC's booleans, not from recomputed thresholds. */}
-        {r.is_veteran && (
-          <span className="ml-1.5 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-red-50 text-red-600 dark:bg-red-500/15 dark:text-red-400 align-middle">veteran</span>
-        )}
-        {r.is_early_churn && (
-          <span className="ml-1.5 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400 align-middle whitespace-nowrap">&lt; 60 days</span>
-        )}
+        {/* Tenure band ties the row to the interpretation chips — read straight
+            from the RPC's tenure_band, no client-side thresholds. */}
+        <BandTag band={r.tenure_band} />
       </td>
       <td className={`${S.td} text-gray-600 dark:text-slate-400`}>{r.desk_name}</td>
       <td className={`${S.td} whitespace-nowrap text-gray-600 dark:text-slate-400 tabular-nums`}>{fmtMD(r.terminated_at)}</td>
