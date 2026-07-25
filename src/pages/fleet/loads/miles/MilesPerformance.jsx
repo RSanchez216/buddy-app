@@ -6,6 +6,7 @@ import { Skeleton } from '../../../../components/Loading'
 import ErrorBoundary from '../../../../components/ErrorBoundary'
 import { S } from '../../../../lib/styles'
 import MilesInterpretation from './MilesInterpretation'
+import { verdictText, loadsLabel, pctS as pctS1 } from './milesInterpText'
 import { fmtMoney, fmtNum, fmtRpm } from '../spotlight/spotlightShared'
 
 // Miles & Performance — loaded vs. empty miles, RPM, and deadhead by driver /
@@ -481,6 +482,42 @@ export default function MilesPerformance() {
     pdf.setFontSize(9); pdf.setTextColor(120)
     pdf.text(`${tabDef.label} · ${periodLabel(range, timeframe)}  ·  generated ${todayYmd()}`, 24, 50)
     let y = 62
+
+    // Interpretation block — lead the report with the read, not raw numbers.
+    if (interp && interp.overall && Number(interp.overall.loads) > 0) {
+      const qual = interp.partial ? (interp.grain === 'month' ? '  ·  MTD' : '  ·  to date') : ''
+      pdf.setFontSize(11); pdf.setTextColor(20)
+      pdf.text('Interpretation', 24, y)
+      const hw = pdf.getTextWidth('Interpretation')
+      pdf.setFontSize(9); pdf.setTextColor(120)
+      pdf.text(`   ${periodLabel(range, timeframe)}${qual}`, 24 + hw, y)
+      y += 15
+      pdf.setFontSize(9); pdf.setTextColor(60)
+      const vlines = pdf.splitTextToSize(verdictText(interp), pw - 48)
+      pdf.text(vlines, 24, y); y += vlines.length * 12 + 8
+      const cbody = [['Region', interp.region], ['Dispatcher', interp.dispatcher], ['Driver', interp.driver]].map(([label, dim]) => {
+        const d = dim || {}
+        const attn = d.flag ? `${d.flag.name} — ${pctS1(d.flag.dh)} · ${loadsLabel(d.flag.loads)}` : 'Not enough data to flag'
+        const bright = d.bright ? `${d.bright.name} — ${pctS1(d.bright.dh)}` : '—'
+        return [label, attn, bright]
+      })
+      autoTable(pdf, {
+        head: [['Focus', 'Needs attention', 'Bright spot']], body: cbody, startY: y,
+        styles: { fontSize: 8, cellPadding: 3 }, headStyles: { fillColor: [234, 88, 12] },
+        columnStyles: { 0: { cellWidth: 80, fontStyle: 'bold' } },
+        // Honesty in print: the attention item reads in danger red.
+        didParseCell: (data) => {
+          if (data.section === 'body' && data.column.index === 1 && data.cell.raw !== 'Not enough data to flag') {
+            data.cell.styles.textColor = [190, 30, 30]
+          }
+        },
+      })
+      y = pdf.lastAutoTable.finalY + 10
+      pdf.setFontSize(7.5); pdf.setTextColor(150)
+      const dis = pdf.splitTextToSize('Reads deadhead %, RPM, and loaded-mile volume — never profit (gross here is freight volume, ~56% pass-through).', pw - 48)
+      pdf.text(dis, 24, y); y += dis.length * 10 + 10
+    }
+
     // Trend chart snapshot (recharts SVG → PNG).
     try {
       const svgEl = chartRef.current?.querySelector('svg.recharts-surface')

@@ -4,13 +4,11 @@
 // (report_miles_interpretation); wording is composed here so it stays tunable.
 // Speaks only in deadhead %, RPM, and loaded-mile volume — never profit.
 
+import { n0, loadsLabel, pctS, rpmS, rpmPhrase, monthNameOf } from './milesInterpText'
+
 const RED = 'text-red-600 dark:text-red-400'
 const GREEN = 'text-emerald-600 dark:text-emerald-400'
 const MUTED = 'text-gray-500 dark:text-slate-400'
-
-const n0 = (n) => Number(n ?? 0).toLocaleString('en-US')          // counts / loaded miles
-const pctS = (x) => (x == null ? '—' : `${Number(x).toFixed(1)}%`) // deadhead, 1 decimal
-const rpmS = (x) => (x == null ? '—' : `$${Number(x).toFixed(2)}`) // RPM, 2 decimals
 
 // up on deadhead = worse = red; down = better = green; steady = neutral.
 function trendPhrase(trend, d) {
@@ -23,12 +21,9 @@ function trendWord(trend) {
   if (trend === 'down') return <span className={`font-semibold ${GREEN}`}>improving</span>
   return <span className={`font-semibold ${MUTED}`}>holding steady</span>
 }
-const rpmPhrase = (trend) => (trend === 'down' ? 'eased' : trend === 'up' ? 'firmed' : 'held')
-
-function monthNameOf(ymd) {
-  const [y, m] = String(ymd || '').split('-').map(Number)
-  if (!y || !m) return ''
-  return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long' })
+// Bold count + correctly-pluralised "load(s)" — mirrors loadsLabel().
+function Loads({ n }) {
+  return <><strong className="font-semibold text-gray-900 dark:text-white">{n0(n)}</strong> load{Number(n) === 1 ? '' : 's'}</>
 }
 
 function Verdict({ interp }) {
@@ -39,7 +34,7 @@ function Verdict({ interp }) {
   if (grain === 'day') {
     return (
       <p className={cls}>
-        Partial day so far — <strong className="font-semibold text-gray-900 dark:text-white">{n0(overall.loads)}</strong> loads at {pctS(overall.dh)} deadhead
+        Partial day so far — <Loads n={overall.loads} /> at {pctS(overall.dh)} deadhead
         {hasPrev && <>, vs yesterday&apos;s {pctS(prev.dh)} for reference</>}. A single day is a pulse, not a trend — the callouts below sit on small samples.
       </p>
     )
@@ -47,7 +42,7 @@ function Verdict({ interp }) {
   if (grain === 'week') {
     return (
       <p className={cls}>
-        Week to date: <strong className="font-semibold text-gray-900 dark:text-white">{n0(overall.loads)}</strong> loads, {pctS(overall.dh)} deadhead
+        Week to date: <Loads n={overall.loads} />, {pctS(overall.dh)} deadhead
         {hasPrev && <> — {trendPhrase(dh_trend, dh_delta)} vs the same point last week ({pctS(prev.dh)}), and RPM {rpmPhrase(rpm_trend)} to {rpmS(overall.rpm)} from {rpmS(prev.rpm)}</>}.
       </p>
     )
@@ -55,7 +50,7 @@ function Verdict({ interp }) {
   if (grain === 'month') {
     return (
       <p className={cls}>
-        {monthNameOf(interp.period_start)} MTD: <strong className="font-semibold text-gray-900 dark:text-white">{n0(overall.loads)}</strong> loads, {pctS(overall.dh)} deadhead
+        {monthNameOf(interp.period_start)} MTD: <Loads n={overall.loads} />, {pctS(overall.dh)} deadhead
         {hasPrev && <> vs {pctS(prev.dh)} at this point last month ({trendWord(dh_trend)}), and RPM {rpmPhrase(rpm_trend)} to {rpmS(overall.rpm)} from {rpmS(prev.rpm)}</>}. Volume is healthy; empty miles are the leak.
       </p>
     )
@@ -63,7 +58,7 @@ function Verdict({ interp }) {
   // custom — no prior period
   return (
     <p className={cls}>
-      Selected range: <strong className="font-semibold text-gray-900 dark:text-white">{n0(overall.loads)}</strong> loads, {pctS(overall.dh)} deadhead, {rpmS(overall.rpm)} RPM loaded. Custom ranges are summarized, not compared — pick a comparison range for a delta.
+      Selected range: <Loads n={overall.loads} />, {pctS(overall.dh)} deadhead, {rpmS(overall.rpm)} RPM loaded. Custom ranges are summarized, not compared — pick a comparison range for a delta.
     </p>
   )
 }
@@ -77,7 +72,9 @@ function Callout({ icon, title, flag, bright, reason, context, ring }) {
       {flag ? (
         <>
           <div className="mt-1 text-sm font-semibold text-orange-600 dark:text-orange-400 truncate" title={flag.name}>{flag.name}</div>
-          <div className="text-[11px] text-gray-500 dark:text-slate-400">{reason}</div>
+          <div className="text-[11px] text-gray-500 dark:text-slate-400">
+            <span className="font-semibold text-orange-600 dark:text-orange-400">{pctS(flag.dh)}</span> · {reason}
+          </div>
         </>
       ) : (
         <div className="mt-1 text-sm text-gray-400 dark:text-slate-500">Not enough data to flag</div>
@@ -94,7 +91,7 @@ function Callout({ icon, title, flag, bright, reason, context, ring }) {
 
 function FrameCard({ children }) {
   return (
-    <div className="rounded-xl border-2 border-orange-500/50 dark:border-orange-500/30 bg-orange-50/40 dark:bg-orange-500/[0.05] p-2.5">
+    <div className="rounded-xl border-2 border-orange-500 bg-orange-50/40 dark:bg-orange-500/[0.05] p-2.5">
       <div className="rounded-lg bg-white dark:bg-[#0d0d1f] shadow-sm p-4 space-y-3">{children}</div>
     </div>
   )
@@ -129,12 +126,12 @@ export default function MilesInterpretation({ interp, error, periodText, activeT
   const driver = interp.driver || {}
 
   const regionReason = region.flag
-    ? `${n0(region.flag.loads)} loads${region.top && region.flag.name === region.top.name ? ' — highest-impact target' : ''}`
+    ? `${loadsLabel(region.flag.loads)}${region.top && region.flag.name === region.top.name ? ' — highest-impact target' : ''}`
     : null
-  const regionContext = region.top ? `${region.top.name} carries the volume — ${n0(region.top.loads)} loads at ${pctS(region.top.dh)}` : null
-  const dispReason = dispatcher.flag ? `${n0(dispatcher.flag.loads)} loads running hot` : null
+  const regionContext = region.top ? `${region.top.name} carries the volume — ${loadsLabel(region.top.loads)} at ${pctS(region.top.dh)}` : null
+  const dispReason = dispatcher.flag ? `${loadsLabel(dispatcher.flag.loads)} running hot` : null
   const driverReason = driver.flag
-    ? `${n0(driver.flag.loads)} loads${Number(driver.flag.loads) >= 15 ? ' — volume + empty = real money' : ' — watch'}`
+    ? `${loadsLabel(driver.flag.loads)}${Number(driver.flag.loads) >= 15 ? ' — volume + empty = real money' : ' — watch'}`
     : null
 
   return (
