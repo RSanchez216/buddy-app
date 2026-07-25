@@ -146,8 +146,13 @@ export default function MilesPerformance() {
 
   function pickTimeframe(tf) {
     setTimeframe(tf)
-    if (tf === 'custom') return
-    setRange(periodOf(range.to || todayYmd(), tf))
+    // Always re-anchor to the period containing today (Chicago), never off the
+    // current period end — otherwise each grain switch drifts forward
+    // (month-end → that day → the next week → the month past it → …).
+    const t = todayYmd()
+    // Custom defaults to the current month through today, never a future-only window.
+    if (tf === 'custom') { setRange({ from: periodOf(t, 'month').from, to: t }); return }
+    setRange(periodOf(t, tf))
   }
   const navPeriod = (dir) => setRange(r => shiftPeriod(r, timeframe, dir))
 
