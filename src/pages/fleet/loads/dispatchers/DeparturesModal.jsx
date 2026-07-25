@@ -236,27 +236,6 @@ export default function DeparturesModal({ open, grain, anchor, onClose }) {
                 pass-through Manas doesn't keep. Run-rate assumes each driver would have continued at their own pace, and isn't a loss if they're replaced.
               </p>
 
-              {/* Tenure band legend — chips match the DRIVER-column pills */}
-              <div>
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-gray-500 dark:text-slate-400">
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-medium ${BAND_CHIP.new}`}>New</span>
-                    60 days or less on the desk
-                  </span>
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-medium ${BAND_CHIP.established}`}>Established</span>
-                    60 days to 6 months
-                  </span>
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-medium ${BAND_CHIP.veteran}`}>Veteran</span>
-                    6 months or more
-                  </span>
-                </div>
-                <p className="mt-1.5 text-[11px] text-gray-400 dark:text-slate-500">
-                  Tenure = length of the driver's run on their home desk (first load to last), not time since hire.
-                </p>
-              </div>
-
               {/* Table */}
               <div className={`${S.card} overflow-x-auto`}>
                 <table className="w-full text-sm">
@@ -332,13 +311,19 @@ function InterpBanner({ interp }) {
         <p className="text-[15px] font-semibold text-gray-900 dark:text-white leading-snug">{interp.headline}</p>
       )}
       {chips.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {chips.map(c => (
-            <span key={c.key} className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${BAND_CHIP[c.key]}`}>
-              {c.label} {c.n}
-            </span>
-          ))}
-        </div>
+        <>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {chips.map(c => (
+              <span key={c.key} className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${BAND_CHIP[c.key]}`}>
+                {c.label} {c.n}
+              </span>
+            ))}
+          </div>
+          <p className="mt-1.5 text-[11px] text-gray-400 dark:text-slate-500">
+            New = 60 days or less · Established = 60 days to 6 months · Veteran = 6 months or more
+            <span className="block">measured over the driver's run on their home desk.</span>
+          </p>
+        </>
       )}
       {interp.detail && (
         <p className="mt-2 text-xs leading-relaxed text-gray-600 dark:text-slate-300">
