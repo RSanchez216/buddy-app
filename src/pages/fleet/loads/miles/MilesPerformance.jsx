@@ -3,7 +3,9 @@ import { BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveCo
 import { supabase } from '../../../../lib/supabase'
 import { withTimeout } from '../../../../lib/withTimeout'
 import { Skeleton } from '../../../../components/Loading'
+import ErrorBoundary from '../../../../components/ErrorBoundary'
 import { S } from '../../../../lib/styles'
+import MilesInterpretation from './MilesInterpretation'
 import { fmtMoney, fmtNum, fmtRpm } from '../spotlight/spotlightShared'
 
 // Miles & Performance — loaded vs. empty miles, RPM, and deadhead by driver /
@@ -137,6 +139,8 @@ export default function MilesPerformance() {
   const [loads, setLoads] = useState(null)
   const [priorLoads, setPriorLoads] = useState(null)
   const [trend, setTrend] = useState(null)
+  const [interp, setInterp] = useState(null)       // timeframe-aware read (report_miles_interpretation)
+  const [interpErr, setInterpErr] = useState(false)
   const [loadsErr, setLoadsErr] = useState(false) // main table/totals panel
   const [trendErr, setTrendErr] = useState(false) // rolling-trend chart panel
   const [reloadKey, setReloadKey] = useState(0)    // bump to re-run the fetch (Retry)
@@ -186,6 +190,20 @@ export default function MilesPerformance() {
     })
     return () => { stale = true }
   }, [range.from, range.to, timeframe, reloadKey])
+
+  // Interpretation card — separate parallel fetch (~1.3s) so a slow/failed read
+  // never holds up the table. Same triggers as the table fetch.
+  useEffect(() => {
+    let stale = false
+    setInterp(null); setInterpErr(false)
+    withTimeout(signal => supabase.rpc('report_miles_interpretation', { p_grain: timeframe, p_start: range.from, p_end: range.to }).abortSignal(signal))
+      .then(({ data, error }) => {
+        if (stale) return
+        if (error) { console.error('miles interpretation failed:', error); setInterpErr(true) } else { setInterp(data || null) }
+      })
+      .catch((e) => { if (stale) return; console.error('miles interpretation failed:', e); setInterpErr(true) })
+    return () => { stale = true }
+  }, [range, timeframe, reloadKey])
 
   const tabDef = TABS.find(t => t.key === tab)
   const rows = useMemo(() => (loads ? aggregate(loads, tabDef.keyField, tabDef.nameField) : []), [loads, tabDef])
@@ -269,6 +287,11 @@ export default function MilesPerformance() {
           <button onClick={exportPdf} disabled={loading} className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-40">↓ PDF</button>
         </div>
       </div>
+
+      {/* Timeframe-aware interpretation */}
+      <ErrorBoundary label="the interpretation card">
+        <MilesInterpretation interp={interp} error={interpErr} periodText={periodLabel(range, timeframe)} activeTab={tab} />
+      </ErrorBoundary>
 
       {/* Rolling deadhead trend */}
       <div className={`${S.card} p-4`} ref={chartRef}>
