@@ -262,6 +262,13 @@ export default function DispatcherScorecard() {
   const toggleSort = (key) => setSort(s => s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: key === 'desk' ? 'asc' : 'desc' })
   const arrow = (key) => sort.key === key ? (sort.dir === 'asc' ? '↑' : '↓') : ''
 
+  // Desk-modal prev/next walk the table's current ordered/filtered list.
+  const selectedIndex = selectedDesk ? shownDesks.findIndex(d => d.desk_id === selectedDesk.desk_id) : -1
+  const navigateDesk = (dir) => {
+    const i = selectedIndex + dir
+    if (i >= 0 && i < shownDesks.length) setSelectedDesk(shownDesks[i])
+  }
+
   // PDF report (all grains) — header stats + focus cards + full desk table with
   // the manager's sign-off (Monthly: ✓/— + note; multi-month: the X/N roll-up +
   // month-prefixed notes). Client-side jsPDF + autoTable (dynamic import so the
@@ -574,6 +581,11 @@ export default function DispatcherScorecard() {
         monthLabel={periodLabel('month', anchor)}
         onSaveReview={saveReview}
         onClose={() => setSelectedDesk(null)}
+        onPrev={() => navigateDesk(-1)}
+        onNext={() => navigateDesk(1)}
+        hasPrev={selectedIndex > 0}
+        hasNext={selectedIndex >= 0 && selectedIndex < shownDesks.length - 1}
+        position={selectedIndex >= 0 ? { index: selectedIndex, total: shownDesks.length } : null}
       />
 
       <DeparturesModal

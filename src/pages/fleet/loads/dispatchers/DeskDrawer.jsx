@@ -48,14 +48,21 @@ function lastDayISO(endExclusiveISO) {
   return `${dt.getUTCFullYear()}-${p(dt.getUTCMonth() + 1)}-${p(dt.getUTCDate())}`
 }
 
-export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgress = false, monthly = false, review, reviewerName, canEdit = false, monthLabel, onSaveReview, onClose }) {
+export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgress = false, monthly = false, review, reviewerName, canEdit = false, monthLabel, onSaveReview, onClose, onPrev, onNext, hasPrev = false, hasNext = false, position = null }) {
   const [rows, setRows] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const panelRef = useRef(null)
+  const bodyRef = useRef(null)
   const restoreFocusRef = useRef(null)
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
+  // Latest prev/next in refs so the keydown listener (bound once per open) always
+  // calls the current handler without re-subscribing on every desk change.
+  const onPrevRef = useRef(onPrev)
+  onPrevRef.current = onPrev
+  const onNextRef = useRef(onNext)
+  onNextRef.current = onNext
 
   useEffect(() => {
     if (!open || !desk?.desk_id) return
@@ -75,12 +82,22 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgre
   }, [open, desk?.desk_id, grain, anchor])
 
   // On open: capture the originating element, move focus into the modal, and
-  // listen for Escape. On close: return focus to where it came from (the row).
+  // listen for Escape / ← prev / → next. On close: return focus to where it came
+  // from (the row).
   useEffect(() => {
     if (!open) return
     restoreFocusRef.current = document.activeElement
     panelRef.current?.focus()
-    const onKey = (e) => { if (e.key === 'Escape') onCloseRef.current?.() }
+    const onKey = (e) => {
+      if (e.key === 'Escape') { onCloseRef.current?.(); return }
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+      // Don't hijack ← / → while typing (note textarea, search box, etc.).
+      const t = e.target
+      if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT' || t.isContentEditable)) return
+      e.preventDefault() // don't also scroll the background
+      if (e.key === 'ArrowLeft') onPrevRef.current?.()
+      else onNextRef.current?.()
+    }
     document.addEventListener('keydown', onKey)
     return () => {
       document.removeEventListener('keydown', onKey)
@@ -88,6 +105,9 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgre
       if (el && typeof el.focus === 'function') el.focus()
     }
   }, [open])
+
+  // Reset the body scroll to the top whenever the desk changes (open or navigate).
+  useEffect(() => { if (bodyRef.current) bodyRef.current.scrollTop = 0 }, [desk?.desk_id])
 
   if (!open || !desk) return null
 
@@ -133,15 +153,34 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgre
             </div>
             <p className="text-xs text-gray-500 dark:text-slate-500 mt-0.5">Dispatch desk · booking + home-desk retention · {periodLabel(grain, anchor)}</p>
           </div>
-          <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 shrink-0">
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+          <div className="flex items-center gap-1 shrink-0">
+            {position && (
+              <div className="flex items-center gap-0.5 mr-1">
+                <button
+                  onClick={onPrev} disabled={!hasPrev} aria-label="Previous desk" title="Previous desk (←)"
+                  className="p-1 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:hover:text-slate-200 dark:hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+                </button>
+                <span className="text-[11px] tabular-nums text-gray-400 dark:text-slate-500 min-w-[3rem] text-center">{position.index + 1} / {position.total}</span>
+                <button
+                  onClick={onNext} disabled={!hasNext} aria-label="Next desk" title="Next desk (→)"
+                  className="p-1 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:hover:text-slate-200 dark:hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                </button>
+              </div>
+            )}
+            <button onClick={onClose} aria-label="Close" className="p-1 text-gray-400 hover:text-gray-700 dark:hover:text-slate-200">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         {/* Body — the only scroll region */}
-        <div className="overflow-y-auto p-4 space-y-4">
+        <div ref={bodyRef} className="overflow-y-auto p-4 space-y-4">
           {/* Recap strip */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             <Recap label="Gross" value={money(desk.gross)} />
