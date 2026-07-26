@@ -5,12 +5,15 @@ import { useAuth } from '../../../../contexts/AuthContext'
 import { useToast } from '../../../../contexts/ToastContext'
 import DeskDrawer from './DeskDrawer'
 import DeparturesModal from './DeparturesModal'
+import ScorecardInterpretation from './ScorecardInterpretation'
+import ErrorBoundary from '../../../../components/ErrorBoundary'
 import {
   fetchScorecard, fetchAmazonBookers, computeFloors, deskRead, surfaceFocus, bookerTier,
   periodLabel, stepAnchor, isCurrentPeriod, anchorForRpc, todayISO,
   fetchReviews, fetchReviewsRange, setDispatcherReview, fetchUserNames, deskKeyOf,
   periodBounds, periodLabelShort, monthShort,
   money, perDriver, rpm, int, pct,
+  fetchScorecardInterpretation,
 } from './dispatcherData'
 
 const GRAINS = [['month', 'Monthly'], ['quarter', 'Quarterly'], ['half', 'Six-month'], ['year', 'Yearly']]
@@ -45,6 +48,8 @@ export default function DispatcherScorecard() {
   const [reloadTick, setReloadTick] = useState(0) // bumped by Retry to re-run the fetch
   const [selectedDesk, setSelectedDesk] = useState(null)
   const [showDepartures, setShowDepartures] = useState(false)
+  const [scInterp, setScInterp] = useState(null)       // blended page interpretation
+  const [scInterpErr, setScInterpErr] = useState(false)
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState({ key: 'gross', dir: 'desc' })
   // Monthly review sign-offs — interactive on the Monthly grain.
@@ -99,6 +104,17 @@ export default function DispatcherScorecard() {
     })()
     return () => { cancelled = true }
   }, [grain, anchor, reloadTick, monthStart])
+
+  // Blended interpretation — separate parallel fetch so a slow/failed read never
+  // holds up the scorecard.
+  useEffect(() => {
+    let cancelled = false
+    setScInterp(null); setScInterpErr(false)
+    fetchScorecardInterpretation(grain, anchor)
+      .then(d => { if (!cancelled) setScInterp(d) })
+      .catch(e => { if (!cancelled) { console.error('scorecard interpretation failed:', e); setScInterpErr(true) } })
+    return () => { cancelled = true }
+  }, [grain, anchor, reloadTick])
 
   const retry = () => setReloadTick(t => t + 1)
 
@@ -375,6 +391,11 @@ export default function DispatcherScorecard() {
         <div className={`${S.card} p-10 text-center text-gray-400 dark:text-slate-600`}>No dispatcher activity in {periodLabel(grain, anchor)}.</div>
       ) : (
         <>
+          {/* Blended interpretation — leads the scorecard */}
+          <ErrorBoundary label="the interpretation card">
+            <ScorecardInterpretation interp={scInterp} error={scInterpErr} />
+          </ErrorBoundary>
+
           {/* Company strip */}
           {company && (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">

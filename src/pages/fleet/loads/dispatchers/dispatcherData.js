@@ -137,6 +137,14 @@ export async function fetchDeparturesInterpretation(grain, anchorISO) {
   if (error) throw error
   return Array.isArray(data) ? (data[0] || null) : (data || null)
 }
+// Blended, MTD/YTD-aware read of the whole scorecard (performance + momentum +
+// efficiency + Amazon), one row. Same basis as the scorecard table.
+export async function fetchScorecardInterpretation(grain, anchorISO) {
+  const { data, error } = await withTimeout(signal =>
+    supabase.rpc('dispatcher_scorecard_interpretation', { p_grain: grain, p_anchor: anchorForRpc(grain, anchorISO) }).abortSignal(signal))
+  if (error) throw error
+  return Array.isArray(data) ? (data[0] || null) : (data || null)
+}
 
 // ── monthly review sign-off (dispatcher_reviews) ─────────────────────────────
 // desk_key convention: desk_id::text for normal desks, the literal 'amazon' for
