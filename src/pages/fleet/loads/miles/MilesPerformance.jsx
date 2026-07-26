@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { supabase } from '../../../../lib/supabase'
 import { withTimeout } from '../../../../lib/withTimeout'
@@ -136,6 +136,8 @@ export default function MilesPerformance() {
   const [range, setRange] = useState(() => periodOf(todayYmd(), 'month'))
   const [tab, setTab] = useState('driver')
   const [sort, setSort] = useState({ key: 'deadheadPct', dir: 'desc' }) // deadhead % is the point of the report
+  const [expanded, setExpanded] = useState(() => new Set()) // open row names
+  const [details, setDetails] = useState({})       // per-entity loads, cached by dimension|period|name
   const [grouped, setGrouped] = useState(null)     // server-aggregated rows (report_miles_grouped)
   const [trend, setTrend] = useState(null)
   const [interp, setInterp] = useState(null)       // timeframe-aware read (report_miles_interpretation)
@@ -158,6 +160,9 @@ export default function MilesPerformance() {
     setRange(periodOf(t, tf))
   }
   const navPeriod = (dir) => setRange(r => shiftPeriod(r, timeframe, dir))
+
+  // Collapse open rows when the dimension or period changes.
+  useEffect(() => { setExpanded(new Set()) }, [tab, range.from, range.to])
 
   // Table — server-aggregated per the active dimension. Refetches when the
   // dimension (tab) changes too, since each dimension is its own grouping.
@@ -223,6 +228,30 @@ export default function MilesPerformance() {
 
   function toggleSort(key) {
     setSort(s => (s.key === key ? { key, dir: s.dir === 'desc' ? 'asc' : 'desc' } : { key, dir: 'desc' }))
+  }
+
+  // Cache key ties a fetched detail to its dimension + period, so a late result
+  // can never land on a stale row and re-expanding never refetches.
+  const detailKey = (name) => `${tab}${range.from}${range.to}${name}`
+  async function loadDetail(name, key) {
+    setDetails(d => ({ ...d, [key]: { loading: true } }))
+    try {
+      const { data, error } = await withTimeout(signal =>
+        supabase.rpc('report_miles_loads_detail', { p_dimension: tab, p_name: name, p_start: range.from, p_end: range.to }).abortSignal(signal))
+      if (error) throw error
+      setDetails(d => ({ ...d, [key]: { loading: false, rows: data || [] } }))
+    } catch (e) {
+      console.error('miles detail failed:', e?.message || e)
+      setDetails(d => ({ ...d, [key]: { loading: false, error: true } }))
+    }
+  }
+  function toggleRow(name) {
+    const isOpen = expanded.has(name)
+    setExpanded(prev => { const n = new Set(prev); if (isOpen) n.delete(name); else n.add(name); return n })
+    if (!isOpen) {
+      const key = detailKey(name)
+      if (!details[key]) loadDetail(name, key)
+    }
   }
 
   const loading = grouped === null
@@ -341,20 +370,73 @@ export default function MilesPerformance() {
                   <Th label="Deadhead" k="deadheadPct" sort={sort} onSort={toggleSort} />
                   <Th label="Gross" k="gross" sort={sort} onSort={toggleSort} />
                   <Th label="RPM" k="rpm" sort={sort} onSort={toggleSort} />
+                  <th className={`${S.th} w-6`} />
                 </tr>
               </thead>
               <tbody>
-                {sortedRows.map(r => (
-                  <tr key={r.key} className={S.tableRow}>
-                    <td className="px-3 py-2 font-medium text-gray-900 dark:text-slate-200">{r.name}</td>
-                    <td className="px-2 py-2 text-right font-mono text-gray-600 dark:text-slate-400">{r.loads}</td>
-                    <td className="px-2 py-2 text-right font-mono text-gray-600 dark:text-slate-400">{fmtNum(r.loaded)}</td>
-                    <td className="px-2 py-2 text-right font-mono text-gray-600 dark:text-slate-400">{fmtNum(r.empty)}</td>
-                    <td className={`px-2 py-2 text-right font-mono font-semibold ${deadheadCls(r.deadheadPct)}`}>{fmtPct(r.deadheadPct)}</td>
-                    <td className="px-2 py-2 text-right font-mono text-gray-900 dark:text-slate-200">{fmtMoney(r.gross)}</td>
-                    <td className="px-2 py-2 text-right font-mono text-gray-600 dark:text-slate-400">{r.rpm == null ? '—' : fmtRpm(r.rpm)}</td>
-                  </tr>
-                ))}
+                {sortedRows.map(r => {
+                  const open = expanded.has(r.name)
+                  const d = open ? details[detailKey(r.name)] : null
+                  return (
+                    <Fragment key={r.key}>
+                      <tr onClick={() => toggleRow(r.name)} className={`${S.tableRow} cursor-pointer`}>
+                        <td className="px-3 py-2 font-medium text-gray-900 dark:text-slate-200">{r.name}</td>
+                        <td className="px-2 py-2 text-right font-mono text-gray-600 dark:text-slate-400">{r.loads}</td>
+                        <td className="px-2 py-2 text-right font-mono text-gray-600 dark:text-slate-400">{fmtNum(r.loaded)}</td>
+                        <td className="px-2 py-2 text-right font-mono text-gray-600 dark:text-slate-400">{fmtNum(r.empty)}</td>
+                        <td className={`px-2 py-2 text-right font-mono font-semibold ${deadheadCls(r.deadheadPct)}`}>{fmtPct(r.deadheadPct)}</td>
+                        <td className="px-2 py-2 text-right font-mono text-gray-900 dark:text-slate-200">{fmtMoney(r.gross)}</td>
+                        <td className="px-2 py-2 text-right font-mono text-gray-600 dark:text-slate-400">{r.rpm == null ? '—' : fmtRpm(r.rpm)}</td>
+                        <td className="px-2 py-2 text-right text-gray-400">{open ? '▾' : '▸'}</td>
+                      </tr>
+                      {open && (
+                        <tr>
+                          <td colSpan={8} className="px-3 pb-3 pt-0 bg-gray-50/60 dark:bg-white/[0.02]">
+                            {!d || d.loading ? (
+                              <div className="py-3 text-center text-[11px] text-gray-400 dark:text-slate-500">Loading loads…</div>
+                            ) : d.error ? (
+                              <div className="py-3 text-center text-[11px] text-gray-500 dark:text-slate-400">Couldn't load this breakdown.</div>
+                            ) : d.rows.length === 0 ? (
+                              <div className="py-3 text-center text-[11px] text-gray-400 dark:text-slate-500">No loads in this period.</div>
+                            ) : (
+                              <table className="w-full text-[11px]">
+                                <thead>
+                                  <tr className="text-gray-400 dark:text-slate-500">
+                                    <th className="text-left font-medium py-1">Load #</th>
+                                    <th className="text-left font-medium py-1">Lane</th>
+                                    <th className="text-left font-medium py-1">Delivered</th>
+                                    <th className="text-right font-medium py-1">Loaded</th>
+                                    <th className="text-right font-medium py-1">Empty</th>
+                                    <th className="text-right font-medium py-1">Deadhead</th>
+                                    <th className="text-right font-medium py-1">Gross</th>
+                                    <th className="text-right font-medium py-1">RPM</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {d.rows.map((l, i) => {
+                                    const dh = l.deadhead_pct == null ? null : Number(l.deadhead_pct) / 100
+                                    return (
+                                      <tr key={`${l.load_number}-${i}`} className="border-t border-gray-100 dark:border-white/5">
+                                        <td className="py-1 font-mono text-gray-700 dark:text-slate-300">{l.load_number}</td>
+                                        <td className="py-1 text-gray-500 dark:text-slate-400">{l.origin} → {l.destination}</td>
+                                        <td className="py-1 font-mono text-gray-500 dark:text-slate-400">{l.delivery_date}</td>
+                                        <td className="py-1 text-right font-mono text-gray-600 dark:text-slate-400">{fmtNum(l.loaded_mi)}</td>
+                                        <td className="py-1 text-right font-mono text-gray-600 dark:text-slate-400">{fmtNum(l.empty_mi)}</td>
+                                        <td className={`py-1 text-right font-mono font-semibold ${deadheadCls(dh)}`}>{fmtPct(dh)}</td>
+                                        <td className="py-1 text-right font-mono text-gray-700 dark:text-slate-300">{fmtMoney(l.gross)}</td>
+                                        <td className="py-1 text-right font-mono text-gray-600 dark:text-slate-400">{l.rpm == null ? '—' : fmtRpm(l.rpm)}</td>
+                                      </tr>
+                                    )
+                                  })}
+                                </tbody>
+                              </table>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  )
+                })}
               </tbody>
               {totals && (
                 <tfoot>
@@ -366,6 +448,7 @@ export default function MilesPerformance() {
                     <td className={`px-2 py-2 text-right font-mono ${deadheadCls(totals.deadheadPct)}`}>{fmtPct(totals.deadheadPct)}</td>
                     <td className="px-2 py-2 text-right font-mono text-gray-900 dark:text-white">{fmtMoney(totals.gross)}</td>
                     <td className="px-2 py-2 text-right font-mono text-gray-700 dark:text-slate-300">{totals.rpm == null ? '—' : fmtRpm(totals.rpm)}</td>
+                    <td />
                   </tr>
                 </tfoot>
               )}
