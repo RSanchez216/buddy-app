@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { supabase } from '../../../../lib/supabase'
 import { withTimeout } from '../../../../lib/withTimeout'
@@ -9,12 +9,15 @@ import MilesInterpretation from './MilesInterpretation'
 import { drawInterpretationPdf } from './milesInterpPdf'
 import { fmtMoney, fmtNum, fmtRpm } from '../spotlight/spotlightShared'
 
-// Miles & Performance — loaded vs. empty miles, RPM, and deadhead by driver /
-// dispatcher / region for a selected period, with a rolling deadhead trend,
-// load-level drill-down, and Excel/PDF export. Source RPCs (already shipped):
-//   report_miles_loads(start,end)  — one row per leg; TONU/combined excluded,
-//                                     empty is override-aware (effective deadhead)
-//   deadhead_trend(grain,end,n)    — rolling empty/loaded/deadhead by bucket
+// Deadhead Analysis — loaded vs. empty miles, RPM, and deadhead by driver /
+// dispatcher / region for a selected period, with a rolling deadhead trend and
+// Excel/PDF export. Source RPCs (already shipped):
+//   report_miles_grouped(dim,start,end) — server-aggregated rows per dimension;
+//                                     no 1,000-row cap, same basis + to-date
+//                                     clamp as report_miles_interpretation, so
+//                                     table and card always agree
+//   report_miles_interpretation(...)    — the interpretation card's read
+//   deadhead_trend(grain,end,n)         — rolling empty/loaded/deadhead by bucket
 
 // ── date helpers (local Y-M-D, no UTC shift) ────────────────────────────────
 const CT = 'America/Chicago'
@@ -83,32 +86,28 @@ function deadheadBarCls(pct) {
 const fmtPct = (p) => (p == null ? '—' : `${(p * 100).toFixed(1)}%`)
 
 // ── aggregation ──────────────────────────────────────────────────────────────
-function aggregate(loads, keyField, nameField) {
-  const map = new Map()
-  for (const l of loads) {
-    const key = l[keyField] ?? '—'
-    let g = map.get(key)
-    if (!g) { g = { key, name: (nameField ? l[nameField] : l[keyField]) || '—', isTeam: false, loads: 0, loaded: 0, empty: 0, gross: 0, drivers: new Set() }; map.set(key, g) }
-    if (l.team_id) g.isTeam = true
-    g.loads++
-    g.loaded += Number(l.loaded_mi) || 0
-    g.empty += Number(l.empty_mi) || 0
-    g.gross += Number(l.gross) || 0
-    if (l.driver_id) g.drivers.add(l.driver_id)
-  }
-  return [...map.values()].map(g => {
-    const total = g.loaded + g.empty
-    return { ...g, drivers: g.drivers.size, deadheadPct: total > 0 ? g.empty / total : null, rpm: g.loaded > 0 ? g.gross / g.loaded : null }
-  })
+// Rows come pre-aggregated from report_miles_grouped (no 1,000-row cap, same
+// basis + to-date clamp as the interpretation card). deadhead_pct arrives as a
+// percentage (e.g. 18.3); store it as a fraction so the shared fmtPct /
+// deadheadCls helpers (which ×100) render it correctly.
+function mapGrouped(data) {
+  return (data || []).map(g => ({
+    key: g.name || '—',
+    name: g.name || '—',
+    loads: Number(g.loads) || 0,
+    loaded: Number(g.loaded_mi) || 0,
+    empty: Number(g.empty_mi) || 0,
+    gross: Number(g.gross) || 0,
+    deadheadPct: g.deadhead_pct == null ? null : Number(g.deadhead_pct) / 100,
+    rpm: g.rpm == null ? null : Number(g.rpm),
+  }))
 }
-function fleetTotals(loads) {
-  const t = loads.reduce((a, l) => {
-    a.loads++; a.loaded += Number(l.loaded_mi) || 0; a.empty += Number(l.empty_mi) || 0; a.gross += Number(l.gross) || 0
-    if (l.driver_id) a.drivers.add(l.driver_id)
-    return a
-  }, { loads: 0, loaded: 0, empty: 0, gross: 0, drivers: new Set() })
+// Fleet total from summed empty / total miles — NOT an average of the per-row
+// percentages. Equals the interpretation card's overall.
+function computeTotals(rows) {
+  const t = rows.reduce((a, r) => { a.loads += r.loads; a.loaded += r.loaded; a.empty += r.empty; a.gross += r.gross; return a }, { loads: 0, loaded: 0, empty: 0, gross: 0 })
   const total = t.loaded + t.empty
-  return { ...t, drivers: t.drivers.size, deadheadPct: total > 0 ? t.empty / total : null, rpm: t.loaded > 0 ? t.gross / t.loaded : null }
+  return { ...t, deadheadPct: total > 0 ? t.empty / total : null, rpm: t.loaded > 0 ? t.gross / t.loaded : null }
 }
 function sortRows(rows, sort) {
   const mul = sort.dir === 'asc' ? 1 : -1
@@ -124,11 +123,12 @@ function sortRows(rows, sort) {
 }
 
 const TABS = [
-  // By Driver groups by performance unit (team or solo driver), not the raw
-  // driver — a team shows as one combined line, no zero-mile co-driver row.
-  { key: 'driver', label: 'By Driver', keyField: 'unit_id', nameField: 'unit_name', head: 'Driver / Team', showDrivers: false },
-  { key: 'dispatcher', label: 'By Dispatcher', keyField: 'dispatcher_id', nameField: 'dispatcher_name', head: 'Dispatcher', showDrivers: true },
-  { key: 'region', label: 'By Region', keyField: 'region', nameField: null, head: 'Region', showDrivers: true },
+  // Grouped server-side (report_miles_grouped) by the same key the interpretation
+  // card uses. By Driver is per individual driver (not team unit) so the table
+  // and card agree on who's flagged.
+  { key: 'driver', label: 'By Driver', head: 'Driver' },
+  { key: 'dispatcher', label: 'By Dispatcher', head: 'Dispatcher' },
+  { key: 'region', label: 'By Region', head: 'Region' },
 ]
 
 export default function MilesPerformance() {
@@ -136,12 +136,11 @@ export default function MilesPerformance() {
   const [range, setRange] = useState(() => periodOf(todayYmd(), 'month'))
   const [tab, setTab] = useState('driver')
   const [sort, setSort] = useState({ key: 'deadheadPct', dir: 'desc' }) // deadhead % is the point of the report
-  const [expanded, setExpanded] = useState(() => new Set())
-  const [loads, setLoads] = useState(null)
+  const [grouped, setGrouped] = useState(null)     // server-aggregated rows (report_miles_grouped)
   const [trend, setTrend] = useState(null)
   const [interp, setInterp] = useState(null)       // timeframe-aware read (report_miles_interpretation)
   const [interpErr, setInterpErr] = useState(false)
-  const [loadsErr, setLoadsErr] = useState(false) // main table/totals panel
+  const [groupedErr, setGroupedErr] = useState(false) // main table/totals panel
   const [trendErr, setTrendErr] = useState(false) // rolling-trend chart panel
   const [reloadKey, setReloadKey] = useState(0)    // bump to re-run the fetch (Retry)
   const chartRef = useRef(null)
@@ -160,32 +159,33 @@ export default function MilesPerformance() {
   }
   const navPeriod = (dir) => setRange(r => shiftPeriod(r, timeframe, dir))
 
-  useEffect(() => { setExpanded(new Set()) }, [tab, range.from, range.to])
-
+  // Table — server-aggregated per the active dimension. Refetches when the
+  // dimension (tab) changes too, since each dimension is its own grouping.
   useEffect(() => {
     let stale = false
-    // Control change (period / timeframe) or Retry returns both panels to
-    // loading — never leave stale data on screen while refetching.
-    setLoads(null); setTrend(null)
-    setLoadsErr(false); setTrendErr(false)
-    const [g, periods] = TREND[timeframe]
-    withTimeout(signal => Promise.all([
-      supabase.rpc('report_miles_loads', { p_start: range.from, p_end: range.to }).abortSignal(signal),
-      supabase.rpc('deadhead_trend', { p_grain: g, p_end: range.to, p_periods: periods }).abortSignal(signal),
-    ])).then(([a, c]) => {
-      if (stale) return
-      // Per-panel: a failed query becomes that panel's error state, never an
-      // empty "No loads" / "No trend data" render (which reads as a real empty
-      // period).
-      if (a.error) { console.error('miles loads failed:', a.error); setLoadsErr(true) } else { setLoads(a.data || []) }
-      if (c.error) { console.error('deadhead trend failed:', c.error); setTrendErr(true) } else { setTrend(c.data || []) }
-    }).catch((e) => {
-      if (stale) return
-      console.error('Miles & performance load failed:', e)
-      setLoadsErr(true); setTrendErr(true)
-    })
+    setGrouped(null); setGroupedErr(false)
+    withTimeout(signal => supabase.rpc('report_miles_grouped', { p_dimension: tab, p_start: range.from, p_end: range.to }).abortSignal(signal))
+      .then(({ data, error }) => {
+        if (stale) return
+        if (error) { console.error('miles grouped failed:', error); setGroupedErr(true) } else { setGrouped(data || []) }
+      })
+      .catch((e) => { if (stale) return; console.error('miles grouped failed:', e); setGroupedErr(true) })
     return () => { stale = true }
-  }, [range.from, range.to, timeframe, reloadKey])
+  }, [range, timeframe, tab, reloadKey])
+
+  // Rolling deadhead trend — fleet-wide, independent of the active dimension.
+  useEffect(() => {
+    let stale = false
+    setTrend(null); setTrendErr(false)
+    const [g, periods] = TREND[timeframe]
+    withTimeout(signal => supabase.rpc('deadhead_trend', { p_grain: g, p_end: range.to, p_periods: periods }).abortSignal(signal))
+      .then(({ data, error }) => {
+        if (stale) return
+        if (error) { console.error('deadhead trend failed:', error); setTrendErr(true) } else { setTrend(data || []) }
+      })
+      .catch((e) => { if (stale) return; console.error('deadhead trend failed:', e); setTrendErr(true) })
+    return () => { stale = true }
+  }, [range, timeframe, reloadKey])
 
   // Interpretation card — separate parallel fetch (~1.3s) so a slow/failed read
   // never holds up the table. Same triggers as the table fetch.
@@ -202,9 +202,9 @@ export default function MilesPerformance() {
   }, [range, timeframe, reloadKey])
 
   const tabDef = TABS.find(t => t.key === tab)
-  const rows = useMemo(() => (loads ? aggregate(loads, tabDef.keyField, tabDef.nameField) : []), [loads, tabDef])
+  const rows = useMemo(() => mapGrouped(grouped), [grouped])
   const sortedRows = useMemo(() => sortRows(rows, sort), [rows, sort])
-  const totals = useMemo(() => (loads ? fleetTotals(loads) : null), [loads])
+  const totals = useMemo(() => (rows.length ? computeTotals(rows) : null), [rows])
 
   const trendData = useMemo(() => {
     if (!trend) return []
@@ -224,11 +224,8 @@ export default function MilesPerformance() {
   function toggleSort(key) {
     setSort(s => (s.key === key ? { key, dir: s.dir === 'desc' ? 'asc' : 'desc' } : { key, dir: 'desc' }))
   }
-  function toggleRow(key) {
-    setExpanded(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n })
-  }
 
-  const loading = loads === null
+  const loading = grouped === null
 
   return (
     <div className="space-y-4">
@@ -321,9 +318,9 @@ export default function MilesPerformance() {
 
       {/* Summary table + accordion */}
       <div className={`${S.card} overflow-hidden`}>
-        {loadsErr ? (
+        {groupedErr ? (
           <div className="p-10 flex flex-col items-center gap-3 text-center">
-            <p className="text-sm text-gray-600 dark:text-slate-400">Couldn't load miles &amp; performance.</p>
+            <p className="text-sm text-gray-600 dark:text-slate-400">Couldn't load the deadhead breakdown.</p>
             <button onClick={retry} className={S.btnSecondary}>Retry</button>
           </div>
         ) : loading ? (
@@ -344,72 +341,20 @@ export default function MilesPerformance() {
                   <Th label="Deadhead" k="deadheadPct" sort={sort} onSort={toggleSort} />
                   <Th label="Gross" k="gross" sort={sort} onSort={toggleSort} />
                   <Th label="RPM" k="rpm" sort={sort} onSort={toggleSort} />
-                  {tabDef.showDrivers && <Th label="Drivers" k="drivers" sort={sort} onSort={toggleSort} />}
-                  <th className={`${S.th} w-6`} />
                 </tr>
               </thead>
               <tbody>
-                {sortedRows.map(r => {
-                  const open = expanded.has(r.key)
-                  const rowLoads = open ? loads.filter(l => (l[tabDef.keyField] ?? '—') === r.key).sort((a, b) => (Number(b.empty_mi) || 0) - (Number(a.empty_mi) || 0)) : []
-                  return (
-                    <Fragment key={r.key}>
-                      <tr onClick={() => toggleRow(r.key)} className={`${S.tableRow} cursor-pointer`}>
-                        <td className="px-3 py-2 font-medium text-gray-900 dark:text-slate-200">
-                          <span className="inline-flex items-center gap-1.5">
-                            {tab === 'driver' && r.isTeam && <TeamIcon />}
-                            {r.name}
-                          </span>
-                        </td>
-                        <td className="px-2 py-2 text-right font-mono text-gray-600 dark:text-slate-400">{r.loads}</td>
-                        <td className="px-2 py-2 text-right font-mono text-gray-600 dark:text-slate-400">{fmtNum(r.loaded)}</td>
-                        <td className="px-2 py-2 text-right font-mono text-gray-600 dark:text-slate-400">{fmtNum(r.empty)}</td>
-                        <td className={`px-2 py-2 text-right font-mono font-semibold ${deadheadCls(r.deadheadPct)}`}>{fmtPct(r.deadheadPct)}</td>
-                        <td className="px-2 py-2 text-right font-mono text-gray-900 dark:text-slate-200">{fmtMoney(r.gross)}</td>
-                        <td className="px-2 py-2 text-right font-mono text-gray-600 dark:text-slate-400">{r.rpm == null ? '—' : fmtRpm(r.rpm)}</td>
-                        {tabDef.showDrivers && <td className="px-2 py-2 text-right font-mono text-gray-600 dark:text-slate-400">{r.drivers}</td>}
-                        <td className="px-2 py-2 text-right text-gray-400">{open ? '▾' : '▸'}</td>
-                      </tr>
-                      {open && (
-                        <tr>
-                          <td colSpan={tabDef.showDrivers ? 9 : 8} className="px-3 pb-3 pt-0 bg-gray-50/60 dark:bg-white/[0.02]">
-                            <table className="w-full text-[11px]">
-                              <thead>
-                                <tr className="text-gray-400 dark:text-slate-500">
-                                  <th className="text-left font-medium py-1">Load</th>
-                                  <th className="text-left font-medium py-1">Lane</th>
-                                  <th className="text-right font-medium py-1">Loaded</th>
-                                  <th className="text-right font-medium py-1">Empty</th>
-                                  <th className="text-right font-medium py-1">Deadhead</th>
-                                  <th className="text-right font-medium py-1">Gross</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {rowLoads.map(l => {
-                                  const lo = Number(l.loaded_mi) || 0, em = Number(l.empty_mi) || 0
-                                  const dh = lo + em > 0 ? em / (lo + em) : null
-                                  return (
-                                    <tr key={l.leg_id} className="border-t border-gray-100 dark:border-white/5">
-                                      <td className="py-1 font-mono text-gray-700 dark:text-slate-300">
-                                        {l.load_number}
-                                        {tab === 'driver' && r.isTeam && l.driver_name && <span className="ml-1.5 font-sans text-[10px] text-gray-400 dark:text-slate-500">· {l.driver_name}</span>}
-                                      </td>
-                                      <td className="py-1 text-gray-500 dark:text-slate-400">{l.origin} → {l.destination}</td>
-                                      <td className="py-1 text-right font-mono text-gray-600 dark:text-slate-400">{fmtNum(lo)}</td>
-                                      <td className="py-1 text-right font-mono text-gray-600 dark:text-slate-400">{fmtNum(em)}</td>
-                                      <td className={`py-1 text-right font-mono ${deadheadCls(dh)}`}>{fmtPct(dh)}</td>
-                                      <td className="py-1 text-right font-mono text-gray-700 dark:text-slate-300">{fmtMoney(l.gross)}</td>
-                                    </tr>
-                                  )
-                                })}
-                              </tbody>
-                            </table>
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
-                  )
-                })}
+                {sortedRows.map(r => (
+                  <tr key={r.key} className={S.tableRow}>
+                    <td className="px-3 py-2 font-medium text-gray-900 dark:text-slate-200">{r.name}</td>
+                    <td className="px-2 py-2 text-right font-mono text-gray-600 dark:text-slate-400">{r.loads}</td>
+                    <td className="px-2 py-2 text-right font-mono text-gray-600 dark:text-slate-400">{fmtNum(r.loaded)}</td>
+                    <td className="px-2 py-2 text-right font-mono text-gray-600 dark:text-slate-400">{fmtNum(r.empty)}</td>
+                    <td className={`px-2 py-2 text-right font-mono font-semibold ${deadheadCls(r.deadheadPct)}`}>{fmtPct(r.deadheadPct)}</td>
+                    <td className="px-2 py-2 text-right font-mono text-gray-900 dark:text-slate-200">{fmtMoney(r.gross)}</td>
+                    <td className="px-2 py-2 text-right font-mono text-gray-600 dark:text-slate-400">{r.rpm == null ? '—' : fmtRpm(r.rpm)}</td>
+                  </tr>
+                ))}
               </tbody>
               {totals && (
                 <tfoot>
@@ -421,8 +366,6 @@ export default function MilesPerformance() {
                     <td className={`px-2 py-2 text-right font-mono ${deadheadCls(totals.deadheadPct)}`}>{fmtPct(totals.deadheadPct)}</td>
                     <td className="px-2 py-2 text-right font-mono text-gray-900 dark:text-white">{fmtMoney(totals.gross)}</td>
                     <td className="px-2 py-2 text-right font-mono text-gray-700 dark:text-slate-300">{totals.rpm == null ? '—' : fmtRpm(totals.rpm)}</td>
-                    {tabDef.showDrivers && <td className="px-2 py-2 text-right font-mono text-gray-700 dark:text-slate-300">{totals.drivers}</td>}
-                    <td />
                   </tr>
                 </tfoot>
               )}
@@ -439,33 +382,23 @@ export default function MilesPerformance() {
 
   // ── exports (inside component to capture current cut/range/data) ────────────
   async function exportExcel() {
-    if (!loads) return
+    if (!grouped) return
     const mod = await import('xlsx')
     const XLSX = mod && mod.utils ? mod : (mod.default ?? mod)
     if (!XLSX?.utils) return
     const summary = sortedRows.map(r => ({
       [tabDef.head]: r.name, Loads: r.loads, Loaded_mi: Math.round(r.loaded), Empty_mi: Math.round(r.empty),
       Deadhead_pct: r.deadheadPct == null ? '' : +(r.deadheadPct * 100).toFixed(1), Gross: Math.round(r.gross),
-      RPM: r.rpm == null ? '' : +r.rpm.toFixed(2), ...(tabDef.showDrivers ? { Drivers: r.drivers } : {}),
+      RPM: r.rpm == null ? '' : +r.rpm.toFixed(2),
     }))
-    if (totals) summary.push({ [tabDef.head]: 'Fleet total', Loads: totals.loads, Loaded_mi: Math.round(totals.loaded), Empty_mi: Math.round(totals.empty), Deadhead_pct: totals.deadheadPct == null ? '' : +(totals.deadheadPct * 100).toFixed(1), Gross: Math.round(totals.gross), RPM: totals.rpm == null ? '' : +totals.rpm.toFixed(2), ...(tabDef.showDrivers ? { Drivers: totals.drivers } : {}) })
-    const loadRows = loads.map(l => {
-      const lo = Number(l.loaded_mi) || 0, em = Number(l.empty_mi) || 0
-      return {
-        Load: l.load_number, Unit: l.unit_name, Driver: l.driver_name, Dispatcher: l.dispatcher_name, Region: l.region,
-        Origin: l.origin, Destination: l.destination, Loaded_mi: Math.round(lo), Empty_mi: Math.round(em),
-        Deadhead_pct: lo + em > 0 ? +((em / (lo + em)) * 100).toFixed(1) : '', Gross: Math.round(Number(l.gross) || 0),
-        RPM_loaded: l.rpm_loaded == null ? '' : +Number(l.rpm_loaded).toFixed(2), Delivery: l.delivery_date,
-      }
-    })
+    if (totals) summary.push({ [tabDef.head]: 'Fleet total', Loads: totals.loads, Loaded_mi: Math.round(totals.loaded), Empty_mi: Math.round(totals.empty), Deadhead_pct: totals.deadheadPct == null ? '' : +(totals.deadheadPct * 100).toFixed(1), Gross: Math.round(totals.gross), RPM: totals.rpm == null ? '' : +totals.rpm.toFixed(2) })
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summary), 'Summary')
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(loadRows), 'Loads')
     XLSX.writeFile(wb, `DeadheadAnalysis_${tab}_${range.from}_to_${range.to}.xlsx`)
   }
 
   async function exportPdf() {
-    if (!loads) return
+    if (!grouped) return
     const { default: jsPDF } = await import('jspdf')
     const { default: autoTable } = await import('jspdf-autotable')
     const pdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' })
@@ -498,21 +431,12 @@ export default function MilesPerformance() {
         pdf.addImage(png, 'PNG', 24, y, iw, ih); y += ih + 14
       }
     } catch (e) { console.error('trend snapshot failed', e) }
-    const cols = [tabDef.head, 'Loads', 'Loaded', 'Empty', 'Deadhead', 'Gross', 'RPM', ...(tabDef.showDrivers ? ['Drivers'] : [])]
-    const body = sortedRows.map(r => [r.name, r.loads, fmtNum(r.loaded), fmtNum(r.empty), fmtPct(r.deadheadPct), fmtMoney(r.gross), r.rpm == null ? '—' : fmtRpm(r.rpm), ...(tabDef.showDrivers ? [r.drivers] : [])])
-    if (totals) body.push(['Fleet total', totals.loads, fmtNum(totals.loaded), fmtNum(totals.empty), fmtPct(totals.deadheadPct), fmtMoney(totals.gross), totals.rpm == null ? '—' : fmtRpm(totals.rpm), ...(tabDef.showDrivers ? [totals.drivers] : [])])
+    const cols = [tabDef.head, 'Loads', 'Loaded', 'Empty', 'Deadhead', 'Gross', 'RPM']
+    const body = sortedRows.map(r => [r.name, r.loads, fmtNum(r.loaded), fmtNum(r.empty), fmtPct(r.deadheadPct), fmtMoney(r.gross), r.rpm == null ? '—' : fmtRpm(r.rpm)])
+    if (totals) body.push(['Fleet total', totals.loads, fmtNum(totals.loaded), fmtNum(totals.empty), fmtPct(totals.deadheadPct), fmtMoney(totals.gross), totals.rpm == null ? '—' : fmtRpm(totals.rpm)])
     autoTable(pdf, { head: [cols], body, startY: y, styles: { fontSize: 8 }, headStyles: { fillColor: [234, 88, 12] } })
     pdf.save(`DeadheadAnalysis_${tab}_${range.from}_to_${range.to}.pdf`)
   }
-}
-
-// Team-unit glyph (users) — marks a By-Driver row that is a team, not a solo.
-function TeamIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="w-3.5 h-3.5 shrink-0 text-gray-400 dark:text-slate-500" aria-label="Team">
-      <path d="M17 20h5v-2a3 3 0 0 0-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 0 1 5.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 0 1 9.288 0M15 7a3 3 0 1 1-6 0 3 3 0 0 1 6 0z" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
 }
 
 // Sortable header cell.
