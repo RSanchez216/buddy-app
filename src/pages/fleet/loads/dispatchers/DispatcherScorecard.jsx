@@ -6,6 +6,7 @@ import { useToast } from '../../../../contexts/ToastContext'
 import DeskDrawer from './DeskDrawer'
 import DeparturesModal from './DeparturesModal'
 import ScorecardInterpretation from './ScorecardInterpretation'
+import { drawScorecardInterpPdf } from './scorecardInterpPdf'
 import ErrorBoundary from '../../../../components/ErrorBoundary'
 import {
   fetchScorecard, fetchAmazonBookers, computeFloors, deskRead, surfaceFocus, bookerTier,
@@ -293,6 +294,11 @@ export default function DispatcherScorecard() {
       )
 
       let y = 82
+      // Interpretation card (vector) — leads the report, above the tables.
+      if (scInterp?.overall) {
+        const pw = doc.internal.pageSize.getWidth()
+        y = drawScorecardInterpPdf(doc, scInterp, M, y, pw - 2 * M) + 16
+      }
       if (focus.length > 0) {
         doc.setFontSize(12); doc.setTextColor(20); doc.text('Desks to focus on', M, y)
         autoTable(doc, {
