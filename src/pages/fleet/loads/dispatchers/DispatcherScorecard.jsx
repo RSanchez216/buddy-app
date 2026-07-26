@@ -67,7 +67,10 @@ export default function DispatcherScorecard() {
 
   // Build a fresh URLSearchParams each time — mutating the object react-router
   // handed us can trigger an extra render (and a duplicate fetch).
-  const setGrain = (g) => setParams(prev => { const p = new URLSearchParams(prev); p.set('grain', g); p.set('anchor', anchorForRpc(g, anchor)); return p }, { replace: true })
+  // Changing grain resets to the CURRENT period for the new grain (based on
+  // today), not the carried-over anchor — otherwise Year→Month would land on
+  // January. Stepping ◀ ▶ still moves within the selected grain.
+  const setGrain = (g) => setParams(prev => { const p = new URLSearchParams(prev); p.set('grain', g); p.set('anchor', anchorForRpc(g, todayISO())); return p }, { replace: true })
   const step = (dir) => setParams(prev => { const p = new URLSearchParams(prev); p.set('grain', grain); p.set('anchor', stepAnchor(grain, anchor, dir)); return p }, { replace: true })
   const goCurrent = () => setParams(prev => { const p = new URLSearchParams(prev); p.set('grain', grain); p.set('anchor', anchorForRpc(grain, todayISO())); return p }, { replace: true })
 
