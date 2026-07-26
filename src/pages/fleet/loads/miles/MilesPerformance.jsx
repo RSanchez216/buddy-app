@@ -138,7 +138,6 @@ export default function MilesPerformance() {
   const [sort, setSort] = useState({ key: 'deadheadPct', dir: 'desc' }) // deadhead % is the point of the report
   const [expanded, setExpanded] = useState(() => new Set())
   const [loads, setLoads] = useState(null)
-  const [priorLoads, setPriorLoads] = useState(null)
   const [trend, setTrend] = useState(null)
   const [interp, setInterp] = useState(null)       // timeframe-aware read (report_miles_interpretation)
   const [interpErr, setInterpErr] = useState(false)
@@ -167,22 +166,18 @@ export default function MilesPerformance() {
     let stale = false
     // Control change (period / timeframe) or Retry returns both panels to
     // loading — never leave stale data on screen while refetching.
-    setLoads(null); setPriorLoads(null); setTrend(null)
+    setLoads(null); setTrend(null)
     setLoadsErr(false); setTrendErr(false)
-    const prior = shiftPeriod(range, timeframe, -1)
     const [g, periods] = TREND[timeframe]
     withTimeout(signal => Promise.all([
       supabase.rpc('report_miles_loads', { p_start: range.from, p_end: range.to }).abortSignal(signal),
-      supabase.rpc('report_miles_loads', { p_start: prior.from, p_end: prior.to }).abortSignal(signal),
       supabase.rpc('deadhead_trend', { p_grain: g, p_end: range.to, p_periods: periods }).abortSignal(signal),
-    ])).then(([a, b, c]) => {
+    ])).then(([a, c]) => {
       if (stale) return
       // Per-panel: a failed query becomes that panel's error state, never an
       // empty "No loads" / "No trend data" render (which reads as a real empty
-      // period). Prior-period loads only drive the vs-prior delta — if it
-      // fails, drop the delta silently rather than erroring a whole panel.
+      // period).
       if (a.error) { console.error('miles loads failed:', a.error); setLoadsErr(true) } else { setLoads(a.data || []) }
-      setPriorLoads(b.error ? [] : (b.data || []))
       if (c.error) { console.error('deadhead trend failed:', c.error); setTrendErr(true) } else { setTrend(c.data || []) }
     }).catch((e) => {
       if (stale) return
@@ -210,7 +205,6 @@ export default function MilesPerformance() {
   const rows = useMemo(() => (loads ? aggregate(loads, tabDef.keyField, tabDef.nameField) : []), [loads, tabDef])
   const sortedRows = useMemo(() => sortRows(rows, sort), [rows, sort])
   const totals = useMemo(() => (loads ? fleetTotals(loads) : null), [loads])
-  const priorTotals = useMemo(() => (priorLoads ? fleetTotals(priorLoads) : null), [priorLoads])
 
   const trendData = useMemo(() => {
     if (!trend) return []
@@ -235,8 +229,6 @@ export default function MilesPerformance() {
   }
 
   const loading = loads === null
-  // vs-prior deadhead delta (percentage points; up = worse).
-  const delta = totals?.deadheadPct != null && priorTotals?.deadheadPct != null ? (totals.deadheadPct - priorTotals.deadheadPct) : null
 
   return (
     <div className="space-y-4">
@@ -270,15 +262,15 @@ export default function MilesPerformance() {
             <button onClick={() => navPeriod(1)} className="px-2 py-1.5 rounded-lg border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5" aria-label="Next period">▶</button>
           </div>
         )}
-        {/* deadhead + vs-prior delta */}
-        {totals?.deadheadPct != null && (
+        {/* deadhead + vs-prior delta — same source as the interpretation card */}
+        {interp?.overall?.dh != null && (
           <span className="inline-flex items-center gap-1.5 text-sm">
-            <span className={`font-mono font-semibold ${deadheadCls(totals.deadheadPct)}`}>{fmtPct(totals.deadheadPct)}</span>
+            <span className={`font-mono font-semibold ${deadheadCls(interp.overall.dh / 100)}`}>{interp.overall.dh.toFixed(1)}%</span>
             <span className="text-[11px] text-gray-400 dark:text-slate-500">deadhead</span>
-            {delta != null && Math.abs(delta) >= 0.0005 && (
-              <span className={`text-[11px] font-mono ${delta > 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}
-                title={`vs ${periodLabel(shiftPeriod(range, timeframe, -1), timeframe)}`}>
-                {delta > 0 ? '▲' : '▼'}{Math.abs(delta * 100).toFixed(1)}
+            {interp.dh_delta != null && Math.abs(interp.dh_delta) >= 0.05 && (
+              <span className={`text-[11px] font-mono ${interp.dh_delta > 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}
+                title="vs prior period">
+                {interp.dh_delta > 0 ? '▲' : '▼'}{Math.abs(interp.dh_delta).toFixed(1)}
               </span>
             )}
           </span>

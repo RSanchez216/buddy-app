@@ -217,7 +217,12 @@ export default function App() {
               } />
               <Route path="fleet/profitability/miles-performance" element={
                 <RequirePageAccess pageKey="miles_performance">
-                  <ErrorBoundary label="Miles & Performance">
+                  <ErrorBoundary label="Miles & Performance" fallback={
+                    <div className="m-6 rounded-xl border border-red-200 dark:border-red-500/20 bg-red-50/60 dark:bg-red-500/[0.06] px-4 py-8 text-center">
+                      <p className="text-sm text-red-700 dark:text-red-300 mb-3">Something went wrong loading this view.</p>
+                      <button onClick={() => window.location.reload()} className="px-3 py-1.5 text-sm font-semibold rounded-lg border border-red-300 dark:border-red-500/40 text-red-700 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-500/10">Reload</button>
+                    </div>
+                  }>
                     <Suspense fallback={<div className="p-8 text-sm text-gray-400 dark:text-slate-500">Loading miles & performance…</div>}>
                       <MilesPerformance />
                     </Suspense>

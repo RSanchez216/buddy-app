@@ -91,7 +91,7 @@ function Callout({ icon, title, flag, bright, reason, context, ring }) {
 
 function FrameCard({ children }) {
   return (
-    <div className="rounded-xl border-2 border-orange-500 bg-orange-50/40 dark:bg-orange-500/[0.05] p-2.5">
+    <div className="rounded-xl bg-orange-50/40 dark:bg-orange-500/[0.05] p-2.5" style={{ borderWidth: '2px', borderStyle: 'solid', borderColor: '#F97316' }}>
       <div className="rounded-lg bg-white dark:bg-[#0d0d1f] shadow-sm p-4 space-y-3">{children}</div>
     </div>
   )
