@@ -586,6 +586,8 @@ export default function DispatcherScorecard() {
         hasPrev={selectedIndex > 0}
         hasNext={selectedIndex >= 0 && selectedIndex < shownDesks.length - 1}
         position={selectedIndex >= 0 ? { index: selectedIndex, total: shownDesks.length } : null}
+        prevDesk={selectedIndex > 0 ? shownDesks[selectedIndex - 1] : null}
+        nextDesk={selectedIndex >= 0 && selectedIndex < shownDesks.length - 1 ? shownDesks[selectedIndex + 1] : null}
       />
 
       <DeparturesModal

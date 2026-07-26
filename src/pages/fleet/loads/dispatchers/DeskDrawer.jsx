@@ -4,6 +4,29 @@ import { S } from '../../../../lib/styles'
 import { fetchDeskDrivers, deskRead, readChips, deskKeyOf, money, perDriver, rpm, int, periodBounds, periodLabel, todayISO } from './dispatcherData'
 import BandPill from './BandPill'
 
+// Per-desk roster cache so ← / → navigation renders instantly instead of waiting
+// on a fresh dispatcher_desk_drivers call. Keyed by desk + timeframe, so a
+// grain/anchor change simply misses (never a stale hit) — no invalidation needed;
+// the roster is independent of the table's sort/filter. Grows for the session.
+const rosterCache = new Map()   // key → resolved rows
+const rosterInflight = new Map() // key → in-flight Promise (dedupes prefetch vs open)
+const rosterKey = (deskId, grain, anchor) => `${deskId}:${grain}:${anchor}`
+function loadRoster(deskId, grain, anchor) {
+  const key = rosterKey(deskId, grain, anchor)
+  if (rosterCache.has(key)) return Promise.resolve(rosterCache.get(key))
+  let p = rosterInflight.get(key)
+  if (!p) {
+    p = fetchDeskDrivers(deskId, grain, anchor)
+      .then(d => { rosterCache.set(key, d); rosterInflight.delete(key); return d })
+      .catch(e => { rosterInflight.delete(key); throw e }) // don't cache failures — a real open retries
+    rosterInflight.set(key, p)
+  }
+  return p
+}
+function prefetchRoster(deskId, grain, anchor) {
+  if (deskId) loadRoster(deskId, grain, anchor).catch(() => {})
+}
+
 // Centered modal for one desk — the content is wide-shaped (roster + departed
 // side by side), so it gets width, not a narrow drawer column. Roster data
 // (dispatcher_desk_drivers) is fetched on open so the leaderboard never waits.
@@ -48,7 +71,7 @@ function lastDayISO(endExclusiveISO) {
   return `${dt.getUTCFullYear()}-${p(dt.getUTCMonth() + 1)}-${p(dt.getUTCDate())}`
 }
 
-export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgress = false, monthly = false, review, reviewerName, canEdit = false, monthLabel, onSaveReview, onClose, onPrev, onNext, hasPrev = false, hasNext = false, position = null }) {
+export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgress = false, monthly = false, review, reviewerName, canEdit = false, monthLabel, onSaveReview, onClose, onPrev, onNext, hasPrev = false, hasNext = false, position = null, prevDesk = null, nextDesk = null }) {
   const [rows, setRows] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -67,10 +90,14 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgre
   useEffect(() => {
     if (!open || !desk?.desk_id) return
     let cancelled = false
+    const key = rosterKey(desk.desk_id, grain, anchor)
     ;(async () => {
+      // Cached (from a prior open or a neighbour prefetch) → render instantly.
+      if (rosterCache.has(key)) { setRows(rosterCache.get(key)); setError(''); setLoading(false); return }
       setLoading(true); setError(''); setRows(null)
       try {
-        const d = await fetchDeskDrivers(desk.desk_id, grain, anchor)
+        const d = await loadRoster(desk.desk_id, grain, anchor)
+        // A late response for a desk we've since arrowed away from is ignored.
         if (!cancelled) setRows(d)
       } catch (e) {
         if (!cancelled) setError(e.message || 'Failed to load roster')
@@ -78,8 +105,11 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgre
         if (!cancelled) setLoading(false)
       }
     })()
+    // Warm the adjacent desks in the background so the next ← / → is instant.
+    prefetchRoster(prevDesk?.desk_id, grain, anchor)
+    prefetchRoster(nextDesk?.desk_id, grain, anchor)
     return () => { cancelled = true }
-  }, [open, desk?.desk_id, grain, anchor])
+  }, [open, desk?.desk_id, grain, anchor, prevDesk?.desk_id, nextDesk?.desk_id])
 
   // On open: capture the originating element, move focus into the modal, and
   // listen for Escape / ← prev / → next. On close: return focus to where it came
@@ -216,7 +246,14 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgre
           </div>
 
           {error && <div className={S.errorBox}>{error}</div>}
-          {loading && <div className="flex items-center justify-center h-24"><div className="animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500" /></div>}
+          {loading && (
+            <div className="space-y-2" aria-label="Loading roster">
+              <div className="h-3 w-40 rounded bg-gray-100 dark:bg-white/5 animate-pulse" />
+              <div className={`${S.card} p-3 space-y-2`}>
+                {Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-8 rounded bg-gray-100 dark:bg-white/5 animate-pulse" />)}
+              </div>
+            </div>
+          )}
 
           {!loading && rows && (
             <div className={`grid grid-cols-1 gap-4 ${hasLeft ? 'min-[900px]:grid-cols-5' : ''}`}>
