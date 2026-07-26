@@ -6,7 +6,7 @@ import { Skeleton } from '../../../../components/Loading'
 import ErrorBoundary from '../../../../components/ErrorBoundary'
 import { S } from '../../../../lib/styles'
 import MilesInterpretation from './MilesInterpretation'
-import { verdictText, loadsLabel, pctS as pctS1 } from './milesInterpText'
+import { drawInterpretationPdf } from './milesInterpPdf'
 import { fmtMoney, fmtNum, fmtRpm } from '../spotlight/spotlightShared'
 
 // Miles & Performance — loaded vs. empty miles, RPM, and deadhead by driver /
@@ -237,7 +237,7 @@ export default function MilesPerformance() {
         <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-orange-600 dark:text-orange-400 mb-1">
           <span className="w-1.5 h-1.5 rounded-full bg-orange-500" /> Profitability
         </div>
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Miles &amp; Performance</h1>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Deadhead Analysis</h1>
         <p className="text-sm text-gray-500 dark:text-slate-500 mt-0.5">Loaded vs. empty miles, RPM, and deadhead by driver, dispatcher, and region. Empty is effective (override-aware); TONU &amp; combined loads excluded.</p>
       </div>
 
@@ -461,7 +461,7 @@ export default function MilesPerformance() {
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summary), 'Summary')
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(loadRows), 'Loads')
-    XLSX.writeFile(wb, `MilesPerformance_${tab}_${range.from}_to_${range.to}.xlsx`)
+    XLSX.writeFile(wb, `DeadheadAnalysis_${tab}_${range.from}_to_${range.to}.xlsx`)
   }
 
   async function exportPdf() {
@@ -470,44 +470,14 @@ export default function MilesPerformance() {
     const { default: autoTable } = await import('jspdf-autotable')
     const pdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' })
     const pw = pdf.internal.pageSize.getWidth()
-    pdf.setFontSize(15); pdf.setTextColor(20); pdf.text('Miles & Performance', 24, 34)
+    pdf.setFontSize(15); pdf.setTextColor(20); pdf.text('Deadhead Analysis', 24, 34)
     pdf.setFontSize(9); pdf.setTextColor(120)
     pdf.text(`${tabDef.label} · ${periodLabel(range, timeframe)}  ·  generated ${todayYmd()}`, 24, 50)
     let y = 62
 
-    // Interpretation block — lead the report with the read, not raw numbers.
+    // Interpretation — a vector rendering of the on-page card (selectable text).
     if (interp && interp.overall && Number(interp.overall.loads) > 0) {
-      const qual = interp.partial ? (interp.grain === 'month' ? '  ·  MTD' : '  ·  to date') : ''
-      pdf.setFontSize(11); pdf.setTextColor(20)
-      pdf.text('Interpretation', 24, y)
-      const hw = pdf.getTextWidth('Interpretation')
-      pdf.setFontSize(9); pdf.setTextColor(120)
-      pdf.text(`   ${periodLabel(range, timeframe)}${qual}`, 24 + hw, y)
-      y += 15
-      pdf.setFontSize(9); pdf.setTextColor(60)
-      const vlines = pdf.splitTextToSize(verdictText(interp), pw - 48)
-      pdf.text(vlines, 24, y); y += vlines.length * 12 + 8
-      const cbody = [['Region', interp.region], ['Dispatcher', interp.dispatcher], ['Driver', interp.driver]].map(([label, dim]) => {
-        const d = dim || {}
-        const attn = d.flag ? `${d.flag.name} — ${pctS1(d.flag.dh)} · ${loadsLabel(d.flag.loads)}` : 'Not enough data to flag'
-        const bright = d.bright ? `${d.bright.name} — ${pctS1(d.bright.dh)}` : '—'
-        return [label, attn, bright]
-      })
-      autoTable(pdf, {
-        head: [['Focus', 'Needs attention', 'Bright spot']], body: cbody, startY: y,
-        styles: { fontSize: 8, cellPadding: 3 }, headStyles: { fillColor: [234, 88, 12] },
-        columnStyles: { 0: { cellWidth: 80, fontStyle: 'bold' } },
-        // Honesty in print: the attention item reads in danger red.
-        didParseCell: (data) => {
-          if (data.section === 'body' && data.column.index === 1 && data.cell.raw !== 'Not enough data to flag') {
-            data.cell.styles.textColor = [190, 30, 30]
-          }
-        },
-      })
-      y = pdf.lastAutoTable.finalY + 10
-      pdf.setFontSize(7.5); pdf.setTextColor(150)
-      const dis = pdf.splitTextToSize('Reads deadhead %, RPM, and loaded-mile volume — never profit (gross here is freight volume, ~56% pass-through).', pw - 48)
-      pdf.text(dis, 24, y); y += dis.length * 10 + 10
+      y = drawInterpretationPdf(pdf, interp, 24, y, pw - 48) + 14
     }
 
     // Trend chart snapshot (recharts SVG → PNG).
@@ -532,7 +502,7 @@ export default function MilesPerformance() {
     const body = sortedRows.map(r => [r.name, r.loads, fmtNum(r.loaded), fmtNum(r.empty), fmtPct(r.deadheadPct), fmtMoney(r.gross), r.rpm == null ? '—' : fmtRpm(r.rpm), ...(tabDef.showDrivers ? [r.drivers] : [])])
     if (totals) body.push(['Fleet total', totals.loads, fmtNum(totals.loaded), fmtNum(totals.empty), fmtPct(totals.deadheadPct), fmtMoney(totals.gross), totals.rpm == null ? '—' : fmtRpm(totals.rpm), ...(tabDef.showDrivers ? [totals.drivers] : [])])
     autoTable(pdf, { head: [cols], body, startY: y, styles: { fontSize: 8 }, headStyles: { fillColor: [234, 88, 12] } })
-    pdf.save(`MilesPerformance_${tab}_${range.from}_to_${range.to}.pdf`)
+    pdf.save(`DeadheadAnalysis_${tab}_${range.from}_to_${range.to}.pdf`)
   }
 }
 

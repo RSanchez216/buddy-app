@@ -4,6 +4,13 @@ import { useAuth } from './AuthContext'
 
 const PageAccessContext = createContext({})
 
+// Frontend display-name overrides — relabel a page in every UI surface (sidebar,
+// Manage simple view, page-access screens) WITHOUT touching the DB. page_key /
+// route (the access, bookmark, and RLS keys) are left untouched.
+const LABEL_OVERRIDES = { miles_performance: 'Deadhead Analysis' }
+const applyLabelOverrides = (rows) =>
+  rows.map(p => (LABEL_OVERRIDES[p.page_key] ? { ...p, label: LABEL_OVERRIDES[p.page_key] } : p))
+
 // Single source of truth for the current user's accessible pages. Calls
 // my_pages() ONCE per app load and shares the rows with every consumer that
 // used to fetch them independently — the sidebar (Layout), the landing
@@ -22,7 +29,7 @@ export function PageAccessProvider({ children }) {
   const refreshPages = useCallback(async () => {
     const { data, error } = await supabase.rpc('my_pages')
     if (error) console.error('Failed to load pages:', error)
-    else setPages(data || [])
+    else setPages(applyLabelOverrides(data || []))
     setPagesLoaded(true)
   }, [])
 
