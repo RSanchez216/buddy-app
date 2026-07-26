@@ -52,7 +52,8 @@ function buildCallouts(d) {
   }
   if (d.decliner) {
     out.push({ label: 'NEEDS ATTENTION', name: d.decliner.name, reason: 'Steepest drop, same-point',
-      metric: [{ text: `down ${pct1(d.decliner.delta_pct)}`, rgb: C.red }, { text: ` · ${money(d.decliner.prev_gross)} → ${money(d.decliner.gross)}`, rgb: C.ink }] })
+      // "to" not "→": U+2192 isn't in the PDF's WinAnsi font (renders as garbage).
+      metric: [{ text: `down ${pct1(d.decliner.delta_pct)}`, rgb: C.red }, { text: ` · ${money(d.decliner.prev_gross)} to ${money(d.decliner.gross)}`, rgb: C.ink }] })
   } else if (d.amazon && Number(d.amazon.drivers) >= 3) {
     const m = [{ text: `${money(d.amazon.gross)} · ${int(d.amazon.drivers)} drivers`, rgb: C.ink }]
     if (d.amazon.delta_pct != null) m.push({ text: ` · ${Number(d.amazon.delta_pct) < 0 ? 'down' : 'up'} ${pct1(d.amazon.delta_pct)}`, rgb: Number(d.amazon.delta_pct) < 0 ? C.red : C.green })

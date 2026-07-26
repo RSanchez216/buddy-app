@@ -314,14 +314,17 @@ export default function DispatcherScorecard() {
       }
 
       doc.setFontSize(12); doc.setTextColor(20); doc.text('All active desks', M, y)
-      const reportDesks = [...desks].sort((a, b) => Number(b.gross) - Number(a.gross))
+      // Include the synthetic Amazon Team aggregate alongside the individual
+      // desks, sorted by gross with the rest (low on Monthly, high on Yearly).
+      const reportDesks = [...desks, ...(amazon ? [amazon] : [])].sort((a, b) => Number(b.gross) - Number(a.gross))
       autoTable(doc, {
         startY: y + 8,
         head: [['Desk', 'Gross', '$/drv·mo', 'Departed', 'RPM', 'Read', 'Reviewed', 'Notes']],
         body: reportDesks.map(d => {
+          const isAmz = !!d.is_amazon_team
           const base = [
-            d.desk_name, money(d.gross), perDriver(d.per_driver_month), int(d.turnover), rpm(d.rpm),
-            deskRead(d, floors, { inProgress }).label,
+            isAmz ? 'Amazon Team' : d.desk_name, money(d.gross), perDriver(d.per_driver_month), int(d.turnover), rpm(d.rpm),
+            isAmz ? 'Amazon' : deskRead(d, floors, { inProgress }).label,
           ]
           if (isMonthly) {
             const rev = reviews[deskKeyOf(d)] || {}
@@ -335,6 +338,8 @@ export default function DispatcherScorecard() {
         styles: { fontSize: 8, cellPadding: 3, overflow: 'linebreak' },
         headStyles: { fillColor: [234, 88, 12] },
         columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' }, 7: { cellWidth: 220 } },
+        // Italicise the Amazon Team row so it reads as an aggregate, not a person.
+        didParseCell: (data) => { if (data.section === 'body' && data.row.raw?.[0] === 'Amazon Team') data.cell.styles.fontStyle = 'italic' },
         margin: { left: M, right: M },
       })
 
