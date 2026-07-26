@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { S } from '../../../../lib/styles'
 import { useAuth } from '../../../../contexts/AuthContext'
@@ -65,11 +65,22 @@ export default function DispatcherScorecard() {
   // Month-starts inside the displayed window (1 for month; 3/6/12 otherwise).
   const periodMonths = useMemo(() => periodBounds(grain, anchor).months, [grain, anchor])
 
-  const setGrain = (g) => setParams(p => { p.set('grain', g); p.set('anchor', anchorForRpc(g, anchor)); return p }, { replace: true })
-  const step = (dir) => setParams(p => { p.set('grain', grain); p.set('anchor', stepAnchor(grain, anchor, dir)); return p }, { replace: true })
-  const goCurrent = () => setParams(p => { p.set('grain', grain); p.set('anchor', anchorForRpc(grain, todayISO())); return p }, { replace: true })
+  // Build a fresh URLSearchParams each time — mutating the object react-router
+  // handed us can trigger an extra render (and a duplicate fetch).
+  const setGrain = (g) => setParams(prev => { const p = new URLSearchParams(prev); p.set('grain', g); p.set('anchor', anchorForRpc(g, anchor)); return p }, { replace: true })
+  const step = (dir) => setParams(prev => { const p = new URLSearchParams(prev); p.set('grain', grain); p.set('anchor', stepAnchor(grain, anchor, dir)); return p }, { replace: true })
+  const goCurrent = () => setParams(prev => { const p = new URLSearchParams(prev); p.set('grain', grain); p.set('anchor', anchorForRpc(grain, todayISO())); return p }, { replace: true })
+
+  // Dedupe guard: fetch at most once per {grain, anchor, reloadTick}, so a
+  // second nudge from the same toggle (e.g. an extra render on URL change)
+  // can't fire a duplicate pair of heavy RPCs.
+  const scorecardKeyRef = useRef(null)
+  const interpKeyRef = useRef(null)
 
   useEffect(() => {
+    const key = `${grain}|${anchor}|${reloadTick}`
+    if (scorecardKeyRef.current === key) return
+    scorecardKeyRef.current = key
     let cancelled = false
     ;(async () => {
       setLoading(true); setError(''); setSelectedDesk(null)
@@ -108,6 +119,9 @@ export default function DispatcherScorecard() {
   // Blended interpretation — separate parallel fetch so a slow/failed read never
   // holds up the scorecard.
   useEffect(() => {
+    const key = `${grain}|${anchor}|${reloadTick}`
+    if (interpKeyRef.current === key) return
+    interpKeyRef.current = key
     let cancelled = false
     setScInterp(null); setScInterpErr(false)
     fetchScorecardInterpretation(grain, anchor)
