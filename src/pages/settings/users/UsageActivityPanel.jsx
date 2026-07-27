@@ -81,8 +81,10 @@ export default function UsageActivityPanel({ user }) {
       ) : (
         <>
           <StatCards data={data} range={range} />
-          <TimeByPage rows={data.by_page || []} />
-          <DailyChart byDay={data.by_day || []} range={range} />
+          <div className="grid lg:grid-cols-2 gap-4 items-start">
+            <TimeByPage rows={data.by_page || []} />
+            <DailyChart byDay={data.by_day || []} range={range} />
+          </div>
           <SessionsTable rows={data.session_list || []} />
         </>
       )}
@@ -96,7 +98,7 @@ function StatCards({ data, range }) {
   const lastPage = (data.session_list || []).find(s => s.ended === 'live')?.last_page
     || (data.by_page || [])[0]?.label
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+    <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-2.5">
       {/* Green hero — active time */}
       <div className="col-span-2 sm:col-span-1 rounded-2xl border border-emerald-200 dark:border-emerald-500/20 bg-emerald-50/60 dark:bg-emerald-500/[0.08] px-4 py-3">
         <p className="text-[10px] font-semibold uppercase tracking-widest text-emerald-700/70 dark:text-emerald-400/70">Active time</p>
@@ -189,7 +191,7 @@ function SessionsTable({ rows }) {
   return (
     <div className={`${S.card} overflow-hidden`}>
       <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-slate-400 px-4 pt-3 pb-2">Sessions</p>
-      <div className="max-h-72 overflow-y-auto">
+      <div className="max-h-[32rem] overflow-y-auto">
         <table className="w-full text-xs">
           <thead className="sticky top-0 bg-white dark:bg-[#0d0d1f] border-y border-gray-100 dark:border-white/5 text-gray-400 dark:text-slate-500">
             <tr>

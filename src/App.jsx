@@ -30,6 +30,7 @@ import SettingsExpenseCategories from './pages/settings/ExpenseCategories'
 import SettingsFactors from './pages/settings/Factors'
 import SettingsRecurringExpenses from './pages/settings/RecurringExpenses'
 import SettingsUsers from './pages/settings/users/Users'
+import UserProfile from './pages/settings/users/UserProfile'
 import SettingsLayout from './pages/settings/SettingsLayout'
 import AcceptInvite from './pages/AcceptInvite'
 import LoanDetail from './pages/financial-controls/LoanDetail'
@@ -286,6 +287,7 @@ export default function App() {
                   <Route path="recurring-expenses" element={<SettingsRecurringExpenses />} />
                   <Route path="driver-purchase-statuses" element={<SettingsDriverPurchaseStatuses />} />
                   <Route path="users" element={<SettingsUsers />} />
+                  <Route path="users/:userId" element={<UserProfile />} />
                 </Route>
               </Route>
             </Route>

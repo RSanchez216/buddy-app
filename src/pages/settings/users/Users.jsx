@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Navigate } from 'react-router-dom'
+import { Navigate, useNavigate } from 'react-router-dom'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../contexts/AuthContext'
 import { S } from '../../../lib/styles'
@@ -16,6 +16,7 @@ const ORANGE_BTN = 'flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-o
 
 export default function Users() {
   const { profile, loading: authLoading, isAdmin } = useAuth()
+  const navigate = useNavigate()
   const toast = useToast()
   const [tab, setTab] = useState('users') // 'users' | 'roles' | 'pages'
   const [users, setUsers] = useState([])
@@ -269,7 +270,7 @@ export default function Users() {
               ) : users.map(u => {
                 const isSelf = u.id === profile?.id
                 return (
-                  <tr key={u.id} className={`${S.tableRow} cursor-pointer`} onClick={() => setEditUser(u)}>
+                  <tr key={u.id} className={`${S.tableRow} cursor-pointer`} onClick={() => navigate(`/settings/users/${u.id}`)}>
                     <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>
                       {u.full_name || '—'}
                       {isSelf && <span className="ml-2 text-[10px] uppercase tracking-wide text-gray-400 dark:text-slate-500">You</span>}

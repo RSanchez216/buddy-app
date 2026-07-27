@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { Link } from 'react-router-dom'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../contexts/AuthContext'
 import { S } from '../../../lib/styles'
@@ -7,7 +8,6 @@ import Select from '../../../components/Select'
 import { ROLES, ROLE_LABEL, rolePill, statusPill, fmtDateTime } from './userUtils'
 import PageAccessPanel from './PageAccessPanel'
 import EffectivePageList from './EffectivePageList'
-import UsageActivityPanel from './UsageActivityPanel'
 import { useToast } from '../../../contexts/ToastContext'
 
 const ORANGE_BTN = 'px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 disabled:bg-gray-200 dark:disabled:bg-slate-700 disabled:text-gray-400 dark:disabled:text-slate-500 text-white rounded-xl transition-all'
@@ -193,10 +193,18 @@ export default function EditUserDrawer({ open, user, onClose, onChange, onSucces
             <EffectivePageList user={user} />
           </div>
 
-          {/* Usage & Activity — admin-only (the RPC also rejects non-admins). */}
+          {/* Usage & Activity now lives on the full-width profile page
+              (/settings/users/:userId) where the Sessions table has room. */}
           {isAdmin && (
             <div className="border-t border-gray-100 dark:border-white/5 pt-4">
-              <UsageActivityPanel user={user} />
+              <Link
+                to={`/settings/users/${user.id}`}
+                onClick={onClose}
+                className="inline-flex items-center gap-1.5 text-sm font-medium text-orange-600 dark:text-orange-400 hover:underline"
+              >
+                View full profile &amp; usage
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+              </Link>
             </div>
           )}
         </div>
