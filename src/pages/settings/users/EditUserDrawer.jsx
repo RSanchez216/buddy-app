@@ -7,13 +7,14 @@ import Select from '../../../components/Select'
 import { ROLES, ROLE_LABEL, rolePill, statusPill, fmtDateTime } from './userUtils'
 import PageAccessPanel from './PageAccessPanel'
 import EffectivePageList from './EffectivePageList'
+import UsageActivityPanel from './UsageActivityPanel'
 import { useToast } from '../../../contexts/ToastContext'
 
 const ORANGE_BTN = 'px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 disabled:bg-gray-200 dark:disabled:bg-slate-700 disabled:text-gray-400 dark:disabled:text-slate-500 text-white rounded-xl transition-all'
 const ACTION_BTN = 'px-3 py-1.5 text-xs font-medium border border-gray-300 dark:border-slate-700 text-gray-600 dark:text-slate-300 rounded-lg hover:bg-gray-50 dark:hover:bg-white/5 transition-colors'
 
 export default function EditUserDrawer({ open, user, onClose, onChange, onSuccess, allUsers }) {
-  const { profile: me } = useAuth()
+  const { profile: me, isAdmin } = useAuth()
   const toast = useToast()
   const isSelf = me && user && me.id === user.id
 
@@ -191,6 +192,13 @@ export default function EditUserDrawer({ open, user, onClose, onChange, onSucces
           <div className="border-t border-gray-100 dark:border-white/5 pt-4">
             <EffectivePageList user={user} />
           </div>
+
+          {/* Usage & Activity — admin-only (the RPC also rejects non-admins). */}
+          {isAdmin && (
+            <div className="border-t border-gray-100 dark:border-white/5 pt-4">
+              <UsageActivityPanel user={user} />
+            </div>
+          )}
         </div>
 
         <div className="sticky bottom-0 bg-white dark:bg-[#0d0d1f] p-4 border-t border-gray-100 dark:border-white/5 flex items-center justify-end gap-2">

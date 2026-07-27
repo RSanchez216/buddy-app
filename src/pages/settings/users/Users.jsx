@@ -8,6 +8,8 @@ import InviteUserModal from './InviteUserModal'
 import EditUserDrawer from './EditUserDrawer'
 import Pages from './Pages'
 import Roles from './Roles'
+import UsageRangeControl from './UsageRangeControl'
+import { downloadTeamUsagePdf } from './usageReportPdf'
 import { useToast } from '../../../contexts/ToastContext'
 
 const ORANGE_BTN = 'flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 text-white rounded-xl transition-all shadow-lg shadow-orange-500/20'
@@ -25,6 +27,8 @@ export default function Users() {
   const [showInvite, setShowInvite] = useState(false)
   const [editUser, setEditUser] = useState(null)
   const [openMenuId, setOpenMenuId] = useState(null)
+  const [teamRange, setTeamRange] = useState(null) // { start, end } from the usage range control
+  const [downloadingTeam, setDownloadingTeam] = useState(false)
 
   useEffect(() => { load() }, [])
 
@@ -150,6 +154,24 @@ export default function Users() {
     load()
   }
 
+  // One combined PDF for the whole team over the selected range — a roster
+  // summary page + a page-broken detailed section per user (admin first, then
+  // alphabetical, as the RPC returns them).
+  async function downloadTeamUsage() {
+    if (!teamRange?.start || !teamRange?.end || downloadingTeam) return
+    setDownloadingTeam(true)
+    try {
+      const { data, error } = await supabase.rpc('all_users_usage', { p_start: teamRange.start, p_end: teamRange.end })
+      if (error) throw error
+      if (!data || (data.users || []).length === 0) { toast.error('No usage recorded for this range yet.'); return }
+      await downloadTeamUsagePdf(data)
+    } catch (e) {
+      toast.error("Couldn't build the team usage report", e)
+    } finally {
+      setDownloadingTeam(false)
+    }
+  }
+
   if (authLoading) {
     return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500" /></div>
   }
@@ -209,6 +231,23 @@ export default function Users() {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
           </svg>
           Invite user
+        </button>
+      </div>
+
+      {/* Team usage report — date range + one combined PDF for everyone. */}
+      <div className="flex items-center justify-between flex-wrap gap-3 rounded-2xl border border-gray-200 dark:border-white/10 bg-gray-50/60 dark:bg-white/[0.02] px-4 py-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-slate-400">Usage report</span>
+          <UsageRangeControl onChange={setTeamRange} />
+        </div>
+        <button
+          onClick={downloadTeamUsage}
+          disabled={downloadingTeam || !teamRange}
+          className="inline-flex items-center gap-2 px-3 py-2 text-sm border border-gray-400 dark:border-slate-700 text-gray-700 dark:text-slate-300 rounded-xl hover:bg-gray-50 dark:hover:bg-white/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          title="Download one PDF with every user's usage for the selected range"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" /></svg>
+          {downloadingTeam ? 'Preparing…' : 'Download usage report (all users)'}
         </button>
       </div>
 

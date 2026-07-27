@@ -71,7 +71,20 @@ export function AuthProvider({ children }) {
     return supabase.auth.signInWithPassword({ email, password })
   }
 
-  const signOut = () => supabase.auth.signOut()
+  // Log the sign-out as page activity BEFORE clearing the session, so the
+  // session that ends with a real logout is labeled 'signout' (vs. 'idle'/'live')
+  // in the usage reports. Best-effort and time-boxed — never block or fail the
+  // actual sign-out on it.
+  const signOut = async () => {
+    try {
+      const route = typeof window !== 'undefined' ? window.location.pathname : null
+      await Promise.race([
+        supabase.rpc('log_page_activity', { p_page_key: null, p_route: route, p_kind: 'signout' }),
+        new Promise(resolve => setTimeout(resolve, 1500)),
+      ])
+    } catch { /* ignore — sign-out must proceed regardless */ }
+    return supabase.auth.signOut()
+  }
 
   // Re-fetch the public.users profile for the current session.
   // SetPassword calls this after flipping status='pending' → 'active' so
