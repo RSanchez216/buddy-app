@@ -21,7 +21,7 @@ export async function fetchLaneLegs({ from, to, basis = 'delivery' }) {
   const out = []
   for (let page = 0; ; page++) {
     const { data, error } = await supabase.from('v_lane_geo')
-      .select('leg_id, load_id, load_number, status, is_tonu, is_projected, load_phase, pickup_date, delivery_date, origin, destination, leg_revenue, leg_total_miles, leg_loaded_miles, leg_empty_miles, customer_name, dispatcher_id, dispatcher_name, driver_display, trailer_id, trailer_display, effective_trailer_id, effective_trailer_unit, effective_trailer_type, trailer_inferred, origin_lat, origin_lng, dest_lat, dest_lng')
+      .select('leg_id, load_id, load_number, status, is_tonu, is_projected, load_phase, pickup_date, delivery_date, origin, destination, leg_revenue, leg_total_miles, leg_loaded_miles, leg_empty_miles, customer_name, dispatcher_id, dispatcher_name, driver_id, driver_display, trailer_id, trailer_display, effective_trailer_id, effective_trailer_unit, effective_trailer_type, trailer_inferred, origin_lat, origin_lng, dest_lat, dest_lng')
       .gte(dateCol, from).lte(dateCol, to)
       .order(dateCol, { ascending: true }).order('leg_id', { ascending: true })
       .range(page * 1000, page * 1000 + 999)
@@ -75,7 +75,10 @@ export async function fetchLaneLegs({ from, to, basis = 'delivery' }) {
 // effective_trailer_type; 'Unknown' matches legs with a NULL effective type
 // (COALESCE(effective_trailer_type,'Unknown')); null/undefined = all types. We
 // filter here rather than via the RPC so the zero-mile-revenue fix above holds.
-export async function fetchLaneGeoRollup({ from, to, basis = 'origin', grain = 'region', phases = ['in_transit', 'delivered'], trailerType = null }) {
+// driverId / dispatcherId (optional): mirror the Lane Flow Map's shared driver
+// and dispatcher filters — narrow the tiles to a single person's freight. Both
+// are v_lane_geo columns, so they filter the same query (null = everyone).
+export async function fetchLaneGeoRollup({ from, to, basis = 'origin', grain = 'region', phases = ['in_transit', 'delivered'], trailerType = null, driverId = null, dispatcherId = null }) {
   const unitCol = grain === 'state'
     ? (basis === 'destination' ? 'dest_state' : 'origin_state')
     : (basis === 'destination' ? 'dest_region' : 'origin_region')
@@ -96,6 +99,8 @@ export async function fetchLaneGeoRollup({ from, to, basis = 'origin', grain = '
         .or(`and(delivery_date.gte.${from},delivery_date.lte.${to}),and(delivery_date.is.null,pickup_date.gte.${from},pickup_date.lte.${to})`)
       if (trailerType === UNKNOWN_TYPE) query = query.is('effective_trailer_type', null)
       else if (trailerType) query = query.eq('effective_trailer_type', trailerType)
+      if (driverId) query = query.eq('driver_id', driverId)
+      if (dispatcherId) query = query.eq('dispatcher_id', dispatcherId)
       return query.order('leg_id', { ascending: true }).range(page * 1000, page * 1000 + 999).abortSignal(signal)
     })
     if (error) throw error

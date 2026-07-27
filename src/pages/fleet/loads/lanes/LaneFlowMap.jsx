@@ -9,6 +9,7 @@ import CopyButton from '../../../../components/CopyButton'
 import LaneHeatCanvas from './LaneHeatCanvas'
 import LaneMapCanvas from './LaneMapCanvas'
 import GeoHeatMap from './GeoHeatMap'
+import PersonFilter from './PersonFilter'
 import TopPerformers from './TopPerformers'
 import TrailerTypeTrends from './TrailerTypeTrends'
 import { aggregateLanes, AMAZON_TYPE, EXCLUDED_STATUSES, fetchLaneLegs, makeRpmScale, makeTypeColorMap, makeWidthScale, pickAllLoadMetrics, resolveLegTypes, RPM_NULL_COLOR, UNKNOWN_TYPE } from './laneData'
@@ -755,27 +756,24 @@ export default function LaneFlowMap() {
       setSortDir('desc'); return key
     })
   }, [])
-  const [dispatcherSearchOpen, setDispatcherSearchOpen] = useState(false)
-  const [dispatcherSearchQuery, setDispatcherSearchQuery] = useState('')
-  const dispatcherInputRef = useRef(null)
-
   // Fetched legs are stored with the period key they belong to, so a
   // period/basis change invalidates them by derivation (Spotlight pattern).
   const dataKey = `${range.from}|${range.to}|${basis}`
   const [legState, setLegState] = useState({ key: null, legs: null })
 
-  // Dispatcher filter is keyed to the data window like the selection below —
-  // changing period/basis resets it by derivation, no reset effect needed.
+  // Dispatcher + driver filters are keyed to the data window like the selection
+  // below — changing period/basis resets them by derivation, no reset effect
+  // needed. Both are page-level (shared) state so a single pick drives every
+  // view: the heat/lanes map, the region/state map, and the leaderboard /
+  // best-worst cards (all read the same client-side lane rows).
   const [dispFilterState, setDispFilterState] = useState({ key: null, id: null })
   const dispatcherFilter = dispFilterState.key === dataKey ? dispFilterState.id : null
   const setDispatcherFilter = useCallback((id) => setDispFilterState({ key: dataKey, id }), [dataKey])
 
-  const clearDispatcherFilter = useCallback((reopen) => {
-    setDispatcherFilter(null)
-    setDispatcherSearchQuery('')
-    setDispatcherSearchOpen(!!reopen)
-    if (reopen) dispatcherInputRef.current?.focus()
-  }, [setDispatcherFilter])
+  const [driverFilterState, setDriverFilterState] = useState({ key: null, id: null })
+  const driverFilter = driverFilterState.key === dataKey ? driverFilterState.id : null
+  const setDriverFilter = useCallback((id) => setDriverFilterState({ key: dataKey, id }), [dataKey])
+
   useEffect(() => {
     let stale = false
     // Trailer type comes from v_lane_geo.effective_trailer_type (linked or
@@ -831,6 +829,8 @@ export default function LaneFlowMap() {
     })
   }
 
+  // Distinct dispatchers + drivers present in the current lane dataset — the
+  // options for the two shared single-select filters (null people skipped).
   const dispatchers = useMemo(() => {
     if (!legState.legs) return []
     const seen = new Map()
@@ -841,18 +841,24 @@ export default function LaneFlowMap() {
     return [...seen.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
   }, [legState.legs])
 
-  const filteredDispatchers = useMemo(() => {
-    const q = dispatcherSearchQuery.trim().toLowerCase()
-    return dispatchers.filter(d => d.name.toLowerCase().includes(q))
-  }, [dispatchers, dispatcherSearchQuery])
+  const drivers = useMemo(() => {
+    if (!legState.legs) return []
+    const seen = new Map()
+    for (const l of legState.legs) {
+      if (l.driver_id && !seen.has(l.driver_id))
+        seen.set(l.driver_id, l.driver_display || String(l.driver_id))
+    }
+    return [...seen.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
+  }, [legState.legs])
 
   const filteredLegs = useMemo(() => {
     if (!typedLegs) return typedLegs
     let legs = typedLegs
     if (dispatcherFilter) legs = legs.filter(l => l.dispatcher_id === dispatcherFilter)
+    if (driverFilter) legs = legs.filter(l => l.driver_id === driverFilter)
     if (typeFilter) legs = legs.filter(l => typeFilter.includes(l.trailer_type))
     return legs
-  }, [typedLegs, dispatcherFilter, typeFilter])
+  }, [typedLegs, dispatcherFilter, driverFilter, typeFilter])
 
   // Lanes split per trailer type so every $/mi row is type-pure — a mixed
   // corridor becomes one row per type, never a blended rate.
@@ -1256,59 +1262,28 @@ export default function LaneFlowMap() {
               )}
             </div>
           )}
-          {dispatchers.length > 1 && (
-            <div className="relative">
-              <input
-                ref={dispatcherInputRef}
-                type="text"
-                value={dispatcherFilter ? (dispatchers.find(d => d.id === dispatcherFilter)?.name || '') : dispatcherSearchQuery}
-                onChange={e => {
-                  // Editing while a dispatcher is selected turns the text into a
-                  // fresh search — emptying the box can never leave a stale filter.
-                  if (dispatcherFilter) setDispatcherFilter(null)
-                  setDispatcherSearchQuery(e.target.value)
-                  setDispatcherSearchOpen(true)
-                }}
-                onFocus={() => setDispatcherSearchOpen(true)}
-                onBlur={() => setTimeout(() => setDispatcherSearchOpen(false), 150)}
-                onKeyDown={e => { if (e.key === 'Escape') clearDispatcherFilter(false) }}
-                placeholder="Filter dispatchers…"
-                className={`${S.input} w-32 text-xs ${dispatcherFilter ? 'pr-7 ring-2 ring-orange-400/50' : ''}`}
-                title="Search and filter by dispatcher — ✕ or Escape resets to all"
-              />
-              {dispatcherFilter && (
-                <button
-                  onMouseDown={e => { e.preventDefault(); clearDispatcherFilter(true) }}
-                  className="absolute right-1.5 top-1/2 -translate-y-1/2 w-4 h-4 flex items-center justify-center rounded-full text-[10px] leading-none text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-white/10"
-                  title="Clear dispatcher filter (back to all dispatchers)"
-                  aria-label="Clear dispatcher filter"
-                >✕</button>
-              )}
-              {dispatcherSearchOpen && (
-                <div className="absolute z-50 mt-1 w-48 rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-[#12132e] shadow-lg overflow-hidden">
-                  <button
-                    onMouseDown={e => { e.preventDefault(); setDispatcherFilter(null); setDispatcherSearchQuery(''); setDispatcherSearchOpen(false) }}
-                    className="w-full text-left px-3 py-2 text-xs text-gray-700 dark:text-slate-300 hover:bg-orange-50 dark:hover:bg-orange-500/10 border-b border-gray-100 dark:border-white/[0.06]"
-                  >
-                    All dispatchers
-                  </button>
-                  {filteredDispatchers.length === 0 ? (
-                    <p className="px-3 py-2 text-xs text-gray-400 dark:text-slate-500">No matches</p>
-                  ) : (
-                    filteredDispatchers.map(d => (
-                      <button
-                        key={d.id}
-                        onMouseDown={e => { e.preventDefault(); setDispatcherFilter(d.id); setDispatcherSearchQuery(''); setDispatcherSearchOpen(false) }}
-                        className={`w-full text-left px-3 py-2 text-xs hover:bg-orange-50 dark:hover:bg-orange-500/10 ${dispatcherFilter === d.id ? 'bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-400 font-semibold' : 'text-gray-700 dark:text-slate-300'}`}
-                      >
-                        {d.name}
-                      </button>
-                    ))
-                  )}
-                </div>
-              )}
-            </div>
-          )}
+          {/* Dispatcher + driver filters — shared page state, so a pick here
+              also drives the region/state map and the leaderboard/cards. */}
+          <PersonFilter
+            items={dispatchers}
+            value={dispatcherFilter}
+            onChange={setDispatcherFilter}
+            placeholder="Filter dispatchers…"
+            allLabel="All dispatchers"
+            searchTitle="Search and filter by dispatcher — ✕ or Escape resets to all"
+            clearTitle="Clear dispatcher filter (back to all dispatchers)"
+            clearAriaLabel="Clear dispatcher filter"
+          />
+          <PersonFilter
+            items={drivers}
+            value={driverFilter}
+            onChange={setDriverFilter}
+            placeholder="Filter drivers…"
+            allLabel="All drivers"
+            searchTitle="Search and filter by driver — ✕ or Escape resets to all"
+            clearTitle="Clear driver filter (back to all drivers)"
+            clearAriaLabel="Clear driver filter"
+          />
         <div className="flex flex-wrap items-center gap-2">
             <button onClick={() => shiftRange(-1)} className="px-2 py-1.5 text-xs font-medium rounded border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors" title="Previous period">◀</button>
             <Pills value={preset} onChange={setPresetRange} options={periodOptions} />
@@ -1771,10 +1746,18 @@ export default function LaneFlowMap() {
       </div>
 
       {/* ── Geo heat map section ── */}
+      {/* Same shared driver + dispatcher filters, so one pick recolors the
+          region/state tiles to that person's freight in sync with the map above. */}
       <GeoHeatMap
         range={range}
         phases={selectedPhases}
         pageTitle="Lanes by region & state"
+        dispatchers={dispatchers}
+        drivers={drivers}
+        dispatcherFilter={dispatcherFilter}
+        onDispatcherFilter={setDispatcherFilter}
+        driverFilter={driverFilter}
+        onDriverFilter={setDriverFilter}
       />
 
       {/* ── Top performers section ── */}

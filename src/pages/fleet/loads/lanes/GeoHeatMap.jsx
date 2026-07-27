@@ -5,6 +5,7 @@ import { interpolateRgbBasis } from 'd3-interpolate'
 import { S } from '../../../../lib/styles'
 import { fmtMoney, trailerTypeColor } from '../spotlight/spotlightShared'
 import { fetchLaneGeoRollup } from './laneData'
+import PersonFilter from './PersonFilter'
 
 // Trailer-type filter options — mirrors the Lane Flow Map's pills (same colored
 // dots via trailerTypeColor); single-select on this map. 'Unknown' = legs with
@@ -161,7 +162,19 @@ function UnplacedList({ rows, basis, onClose }) {
   )
 }
 
-export default function GeoHeatMap({ range, phases }) {
+export default function GeoHeatMap({
+  range,
+  phases,
+  // Shared driver + dispatcher filters (page-level state on the Lane Flow Map).
+  // The lists populate this map's own filter dropdowns; the selected ids narrow
+  // the rollup query so the tiles reflect the same one pick as the maps above.
+  dispatchers = [],
+  drivers = [],
+  dispatcherFilter = null,
+  onDispatcherFilter,
+  driverFilter = null,
+  onDriverFilter,
+}) {
   const [view, setView] = useState('region') // region | state
   const [colorBy, setColorBy] = useState('gross') // loads | gross | avg | rpm
   const [basis, setBasis] = useState('origin') // origin | destination
@@ -179,7 +192,7 @@ export default function GeoHeatMap({ range, phases }) {
   // Note: topology is loaded in SVGMap component
 
   // Fetch data when filters change
-  const dataKey = `${range.from}|${range.to}|${basis}|${[...phases].sort().join(',')}|${trailerType || 'all'}`
+  const dataKey = `${range.from}|${range.to}|${basis}|${[...phases].sort().join(',')}|${trailerType || 'all'}|${dispatcherFilter || 'all'}|${driverFilter || 'all'}`
   useEffect(() => {
     let stale = false
     setLoading(true)
@@ -194,6 +207,8 @@ export default function GeoHeatMap({ range, phases }) {
           grain: view,
           phases: Array.from(phases),
           trailerType,
+          driverId: driverFilter,
+          dispatcherId: dispatcherFilter,
         })
 
         if (!stale) {
@@ -227,7 +242,7 @@ export default function GeoHeatMap({ range, phases }) {
     return () => {
       stale = true
     }
-  }, [dataKey, range, basis, view, phases, trailerType, reloadKey])
+  }, [dataKey, range, basis, view, phases, trailerType, driverFilter, dispatcherFilter, reloadKey])
 
   // Compute color scale
   const colorScale = useMemo(() => {
@@ -365,6 +380,33 @@ export default function GeoHeatMap({ range, phases }) {
               </button>
             )}
           </div>
+
+          {/* Dispatcher + driver filters — shared with the maps above, so a pick
+              in either place recolors both. Hidden until options exist. */}
+          {onDispatcherFilter && (
+            <PersonFilter
+              items={dispatchers}
+              value={dispatcherFilter}
+              onChange={onDispatcherFilter}
+              placeholder="Filter dispatchers…"
+              allLabel="All dispatchers"
+              searchTitle="Search and filter by dispatcher — ✕ or Escape resets to all"
+              clearTitle="Clear dispatcher filter (back to all dispatchers)"
+              clearAriaLabel="Clear dispatcher filter"
+            />
+          )}
+          {onDriverFilter && (
+            <PersonFilter
+              items={drivers}
+              value={driverFilter}
+              onChange={onDriverFilter}
+              placeholder="Filter drivers…"
+              allLabel="All drivers"
+              searchTitle="Search and filter by driver — ✕ or Escape resets to all"
+              clearTitle="Clear driver filter (back to all drivers)"
+              clearAriaLabel="Clear driver filter"
+            />
+          )}
         </div>
 
         {/* Caption */}
