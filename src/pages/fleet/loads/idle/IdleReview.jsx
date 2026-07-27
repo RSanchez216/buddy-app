@@ -17,12 +17,14 @@ import BehindOnPurchaseChip from '../../../driver-purchases/components/BehindChi
 // resolve when sold / terminated / back to work. Read/writes go through the
 // idle_subjects / set_idle_reason / resolve_idle RPCs (already deployed).
 
-const UNIT_REASONS = ['Available', 'Driver is off', 'Pending - TBD', 'Parked', 'Dedicated lane site', 'Under repairs', 'Under claim', 'For sale', 'Lease to Purchase', 'Other']
+const UNIT_REASONS = ['Available', 'Available - Away From Yard', 'Driver is off', 'Pending - TBD', 'Parked', 'Dedicated lane site', 'Under repairs', 'Under claim', 'For sale', 'Lease to Purchase', 'Other']
 const DRIVER_REASONS = ['Ready', 'Waiting for load', 'Pending - TBD', 'Vacation', 'Home-time', 'Under repairs', 'Health', 'Family', 'Other']
 
 // "Available" reasons: the subject is fine / ready — not a problem — so they
 // mark green, above the severity ladder. Small named set, easy to extend.
-const AVAILABLE_REASONS = new Set(['Ready', 'Waiting for load', 'Available'])
+// "Available - Away From Yard" is an available variant (unit is ready but not
+// sitting at the Aurora yard) — same green/non-billable semantics as Available.
+const AVAILABLE_REASONS = new Set(['Ready', 'Waiting for load', 'Available', 'Available - Away From Yard'])
 
 // Benign reasons read as expected idle (low severity); the rest are
 // "attention" (amber). Anything uncategorized, or idle 14+ days, escalates red.
