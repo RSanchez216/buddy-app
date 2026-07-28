@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { supabase } from '../../../lib/supabase'
 import { S } from '../../../lib/styles'
 import Select from '../../../components/Select'
+import { buildDeptOptions } from '../../../lib/deptUtils'
 import { ROLES, ROLE_LABEL, ROLE_DESCRIPTION } from './userUtils'
 import { useToast } from '../../../contexts/ToastContext'
 
@@ -14,13 +15,23 @@ export default function InviteUserModal({ open, onClose, onInvited }) {
   const toast = useToast()
   const [email, setEmail] = useState('')
   const [fullName, setFullName] = useState('')
-  const [role, setRole] = useState('manager')
+  // Permission level (users.role) — governs real data access via RLS. Default
+  // Viewer: Admin/Manager must be a deliberate choice (Manager alone satisfies
+  // is_admin_or_manager() across ~45 policies).
+  const [role, setRole] = useState('viewer')
+  // Access role (users.role_id) — additive sidebar pages only, no data rights.
+  const [roleId, setRoleId] = useState('')
+  // Department (users.department_id) — drives Lumper "Paid from" attribution.
+  const [departmentId, setDepartmentId] = useState('')
+  const [roles, setRoles] = useState([])
+  const [departments, setDepartments] = useState([])
+  const [rolePageCounts, setRolePageCounts] = useState({}) // role_id -> granted page count
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
   useEffect(() => {
     if (!open) return
-    setEmail(''); setFullName(''); setRole('manager'); setError('')
+    setEmail(''); setFullName(''); setRole('viewer'); setRoleId(''); setDepartmentId(''); setError('')
   }, [open])
 
   useEffect(() => {
@@ -30,10 +41,32 @@ export default function InviteUserModal({ open, onClose, onInvited }) {
     return () => { document.body.style.overflow = prev }
   }, [open])
 
+  // Option lists + per-role page-grant counts (for the empty-sidebar warning).
+  useEffect(() => {
+    if (!open) return
+    let stale = false
+    Promise.all([
+      supabase.from('roles').select('id, name, key').eq('is_active', true).order('sort_order').order('name'),
+      supabase.from('departments').select('id, name, parent_id').eq('is_active', true).order('name'),
+      supabase.from('role_page_access').select('role_id'),
+    ]).then(([r, d, rpa]) => {
+      if (stale) return
+      setRoles(r.data || [])
+      setDepartments(d.data || [])
+      const counts = {}
+      for (const row of rpa.data || []) counts[row.role_id] = (counts[row.role_id] || 0) + 1
+      setRolePageCounts(counts)
+    }).catch(() => { /* non-fatal: the pickers just stay empty */ })
+    return () => { stale = true }
+  }, [open])
+
+  const deptOptions = buildDeptOptions(departments)
+  const zeroPageRole = !!roleId && (rolePageCounts[roleId] ?? 0) === 0
+
   async function submit() {
     if (!isEmail(email.trim())) return setError('Enter a valid email address')
     if (!fullName.trim())       return setError('Full name is required')
-    if (!ROLES.includes(role))  return setError('Pick a role')
+    if (!ROLES.includes(role))  return setError('Pick a permission level')
 
     setSubmitting(true); setError('')
     try {
@@ -42,7 +75,21 @@ export default function InviteUserModal({ open, onClose, onInvited }) {
       })
       if (fnErr) throw new Error(fnErr.message || 'Invite failed')
       if (data?.error) throw new Error(data.error)
-      onInvited?.({ email: email.trim().toLowerCase(), user_id: data?.user_id })
+
+      // Persist the (optional) access role + department. The edge function
+      // creates the row with just the permission level; the inviting admin is
+      // allowed to set these privileged columns (guard trigger permits admins).
+      // Non-fatal — the invite already succeeded and they're settable later.
+      const newId = data?.user_id
+      const patch = {}
+      if (roleId) patch.role_id = roleId
+      if (departmentId) patch.department_id = departmentId
+      if (newId && Object.keys(patch).length) {
+        const { error: updErr } = await supabase.from('users').update(patch).eq('id', newId)
+        if (updErr) toast.error("Invite sent, but couldn't set role/department — set them on the profile.", updErr)
+      }
+
+      onInvited?.({ email: email.trim().toLowerCase(), user_id: newId })
       onClose()
     } catch (e) {
       setError(e?.message || 'Invite failed')
@@ -97,14 +144,43 @@ export default function InviteUserModal({ open, onClose, onInvited }) {
                 placeholder="Jane Doe"
               />
             </div>
+
+            {/* Permission level (users.role) — real data access */}
             <div>
-              <label className={S.label}>Role</label>
+              <label className={S.label}>Permission level</label>
               <Select value={role} onChange={e => setRole(e.target.value)}>
                 {ROLES.map(r => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
               </Select>
               <p className="text-xs text-gray-500 dark:text-slate-500 mt-1.5">
-                {ROLE_DESCRIPTION[role]}
+                Controls what data this person can access. Not the same as their role below.
               </p>
+              <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-0.5">{ROLE_DESCRIPTION[role]}</p>
+            </div>
+
+            {/* Access role (users.role_id) — sidebar pages only */}
+            <div>
+              <label className={S.label}>Role</label>
+              <Select value={roleId} onChange={e => setRoleId(e.target.value)}>
+                <option value="">No role</option>
+                {roles.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+              </Select>
+              <p className="text-xs text-gray-500 dark:text-slate-500 mt-1.5">Controls which pages appear in their sidebar.</p>
+              {zeroPageRole && (
+                <div className="mt-2 flex items-start gap-2 p-2.5 rounded-lg bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 text-xs text-amber-700 dark:text-amber-400">
+                  <svg className="w-4 h-4 shrink-0 mt-px" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /></svg>
+                  <span>This role has no pages assigned. They&apos;ll sign in to an empty sidebar.</span>
+                </div>
+              )}
+            </div>
+
+            {/* Department (users.department_id) */}
+            <div>
+              <label className={S.label}>Department</label>
+              <Select value={departmentId} onChange={e => setDepartmentId(e.target.value)}>
+                <option value="">Not set</option>
+                {deptOptions.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}
+              </Select>
+              <p className="text-xs text-gray-500 dark:text-slate-500 mt-1.5">Can be set later from the user's profile.</p>
             </div>
 
             <div className={S.modalFooter}>

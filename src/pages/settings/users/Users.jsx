@@ -257,7 +257,7 @@ export default function Users() {
           <table className="w-full text-sm">
             <thead className={S.tableHead}>
               <tr>
-                {['Name', 'Email', 'Permission', 'Role', 'Pages', 'Status', 'Last sign-in', 'Invited by', ''].map(h => (
+                {['Name', 'Email', 'Permission level', 'Role', 'Pages', 'Status', 'Last sign-in', 'Invited by', ''].map(h => (
                   <th key={h} className={S.th}>{h}</th>
                 ))}
               </tr>
