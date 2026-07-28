@@ -13,7 +13,7 @@ import {
 } from 'recharts'
 import {
   listOffices, periodStats, listExpenses, listTransfers, rateFor,
-  periodRange, stepPeriod, isCurrentPeriod, prevPeriodLabel, todayISO,
+  periodRange, stepPeriod, prevPeriodLabel, todayISO,
   usd0, usd2, local0, rate2, expensesToCSV, downloadCSV,
 } from './officeData'
 import AddOfficeExpensesModal from './AddOfficeExpensesModal'
@@ -141,6 +141,23 @@ export default function OfficeExpenses() {
     return d && d < period.from
   }, [transfersById, period.from])
 
+  // Pending (unrated) spend for the selected period — amount_usd is null until a
+  // transfer lands and the DB trigger back-fills the rate. `pendingLocal` is the
+  // "to transfer" planning number; `plannedLocal` is the full local spend.
+  const pendingRows = useMemo(() => expenses.filter(e => e.amount_usd == null), [expenses])
+  const pendingCount = pendingRows.length
+  const pendingLocal = useMemo(() => pendingRows.reduce((s, e) => s + Number(e.amount_local || 0), 0), [pendingRows])
+  const plannedLocal = useMemo(() => expenses.reduce((s, e) => s + Number(e.amount_local || 0), 0), [expenses])
+  const windowPendingCount = useMemo(() => windowExpenses.filter(e => e.amount_usd == null).length, [windowExpenses])
+
+  // Open the transfer modal, prefilling the local amount with this period's
+  // pending total so the transfer falls right out of the planned expenses.
+  const [transferPrefill, setTransferPrefill] = useState('')
+  const openTransfer = useCallback(() => {
+    setTransferPrefill(pendingLocal > 0 ? String(Math.round(pendingLocal)) : '')
+    setShowTransfer(true)
+  }, [pendingLocal])
+
   // Stacked spend-by-category (USD) over the window.
   const { chartData, chartCats } = useMemo(() => {
     const byCat = {}
@@ -203,12 +220,13 @@ export default function OfficeExpenses() {
       amount_local: amt,
       updated_at: new Date().toISOString(),
     }
-    // If the date moved, restamp the rate that applies to the new date.
+    // If the date moved, restamp the rate that applies to the new date. If the
+    // new date has no transfer yet, clear the rate so the row becomes pending —
+    // the DB trigger back-fills it when a transfer for that month is recorded.
     if (editForm.expense_date !== orig.expense_date) {
       const info = await rateFor(officeId, editForm.expense_date)
-      if (!info?.fx_rate) { toast.error(`No transfer rate exists on or before ${editForm.expense_date}`); return }
-      patch.fx_rate = Number(info.fx_rate)
-      patch.rate_transfer_id = info.transfer_id || null
+      patch.fx_rate = info?.fx_rate ? Number(info.fx_rate) : null
+      patch.rate_transfer_id = info?.fx_rate ? (info.transfer_id || null) : null
       patch.rate_is_manual = false
     }
     const { error: e } = await supabase.from('office_expenses').update(patch).eq('id', orig.id)
@@ -252,7 +270,7 @@ export default function OfficeExpenses() {
         </div>
         <div className="flex items-center gap-2">
           <button onClick={exportCSV} className={S.btnSecondary}>Export</button>
-          {canEdit && <button onClick={() => setShowTransfer(true)} className={S.btnSecondary}>Record transfer</button>}
+          {canEdit && <button onClick={openTransfer} className={S.btnSecondary}>Record transfer</button>}
           {canEdit && <button onClick={() => setShowAdd(true)} className={S.btnPrimary}>
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
             Add expenses
@@ -275,8 +293,9 @@ export default function OfficeExpenses() {
         <div className="flex items-center gap-2">
           <button onClick={() => setAnchor(a => stepPeriod(grain, a, -1))} className={S.btnSecondary} aria-label="Previous period">◀</button>
           <span className="min-w-[7rem] text-center text-sm font-semibold text-gray-900 dark:text-white">{period.label}</span>
-          <button onClick={() => setAnchor(a => stepPeriod(grain, a, 1))} disabled={isCurrentPeriod(grain, anchor)}
-            className={`${S.btnSecondary} disabled:opacity-40`} aria-label="Next period">▶</button>
+          {/* Un-capped: step into future periods to plan/enter ahead of a transfer. */}
+          <button onClick={() => setAnchor(a => stepPeriod(grain, a, 1))}
+            className={S.btnSecondary} aria-label="Next period">▶</button>
           <button onClick={() => setAnchor(todayISO())} className={S.btnSecondary}>This period</button>
           <button onClick={() => setCompare(c => !c)} className={S.filterBtn(compare)}>Compare</button>
         </div>
@@ -295,6 +314,21 @@ export default function OfficeExpenses() {
         </div>
       ) : (
         <>
+          {/* Planning banner — the "to transfer" total, shown whenever there's
+              unfunded spend in the period (the key number for deciding a transfer). */}
+          {pendingCount > 0 && (
+            <div className="flex items-start justify-between gap-4 flex-wrap p-4 rounded-2xl border border-orange-200 dark:border-orange-500/30 bg-orange-50/70 dark:bg-orange-500/[0.08]">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-widest text-orange-700/80 dark:text-orange-400/80">To transfer · {period.label}</p>
+                <p className="text-2xl font-bold text-orange-700 dark:text-orange-400 tabular-nums mt-0.5">{local0(pendingLocal, ccy)}</p>
+                <p className="text-xs text-orange-700/80 dark:text-orange-400/80 mt-0.5">
+                  {pendingCount} expense{pendingCount === 1 ? '' : 's'} awaiting a rate{plannedLocal > pendingLocal ? ` · ${local0(plannedLocal, ccy)} planned in total` : ''}. Record a transfer to fund it — USD fills in automatically.
+                </p>
+              </div>
+              {canEdit && <button onClick={openTransfer} className={S.btnPrimary}>Record transfer</button>}
+            </div>
+          )}
+
           {/* Stat cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <StatCard label={`Spent (${period.label})`} value={usd2(spentUsd)} sub={local0(sel?.spent_local, ccy)} delta={spentDelta} deltaLabel={`vs ${prevPeriodLabel(grain, anchor)}`} invertDelta />
@@ -347,7 +381,10 @@ export default function OfficeExpenses() {
           {/* Charts */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div className={`${S.card} p-4`}>
-              <div className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Spend by category (USD)</div>
+              <div className="text-sm font-semibold text-gray-900 dark:text-white mb-3">
+                Spend by category (USD)
+                {windowPendingCount > 0 && <span className="ml-2 text-[11px] font-normal text-amber-600 dark:text-amber-400">+{windowPendingCount} pending (awaiting a rate)</span>}
+              </div>
               <ResponsiveContainer width="100%" height={260}>
                 <BarChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
@@ -378,6 +415,11 @@ export default function OfficeExpenses() {
 
           {/* Expenses table */}
           <div className={`${S.card} overflow-hidden`}>
+            {pendingCount > 0 && (
+              <div className="px-4 py-2 text-[11px] text-amber-700 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-500/[0.06] border-b border-amber-200/60 dark:border-amber-500/20">
+                {pendingCount} expense{pendingCount === 1 ? '' : 's'} awaiting a rate — USD fills in automatically once a transfer is recorded for {period.label}.
+              </div>
+            )}
             <table className="w-full text-sm">
               <thead className={S.tableHead}>
                 <tr>
@@ -423,7 +465,11 @@ export default function OfficeExpenses() {
                       </td>
                       <td className={`${S.td} text-gray-600 dark:text-slate-400`}>{e.description || <span className="text-gray-300 dark:text-slate-600">—</span>}</td>
                       <td className={`${S.td} text-right text-gray-900 dark:text-slate-200 tabular-nums`}>{local0(e.amount_local, ccy)}</td>
-                      <td className={`${S.td} text-right text-gray-600 dark:text-slate-400 tabular-nums`}>{usd2(e.amount_usd)}</td>
+                      <td className={`${S.td} text-right tabular-nums`}>
+                        {e.amount_usd != null
+                          ? <span className="text-gray-600 dark:text-slate-400">{usd2(e.amount_usd)}</span>
+                          : <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/20" title="No rate yet — fills in when a transfer is recorded">pending</span>}
+                      </td>
                       <td className={`${S.td} text-right whitespace-nowrap`}>
                         {canEdit && (
                           <div className="flex items-center justify-end gap-3 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -464,7 +510,7 @@ export default function OfficeExpenses() {
         <>
           <AddOfficeExpensesModal open={showAdd} office={office} defaultDate={period.from} periodLabel={period.label}
             onClose={() => setShowAdd(false)} onSaved={reload} />
-          <OfficeTransferModal open={showTransfer} office={office}
+          <OfficeTransferModal open={showTransfer} office={office} prefillLocal={transferPrefill}
             onClose={() => setShowTransfer(false)} onSaved={reload} />
         </>
       )}

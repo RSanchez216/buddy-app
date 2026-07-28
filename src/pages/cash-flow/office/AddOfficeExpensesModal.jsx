@@ -94,37 +94,40 @@ export default function AddOfficeExpensesModal({ open, office, defaultDate, peri
   const totalLocal = useMemo(() => rows.reduce((s, r) => s + (Number(r.amount_local) || 0), 0), [rows])
 
   async function save() {
-    // Validate every row before touching the DB (all-or-nothing).
+    // Validate every row before touching the DB (all-or-nothing). A missing
+    // rate is NO LONGER a blocker — rows without a rate save as pending.
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i]
       if (!r.expense_date) return setError(`Row ${i + 1}: date is required`)
       if (!r.category) return setError(`Row ${i + 1}: choose a category`)
       const amt = Number(r.amount_local)
       if (!amt || amt <= 0) return setError(`Row ${i + 1}: ${ccy} amount must be greater than 0`)
-      const info = rateCache[r.expense_date]
-      if (!info || !info.fx_rate) {
-        return setError(`Row ${i + 1}: no transfer rate exists on or before ${r.expense_date}. Record a transfer first.`)
-      }
     }
 
     setSaving(true); setError('')
     const payload = rows.map(r => {
       const info = rateCache[r.expense_date]
-      return {
+      const base = {
         office_id: office.id,
         category: r.category,
         description: r.description.trim() || null,
         expense_date: r.expense_date,
         amount_local: Number(r.amount_local),
-        fx_rate: Number(info.fx_rate),                 // stamped from office_rate_for
-        rate_transfer_id: info.transfer_id || null,
-        rate_is_manual: false,
         created_by: user?.id || null,
       }
+      // Rated → stamp fx_rate + transfer. Pending → OMIT fx_rate entirely (never
+      // send 0; the > 0 check rejects it). The DB trigger fills it later.
+      if (info?.fx_rate) {
+        base.fx_rate = Number(info.fx_rate)
+        base.rate_transfer_id = info.transfer_id || null
+        base.rate_is_manual = false
+      }
+      return base
     })
     const { error: e } = await supabase.from('office_expenses').insert(payload)
     if (e) { setError(`Couldn't save: ${e.message || 'unknown error'}`); toast.error("Couldn't save expenses", e); setSaving(false); return }
-    toast.success(`${payload.length} expense${payload.length === 1 ? '' : 's'} added`)
+    const pend = payload.filter(p => p.fx_rate == null).length
+    toast.success(`${payload.length} expense${payload.length === 1 ? '' : 's'} added${pend ? ` · ${pend} pending a rate` : ''}`)
     setSaving(false)
     onSaved?.()
     onClose?.()
@@ -135,17 +138,21 @@ export default function AddOfficeExpensesModal({ open, office, defaultDate, peri
       <div className={S.modalBody}>
         {error && <div className={S.errorBox}>{error}</div>}
 
-        {/* Rate strip */}
-        <div className="flex items-center justify-between px-4 py-3 rounded-xl bg-cyan-50 dark:bg-cyan-500/5 border border-cyan-200 dark:border-cyan-500/20">
-          <div className="text-xs font-medium text-cyan-700 dark:text-cyan-300 uppercase tracking-wide">
-            Rate for {periodLabel || 'this period'}
+        {/* Rate strip — informational. Without a rate, expenses still save (as
+            pending); the USD fills in automatically once a transfer is recorded. */}
+        {headRate?.fx_rate ? (
+          <div className="flex items-center justify-between px-4 py-3 rounded-xl bg-cyan-50 dark:bg-cyan-500/5 border border-cyan-200 dark:border-cyan-500/20">
+            <div className="text-xs font-medium text-cyan-700 dark:text-cyan-300 uppercase tracking-wide">Rate for {periodLabel || 'this period'}</div>
+            <div className="text-sm font-semibold text-cyan-800 dark:text-cyan-200">
+              1 USD = {rate2(headRate.fx_rate)} {ccy}{headRate.is_inherited && <span className="ml-2 text-[11px] font-normal opacity-70">(inherited)</span>}
+            </div>
           </div>
-          <div className="text-sm font-semibold text-cyan-800 dark:text-cyan-200">
-            {headRate?.fx_rate
-              ? <>1 USD = {rate2(headRate.fx_rate)} {ccy}{headRate.is_inherited && <span className="ml-2 text-[11px] font-normal opacity-70">(inherited)</span>}</>
-              : `No rate yet — record a transfer`}
+        ) : (
+          <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-amber-50 dark:bg-amber-500/[0.08] border border-amber-200 dark:border-amber-500/20">
+            <div className="text-xs font-medium text-amber-700 dark:text-amber-400 uppercase tracking-wide">No rate yet for {periodLabel || 'this period'}</div>
+            <div className="text-xs text-amber-700 dark:text-amber-400">Expenses save as <span className="font-semibold">pending</span> — USD fills in when a transfer is recorded.</div>
           </div>
-        </div>
+        )}
 
         <div className="flex items-center justify-between">
           <button type="button" onClick={copyLastMonth} disabled={copying} className={S.btnSecondary}>
@@ -177,8 +184,12 @@ export default function AddOfficeExpensesModal({ open, office, defaultDate, peri
                 onChange={e => setRow(i, { description: e.target.value })} placeholder="Optional" />
               <input type="number" step="0.01" min="0" className={`${S.input} col-span-2`} value={r.amount_local}
                 onChange={e => setRow(i, { amount_local: e.target.value })} placeholder="0" />
-              <div className="col-span-1 text-right text-sm text-gray-600 dark:text-slate-400 tabular-nums">
-                {usdFor(r) != null ? usd2(usdFor(r)) : '—'}
+              <div className="col-span-1 text-right text-sm tabular-nums">
+                {Number(r.amount_local) > 0
+                  ? (usdFor(r) != null
+                    ? <span className="text-gray-600 dark:text-slate-400">{usd2(usdFor(r))}</span>
+                    : <span className="text-amber-600 dark:text-amber-400 text-xs">pending</span>)
+                  : <span className="text-gray-400 dark:text-slate-500">—</span>}
               </div>
               <div className="col-span-1 flex justify-end">
                 {rows.length > 1 && (

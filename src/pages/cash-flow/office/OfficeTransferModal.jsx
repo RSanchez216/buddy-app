@@ -11,7 +11,7 @@ import { todayISO, rate2, usd2 } from './officeData'
 // column — we never write fx_rate. This transfer becomes the rate source for
 // office expenses on/after its received date.
 
-export default function OfficeTransferModal({ open, office, onClose, onSaved }) {
+export default function OfficeTransferModal({ open, office, prefillLocal = '', onClose, onSaved }) {
   const { user } = useAuth()
   const toast = useToast()
   const [accounts, setAccounts] = useState([])
@@ -32,7 +32,9 @@ export default function OfficeTransferModal({ open, office, onClose, onSaved }) 
     let cancelled = false
     ;(async () => {
       const t = todayISO()
-      setError(''); setFromId(''); setAmountUsd(''); setAmountLocal('')
+      // Prefill the local amount with the period's pending total, so the transfer
+      // falls right out of the planned expenses (editable).
+      setError(''); setFromId(''); setAmountUsd(''); setAmountLocal(prefillLocal ? String(prefillLocal) : '')
       setMethod('bank'); setNotes(''); setSentDate(t); setReceivedDate(t)
       const { data } = await supabase.from('funding_accounts')
         .select('id, name, bank_name, last_four, is_active').order('name')
@@ -40,7 +42,7 @@ export default function OfficeTransferModal({ open, office, onClose, onSaved }) 
       setAccounts((data || []).filter(a => a.is_active))
     })()
     return () => { cancelled = true }
-  }, [open])
+  }, [open, prefillLocal])
 
   // Live derived rate — local per 1 USD. Purely a preview; the DB computes the
   // stored value identically from the two amounts.
