@@ -81,6 +81,10 @@ export default function UsageActivityPanel({ user }) {
       ) : (
         <>
           <StatCards data={data} range={range} />
+          <p className="text-[11px] text-gray-400 dark:text-slate-500 -mt-1">
+            <span className="font-semibold text-gray-500 dark:text-slate-400">Active</span> = tab focused and in use ·{' '}
+            <span className="font-semibold text-gray-500 dark:text-slate-400">On page</span> = how long the page was open (includes time spent cross-referencing other tools).
+          </p>
           <div className="grid lg:grid-cols-2 gap-4 items-start">
             <TimeByPage rows={data.by_page || []} />
             <DailyChart byDay={data.by_day || []} range={range} />
@@ -99,10 +103,11 @@ function StatCards({ data, range }) {
     || (data.by_page || [])[0]?.label
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-2.5">
-      {/* Green hero — active time */}
+      {/* Green hero — active time, with wall-clock "on page" beneath it */}
       <div className="col-span-2 sm:col-span-1 rounded-2xl border border-emerald-200 dark:border-emerald-500/20 bg-emerald-50/60 dark:bg-emerald-500/[0.08] px-4 py-3">
         <p className="text-[10px] font-semibold uppercase tracking-widest text-emerald-700/70 dark:text-emerald-400/70">Active time</p>
         <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-400 font-mono leading-tight mt-0.5">{fmtActive(data.active_seconds)}</p>
+        <p className="text-[11px] font-medium text-emerald-700/70 dark:text-emerald-400/70 font-mono mt-0.5">· {fmtActive(data.open_seconds)} on page</p>
       </div>
       <Stat label="Sessions" value={data.sessions ?? 0} />
       <Stat label="Avg session" value={fmtActive(data.avg_session_seconds)} />
@@ -127,21 +132,39 @@ function Stat({ label, value, sub }) {
 }
 
 function TimeByPage({ rows }) {
-  const top = rows[0]?.seconds || 1
   if (rows.length === 0) return null
+  // Bar length = ON-PAGE time relative to the top page's on-page; the darker
+  // inner segment is the ACTIVE (focused) portion of that on-page time.
+  const topOpen = Math.max(1, ...rows.map(r => r.open_seconds ?? r.seconds ?? 0))
   return (
     <div className={`${S.card} p-4`}>
-      <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-slate-400 mb-2.5">Time by page</p>
-      <div className="space-y-2">
-        {rows.slice(0, 12).map((r, i) => (
-          <div key={r.page_key || r.label || i} className="flex items-center gap-3">
-            <span className="w-32 shrink-0 text-xs text-gray-700 dark:text-slate-300 truncate" title={r.label}>{r.label}</span>
-            <div className="flex-1 h-3 rounded-full bg-gray-100 dark:bg-white/5 overflow-hidden">
-              <div className="h-full rounded-full bg-orange-400 dark:bg-orange-500" style={{ width: `${Math.max(3, Math.round((r.seconds / top) * 100))}%` }} />
+      <div className="flex items-baseline justify-between mb-2.5">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-slate-400">Time by page</p>
+        <p className="text-[10px] text-gray-400 dark:text-slate-500 inline-flex items-center gap-2">
+          <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-orange-500" />active</span>
+          <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-orange-200 dark:bg-orange-500/30" />on page</span>
+        </p>
+      </div>
+      <div className="space-y-2.5">
+        {rows.slice(0, 12).map((r, i) => {
+          const active = Number(r.seconds) || 0
+          const open = Number(r.open_seconds ?? r.seconds) || 0
+          const barPct = Math.max(3, Math.round((open / topOpen) * 100))
+          const activePct = open > 0 ? Math.min(100, Math.round((active / open) * 100)) : 0
+          return (
+            <div key={r.page_key || r.label || i}>
+              <div className="flex items-baseline justify-between gap-2 mb-1">
+                <span className="text-xs text-gray-700 dark:text-slate-300 truncate min-w-0" title={r.label}>{r.label}</span>
+                <span className="text-[11px] font-mono text-gray-500 dark:text-slate-400 shrink-0 whitespace-nowrap">{fmtActive(active)} active · {fmtActive(open)} on page</span>
+              </div>
+              <div className="h-3 rounded-full bg-gray-100 dark:bg-white/5 overflow-hidden">
+                <div className="h-full rounded-full bg-orange-200 dark:bg-orange-500/30" style={{ width: `${barPct}%` }}>
+                  <div className="h-full rounded-full bg-orange-500" style={{ width: `${activePct}%` }} />
+                </div>
+              </div>
             </div>
-            <span className="w-16 shrink-0 text-right text-xs font-mono text-gray-500 dark:text-slate-400">{fmtActive(r.seconds)}</span>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </div>
   )
@@ -198,6 +221,7 @@ function SessionsTable({ rows }) {
               <th className="text-left font-semibold px-3 py-2">Date</th>
               <th className="text-left font-semibold px-2 py-2">Signed in</th>
               <th className="text-right font-semibold px-2 py-2">Active</th>
+              <th className="text-right font-semibold px-2 py-2">On page</th>
               <th className="text-right font-semibold px-2 py-2">Pages</th>
               <th className="text-left font-semibold px-3 py-2">Flow</th>
               <th className="text-left font-semibold px-3 py-2">Ended</th>
@@ -211,6 +235,7 @@ function SessionsTable({ rows }) {
                   <td className="px-3 py-2 whitespace-nowrap text-gray-700 dark:text-slate-300">{fmtDayLong(s.date || s.start)}</td>
                   <td className="px-2 py-2 whitespace-nowrap text-gray-500 dark:text-slate-400">{fmtTime(s.start)}</td>
                   <td className="px-2 py-2 text-right font-mono text-gray-700 dark:text-slate-300">{fmtActive(s.active_seconds)}</td>
+                  <td className="px-2 py-2 text-right font-mono text-gray-500 dark:text-slate-400">{fmtActive(s.open_seconds)}</td>
                   <td className="px-2 py-2 text-right font-mono text-gray-500 dark:text-slate-400">{s.pages ?? '—'}</td>
                   <td className="px-3 py-2 text-gray-500 dark:text-slate-400 truncate max-w-[140px]" title={`${s.first_page || '—'} → ${s.last_page || '—'}`}>
                     {s.first_page || '—'} <span className="text-gray-300 dark:text-slate-600">→</span> {s.last_page || '—'}

@@ -15,7 +15,7 @@ import {
 // WinAnsi-encoded, so we avoid non-WinAnsi glyphs (→) and use "->" in text.
 const C = {
   ink: [15, 23, 42], muted: [100, 116, 139], line: [226, 232, 240],
-  orange: [249, 115, 22], cardBg: [248, 250, 252],
+  orange: [249, 115, 22], orangeSoft: [253, 215, 170], cardBg: [248, 250, 252],
   green: [5, 150, 105], greenBg: [236, 253, 245],
   indigo: [79, 70, 229], amber: [180, 83, 9], white: [255, 255, 255],
 }
@@ -85,7 +85,7 @@ function drawUserHeader(doc, summary, x, y, w) {
 
 function drawStatCards(doc, summary, x, y, w) {
   const cards = [
-    { label: 'ACTIVE TIME', value: fmtActive(summary.active_seconds), hero: true },
+    { label: 'ACTIVE TIME', value: fmtActive(summary.active_seconds), sub: `${fmtActive(summary.open_seconds)} on page`, hero: true },
     { label: 'SESSIONS', value: String(summary.sessions ?? 0) },
     { label: 'AVG SESSION', value: fmtActive(summary.avg_session_seconds) },
     { label: 'ACTIVE DAYS', value: `${summary.active_days ?? 0}/${daysInRange(summary.range?.start, summary.range?.end)}` },
@@ -102,27 +102,39 @@ function drawStatCards(doc, summary, x, y, w) {
     doc.setFont('helvetica', 'bold'); doc.setFontSize(6.5); setText(doc, c.hero ? C.green : C.muted)
     doc.text(c.label, cx + 8, y + 15)
     doc.setFont('helvetica', 'bold'); setText(doc, c.hero ? C.green : C.ink)
-    doc.text(fitFont(doc, String(c.value), cw - 14, c.hero ? 15 : 13, 8), cx + 8, y + 34)
+    doc.text(fitFont(doc, String(c.value), cw - 14, c.hero ? 15 : 13, 8), cx + 8, c.sub ? y + 30 : y + 34)
+    if (c.sub) {
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5); setText(doc, c.hero ? C.green : C.muted)
+      doc.text(clip(doc, `- ${c.sub}`, cw - 14, 6.5), cx + 8, y + 40)
+    }
   })
   return y + ch
 }
 
 function drawTimeByPage(doc, rows, x, y, w) {
   doc.setFont('helvetica', 'bold'); doc.setFontSize(10); setText(doc, C.ink)
-  doc.text('Time by page', x, y); y += 10
-  const top = rows[0]?.seconds || 1
-  const labelW = 150, valueW = 56, gap = 8
+  doc.text('Time by page', x, y)
+  // Bar = on-page (relative to top page's on-page); dark fill = active portion.
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7); setText(doc, C.muted)
+  doc.text('bar = on page  |  fill = active', x + w, y, { align: 'right' })
+  y += 10
+  const topOpen = Math.max(1, ...rows.map(r => Number(r.open_seconds ?? r.seconds) || 0))
+  const labelW = 140, valueW = 88, gap = 8
   const barX = x + labelW + gap
   const barW = w - labelW - valueW - 2 * gap
   const rowH = 14
   for (const r of rows.slice(0, 10)) {
-    doc.setFont('helvetica', 'normal'); setText(doc, C.ink)
+    const active = Number(r.seconds) || 0
+    const open = Number(r.open_seconds ?? r.seconds) || 0
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); setText(doc, C.ink)
     doc.text(clip(doc, r.label || '-', labelW, 8), x, y + 8)
     setFill(doc, C.cardBg); doc.roundedRect(barX, y + 2, barW, 7, 3, 3, 'F')
-    const fw = Math.max(2, Math.round((r.seconds / top) * barW))
-    setFill(doc, C.orange); doc.roundedRect(barX, y + 2, fw, 7, 3, 3, 'F')
+    const ow = Math.max(2, Math.round((open / topOpen) * barW))
+    setFill(doc, C.orangeSoft); doc.roundedRect(barX, y + 2, ow, 7, 3, 3, 'F')
+    const aw = open > 0 ? Math.max(1, Math.round((active / open) * ow)) : 0
+    if (aw > 0) { setFill(doc, C.orange); doc.roundedRect(barX, y + 2, aw, 7, 3, 3, 'F') }
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8); setText(doc, C.muted)
-    doc.text(fmtActive(r.seconds), x + w, y + 8, { align: 'right' })
+    doc.text(`${fmtActive(active)} / ${fmtActive(open)}`, x + w, y + 8, { align: 'right' })
     y += rowH
   }
   return y + 2
@@ -160,21 +172,22 @@ function drawSessions(doc, autoTable, rows, x, y, w) {
   const pw = doc.internal.pageSize.getWidth()
   autoTable(doc, {
     startY: y + 6,
-    head: [['Date', 'Signed in', 'Active', 'Pages', 'Flow', 'Ended']],
+    head: [['Date', 'Signed in', 'Active', 'On page', 'Pages', 'Flow', 'Ended']],
     body: rows.map(s => [
       fmtDayLong(s.date || s.start),
       fmtTime(s.start),
       fmtActive(s.active_seconds),
+      fmtActive(s.open_seconds),
       String(s.pages ?? '-'),
       `${s.first_page || '-'} -> ${s.last_page || '-'}`,
       s.ended === 'live' ? 'live now' : s.ended === 'signout' ? 'signed out' : s.ended === 'idle' ? 'idle 30m' : (s.ended || '-'),
     ]),
     styles: { fontSize: 8, cellPadding: 3, overflow: 'linebreak' },
     headStyles: { fillColor: C.orange, textColor: C.white },
-    columnStyles: { 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { cellWidth: 150 } },
+    columnStyles: { 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { cellWidth: 130 } },
     margin: { left: x, right: pw - (x + w) },
     didParseCell: (d) => {
-      if (d.section === 'body' && d.column.index === 5) {
+      if (d.section === 'body' && d.column.index === 6) {
         const s = rows[d.row.index]
         const col = s?.ended === 'live' ? C.indigo : s?.ended === 'signout' ? C.green : s?.ended === 'idle' ? C.amber : C.muted
         d.cell.styles.textColor = col
@@ -271,13 +284,14 @@ export async function downloadTeamUsagePdf(all) {
   doc.text(`Team roster · ${users.length} user${users.length === 1 ? '' : 's'}`, M, 96)
   autoTable(doc, {
     startY: 104,
-    head: [['Name', 'Role', 'Active time', 'Sessions', 'Active days', 'Last active']],
+    head: [['Name', 'Role', 'Active time', 'On page', 'Sessions', 'Active days', 'Last active']],
     body: users.map(s => {
       const u = s.user || {}
       return [
         u.name || u.email || '-',
         cap(u.role),
         fmtActive(s.active_seconds),
+        fmtActive(s.open_seconds),
         String(s.sessions ?? 0),
         `${s.active_days ?? 0}/${daysInRange(s.range?.start, s.range?.end)}`,
         fmtRelative(s.last_active),
@@ -285,7 +299,7 @@ export async function downloadTeamUsagePdf(all) {
     }),
     styles: { fontSize: 9, cellPadding: 4, overflow: 'linebreak' },
     headStyles: { fillColor: C.orange, textColor: C.white },
-    columnStyles: { 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } },
+    columnStyles: { 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' } },
     margin: { left: M, right: M },
   })
 
