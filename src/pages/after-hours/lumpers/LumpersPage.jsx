@@ -32,8 +32,9 @@ export default function LumpersPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
 
-  // Filters (client-side over the fetched range).
-  const [status, setStatus] = useState('all')
+  // Filters (client-side over the fetched range). Default to Open so the list
+  // leads with what's still owed (the point of the page).
+  const [status, setStatus] = useState('open')
   const [carrierId, setCarrierId] = useState('all')
   const [categoryId, setCategoryId] = useState('all')
   const [chargeTo, setChargeTo] = useState('all')
