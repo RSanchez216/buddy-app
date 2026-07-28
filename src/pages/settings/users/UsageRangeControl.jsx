@@ -2,20 +2,26 @@ import { useEffect, useRef, useState } from 'react'
 import { S } from '../../../lib/styles'
 import { presetRange, todayYmd } from './usageFormat'
 
-// Date-range selector for the usage reports: Last 7 days (default), Last 30 days,
-// and Custom. Self-contained — owns its own state and calls onChange({ start,
-// end, mode, label }) whenever the effective range changes (including on mount),
-// so parents just stash the latest range.
+// Date-range selector, reused across the app (usage reports, lumpers, …).
+// Self-contained — owns its own state and calls onChange({ start, end, mode,
+// label }) whenever the effective range changes (including on mount), so parents
+// just stash the latest range.
+//
+// `presets` is an array of [key, label, days] (days omitted for 'custom').
+// Defaults to the usage-report set so existing callers are unchanged; pass a
+// different set + `defaultMode` to reuse the same pills elsewhere.
 
-const PRESETS = [
-  ['7', 'Last 7 days'],
-  ['30', 'Last 30 days'],
+const DEFAULT_PRESETS = [
+  ['7', 'Last 7 days', 7],
+  ['30', 'Last 30 days', 30],
   ['custom', 'Custom'],
 ]
 
-export default function UsageRangeControl({ onChange, size = 'sm' }) {
-  const [mode, setMode] = useState('7')
-  const [customStart, setCustomStart] = useState(() => presetRange(7).start)
+export default function UsageRangeControl({ onChange, size = 'sm', presets = DEFAULT_PRESETS, defaultMode }) {
+  const initialMode = defaultMode || presets[0][0]
+  const initialDays = presets.find(p => p[0] === initialMode)?.[2] || 30
+  const [mode, setMode] = useState(initialMode)
+  const [customStart, setCustomStart] = useState(() => presetRange(initialDays).start)
   const [customEnd, setCustomEnd] = useState(() => todayYmd())
   const onChangeRef = useRef(onChange)
   useEffect(() => { onChangeRef.current = onChange }, [onChange])
@@ -23,11 +29,13 @@ export default function UsageRangeControl({ onChange, size = 'sm' }) {
   // Emit the effective range whenever the selection changes. Custom stays valid
   // (start ≤ end) by clamping in the inputs below.
   useEffect(() => {
+    const preset = presets.find(p => p[0] === mode)
     const range = mode === 'custom'
       ? { start: customStart, end: customEnd }
-      : presetRange(Number(mode))
-    const label = PRESETS.find(p => p[0] === mode)?.[1] || 'Custom'
+      : presetRange(preset?.[2] || 30)
+    const label = preset?.[1] || 'Custom'
     onChangeRef.current?.({ ...range, mode, label })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, customStart, customEnd])
 
   const btn = (active) =>
@@ -40,7 +48,7 @@ export default function UsageRangeControl({ onChange, size = 'sm' }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
       <div className="flex gap-1.5">
-        {PRESETS.map(([k, lbl]) => (
+        {presets.map(([k, lbl]) => (
           <button key={k} type="button" onClick={() => setMode(k)} className={btn(mode === k)}>{lbl}</button>
         ))}
       </div>

@@ -1,0 +1,519 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { supabase } from '../../../lib/supabase'
+import { useAuth } from '../../../contexts/AuthContext'
+import { useToast } from '../../../contexts/ToastContext'
+import { S } from '../../../lib/styles'
+import SearchSelect from './SearchSelect'
+import {
+  loadLookup, addCategory, deriveStatus, statusMeta, money, todayChicago,
+  DOC_BUCKET, CHARGE_TO, RC_STATUS,
+} from './lumperData'
+
+const ORANGE_BTN = 'px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 disabled:bg-gray-200 dark:disabled:bg-slate-700 disabled:text-gray-400 dark:disabled:text-slate-500 text-white rounded-xl transition-all'
+const num = (v) => (v === '' || v == null ? null : Number(v))
+const sanitizeName = (n) => String(n || 'file').replace(/[^\w.-]+/g, '_').slice(-80)
+
+export default function LumperDrawer({ open, mode, row, categories, refLists, onCategoriesChange, onClose, onSaved }) {
+  const { profile: me, canEdit } = useAuth()
+  const toast = useToast()
+  const isEdit = mode === 'edit'
+
+  // Step 1 — load
+  const [loadNumber, setLoadNumber] = useState('')
+  const [datePaid, setDatePaid] = useState(todayChicago())
+  const [lookup, setLookup] = useState({ status: 'idle', drivers: [] }) // idle|loading|found|notfound
+  const [loadId, setLoadId] = useState(null)
+  const [carrierId, setCarrierId] = useState(null)
+  const [customerId, setCustomerId] = useState(null)
+  const [broker, setBroker] = useState('')
+  const [dispatcherId, setDispatcherId] = useState(null)
+  const [dispatcherName, setDispatcherName] = useState('')
+  const [driverId, setDriverId] = useState(null)
+  const [driverName, setDriverName] = useState('')
+
+  // Step 2 — payment
+  const [efsCode, setEfsCode] = useState('')
+  const [amount, setAmount] = useState('')
+  const [efsFee, setEfsFee] = useState('2.00')
+  const [categoryId, setCategoryId] = useState(null)
+  const [invoiceNumber, setInvoiceNumber] = useState('')
+  const [addingCat, setAddingCat] = useState(false)
+  const [newCat, setNewCat] = useState('')
+
+  // Step 3 — recovery
+  const [chargeTo, setChargeTo] = useState('broker')
+  const [rcStatus, setRcStatus] = useState('pending')
+  const [reimbursedAt, setReimbursedAt] = useState('')
+  const [reimbursedAmount, setReimbursedAmount] = useState('')
+  const [resolvedAt, setResolvedAt] = useState('')
+
+  // Docs + notes + recorder
+  const [receiptFile, setReceiptFile] = useState(null)
+  const [receiptPath, setReceiptPath] = useState(null)
+  const [rcFile, setRcFile] = useState(null)
+  const [rcPath, setRcPath] = useState(null)
+  const [notes, setNotes] = useState('')
+  const [recorderId, setRecorderId] = useState(null)
+
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const debounceRef = useRef(null)
+
+  const usersOptions = useMemo(() => (refLists.users || []).map(u => ({ id: u.id, name: u.full_name })), [refLists.users])
+  const usersById = useMemo(() => new Map((refLists.users || []).map(u => [u.id, u])), [refLists.users])
+
+  // Populate on open (reset for create, hydrate for edit).
+  useEffect(() => {
+    if (!open) return
+    setError(''); setSaving(false); setAddingCat(false); setNewCat('')
+    setReceiptFile(null); setRcFile(null)
+    if (isEdit && row) {
+      setLoadNumber(row.load_number || '')
+      setDatePaid(row.event_date || todayChicago())
+      setLookup({ status: 'idle', drivers: [] })
+      setLoadId(row.load_id || null)
+      setCarrierId(row.carrier_id || null)
+      setCustomerId(row.customer_id || null)
+      setBroker(row.broker_name || '')
+      setDispatcherId(row.dispatcher_id || null)
+      setDispatcherName(row.dispatcher_name || row.dispatcher?.name || '')
+      setDriverId(row.driver_id || null)
+      setDriverName(row.driver_name || row.driver?.full_name || '')
+      setEfsCode(row.efs_code || '')
+      setAmount(row.amount != null ? String(row.amount) : '')
+      setEfsFee(row.efs_fee != null ? String(row.efs_fee) : '2.00')
+      setCategoryId(row.category_id || null)
+      setInvoiceNumber(row.invoice_number || '')
+      setChargeTo(row.charge_to || 'broker')
+      setRcStatus(row.rc_status || 'pending')
+      setReimbursedAt(row.reimbursed_at || '')
+      setReimbursedAmount(row.reimbursed_amount != null ? String(row.reimbursed_amount) : '')
+      setResolvedAt(row.resolved_at || '')
+      setReceiptPath(row.receipt_path || null)
+      setRcPath(row.revised_rc_path || null)
+      setNotes(row.notes || '')
+      setRecorderId(row.recorded_by || me?.id || null)
+    } else {
+      setLoadNumber(''); setDatePaid(todayChicago()); setLookup({ status: 'idle', drivers: [] })
+      setLoadId(null); setCarrierId(null); setCustomerId(null); setBroker('')
+      setDispatcherId(null); setDispatcherName(''); setDriverId(null); setDriverName('')
+      setEfsCode(''); setAmount(''); setEfsFee('2.00'); setCategoryId(null); setInvoiceNumber('')
+      setChargeTo('broker'); setRcStatus('pending'); setReimbursedAt(''); setReimbursedAmount(''); setResolvedAt('')
+      setReceiptPath(null); setRcPath(null); setNotes(''); setRecorderId(me?.id || null)
+    }
+  }, [open, isEdit, row, me?.id])
+
+  useEffect(() => {
+    if (!open) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = prev }
+  }, [open])
+
+  const totalDisplay = (num(amount) || 0) + (num(efsFee) || 0)
+  const derivedStatus = deriveStatus({ charge_to: chargeTo, resolved_at: resolvedAt || null, reimbursed_at: reimbursedAt || null })
+  const nowLabel = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date()) + ' CT'
+
+  async function runLookup(rawNum) {
+    const n = rawNum.trim()
+    if (!n) { setLookup({ status: 'idle', drivers: [] }); return }
+    setLookup({ status: 'loading', drivers: [] })
+    try {
+      const res = await loadLookup(n)
+      if (res?.found) {
+        setLoadId(res.load_id || null)
+        setCarrierId(res.carrier_id || null)
+        setCustomerId(res.customer_id || null)
+        setBroker(res.broker_name || '')
+        setDispatcherId(res.dispatcher_id || null)
+        setDispatcherName(res.dispatcher_name || '')
+        const drivers = res.drivers || []
+        if (drivers.length === 1) { setDriverId(drivers[0].id); setDriverName(drivers[0].name) }
+        else { setDriverId(null); setDriverName('') }
+        setLookup({ status: 'found', drivers })
+      } else {
+        setLookup({ status: 'notfound', drivers: [] })
+      }
+    } catch {
+      setLookup({ status: 'notfound', drivers: [] })
+    }
+  }
+
+  function onLoadNumberChange(v) {
+    setLoadNumber(v)
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => runLookup(v), 600)
+  }
+
+  async function submitAddCategory() {
+    const name = newCat.trim()
+    if (!name) return
+    try {
+      const cat = await addCategory(name)
+      onCategoriesChange?.([...categories, cat].sort((a, b) => a.sort_order - b.sort_order))
+      setCategoryId(cat.id)
+      setAddingCat(false); setNewCat('')
+    } catch (e) {
+      toast.error("Couldn't add category", e)
+    }
+  }
+
+  async function viewDoc(path) {
+    try {
+      const { data, error: e } = await supabase.storage.from(DOC_BUCKET).createSignedUrl(path, 3600)
+      if (e) throw e
+      if (data?.signedUrl) window.open(data.signedUrl, '_blank', 'noopener')
+    } catch (e) {
+      toast.error("Couldn't open the document", e)
+    }
+  }
+
+  async function uploadDoc(eventId, kind, file) {
+    const path = `${eventId}/${kind}-${sanitizeName(file.name)}`
+    const { error: e } = await supabase.storage.from(DOC_BUCKET).upload(path, file, { upsert: true, contentType: file.type || undefined })
+    if (e) throw e
+    return path
+  }
+
+  async function save() {
+    setError('')
+    if (!(num(amount) > 0)) { setError('Enter the amount paid.'); return }
+    if (!datePaid) { setError('Pick the date paid.'); return }
+    if (!categoryId) { setError('Pick a category.'); return }
+
+    setSaving(true)
+    try {
+      const recorder = recorderId ? usersById.get(recorderId) : null
+      // NEVER send status, total_amount, or updated_at — all DB-computed.
+      const payload = {
+        event_date: datePaid,
+        load_id: loadId || null,
+        load_number: loadNumber.trim() || null,
+        carrier_id: carrierId || null,
+        customer_id: customerId || null,
+        broker_name: broker.trim() || null,
+        dispatcher_id: dispatcherId || null,
+        dispatcher_name: dispatcherName.trim() || null,
+        driver_id: driverId || null,
+        driver_name: driverName.trim() || null,
+        category_id: categoryId || null,
+        amount: num(amount),
+        efs_fee: efsFee === '' ? 0 : num(efsFee),
+        efs_code: efsCode.trim() || null,
+        invoice_number: invoiceNumber.trim() || null,
+        rc_status: rcStatus,
+        charge_to: chargeTo,
+        reimbursed_at: reimbursedAt || null,
+        reimbursed_amount: num(reimbursedAmount),
+        resolved_at: resolvedAt || null,
+        notes: notes.trim() || null,
+        paid_by_user_id: recorderId || null,
+        paid_from_department_id: recorder?.department_id || null,
+        recorded_by: recorderId || null,
+        recorded_by_name: recorder?.full_name || null,
+      }
+
+      let eventId = row?.id
+      if (isEdit) {
+        const { error: e } = await supabase.from('lumper_events').update(payload).eq('id', eventId)
+        if (e) throw e
+      } else {
+        const { data, error: e } = await supabase.from('lumper_events')
+          .insert({ ...payload, created_by: me?.id || null }).select('id').single()
+        if (e) throw e
+        eventId = data.id
+      }
+
+      // Uploads happen after we have an id (path is {id}/{kind}-{filename}).
+      const patch = {}
+      if (receiptFile) patch.receipt_path = await uploadDoc(eventId, 'receipt', receiptFile)
+      if (rcFile) patch.revised_rc_path = await uploadDoc(eventId, 'revised_rc', rcFile)
+      if (Object.keys(patch).length) {
+        const { error: e2 } = await supabase.from('lumper_events').update(patch).eq('id', eventId)
+        if (e2) throw e2
+      }
+
+      toast.success(isEdit ? 'Lumper updated' : 'Lumper recorded')
+      onSaved?.()
+    } catch (e) {
+      setError(e?.message || 'Save failed.')
+      toast.error("Couldn't save the lumper", e)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!open) return null
+
+  return createPortal(
+    <div className="fixed inset-0 z-[90] flex justify-end">
+      <div className="absolute inset-0 bg-black/40 dark:bg-black/60" onClick={onClose} />
+      <div className="relative w-full max-w-xl bg-white dark:bg-[#0d0d1f] border-l border-gray-200 dark:border-white/10 shadow-2xl flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between p-4 border-b border-gray-100 dark:border-white/5 shrink-0">
+          <div>
+            <h3 className="text-lg font-bold text-gray-900 dark:text-white">{isEdit ? 'Edit lumper' : 'Add lumper'}</h3>
+            <p className="text-xs text-gray-500 dark:text-slate-500">Advance paid at the dock — record it and track recovery.</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 dark:hover:text-slate-200">
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="overflow-y-auto flex-1 p-5 space-y-6">
+          {error && <div className={S.errorBox}>{error}</div>}
+
+          {/* Step 1 — the load */}
+          <Step n={1} title="Start with the load">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={S.label}>TMS load number</label>
+                <input className={S.input} value={loadNumber} placeholder="2607-1306"
+                  onChange={e => onLoadNumberChange(e.target.value)}
+                  onBlur={() => { if (debounceRef.current) clearTimeout(debounceRef.current); runLookup(loadNumber) }} />
+              </div>
+              <div>
+                <label className={S.label}>Date paid</label>
+                <input type="date" className={S.input} value={datePaid} max={todayChicago()} onChange={e => setDatePaid(e.target.value || datePaid)} />
+              </div>
+            </div>
+
+            {lookup.status === 'loading' && <p className="text-xs text-gray-400 dark:text-slate-500 mt-2">Looking up load…</p>}
+            {lookup.status === 'found' && (
+              <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-2 inline-flex items-center gap-1.5">
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                Load found — details auto-filled below. Adjust anything that doesn&apos;t match.
+              </p>
+            )}
+            {lookup.status === 'notfound' && (
+              <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">No load found with that number. You can still record the lumper and link it later.</p>
+            )}
+
+            {lookup.status === 'found' && lookup.drivers.length > 1 && (
+              <div className="mt-3 p-2.5 rounded-lg bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20">
+                <p className="text-[11px] font-medium text-amber-700 dark:text-amber-400 mb-1.5">Multiple drivers on this load — pick who paid:</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {lookup.drivers.map(d => (
+                    <button key={d.id} type="button" onClick={() => { setDriverId(d.id); setDriverName(d.name) }}
+                      className={`px-2.5 py-1 rounded-full text-xs border ${driverId === d.id ? 'bg-orange-500 text-white border-orange-500' : 'border-gray-300 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-white dark:hover:bg-white/5'}`}>
+                      {d.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-3 mt-3">
+              <AutoField label="Carrier" auto={lookup.status === 'found'}>
+                <SearchSelect options={refLists.carriers} value={carrierId} onChange={id => setCarrierId(id)} placeholder="Search carriers…" />
+              </AutoField>
+              <AutoField label="Driver" auto={lookup.status === 'found' && !!driverId}>
+                <SearchSelect options={refLists.drivers} value={driverId} onChange={(id, o) => { setDriverId(id); setDriverName(o?.name || '') }} placeholder="Search drivers…" />
+              </AutoField>
+              <AutoField label="Dispatcher" auto={lookup.status === 'found'}>
+                <SearchSelect options={refLists.dispatchers} value={dispatcherId} onChange={(id, o) => { setDispatcherId(id); setDispatcherName(o?.name || '') }} placeholder="Search dispatchers…" />
+              </AutoField>
+              <AutoField label="Broker" auto={lookup.status === 'found'}>
+                <input className={S.input} value={broker} onChange={e => setBroker(e.target.value)} placeholder="Broker name" />
+              </AutoField>
+            </div>
+          </Step>
+
+          {/* Step 2 — the payment */}
+          <Step n={2} title="The payment">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={S.label}>EFS code</label>
+                <input className={S.input} value={efsCode} onChange={e => setEfsCode(e.target.value)} />
+              </div>
+              <div>
+                <label className={S.label}>Amount paid *</label>
+                <input type="number" min="0" step="0.01" className={S.input} value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00" />
+              </div>
+              <div>
+                <label className={S.label}>EFS check fee</label>
+                <input type="number" min="0" step="0.01" className={S.input} value={efsFee} onChange={e => setEfsFee(e.target.value)} />
+                <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1">Default — change only if EFS charged something else.</p>
+              </div>
+              <div>
+                <label className={S.label}>Total <span className="text-gray-400 dark:text-slate-500 font-normal normal-case">· calculated</span></label>
+                <div className={`${S.input} bg-gray-50 dark:bg-white/5 flex items-center font-mono tabular-nums font-semibold`}>{money(totalDisplay)}</div>
+              </div>
+            </div>
+
+            <div className="mt-3">
+              <label className={S.label}>Category *</label>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {categories.map(c => (
+                  <button key={c.id} type="button" onClick={() => setCategoryId(categoryId === c.id ? null : c.id)}
+                    className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${categoryId === c.id ? 'bg-orange-500 text-white border-orange-500' : 'border-gray-300 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5'}`}>
+                    {c.name}
+                  </button>
+                ))}
+                {canEdit && !addingCat && (
+                  <button type="button" onClick={() => setAddingCat(true)} title="Add a category"
+                    className="w-7 h-7 inline-flex items-center justify-center rounded-full border border-dashed border-gray-300 dark:border-slate-600 text-gray-400 hover:text-orange-500 hover:border-orange-400">
+                    +
+                  </button>
+                )}
+                {canEdit && addingCat && (
+                  <span className="inline-flex items-center gap-1">
+                    <input autoFocus value={newCat} onChange={e => setNewCat(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') submitAddCategory(); if (e.key === 'Escape') { setAddingCat(false); setNewCat('') } }}
+                      placeholder="New category" className={`${S.input} !py-1 !w-36 text-xs`} />
+                    <button type="button" onClick={submitAddCategory} className="text-xs font-medium text-orange-600 dark:text-orange-400 hover:underline">Add</button>
+                    <button type="button" onClick={() => { setAddingCat(false); setNewCat('') }} className="text-xs text-gray-400 hover:text-gray-600">✕</button>
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-3">
+              <label className={S.label}>Invoice / reference #</label>
+              <input className={S.input} value={invoiceNumber} onChange={e => setInvoiceNumber(e.target.value)} placeholder="Broker's reference number" />
+            </div>
+          </Step>
+
+          {/* Step 3 — getting it back */}
+          <Step n={3} title="Getting it back">
+            <div>
+              <label className={S.label}>Charge to <span className="text-gray-400 dark:text-slate-500 font-normal normal-case">· who ends up paying</span></label>
+              <div className="flex flex-wrap gap-1.5">
+                {CHARGE_TO.map(([v, l]) => (
+                  <button key={v} type="button" onClick={() => setChargeTo(v)}
+                    className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${chargeTo === v ? 'bg-orange-500 text-white border-orange-500' : 'border-gray-300 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5'}`}>
+                    {l}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 mt-3">
+              <div>
+                <label className={S.label}>Revised rate con</label>
+                <select className={`${S.input} appearance-none`} value={rcStatus} onChange={e => setRcStatus(e.target.value)}>
+                  {RC_STATUS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className={S.label}>Status <span className="text-gray-400 dark:text-slate-500 font-normal normal-case">· derived</span></label>
+                <div className="flex items-center h-[42px]">
+                  <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ${statusMeta(derivedStatus).pill}`}>{statusMeta(derivedStatus).label}</span>
+                </div>
+                <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-0.5">Closes itself when reimbursement is recorded.</p>
+              </div>
+            </div>
+
+            {isEdit && (
+              <div className="grid grid-cols-2 gap-3 mt-3">
+                <div>
+                  <label className={S.label}>Reimbursed on</label>
+                  <input type="date" className={S.input} value={reimbursedAt} max={todayChicago()} onChange={e => setReimbursedAt(e.target.value)} />
+                </div>
+                <div>
+                  <label className={S.label}>Reimbursed amount</label>
+                  <input type="number" min="0" step="0.01" className={S.input} value={reimbursedAmount} onChange={e => setReimbursedAmount(e.target.value)} placeholder="0.00" />
+                </div>
+              </div>
+            )}
+            {chargeTo === 'company' && (
+              <div className="mt-3">
+                <label className={S.label}>Resolved / written-off on</label>
+                <input type="date" className={S.input} value={resolvedAt} max={todayChicago()} onChange={e => setResolvedAt(e.target.value)} />
+                <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1">A resolved date on a company charge marks it written off (absorbed).</p>
+              </div>
+            )}
+          </Step>
+
+          {/* Documents */}
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 dark:text-slate-400 mb-2">Documents</p>
+            <div className="grid grid-cols-2 gap-3">
+              <DocTarget label="Receipt" file={receiptFile} path={receiptPath} onFile={setReceiptFile} onView={viewDoc} onClear={() => setReceiptFile(null)} />
+              <DocTarget label="Revised rate con" file={rcFile} path={rcPath} onFile={setRcFile} onView={viewDoc} onClear={() => setRcFile(null)} />
+            </div>
+          </div>
+
+          {/* Notes */}
+          <div>
+            <label className={S.label}>Notes</label>
+            <textarea rows={3} className={S.textarea} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Anything the morning team needs to know…" />
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="shrink-0 border-t border-gray-100 dark:border-white/5 p-4 space-y-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500 shrink-0">Recorded by</span>
+              <div className="w-48">
+                <SearchSelect options={usersOptions} value={recorderId} onChange={id => setRecorderId(id)} placeholder="Recorder…" />
+              </div>
+              {recorderId === me?.id && <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 shrink-0">YOU</span>}
+            </div>
+            <span className="text-[11px] text-gray-400 dark:text-slate-500 tabular-nums">{nowLabel}</span>
+          </div>
+          <div className="flex items-center justify-end gap-2">
+            <button onClick={onClose} className={S.btnCancel}>Cancel</button>
+            <button onClick={save} disabled={saving} className={ORANGE_BTN}>{saving ? 'Saving…' : 'Save lumper'}</button>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body
+  )
+}
+
+function Step({ n, title, children }) {
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-3">
+        <span className="w-6 h-6 rounded-full bg-orange-100 dark:bg-orange-500/15 text-orange-600 dark:text-orange-400 inline-flex items-center justify-center text-xs font-bold">{n}</span>
+        <h4 className="text-sm font-semibold text-gray-900 dark:text-white">{title}</h4>
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function AutoField({ label, auto, children }) {
+  return (
+    <div>
+      <label className={`${S.label} flex items-center gap-1.5`}>
+        {label}
+        {auto && <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 tracking-normal">AUTO</span>}
+      </label>
+      {children}
+    </div>
+  )
+}
+
+function DocTarget({ label, file, path, onFile, onView, onClear }) {
+  return (
+    <div className="rounded-xl border border-dashed border-gray-300 dark:border-slate-600 p-3">
+      <p className="text-xs font-medium text-gray-700 dark:text-slate-300 mb-1.5">{label}</p>
+      {file ? (
+        <div className="flex items-center gap-2 text-xs">
+          <span className="truncate text-gray-600 dark:text-slate-400" title={file.name}>{file.name}</span>
+          <button type="button" onClick={onClear} className="ml-auto text-gray-400 hover:text-red-500 shrink-0" aria-label="Remove">✕</button>
+        </div>
+      ) : path ? (
+        <div className="flex items-center gap-2 text-xs">
+          <button type="button" onClick={() => onView(path)} className="text-orange-600 dark:text-orange-400 font-medium hover:underline">View current</button>
+          <label className="ml-auto text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 cursor-pointer shrink-0">
+            Replace
+            <input type="file" accept="image/*,application/pdf" className="hidden" onChange={e => e.target.files?.[0] && onFile(e.target.files[0])} />
+          </label>
+        </div>
+      ) : (
+        <label className="flex items-center justify-center gap-1.5 py-2 text-xs text-gray-400 dark:text-slate-500 cursor-pointer hover:text-orange-500">
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" /></svg>
+          Upload image or PDF
+          <input type="file" accept="image/*,application/pdf" className="hidden" onChange={e => e.target.files?.[0] && onFile(e.target.files[0])} />
+        </label>
+      )}
+    </div>
+  )
+}

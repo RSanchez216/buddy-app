@@ -60,10 +60,20 @@ const PAGE_ICON = {
   combined_loads: Icons.merge,
   dashboard: Icons.dashboard, vendor_master: Icons.vendors, invoice_inbox: Icons.invoices,
   transaction_feed: Icons.txns, monthly_report: Icons.report,
+  lumpers: Icons.moon,
 }
 // nav_group render order (matches the previous hardcoded sidebar). Groups not
 // listed here fall to the end, alphabetically.
 const SECTION_ORDER = ['Today', 'Money', 'Profitability', 'Fleet', 'Payables']
+
+// Frontend static-nav groups: page_keys pulled OUT of their DB nav_group and
+// shown under a dedicated section instead (access still comes from my_pages, so
+// the section is empty/hidden for users without the grant). "After Hours" holds
+// the new night-shift surfaces (Lumpers now, Night Shift to follow).
+const STATIC_NAV_GROUPS = [
+  { label: 'After Hours', pageKeys: ['lumpers'] },
+]
+const STATIC_NAV_KEYS = new Set(STATIC_NAV_GROUPS.flatMap(g => g.pageKeys))
 
 // ── Nav item ───────────────────────────────────────────────────────────────
 // Always reserves a 2px left border so the active orange marker doesn't
@@ -208,10 +218,22 @@ export default function Layout() {
     const g = {}
     for (const p of pages) {
       if (navMode === 'simple' && !p.is_bookmarked) continue
+      if (STATIC_NAV_KEYS.has(p.page_key)) continue // rendered under a static group instead
       ;(g[p.nav_group] ||= []).push(p)
     }
     Object.values(g).forEach(arr => arr.sort((a, b) => a.sort_order - b.sort_order))
     return g
+  }, [pages, navMode])
+
+  // Static "After Hours"-style groups, populated from the accessible pages
+  // (so access-gating is automatic via my_pages).
+  const staticGroups = useMemo(() => {
+    return STATIC_NAV_GROUPS.map(g => ({
+      label: g.label,
+      items: pages
+        .filter(p => g.pageKeys.includes(p.page_key) && (navMode !== 'simple' || p.is_bookmarked))
+        .sort((a, b) => a.sort_order - b.sort_order),
+    })).filter(g => g.items.length > 0)
   }, [pages, navMode])
 
   const orderedGroups = useMemo(() => {
@@ -259,24 +281,33 @@ export default function Layout() {
               </button>
             </div>
           ) : (
-            orderedGroups.map((group, i) => {
-              const items = grouped[group] || []
-              return (
-                <NavSection key={group} id={group.toLowerCase()} label={group} withDivider={i > 0} visibleCount={items.length}>
-                  {items.map(p => (
-                    <NavItem
-                      key={p.page_key}
-                      to={p.route}
-                      label={p.label}
-                      icon={PAGE_ICON[p.page_key]}
-                      end={p.page_key === 'profitability'}
-                      onClick={close}
-                      count={p.page_key === 'command_center' ? openTaskCount : 0}
-                    />
+            <>
+              {orderedGroups.map((group, i) => {
+                const items = grouped[group] || []
+                return (
+                  <NavSection key={group} id={group.toLowerCase()} label={group} withDivider={i > 0} visibleCount={items.length}>
+                    {items.map(p => (
+                      <NavItem
+                        key={p.page_key}
+                        to={p.route}
+                        label={p.label}
+                        icon={PAGE_ICON[p.page_key]}
+                        end={p.page_key === 'profitability'}
+                        onClick={close}
+                        count={p.page_key === 'command_center' ? openTaskCount : 0}
+                      />
+                    ))}
+                  </NavSection>
+                )
+              })}
+              {staticGroups.map((g, i) => (
+                <NavSection key={g.label} id={g.label.toLowerCase().replace(/\s+/g, '-')} label={g.label} withDivider={orderedGroups.length > 0 || i > 0} visibleCount={g.items.length}>
+                  {g.items.map(p => (
+                    <NavItem key={p.page_key} to={p.route} label={p.label} icon={PAGE_ICON[p.page_key]} onClick={close} />
                   ))}
                 </NavSection>
-              )
-            })
+              ))}
+            </>
           )}
         </nav>
 

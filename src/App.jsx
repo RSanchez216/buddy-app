@@ -92,6 +92,8 @@ const CommandCenter = lazyWithReload(() => import('./pages/command-center/Comman
 // Lazy — The Rig carries the whole three.js stack; it must never weigh on
 // any other route. Standalone preview, direct URL only (no nav entry yet).
 const RigPage = lazyWithReload(() => import('./pages/rig/RigPage'))
+// Lazy — Lumpers (After Hours) is a standalone night-shift surface; its own chunk.
+const LumpersPage = lazyWithReload(() => import('./pages/after-hours/lumpers/LumpersPage'))
 
 export default function App() {
   return (
@@ -147,6 +149,16 @@ export default function App() {
               <Route path="invoices" element={<RequirePageAccess pageKey="invoices"><InvoiceInbox /></RequirePageAccess>} />
               <Route path="transactions" element={<RequirePageAccess pageKey="transactions"><TransactionFeed /></RequirePageAccess>} />
               <Route path="reports" element={<RequirePageAccess pageKey="reports"><MonthlyReport /></RequirePageAccess>} />
+              {/* After Hours */}
+              <Route path="after-hours/lumpers" element={
+                <RequirePageAccess pageKey="lumpers">
+                  <ErrorBoundary label="the Lumpers page">
+                    <Suspense fallback={<div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500" /></div>}>
+                      <LumpersPage />
+                    </Suspense>
+                  </ErrorBoundary>
+                </RequirePageAccess>
+              } />
               {/* Fleet Inventory */}
               <Route path="fleet/trucks" element={<RequirePageAccess pageKey="fleet/trucks"><TrucksList /></RequirePageAccess>} />
               <Route path="fleet/trucks/:id" element={<RequirePageAccess pageKey="fleet/trucks"><TruckDetail /></RequirePageAccess>} />
