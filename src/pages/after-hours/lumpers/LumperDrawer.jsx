@@ -59,6 +59,9 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const debounceRef = useRef(null)
+  const modalRef = useRef(null)
+  const loadInputRef = useRef(null)
+  const previouslyFocused = useRef(null)
 
   const usersOptions = useMemo(() => (refLists.users || []).map(u => ({ id: u.id, name: u.full_name })), [refLists.users])
   const usersById = useMemo(() => new Map((refLists.users || []).map(u => [u.id, u])), [refLists.users])
@@ -104,12 +107,34 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
     }
   }, [open, isEdit, row, me?.id])
 
+  // On open: lock background scroll, remember the trigger, focus the TMS load
+  // field; on close: restore scroll + return focus to the trigger.
   useEffect(() => {
     if (!open) return
-    const prev = document.body.style.overflow
+    previouslyFocused.current = document.activeElement
+    const prevOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
-    return () => { document.body.style.overflow = prev }
+    const t = setTimeout(() => loadInputRef.current?.focus(), 30)
+    return () => {
+      document.body.style.overflow = prevOverflow
+      clearTimeout(t)
+      if (previouslyFocused.current instanceof HTMLElement) previouslyFocused.current.focus()
+    }
   }, [open])
+
+  // Esc closes; Tab / Shift+Tab cycle within the modal (focus trap).
+  function onModalKeyDown(e) {
+    if (e.key === 'Escape') { e.stopPropagation(); onClose?.(); return }
+    if (e.key !== 'Tab' || !modalRef.current) return
+    const nodes = modalRef.current.querySelectorAll(
+      'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )
+    const list = Array.from(nodes).filter(el => el.offsetParent !== null)
+    if (!list.length) return
+    const first = list[0], last = list[list.length - 1]
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
+  }
 
   const totalDisplay = (num(amount) || 0) + (num(efsFee) || 0)
   const derivedStatus = deriveStatus({ charge_to: chargeTo, resolved_at: resolvedAt || null, reimbursed_at: reimbursedAt || null })
@@ -247,204 +272,226 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
   if (!open) return null
 
   return createPortal(
-    <div className="fixed inset-0 z-[90] flex justify-end">
-      <div className="absolute inset-0 bg-black/40 dark:bg-black/60" onClick={onClose} />
-      <div className="relative w-full max-w-xl bg-white dark:bg-[#0d0d1f] border-l border-gray-200 dark:border-white/10 shadow-2xl flex flex-col">
-        {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-gray-100 dark:border-white/5 shrink-0">
+    <div className="fixed inset-0 z-[90] flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/50 dark:bg-black/70 backdrop-blur-sm" onClick={onClose} />
+      <div
+        ref={modalRef}
+        role="dialog" aria-modal="true" aria-labelledby="lumper-modal-title"
+        onKeyDown={onModalKeyDown}
+        className="relative flex flex-col w-[calc(100vw-64px)] max-w-[1308px] max-h-[calc(100vh-64px)] rounded-2xl border border-gray-200 dark:border-white/10 bg-white dark:bg-[#0B1120] shadow-2xl overflow-hidden max-[639px]:w-screen max-[639px]:h-screen max-[639px]:max-w-none max-[639px]:max-h-none max-[639px]:rounded-none max-[639px]:border-0"
+      >
+        {/* Header (full width) */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-white/5 shrink-0">
           <div>
-            <h3 className="text-lg font-bold text-gray-900 dark:text-white">{isEdit ? 'Edit lumper' : 'Add lumper'}</h3>
+            <h3 id="lumper-modal-title" className="text-lg font-bold text-gray-900 dark:text-white">{isEdit ? 'Edit lumper' : 'Add lumper'}</h3>
             <p className="text-xs text-gray-500 dark:text-slate-500">Advance paid at the dock — record it and track recovery.</p>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 dark:hover:text-slate-200">
+          <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-700 dark:hover:text-slate-200">
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
           </button>
         </div>
 
-        {/* Body */}
-        <div className="overflow-y-auto flex-1 p-5 space-y-6">
-          {error && <div className={S.errorBox}>{error}</div>}
+        {/* Body — two columns ≥1100px, single column below (scrolls only here) */}
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          {error && <div className="px-5 pt-4"><div className={S.errorBox}>{error}</div></div>}
 
-          {/* Step 1 — the load */}
-          <Step n={1} title="Start with the load">
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className={S.label}>TMS load number</label>
-                <input className={S.input} value={loadNumber} placeholder="2607-1306"
-                  onChange={e => onLoadNumberChange(e.target.value)}
-                  onBlur={() => { if (debounceRef.current) clearTimeout(debounceRef.current); runLookup(loadNumber) }} />
+          <div className="grid min-[1100px]:grid-cols-[1fr_452px]">
+            {/* Left column — Steps 1 & 2 */}
+            <div className="p-5 space-y-5">
+              {/* Step 1 — tinted lookup panel */}
+              <div className="rounded-xl border border-orange-200 dark:border-orange-500/30 bg-orange-50/40 dark:bg-orange-500/[0.05] p-4">
+                <Step n={1} title="Start with the load">
+                  <div className="grid grid-cols-[1fr_168px] gap-3">
+                    <div>
+                      <label className={S.label}>TMS load number</label>
+                      <input ref={loadInputRef} className={S.input} value={loadNumber} placeholder="2607-1306"
+                        onChange={e => onLoadNumberChange(e.target.value)}
+                        onBlur={() => { if (debounceRef.current) clearTimeout(debounceRef.current); runLookup(loadNumber) }} />
+                    </div>
+                    <div>
+                      <label className={S.label}>Date paid</label>
+                      <input type="date" className={S.input} value={datePaid} max={todayChicago()} onChange={e => setDatePaid(e.target.value || datePaid)} />
+                    </div>
+                  </div>
+
+                  {lookup.status === 'loading' && <p className="text-xs text-gray-400 dark:text-slate-500 mt-2">Looking up load…</p>}
+                  {lookup.status === 'found' && (
+                    <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-2 inline-flex items-center gap-1.5">
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                      Load found — details auto-filled below. Adjust anything that doesn&apos;t match.
+                    </p>
+                  )}
+                  {lookup.status === 'notfound' && (
+                    <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">No load found with that number. You can still record the lumper and link it later.</p>
+                  )}
+
+                  {lookup.status === 'found' && lookup.drivers.length > 1 && (
+                    <div className="mt-3 p-2.5 rounded-lg bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20">
+                      <p className="text-[11px] font-medium text-amber-700 dark:text-amber-400 mb-1.5">Multiple drivers on this load — pick who paid:</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {lookup.drivers.map(d => (
+                          <button key={d.id} type="button" onClick={() => { setDriverId(d.id); setDriverName(d.name) }}
+                            className={`px-2.5 py-1 rounded-full text-xs border ${driverId === d.id ? 'bg-orange-500 text-white border-orange-500' : 'border-gray-300 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-white dark:hover:bg-white/5'}`}>
+                            {d.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Auto cards — 2×2 so long names (Sean Bektur Uzonaliev) fit */}
+                  <div className="grid grid-cols-2 gap-3 mt-3">
+                    <AutoField label="Carrier" auto={lookup.status === 'found'}>
+                      <SearchSelect options={refLists.carriers} value={carrierId} onChange={id => setCarrierId(id)} placeholder="Search carriers…" />
+                    </AutoField>
+                    <AutoField label="Driver" auto={lookup.status === 'found' && !!driverId}>
+                      <SearchSelect options={refLists.drivers} value={driverId} onChange={(id, o) => { setDriverId(id); setDriverName(o?.name || '') }} placeholder="Search drivers…" />
+                    </AutoField>
+                    <AutoField label="Dispatcher" auto={lookup.status === 'found'}>
+                      <SearchSelect options={refLists.dispatchers} value={dispatcherId} onChange={(id, o) => { setDispatcherId(id); setDispatcherName(o?.name || '') }} placeholder="Search dispatchers…" />
+                    </AutoField>
+                    <AutoField label="Broker" auto={lookup.status === 'found'}>
+                      <input className={S.input} value={broker} onChange={e => setBroker(e.target.value)} placeholder="Broker name" />
+                    </AutoField>
+                  </div>
+                </Step>
               </div>
-              <div>
-                <label className={S.label}>Date paid</label>
-                <input type="date" className={S.input} value={datePaid} max={todayChicago()} onChange={e => setDatePaid(e.target.value || datePaid)} />
-              </div>
-            </div>
 
-            {lookup.status === 'loading' && <p className="text-xs text-gray-400 dark:text-slate-500 mt-2">Looking up load…</p>}
-            {lookup.status === 'found' && (
-              <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-2 inline-flex items-center gap-1.5">
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
-                Load found — details auto-filled below. Adjust anything that doesn&apos;t match.
-              </p>
-            )}
-            {lookup.status === 'notfound' && (
-              <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">No load found with that number. You can still record the lumper and link it later.</p>
-            )}
+              <div className="border-t border-gray-200 dark:border-white/10" />
 
-            {lookup.status === 'found' && lookup.drivers.length > 1 && (
-              <div className="mt-3 p-2.5 rounded-lg bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20">
-                <p className="text-[11px] font-medium text-amber-700 dark:text-amber-400 mb-1.5">Multiple drivers on this load — pick who paid:</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {lookup.drivers.map(d => (
-                    <button key={d.id} type="button" onClick={() => { setDriverId(d.id); setDriverName(d.name) }}
-                      className={`px-2.5 py-1 rounded-full text-xs border ${driverId === d.id ? 'bg-orange-500 text-white border-orange-500' : 'border-gray-300 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-white dark:hover:bg-white/5'}`}>
-                      {d.name}
-                    </button>
-                  ))}
+              {/* Step 2 — the payment */}
+              <Step n={2} title="The payment">
+                <div className="grid grid-cols-[1.15fr_1fr_0.9fr_1fr] gap-3">
+                  <div>
+                    <label className={S.label}>EFS code</label>
+                    <input className={S.input} value={efsCode} onChange={e => setEfsCode(e.target.value)} />
+                  </div>
+                  <div>
+                    <label className={S.label}>Amount paid *</label>
+                    <input type="number" min="0" step="0.01" className={S.input} value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00" />
+                  </div>
+                  <div>
+                    <label className={S.label}>EFS check fee</label>
+                    <input type="number" min="0" step="0.01" className={S.input} value={efsFee} onChange={e => setEfsFee(e.target.value)} />
+                  </div>
+                  <div>
+                    <label className={S.label}>Total <span className="text-gray-400 dark:text-slate-500 font-normal normal-case">· calculated</span></label>
+                    <div className={`${S.input} bg-gray-50 dark:bg-white/5 flex items-center font-mono tabular-nums font-semibold`}>{money(totalDisplay)}</div>
+                  </div>
                 </div>
-              </div>
-            )}
+                <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1.5">Default — change only if EFS charged something else.</p>
 
-            <div className="grid grid-cols-2 gap-3 mt-3">
-              <AutoField label="Carrier" auto={lookup.status === 'found'}>
-                <SearchSelect options={refLists.carriers} value={carrierId} onChange={id => setCarrierId(id)} placeholder="Search carriers…" />
-              </AutoField>
-              <AutoField label="Driver" auto={lookup.status === 'found' && !!driverId}>
-                <SearchSelect options={refLists.drivers} value={driverId} onChange={(id, o) => { setDriverId(id); setDriverName(o?.name || '') }} placeholder="Search drivers…" />
-              </AutoField>
-              <AutoField label="Dispatcher" auto={lookup.status === 'found'}>
-                <SearchSelect options={refLists.dispatchers} value={dispatcherId} onChange={(id, o) => { setDispatcherId(id); setDispatcherName(o?.name || '') }} placeholder="Search dispatchers…" />
-              </AutoField>
-              <AutoField label="Broker" auto={lookup.status === 'found'}>
-                <input className={S.input} value={broker} onChange={e => setBroker(e.target.value)} placeholder="Broker name" />
-              </AutoField>
-            </div>
-          </Step>
-
-          {/* Step 2 — the payment */}
-          <Step n={2} title="The payment">
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className={S.label}>EFS code</label>
-                <input className={S.input} value={efsCode} onChange={e => setEfsCode(e.target.value)} />
-              </div>
-              <div>
-                <label className={S.label}>Amount paid *</label>
-                <input type="number" min="0" step="0.01" className={S.input} value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00" />
-              </div>
-              <div>
-                <label className={S.label}>EFS check fee</label>
-                <input type="number" min="0" step="0.01" className={S.input} value={efsFee} onChange={e => setEfsFee(e.target.value)} />
-                <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1">Default — change only if EFS charged something else.</p>
-              </div>
-              <div>
-                <label className={S.label}>Total <span className="text-gray-400 dark:text-slate-500 font-normal normal-case">· calculated</span></label>
-                <div className={`${S.input} bg-gray-50 dark:bg-white/5 flex items-center font-mono tabular-nums font-semibold`}>{money(totalDisplay)}</div>
-              </div>
-            </div>
-
-            <div className="mt-3">
-              <label className={S.label}>Category *</label>
-              <div className="flex flex-wrap items-center gap-1.5">
-                {categories.map(c => (
-                  <button key={c.id} type="button" onClick={() => setCategoryId(categoryId === c.id ? null : c.id)}
-                    className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${categoryId === c.id ? 'bg-orange-500 text-white border-orange-500' : 'border-gray-300 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5'}`}>
-                    {c.name}
-                  </button>
-                ))}
-                {canEdit && !addingCat && (
-                  <button type="button" onClick={() => setAddingCat(true)} title="Add a category"
-                    className="w-7 h-7 inline-flex items-center justify-center rounded-full border border-dashed border-gray-300 dark:border-slate-600 text-gray-400 hover:text-orange-500 hover:border-orange-400">
-                    +
-                  </button>
-                )}
-                {canEdit && addingCat && (
-                  <span className="inline-flex items-center gap-1">
-                    <input autoFocus value={newCat} onChange={e => setNewCat(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') submitAddCategory(); if (e.key === 'Escape') { setAddingCat(false); setNewCat('') } }}
-                      placeholder="New category" className={`${S.input} !py-1 !w-36 text-xs`} />
-                    <button type="button" onClick={submitAddCategory} className="text-xs font-medium text-orange-600 dark:text-orange-400 hover:underline">Add</button>
-                    <button type="button" onClick={() => { setAddingCat(false); setNewCat('') }} className="text-xs text-gray-400 hover:text-gray-600">✕</button>
-                  </span>
-                )}
-              </div>
-            </div>
-
-            <div className="mt-3">
-              <label className={S.label}>Invoice / reference #</label>
-              <input className={S.input} value={invoiceNumber} onChange={e => setInvoiceNumber(e.target.value)} placeholder="Broker's reference number" />
-            </div>
-          </Step>
-
-          {/* Step 3 — getting it back */}
-          <Step n={3} title="Getting it back">
-            <div>
-              <label className={S.label}>Charge to <span className="text-gray-400 dark:text-slate-500 font-normal normal-case">· who ends up paying</span></label>
-              <div className="flex flex-wrap gap-1.5">
-                {CHARGE_TO.map(([v, l]) => (
-                  <button key={v} type="button" onClick={() => setChargeTo(v)}
-                    className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${chargeTo === v ? 'bg-orange-500 text-white border-orange-500' : 'border-gray-300 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5'}`}>
-                    {l}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3 mt-3">
-              <div>
-                <label className={S.label}>Revised rate con</label>
-                <select className={`${S.input} appearance-none`} value={rcStatus} onChange={e => setRcStatus(e.target.value)}>
-                  {RC_STATUS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className={S.label}>Status <span className="text-gray-400 dark:text-slate-500 font-normal normal-case">· derived</span></label>
-                <div className="flex items-center h-[42px]">
-                  <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ${statusMeta(derivedStatus).pill}`}>{statusMeta(derivedStatus).label}</span>
+                <div className="grid grid-cols-2 gap-4 mt-3">
+                  <div>
+                    <label className={S.label}>Category *</label>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {categories.map(c => (
+                        <button key={c.id} type="button" onClick={() => setCategoryId(categoryId === c.id ? null : c.id)}
+                          className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${categoryId === c.id ? 'bg-orange-500 text-white border-orange-500' : 'border-gray-300 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5'}`}>
+                          {c.name}
+                        </button>
+                      ))}
+                      {canEdit && !addingCat && (
+                        <button type="button" onClick={() => setAddingCat(true)} title="Add a category"
+                          className="w-7 h-7 inline-flex items-center justify-center rounded-full border border-dashed border-gray-300 dark:border-slate-600 text-gray-400 hover:text-orange-500 hover:border-orange-400">
+                          +
+                        </button>
+                      )}
+                      {canEdit && addingCat && (
+                        <span className="inline-flex items-center gap-1">
+                          <input autoFocus value={newCat} onChange={e => setNewCat(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') submitAddCategory(); if (e.key === 'Escape') { e.stopPropagation(); setAddingCat(false); setNewCat('') } }}
+                            placeholder="New category" className={`${S.input} !py-1 !w-36 text-xs`} />
+                          <button type="button" onClick={submitAddCategory} className="text-xs font-medium text-orange-600 dark:text-orange-400 hover:underline">Add</button>
+                          <button type="button" onClick={() => { setAddingCat(false); setNewCat('') }} className="text-xs text-gray-400 hover:text-gray-600">✕</button>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <label className={S.label}>Invoice / reference #</label>
+                    <input className={S.input} value={invoiceNumber} onChange={e => setInvoiceNumber(e.target.value)} placeholder="Broker's reference number" />
+                    <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1">Broker&apos;s reference number.</p>
+                  </div>
                 </div>
-                <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-0.5">Closes itself when reimbursement is recorded.</p>
-              </div>
+              </Step>
             </div>
 
-            {isEdit && (
-              <div className="grid grid-cols-2 gap-3 mt-3">
+            {/* Right column — Step 3, Documents, Notes */}
+            <div className="p-5 space-y-5 min-[1100px]:border-l max-[1099px]:border-t border-gray-200 dark:border-white/10 min-[1100px]:bg-gray-50/60 min-[1100px]:dark:bg-[#0E1626]">
+              {/* Step 3 — getting it back */}
+              <Step n={3} title="Getting it back">
                 <div>
-                  <label className={S.label}>Reimbursed on</label>
-                  <input type="date" className={S.input} value={reimbursedAt} max={todayChicago()} onChange={e => setReimbursedAt(e.target.value)} />
+                  <label className={S.label}>Charge to <span className="text-gray-400 dark:text-slate-500 font-normal normal-case">· who ends up paying</span></label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {CHARGE_TO.map(([v, l]) => (
+                      <button key={v} type="button" onClick={() => setChargeTo(v)}
+                        className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${chargeTo === v ? 'bg-orange-500 text-white border-orange-500' : 'border-gray-300 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5'}`}>
+                        {l}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <div>
-                  <label className={S.label}>Reimbursed amount</label>
-                  <input type="number" min="0" step="0.01" className={S.input} value={reimbursedAmount} onChange={e => setReimbursedAmount(e.target.value)} placeholder="0.00" />
-                </div>
-              </div>
-            )}
-            {chargeTo === 'company' && (
-              <div className="mt-3">
-                <label className={S.label}>Resolved / written-off on</label>
-                <input type="date" className={S.input} value={resolvedAt} max={todayChicago()} onChange={e => setResolvedAt(e.target.value)} />
-                <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1">A resolved date on a company charge marks it written off (absorbed).</p>
-              </div>
-            )}
-          </Step>
 
-          {/* Documents */}
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 dark:text-slate-400 mb-2">Documents</p>
-            <div className="grid grid-cols-2 gap-3">
-              <DocTarget label="Receipt" file={receiptFile} path={receiptPath} onFile={setReceiptFile} onView={viewDoc} onClear={() => setReceiptFile(null)} />
-              <DocTarget label="Revised rate con" file={rcFile} path={rcPath} onFile={setRcFile} onView={viewDoc} onClear={() => setRcFile(null)} />
+                <div className="grid grid-cols-2 gap-3 mt-3">
+                  <div>
+                    <label className={S.label}>Revised rate con</label>
+                    <select className={`${S.input} appearance-none`} value={rcStatus} onChange={e => setRcStatus(e.target.value)}>
+                      {RC_STATUS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className={S.label}>Status <span className="text-gray-400 dark:text-slate-500 font-normal normal-case">· derived</span></label>
+                    <div className="flex items-center h-[42px]">
+                      <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ${statusMeta(derivedStatus).pill}`}>{statusMeta(derivedStatus).label}</span>
+                    </div>
+                  </div>
+                </div>
+                <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1.5">Closes itself when reimbursement is recorded.</p>
+
+                {isEdit && (
+                  <div className="grid grid-cols-2 gap-3 mt-3">
+                    <div>
+                      <label className={S.label}>Reimbursed on</label>
+                      <input type="date" className={S.input} value={reimbursedAt} max={todayChicago()} onChange={e => setReimbursedAt(e.target.value)} />
+                    </div>
+                    <div>
+                      <label className={S.label}>Reimbursed amount</label>
+                      <input type="number" min="0" step="0.01" className={S.input} value={reimbursedAmount} onChange={e => setReimbursedAmount(e.target.value)} placeholder="0.00" />
+                    </div>
+                  </div>
+                )}
+                {chargeTo === 'company' && (
+                  <div className="mt-3">
+                    <label className={S.label}>Resolved / written-off on</label>
+                    <input type="date" className={S.input} value={resolvedAt} max={todayChicago()} onChange={e => setResolvedAt(e.target.value)} />
+                    <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1">A resolved date on a company charge marks it written off (absorbed).</p>
+                  </div>
+                )}
+              </Step>
+
+              <div className="border-t border-gray-200 dark:border-white/10" />
+
+              {/* Documents — stacked to fit the narrower column */}
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 dark:text-slate-400 mb-2">Documents</p>
+                <div className="space-y-3">
+                  <DocTarget label="Receipt" file={receiptFile} path={receiptPath} onFile={setReceiptFile} onView={viewDoc} onClear={() => setReceiptFile(null)} />
+                  <DocTarget label="Revised rate con" file={rcFile} path={rcPath} onFile={setRcFile} onView={viewDoc} onClear={() => setRcFile(null)} />
+                </div>
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className={S.label}>Notes</label>
+                <textarea rows={2} className={`${S.textarea} min-h-[74px]`} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Anything the morning team needs to know…" />
+              </div>
             </div>
-          </div>
-
-          {/* Notes */}
-          <div>
-            <label className={S.label}>Notes</label>
-            <textarea rows={3} className={S.textarea} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Anything the morning team needs to know…" />
           </div>
         </div>
 
-        {/* Footer */}
-        <div className="shrink-0 border-t border-gray-100 dark:border-white/5 p-4 space-y-3">
+        {/* Footer (full width) */}
+        <div className="shrink-0 border-t border-gray-100 dark:border-white/5 px-5 py-4">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="flex items-center gap-2 min-w-0">
               <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500 shrink-0">Recorded by</span>
@@ -452,12 +499,12 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
                 <SearchSelect options={usersOptions} value={recorderId} onChange={id => setRecorderId(id)} placeholder="Recorder…" />
               </div>
               {recorderId === me?.id && <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 shrink-0">YOU</span>}
+              <span className="text-[11px] text-gray-400 dark:text-slate-500 tabular-nums ml-3 whitespace-nowrap">{nowLabel}</span>
             </div>
-            <span className="text-[11px] text-gray-400 dark:text-slate-500 tabular-nums">{nowLabel}</span>
-          </div>
-          <div className="flex items-center justify-end gap-2">
-            <button onClick={onClose} className={S.btnCancel}>Cancel</button>
-            <button onClick={save} disabled={saving} className={ORANGE_BTN}>{saving ? 'Saving…' : 'Save lumper'}</button>
+            <div className="flex items-center justify-end gap-2 ml-auto">
+              <button onClick={onClose} className={S.btnCancel}>Cancel</button>
+              <button onClick={save} disabled={saving} className={ORANGE_BTN}>{saving ? 'Saving…' : 'Save lumper'}</button>
+            </div>
           </div>
         </div>
       </div>
