@@ -6,7 +6,7 @@ import UsageRangeControl from '../../settings/users/UsageRangeControl'
 import StatsBand from './StatsBand'
 import LumperDrawer from './LumperDrawer'
 import {
-  fetchLumperEvents, fetchSummary, fetchCategories, fetchRefLists,
+  fetchLumperEvents, fetchSummary, fetchCategories, fetchRefLists, rangeForDays,
   money, fmtDate, fmtMonth, ageDays, statusMeta, recorderLabel, dispatcherDisplay,
   CHARGE_TO, RC_STATUS,
 } from './lumperData'
@@ -44,6 +44,13 @@ export default function LumpersPage() {
   const [drawer, setDrawer] = useState({ open: false, mode: 'create', row: null })
 
   const usersById = useMemo(() => new Map((refLists.users || []).map(u => [u.id, u])), [refLists.users])
+
+  // Presets recompute in Chicago (today − N, inclusive of the boundary day) so
+  // the client window matches the server / lumper_summary exactly; Custom uses
+  // the literal picked endpoints (already inclusive via gte/lte).
+  const handleRange = useCallback(({ mode, start, end }) => {
+    setRange(mode === 'custom' ? { start, end } : rangeForDays(Number(mode)))
+  }, [])
 
   // Reference data — fetched once.
   useEffect(() => {
@@ -147,7 +154,7 @@ export default function LumpersPage() {
         </button>
       </div>
 
-      <UsageRangeControl presets={LUMPER_PRESETS} defaultMode="90" onChange={setRange} />
+      <UsageRangeControl presets={LUMPER_PRESETS} defaultMode="90" onChange={handleRange} />
 
       {/* Stats band */}
       <StatsBand summary={loading ? null : summary} rangeDays={range?.start && range?.end ? (ageDays(range.start) - ageDays(range.end) + 1) : 0} />
@@ -285,7 +292,12 @@ function LumperRow({ row, usersById, onClick }) {
       </td>
       <td className="px-3 py-2.5 min-w-[130px]">
         <p className="font-mono text-gray-900 dark:text-slate-200 leading-tight">{row.load_number || '—'}</p>
-        {row.broker_name && <p className="text-[10px] text-gray-400 dark:text-slate-500 leading-tight truncate max-w-[160px]" title={row.broker_name}>{row.broker_name}</p>}
+        {(() => {
+          // Broker: prefer the joined customers.name, fall back to the denormalized
+          // broker_name text; render nothing when both are empty.
+          const broker = row.customer?.name || row.broker_name
+          return broker ? <p className="text-[10px] text-gray-400 dark:text-slate-500 leading-tight truncate max-w-[160px]" title={broker}>{broker}</p> : null
+        })()}
       </td>
       <td className="px-3 py-2.5 text-gray-600 dark:text-slate-400 whitespace-nowrap">{row.carrier?.name || '—'}</td>
       <td className="px-3 py-2.5 whitespace-nowrap">

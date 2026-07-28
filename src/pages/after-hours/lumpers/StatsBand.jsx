@@ -17,8 +17,9 @@ export default function StatsBand({ summary, rangeDays }) {
   const aging = summary.aging || {}
   const advanced = Number(summary.advanced_amount) || 0
   const paid = Number(summary.paid_amount) || 0
+  // EFS fees come straight from the RPC's efs_fees (the per-row fee is editable —
+  // one historical row is $64.79 — so never derive it as count × $2.00).
   const efs = Number(summary.efs_fees) || 0
-  const efsCount = Math.round(efs / 2)
   const paidPct = advanced > 0 ? Math.round((paid / advanced) * 100) : 0
   const annualized = rangeDays > 0 ? efs * (365 / rangeDays) : 0
 
@@ -52,7 +53,7 @@ export default function StatsBand({ summary, rangeDays }) {
       <StatCard
         label="EFS check fees"
         value={money(efs, 0)}
-        sub={`${efsCount} × $2.00`}
+        sub="actual fees charged"
         note={`≈ ${money(annualized, 0)}/yr run-rate`}
       />
     </div>

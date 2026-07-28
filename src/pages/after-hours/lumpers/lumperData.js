@@ -32,6 +32,7 @@ const EVENT_SELECT = `
   reimbursed_at, reimbursed_amount, resolved_at, status,
   receipt_path, revised_rc_path, notes, created_by, recorded_by, recorded_by_name, source, created_at,
   carrier:carriers ( name ),
+  customer:customers ( name ),
   dispatcher:dispatchers ( name ),
   driver:drivers ( full_name ),
   category:lumper_categories ( name )
@@ -118,6 +119,25 @@ export function money(n, dp = 2) {
 // Today's date in Chicago as 'YYYY-MM-DD'.
 export function todayChicago() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago' }).format(new Date())
+}
+
+// Add/subtract whole days to a 'YYYY-MM-DD' (calendar math on the date parts —
+// no time component, so no DST/UTC shift).
+export function addDays(ymd, n) {
+  const [y, m, d] = String(ymd).slice(0, 10).split('-').map(Number)
+  const dt = new Date(y, m - 1, d)
+  dt.setDate(dt.getDate() + n)
+  const p = (x) => String(x).padStart(2, '0')
+  return `${dt.getFullYear()}-${p(dt.getMonth() + 1)}-${p(dt.getDate())}`
+}
+
+// Inclusive [today − days, today] window in CHICAGO time. A row dated exactly
+// `days` ago is included (the fetch/RPC use event_date >= start), matching the
+// server's `(now() AT TIME ZONE 'America/Chicago')::date` boundary. Fixes the
+// off-by-one that dropped the boundary day (e.g. 90d missing 2026-04-29).
+export function rangeForDays(days) {
+  const end = todayChicago()
+  return { start: addDays(end, -Number(days)), end }
 }
 
 // Whole days since a 'YYYY-MM-DD' date (Chicago basis). null-safe.
