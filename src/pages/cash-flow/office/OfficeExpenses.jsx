@@ -228,10 +228,37 @@ export default function OfficeExpenses() {
     return { chartData: Object.values(buckets), chartCats: cats }
   }, [windowExpenses, grain, anchor, estUsd])
 
-  const balanceData = useMemo(
-    () => windowRows.map(r => ({ period: periodRange(grain, r.period_start).label, balance: Number(r.balance_local_end || 0) })),
-    [windowRows, grain]
+  // Running balance in USD, converted at the EFFECTIVE rate per period — real
+  // transfer rate when one exists, else the month's estimate, else the most
+  // recent known rate carried forward. Same estimate math the SPENT card uses,
+  // applied to the closing balance. `estimated` flags months with no real rate.
+  const balanceData = useMemo(() => {
+    let lastRate = null
+    return windowRows.map(r => {
+      const monthKey = String(r.period_start).slice(0, 7)
+      const real = r.period_rate != null ? Number(r.period_rate) : null
+      const est = estByMonth.get(monthKey) ?? null
+      const eff = real ?? est ?? lastRate
+      if (eff) lastRate = eff
+      const balanceLocal = Number(r.balance_local_end || 0)
+      return {
+        from: String(r.period_start),
+        period: periodRange(grain, r.period_start).label,
+        balanceLocal,
+        balanceUsd: eff ? balanceLocal / eff : null,
+        estimated: real == null,
+      }
+    })
+  }, [windowRows, grain, estByMonth])
+
+  // Selected-period balance for the BALANCE card — same effective conversion, so
+  // card, chart, and SPENT all agree (est. instead of the real $0 while pending).
+  const selBal = useMemo(
+    () => balanceData.find(d => d.from === period.from) || balanceData[balanceData.length - 1] || null,
+    [balanceData, period.from]
   )
+  const balCardUsd = selBal?.balanceUsd != null ? selBal.balanceUsd : balUsd
+  const balCardEstimated = selBal?.balanceUsd != null && selBal.estimated
 
   // Compare: category totals prev vs selected period (USD).
   const compareRows = useMemo(() => {
@@ -314,6 +341,15 @@ export default function OfficeExpenses() {
     backgroundColor: isDark ? '#1e293b' : '#ffffff',
     border: `1px solid ${isDark ? '#334155' : '#e5e7eb'}`,
     borderRadius: 12, fontSize: 12,
+  }
+
+  // Balance-line dots: estimated months read as amber hollow, real as solid cyan.
+  const renderBalanceDot = (props) => {
+    const { cx, cy, payload, index } = props
+    if (cx == null || cy == null || payload?.balanceUsd == null) return null
+    return payload.estimated
+      ? <circle key={index} cx={cx} cy={cy} r={3.5} fill={isDark ? '#0d0d1f' : '#ffffff'} stroke="#f59e0b" strokeWidth={2} />
+      : <circle key={index} cx={cx} cy={cy} r={3.5} fill="#06b6d4" stroke="#06b6d4" strokeWidth={1} />
   }
 
   const spentDelta = prevSpent != null ? spentUsd - prevSpent : null
@@ -402,7 +438,7 @@ export default function OfficeExpenses() {
             <StatCard label="Transferred in" value={usd2(inUsd)} sub={local0(sel?.in_local, ccy)} delta={inDelta} deltaLabel={`vs ${prevPeriodLabel(grain, anchor)}`} />
             <StatCard
               label={`Balance (end of ${period.label})`}
-              value={balUsd != null ? usd2(balUsd) : '—'}
+              value={balCardUsd != null ? `${balCardEstimated ? '≈ ' : ''}${usd2(balCardUsd)}` : '—'}
               sub={local0(balLocal, ccy)}
               foot={openingLocal != null ? `Opened at ${local0(openingLocal, ccy)} · carried from prior months` : null}
             />
@@ -484,15 +520,17 @@ export default function OfficeExpenses() {
               </ResponsiveContainer>
             </div>
             <div className={`${S.card} p-4`}>
-              <div className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Balance ({ccy})</div>
+              <div className="text-sm font-semibold text-gray-900 dark:text-white mb-3 flex items-center flex-wrap gap-x-2">
+                Balance (USD)
+                {balanceData.some(d => d.estimated) && <span className="text-[11px] font-normal text-amber-600 dark:text-amber-400">≈ estimated where no transfer yet</span>}
+              </div>
               <ResponsiveContainer width="100%" height={260}>
                 <LineChart data={balanceData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
                   <XAxis dataKey="period" tick={{ fill: tickColor, fontSize: 11 }} axisLine={{ stroke: gridColor }} tickLine={false} />
-                  <YAxis tick={{ fill: tickColor, fontSize: 11 }} axisLine={false} tickLine={false} width={64}
-                    tickFormatter={v => Math.round(v).toLocaleString('en-US')} />
-                  <Tooltip contentStyle={tooltipStyle} formatter={v => [local0(v, ccy), 'Balance']} />
-                  <Line type="monotone" dataKey="balance" stroke="#06b6d4" strokeWidth={2} dot={{ r: 3 }} />
+                  <YAxis tick={{ fill: tickColor, fontSize: 11 }} axisLine={false} tickLine={false} width={56} tickFormatter={usd0} />
+                  <Tooltip content={<BalanceTooltip ccy={ccy} isDark={isDark} />} />
+                  <Line type="monotone" dataKey="balanceUsd" stroke="#06b6d4" strokeWidth={2} dot={renderBalanceDot} connectNulls />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -637,6 +675,22 @@ function StatCard({ label, value, sub, delta, deltaLabel, invertDelta, foot }) {
           {foot}
         </div>
       )}
+    </div>
+  )
+}
+
+// Balance-chart tooltip — USD primary (est. marked), KGS kept on the line below.
+function BalanceTooltip({ active, payload, ccy, isDark }) {
+  if (!active || !payload?.length) return null
+  const p = payload[0].payload
+  return (
+    <div className="px-3 py-2" style={{ backgroundColor: isDark ? '#1e293b' : '#ffffff', border: `1px solid ${isDark ? '#334155' : '#e5e7eb'}`, borderRadius: 12, fontSize: 12 }}>
+      <div className="text-[11px] font-semibold text-gray-600 dark:text-slate-300 mb-0.5">{p.period}</div>
+      <div className="text-gray-900 dark:text-white tabular-nums">
+        {p.balanceUsd != null ? usd2(p.balanceUsd) : '—'}
+        {p.estimated && <span className="text-amber-500 dark:text-amber-400"> (≈ est.)</span>}
+      </div>
+      <div className="text-gray-400 dark:text-slate-500 tabular-nums">{local0(p.balanceLocal, ccy)}</div>
     </div>
   )
 }
