@@ -12,6 +12,14 @@ export function todayISO() {
   const n = new Date()
   return toISO(n.getFullYear(), n.getMonth() + 1, n.getDate())
 }
+// Today in America/Chicago as 'YYYY-MM-DD' — for the mark-paid default date.
+export function todayChicago() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago' }).format(new Date())
+}
+// First-of-month key for a date (the office_rate_estimates.period_month grain).
+export function firstOfMonth(iso) {
+  return `${String(iso).slice(0, 7)}-01`
+}
 // Parse 'YYYY-MM-DD' into {y,m,d} without a Date object.
 export function parts(iso) {
   const [y, m, d] = String(iso).split('-').map(Number)
@@ -83,12 +91,53 @@ export async function rateFor(officeId, onDate) {
 
 export async function listExpenses(officeId, from, to) {
   const { data, error } = await supabase.from('office_expenses')
-    .select('id, office_id, category, description, expense_date, amount_local, fx_rate, amount_usd, rate_transfer_id, rate_is_manual, notes')
+    .select('id, office_id, category, description, expense_date, amount_local, fx_rate, amount_usd, rate_transfer_id, rate_is_manual, notes, entry_currency, entered_amount, is_paid, paid_date, payment_method, paid_by, paid_at, payment_note')
     .eq('office_id', officeId).gte('expense_date', from).lte('expense_date', to)
     .order('expense_date', { ascending: false }).order('created_at', { ascending: false })
   if (error) throw error
   return data || []
 }
+
+// Lightweight user list for resolving paid_by → name (small team).
+export async function listUsersLite() {
+  const { data, error } = await supabase.from('users').select('id, full_name')
+  if (error) throw error
+  return data || []
+}
+
+// ── Estimate rates + payment (admin/manager RPCs) ────────────────────────────
+// Estimate rate: a temporary, editable KGS/UZS-per-USD used until a real
+// transfer exists. Stored per office+month in office_rate_estimates; it drives
+// estimated USD + currency conversion but is NEVER stamped onto expenses.
+export async function listRateEstimates(officeId) {
+  const { data, error } = await supabase.from('office_rate_estimates')
+    .select('period_month, fx_rate').eq('office_id', officeId)
+  if (error) throw error
+  return data || []
+}
+export async function getRateEstimate(officeId, periodMonth) {
+  const { data, error } = await supabase.from('office_rate_estimates')
+    .select('fx_rate').eq('office_id', officeId).eq('period_month', periodMonth).maybeSingle()
+  if (error) throw error
+  return data?.fx_rate != null ? Number(data.fx_rate) : null
+}
+export async function setRateEstimate(officeId, periodMonth, fxRate) {
+  const { error } = await supabase.rpc('set_office_rate_estimate',
+    { p_office_id: officeId, p_period_month: periodMonth, p_fx_rate: fxRate })
+  if (error) throw error
+}
+export async function markExpensePaid(id, paidDate, method, note) {
+  const { error } = await supabase.rpc('mark_expense_paid',
+    { p_expense_id: id, p_paid_date: paidDate, p_method: method, p_note: note?.trim() || null })
+  if (error) throw error
+}
+export async function unmarkExpensePaid(id) {
+  const { error } = await supabase.rpc('unmark_expense_paid', { p_expense_id: id })
+  if (error) throw error
+}
+
+// Free-text values stored verbatim in office_expenses.payment_method.
+export const PAYMENT_METHODS = ['Manual / cash', 'Wire', 'Check', 'Payroll deduction', 'Other']
 
 export async function listTransfers(officeId) {
   const { data, error } = await supabase.from('office_transfers')

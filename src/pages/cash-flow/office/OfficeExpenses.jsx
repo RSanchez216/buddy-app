@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from 'react'
+import { Fragment, useEffect, useMemo, useState, useCallback } from 'react'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../contexts/AuthContext'
 import { useToast } from '../../../contexts/ToastContext'
@@ -13,11 +13,13 @@ import {
 } from 'recharts'
 import {
   listOffices, periodStats, listExpenses, listTransfers, rateFor,
-  periodRange, stepPeriod, prevPeriodLabel, todayISO,
+  periodRange, stepPeriod, prevPeriodLabel, todayISO, firstOfMonth,
+  listRateEstimates, setRateEstimate, listUsersLite, unmarkExpensePaid,
   usd0, usd2, local0, rate2, expensesToCSV, downloadCSV,
 } from './officeData'
 import AddOfficeExpensesModal from './AddOfficeExpensesModal'
 import OfficeTransferModal from './OfficeTransferModal'
+import MarkPaidPopover from './MarkPaidPopover'
 
 const GRAINS = [
   { value: 'month', label: 'Month' },
@@ -45,6 +47,8 @@ export default function OfficeExpenses() {
   const [expenses, setExpenses] = useState([])  // selected-period expenses
   const [windowExpenses, setWindowExpenses] = useState([]) // window expenses (charts + compare)
   const [transfersById, setTransfersById] = useState({})
+  const [estByMonth, setEstByMonth] = useState(new Map()) // 'YYYY-MM' → estimate fx_rate
+  const [usersById, setUsersById] = useState(new Map())   // paid_by → name
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
 
@@ -53,6 +57,9 @@ export default function OfficeExpenses() {
   const [editingId, setEditingId] = useState(null)
   const [editForm, setEditForm] = useState(null)
   const [confirmDelete, setConfirmDelete] = useState(null)
+  const [markPaidFor, setMarkPaidFor] = useState(null)   // expense being marked paid
+  const [estimateInput, setEstimateInput] = useState('') // editable estimate-rate field
+  const [savingEstimate, setSavingEstimate] = useState(false)
 
   const office = useMemo(() => offices.find(o => o.id === officeId) || null, [offices, officeId])
   const ccy = office?.currency_code || ''
@@ -72,6 +79,11 @@ export default function OfficeExpenses() {
   }, [])
   useEffect(() => { loadOffices() }, [loadOffices])
 
+  // Names for paid_by (small team) — fetched once.
+  useEffect(() => {
+    listUsersLite().then(list => setUsersById(new Map(list.map(u => [u.id, u.full_name])))).catch(() => {})
+  }, [])
+
   const reload = useCallback(async () => {
     if (!officeId) return
     setLoading(true)
@@ -79,10 +91,11 @@ export default function OfficeExpenses() {
     try {
       // These helpers wrap their own supabase calls (no signal threaded); the
       // shared withTimeout still rejects at 20s on a hang regardless.
-      const [win, winExp, tfs] = await withTimeout(() => Promise.all([
+      const [win, winExp, tfs, ests] = await withTimeout(() => Promise.all([
         periodStats(officeId, grain, winFrom, period.to),
         listExpenses(officeId, winFrom, period.to),
         listTransfers(officeId),
+        listRateEstimates(officeId),
       ]))
       // period_start may arrive as a full timestamp — normalize to a date.
       const rows = (win || [])
@@ -96,6 +109,8 @@ export default function OfficeExpenses() {
       const tmap = {}
       for (const t of tfs) tmap[t.id] = t
       setTransfersById(tmap)
+      // Estimate rates keyed by 'YYYY-MM' for quick per-month lookup.
+      setEstByMonth(new Map((ests || []).map(r => [String(r.period_month).slice(0, 7), Number(r.fx_rate)])))
     } catch (e) {
       // Never fall through to $0.00 stat cards + empty tables — that reads as a
       // real, clean period when the query actually failed. Show error + Retry.
@@ -150,6 +165,35 @@ export default function OfficeExpenses() {
   const plannedLocal = useMemo(() => expenses.reduce((s, e) => s + Number(e.amount_local || 0), 0), [expenses])
   const windowPendingCount = useMemo(() => windowExpenses.filter(e => e.amount_usd == null).length, [windowExpenses])
 
+  // Effective rate for the selected period: the real transfer rate (actual) if
+  // one exists, else the editable estimate for the period's month.
+  const periodMonthKey = period.from.slice(0, 7)
+  const periodEstimate = estByMonth.get(periodMonthKey) ?? null
+  const rateIsEstimate = !periodRate && periodEstimate != null
+
+  // Estimated USD for one expense: real amount_usd when present; else a USD
+  // invoice keeps its entered $, a local invoice divides by the month's estimate.
+  // null when it can't be estimated (pending local with no estimate).
+  const estUsd = useCallback((e) => {
+    if (e.amount_usd != null) return Number(e.amount_usd)
+    if (e.entry_currency === 'usd' && e.entered_amount != null) return Number(e.entered_amount)
+    const rate = estByMonth.get(String(e.expense_date).slice(0, 7))
+    if (rate && e.amount_local != null) return Number(e.amount_local) / rate
+    return null
+  }, [estByMonth])
+
+  // Spent card incl. estimated USD for still-pending rows (so it never reads $0
+  // when spend is only estimated).
+  const pendingEstUsd = useMemo(() => pendingRows.reduce((s, e) => s + (estUsd(e) ?? 0), 0), [pendingRows, estUsd])
+  const estSpentUsd = spentUsd + pendingEstUsd
+
+  const paidByName = useCallback((e) => (e.paid_by ? usersById.get(e.paid_by) || null : null), [usersById])
+
+  // Keep the estimate-rate input in sync with the stored estimate for the month.
+  useEffect(() => {
+    setEstimateInput(periodEstimate != null ? String(periodEstimate) : '')
+  }, [periodEstimate, officeId, periodMonthKey])
+
   // Open the transfer modal, prefilling the local amount with this period's
   // pending total so the transfer falls right out of the planned expenses.
   const [transferPrefill, setTransferPrefill] = useState('')
@@ -158,30 +202,31 @@ export default function OfficeExpenses() {
     setShowTransfer(true)
   }, [pendingLocal])
 
-  // Stacked spend-by-category (USD) over the window.
+  // Stacked spend-by-category over the window, using ESTIMATED USD so pending
+  // rows appear in their month. Each category is split into paid + unpaid
+  // (`cat` / `cat__pending`) so paid renders solid and unpaid renders lighter.
   const { chartData, chartCats } = useMemo(() => {
     const byCat = {}
-    for (const e of windowExpenses) byCat[e.category] = (byCat[e.category] || 0) + Number(e.amount_usd || 0)
+    for (const e of windowExpenses) byCat[e.category] = (byCat[e.category] || 0) + (estUsd(e) || 0)
     const top = Object.entries(byCat).sort((a, b) => b[1] - a[1]).slice(0, CHART_COLORS.length - 1).map(x => x[0])
     const topSet = new Set(top)
     const buckets = {}
     for (let i = WINDOW - 1; i >= 0; i--) {
       const pr = periodRange(grain, stepPeriod(grain, anchor, -i))
       buckets[pr.from] = { period: pr.label, __from: pr.from }
-      for (const c of top) buckets[pr.from][c] = 0
-      buckets[pr.from].Other = 0
+      for (const c of [...top, 'Other']) { buckets[pr.from][c] = 0; buckets[pr.from][`${c}__pending`] = 0 }
     }
     for (const e of windowExpenses) {
       const pr = periodRange(grain, e.expense_date)
       const b = buckets[pr.from]
       if (!b) continue
       const key = topSet.has(e.category) ? e.category : 'Other'
-      b[key] = (b[key] || 0) + Number(e.amount_usd || 0)
+      b[key + (e.is_paid ? '' : '__pending')] += (estUsd(e) || 0)
     }
     const cats = [...top]
-    if (Object.values(buckets).some(b => b.Other > 0)) cats.push('Other')
+    if (Object.values(buckets).some(b => b.Other > 0 || b.Other__pending > 0)) cats.push('Other')
     return { chartData: Object.values(buckets), chartCats: cats }
-  }, [windowExpenses, grain, anchor])
+  }, [windowExpenses, grain, anchor, estUsd])
 
   const balanceData = useMemo(
     () => windowRows.map(r => ({ period: periodRange(grain, r.period_start).label, balance: Number(r.balance_local_end || 0) })),
@@ -239,6 +284,22 @@ export default function OfficeExpenses() {
     if (e) { toast.error("Couldn't delete expense", e); return }
     toast.success('Expense deleted')
     setConfirmDelete(null); reload()
+  }
+
+  async function saveEstimate() {
+    const rate = Number(estimateInput)
+    if (!rate || rate <= 0) { toast.error('Enter a rate greater than 0'); return }
+    setSavingEstimate(true)
+    try {
+      await setRateEstimate(officeId, firstOfMonth(period.from), rate)
+      toast.success('Estimate rate saved')
+      reload()
+    } catch (e) { toast.error("Couldn't save estimate rate", e) }
+    finally { setSavingEstimate(false) }
+  }
+  async function markUnpaid(id) {
+    try { await unmarkExpensePaid(id); toast.success('Marked unpaid'); reload() }
+    catch (e) { toast.error("Couldn't mark unpaid", e) }
   }
 
   function exportCSV() {
@@ -331,7 +392,13 @@ export default function OfficeExpenses() {
 
           {/* Stat cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <StatCard label={`Spent (${period.label})`} value={usd2(spentUsd)} sub={local0(sel?.spent_local, ccy)} delta={spentDelta} deltaLabel={`vs ${prevPeriodLabel(grain, anchor)}`} invertDelta />
+            <StatCard
+              label={`Spent (${period.label})`}
+              value={pendingEstUsd > 0 ? `≈ ${usd2(estSpentUsd)}` : usd2(spentUsd)}
+              sub={local0(sel?.spent_local, ccy)}
+              foot={pendingEstUsd > 0 ? `Incl. ${usd2(pendingEstUsd)} estimated · pending a transfer` : null}
+              delta={pendingEstUsd > 0 ? null : spentDelta} deltaLabel={`vs ${prevPeriodLabel(grain, anchor)}`} invertDelta
+            />
             <StatCard label="Transferred in" value={usd2(inUsd)} sub={local0(sel?.in_local, ccy)} delta={inDelta} deltaLabel={`vs ${prevPeriodLabel(grain, anchor)}`} />
             <StatCard
               label={`Balance (end of ${period.label})`}
@@ -339,7 +406,11 @@ export default function OfficeExpenses() {
               sub={local0(balLocal, ccy)}
               foot={openingLocal != null ? `Opened at ${local0(openingLocal, ccy)} · carried from prior months` : null}
             />
-            <StatCard label="Rate" value={periodRate ? `${rate2(periodRate)} ${ccy}` : '—'} sub={periodRate ? 'per 1 USD' : 'no transfer yet'} />
+            <RateCard
+              periodRate={periodRate} periodEstimate={periodEstimate} rateIsEstimate={rateIsEstimate}
+              ccy={ccy} periodLabel={period.label} canEdit={canEdit}
+              value={estimateInput} onChange={setEstimateInput} onSave={saveEstimate} saving={savingEstimate}
+            />
           </div>
 
           {/* Compare table */}
@@ -381,20 +452,34 @@ export default function OfficeExpenses() {
           {/* Charts */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div className={`${S.card} p-4`}>
-              <div className="text-sm font-semibold text-gray-900 dark:text-white mb-3">
+              <div className="text-sm font-semibold text-gray-900 dark:text-white mb-1 flex items-center flex-wrap gap-x-2">
                 Spend by category (USD)
-                {windowPendingCount > 0 && <span className="ml-2 text-[11px] font-normal text-amber-600 dark:text-amber-400">+{windowPendingCount} pending (awaiting a rate)</span>}
+                <span className="text-[11px] font-normal text-gray-400 dark:text-slate-500">solid = paid · lighter = unpaid</span>
+                {windowPendingCount > 0 && <span className="text-[11px] font-normal text-amber-600 dark:text-amber-400">+{windowPendingCount} pending (awaiting a rate)</span>}
               </div>
               <ResponsiveContainer width="100%" height={260}>
-                <BarChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                <BarChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
                   <XAxis dataKey="period" tick={{ fill: tickColor, fontSize: 11 }} axisLine={{ stroke: gridColor }} tickLine={false} />
                   <YAxis tick={{ fill: tickColor, fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={usd0} width={56} />
-                  <Tooltip contentStyle={tooltipStyle} formatter={(v, n) => [usd0(v), formatLabel(n)]} />
+                  <Tooltip
+                    contentStyle={tooltipStyle}
+                    formatter={(v, n) => {
+                      const pending = String(n).endsWith('__pending')
+                      const cat = pending ? String(n).slice(0, -'__pending'.length) : n
+                      return [usd0(v), `${formatLabel(cat)}${pending ? ' (unpaid)' : ''}`]
+                    }}
+                  />
                   <Legend formatter={(v) => formatLabel(v)} wrapperStyle={{ fontSize: 11 }} />
-                  {chartCats.map((c, i) => (
-                    <Bar key={c} dataKey={c} stackId="s" fill={CHART_COLORS[i % CHART_COLORS.length]} radius={i === chartCats.length - 1 ? [4, 4, 0, 0] : 0} />
-                  ))}
+                  {chartCats.map((c, i) => {
+                    const color = CHART_COLORS[i % CHART_COLORS.length]
+                    return (
+                      <Fragment key={c}>
+                        <Bar dataKey={c} name={c} stackId="s" fill={color} />
+                        <Bar dataKey={`${c}__pending`} name={`${c}__pending`} stackId="s" fill={color} fillOpacity={0.32} legendType="none" />
+                      </Fragment>
+                    )
+                  })}
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -428,12 +513,13 @@ export default function OfficeExpenses() {
                   <th className={S.th}>Description</th>
                   <th className={`${S.th} text-right`}>{ccy}</th>
                   <th className={`${S.th} text-right`}>USD</th>
+                  <th className={S.th}>Payment</th>
                   <th className={S.th}></th>
                 </tr>
               </thead>
               <tbody>
                 {expenses.length === 0 ? (
-                  <tr><td colSpan={6} className="px-4 py-10 text-center text-gray-400 dark:text-slate-600">No expenses in {period.label}</td></tr>
+                  <tr><td colSpan={7} className="px-4 py-10 text-center text-gray-400 dark:text-slate-600">No expenses in {period.label}</td></tr>
                 ) : expenses.map(e => {
                   const editing = editingId === e.id
                   if (editing) {
@@ -448,6 +534,7 @@ export default function OfficeExpenses() {
                         <td className={S.td}><input className={S.input} value={editForm.description} onChange={ev => setEditForm(f => ({ ...f, description: ev.target.value }))} /></td>
                         <td className={S.td}><input type="number" step="0.01" min="0" className={`${S.input} text-right`} value={editForm.amount_local} onChange={ev => setEditForm(f => ({ ...f, amount_local: ev.target.value }))} /></td>
                         <td className={`${S.td} text-right text-gray-400 dark:text-slate-500 tabular-nums`}>auto</td>
+                        <td className={S.td}></td>
                         <td className={`${S.td} text-right whitespace-nowrap`}>
                           <button onClick={() => saveEdit(e)} className="text-emerald-600 dark:text-emerald-400 font-medium mr-3">Save</button>
                           <button onClick={() => { setEditingId(null); setEditForm(null) }} className="text-gray-400">Cancel</button>
@@ -466,9 +553,16 @@ export default function OfficeExpenses() {
                       <td className={`${S.td} text-gray-600 dark:text-slate-400`}>{e.description || <span className="text-gray-300 dark:text-slate-600">—</span>}</td>
                       <td className={`${S.td} text-right text-gray-900 dark:text-slate-200 tabular-nums`}>{local0(e.amount_local, ccy)}</td>
                       <td className={`${S.td} text-right tabular-nums`}>
-                        {e.amount_usd != null
-                          ? <span className="text-gray-600 dark:text-slate-400">{usd2(e.amount_usd)}</span>
-                          : <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/20" title="No rate yet — fills in when a transfer is recorded">pending</span>}
+                        {e.amount_usd != null ? (
+                          <span className="text-gray-600 dark:text-slate-400">{usd2(e.amount_usd)}</span>
+                        ) : estUsd(e) != null ? (
+                          <span className="text-amber-600 dark:text-amber-400" title="Estimated — the real USD fills in when a transfer is recorded">≈ {usd2(estUsd(e))}</span>
+                        ) : (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/20" title="No rate or estimate yet">pending</span>
+                        )}
+                      </td>
+                      <td className={S.td}>
+                        <PaymentCell e={e} canEdit={canEdit} paidByName={paidByName(e)} onMarkPaid={() => setMarkPaidFor(e)} onMarkUnpaid={() => markUnpaid(e.id)} />
                       </td>
                       <td className={`${S.td} text-right whitespace-nowrap`}>
                         {canEdit && (
@@ -506,6 +600,9 @@ export default function OfficeExpenses() {
         </div>
       )}
 
+      <MarkPaidPopover open={!!markPaidFor} expense={markPaidFor}
+        onClose={() => setMarkPaidFor(null)} onDone={() => { setMarkPaidFor(null); reload() }} />
+
       {office && (
         <>
           <AddOfficeExpensesModal open={showAdd} office={office} defaultDate={period.from} periodLabel={period.label}
@@ -541,6 +638,66 @@ function StatCard({ label, value, sub, delta, deltaLabel, invertDelta, foot }) {
         </div>
       )}
     </div>
+  )
+}
+
+// Rate card: shows the real transfer rate (actual) when one exists, else an
+// editable per-month estimate (admin/manager) that drives estimated USD.
+function RateCard({ periodRate, periodEstimate, ccy, periodLabel, canEdit, value, onChange, onSave, saving }) {
+  if (periodRate) {
+    return (
+      <div className={`${S.card} p-4`}>
+        <div className="text-xs font-medium text-gray-500 dark:text-slate-500 uppercase tracking-wide">Rate</div>
+        <div className="text-2xl font-bold text-gray-900 dark:text-white mt-1 tabular-nums">{rate2(periodRate)} {ccy}</div>
+        <div className="text-xs text-gray-400 dark:text-slate-500 mt-1">per 1 USD · <span className="text-emerald-600 dark:text-emerald-400 font-medium">actual</span></div>
+      </div>
+    )
+  }
+  return (
+    <div className={`${S.card} p-4`}>
+      <div className="text-xs font-medium text-gray-500 dark:text-slate-500 uppercase tracking-wide">Estimate rate · {periodLabel}</div>
+      {canEdit ? (
+        <div className="mt-1.5 flex items-center gap-2">
+          <input type="number" step="0.01" min="0" value={value} onChange={e => onChange(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') onSave() }}
+            placeholder="87.00" className={`${S.input} !py-1.5 w-24 text-lg font-bold tabular-nums`} />
+          <span className="text-xs text-gray-400 dark:text-slate-500">{ccy}/USD</span>
+          <button onClick={onSave} disabled={saving} className={`${S.btnSecondary} ml-auto`}>{saving ? '…' : 'Set'}</button>
+        </div>
+      ) : (
+        <div className="text-2xl font-bold text-gray-900 dark:text-white mt-1 tabular-nums">{periodEstimate != null ? `${rate2(periodEstimate)} ${ccy}` : '—'}</div>
+      )}
+      <div className="text-xs text-gray-400 dark:text-slate-500 mt-1">
+        {periodEstimate != null ? 'estimate · drives USD until a transfer' : 'no transfer yet — set an estimate'}
+      </div>
+    </div>
+  )
+}
+
+// Payment cell: unpaid → a "Mark paid" button; paid → a green badge with the
+// date · method · who and the optional note, plus an undo (admin/manager only).
+function PaymentCell({ e, canEdit, paidByName, onMarkPaid, onMarkUnpaid }) {
+  if (e.is_paid) {
+    return (
+      <div className="group/pay">
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">
+          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+          Paid
+        </span>
+        <div className="text-[10px] text-gray-400 dark:text-slate-500 mt-0.5 whitespace-nowrap">
+          {e.paid_date || '—'}{e.payment_method ? ` · ${e.payment_method}` : ''}{paidByName ? ` · ${paidByName}` : ''}
+        </div>
+        {e.payment_note && <div className="text-[10px] text-gray-500 dark:text-slate-400 italic truncate max-w-[200px]" title={e.payment_note}>“{e.payment_note}”</div>}
+        {canEdit && <button onClick={onMarkUnpaid} className="text-[10px] text-gray-400 hover:text-red-500 mt-0.5 opacity-0 group-hover/pay:opacity-100 transition-opacity">Mark unpaid</button>}
+      </div>
+    )
+  }
+  if (!canEdit) return <span className="text-[11px] text-gray-400 dark:text-slate-500">Unpaid</span>
+  return (
+    <button onClick={onMarkPaid} className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded-lg border border-gray-300 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-emerald-50 dark:hover:bg-emerald-500/10 hover:text-emerald-700 dark:hover:text-emerald-400 hover:border-emerald-300 dark:hover:border-emerald-500/30 transition-colors">
+      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+      Mark paid
+    </button>
   )
 }
 
