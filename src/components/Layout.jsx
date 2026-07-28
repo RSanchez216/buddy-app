@@ -79,25 +79,31 @@ const STATIC_NAV_KEYS = new Set(STATIC_NAV_GROUPS.flatMap(g => g.pageKeys))
 // Always reserves a 2px left border so the active orange marker doesn't
 // shift the chip's width when it appears.
 // visible prop controls whether the item should be shown (default true)
-function NavItem({ to, label, icon, end = false, onClick, visible = true, count = 0 }) {
+// `collapsed` (desktop icon-rail) is CSS-gated to lg: on mobile the drawer always
+// shows full labels, so the same state can't strand the off-canvas menu.
+function NavItem({ to, label, icon, end = false, onClick, visible = true, count = 0, collapsed = false }) {
   if (!visible) return null
   return (
     <NavLink
       to={to} end={end} onClick={onClick}
+      title={collapsed ? label : undefined}
       className={({ isActive }) =>
-        `flex items-center gap-2.5 pl-2.5 pr-3 py-2 rounded-xl text-sm font-medium transition-all duration-150 border-l-2 ${
+        `relative flex items-center gap-2.5 pl-2.5 pr-3 py-2 rounded-xl text-sm font-medium transition-all duration-150 border-l-2 ${collapsed ? 'lg:justify-center lg:px-0' : ''} ${
           isActive
             ? 'bg-cyan-50 dark:bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border-orange-500 shadow-[inset_0_0_0_1px_rgba(6,182,212,0.15)]'
             : 'border-transparent text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 hover:text-gray-900 dark:hover:text-slate-200'
         }`
       }
     >
-      {icon}
-      {label}
+      <span className="shrink-0">{icon}</span>
+      <span className={collapsed ? 'lg:hidden' : ''}>{label}</span>
       {count > 0 && (
-        <span className="ml-auto min-w-[18px] h-[18px] px-1 inline-flex items-center justify-center rounded-full bg-orange-500 text-white text-[10px] font-bold leading-none shrink-0">
-          {count > 99 ? '99+' : count}
-        </span>
+        <>
+          <span className={`ml-auto min-w-[18px] h-[18px] px-1 inline-flex items-center justify-center rounded-full bg-orange-500 text-white text-[10px] font-bold leading-none shrink-0 ${collapsed ? 'lg:hidden' : ''}`}>
+            {count > 99 ? '99+' : count}
+          </span>
+          {collapsed && <span className="hidden lg:block absolute top-1 right-1.5 w-2 h-2 rounded-full bg-orange-500" aria-hidden />}
+        </>
       )}
     </NavLink>
   )
@@ -107,7 +113,7 @@ function NavItem({ to, label, icon, end = false, onClick, visible = true, count 
 // `withDivider` adds a thin top divider + spacing — set on every section
 // after the first to visually separate groups.
 // visibleCount: number of visible items in this section (passed by parent)
-function NavSection({ id, label, badge, children, defaultOpen = true, withDivider = false, visibleCount = 0 }) {
+function NavSection({ id, label, badge, children, defaultOpen = true, withDivider = false, visibleCount = 0, collapsed = false }) {
   const [open, setOpen] = useState(() => {
     const stored = localStorage.getItem(`buddy-nav-${id}`)
     return stored !== null ? stored === 'true' : defaultOpen
@@ -127,7 +133,7 @@ function NavSection({ id, label, badge, children, defaultOpen = true, withDivide
       <button
         type="button"
         onClick={toggle}
-        className="w-full flex items-center justify-between px-3 py-1.5 rounded-lg group transition-colors"
+        className={`w-full flex items-center justify-between px-3 py-1.5 rounded-lg group transition-colors ${collapsed ? 'lg:hidden' : ''}`}
       >
         <div className="flex items-center gap-2">
           <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-600 group-hover:text-gray-500 dark:group-hover:text-slate-500 transition-colors">
@@ -144,8 +150,8 @@ function NavSection({ id, label, badge, children, defaultOpen = true, withDivide
         </span>
       </button>
 
-      <div className={`overflow-hidden transition-all duration-200 ${open ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'}`}>
-        <div className="space-y-0.5 mt-0.5 pl-3">
+      <div className={`overflow-hidden transition-all duration-200 ${open ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'} ${collapsed ? 'lg:max-h-none lg:opacity-100' : ''}`}>
+        <div className={`space-y-0.5 mt-0.5 pl-3 ${collapsed ? 'lg:pl-0 lg:mt-0' : ''}`}>
           {children}
         </div>
       </div>
@@ -163,6 +169,15 @@ export default function Layout() {
   // once per app load and shared with the route guards + landing redirect).
   const { pages, setPages, pagesLoaded } = usePageAccess()
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  // Desktop icon-rail collapse — persisted like the theme, restored on load.
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem('buddy-sidebar-collapsed') === 'true' } catch { return false }
+  })
+  const toggleCollapsed = () => setCollapsed(c => {
+    const next = !c
+    try { localStorage.setItem('buddy-sidebar-collapsed', String(next)) } catch { /* ignore */ }
+    return next
+  })
   const [navMode, setNavMode] = useState('simple') // 'simple' | 'advanced' — mirrors users.nav_mode
   const [showManage, setShowManage] = useState(false)
   const [presenceOpen, setPresenceOpen] = useState(false) // "who's online" drawer
@@ -251,20 +266,30 @@ export default function Layout() {
       {/* Mobile overlay */}
       {sidebarOpen && <div className="fixed inset-0 bg-black/60 z-20 lg:hidden backdrop-blur-sm" onClick={close} />}
 
-      {/* Sidebar */}
-      <aside className={`fixed inset-y-0 left-0 z-30 w-60 bg-white dark:bg-[#0d0d1f] border-r border-gray-200 dark:border-white/5 flex flex-col transform transition-transform duration-300 lg:translate-x-0 lg:sticky lg:top-0 lg:h-screen lg:self-start lg:z-auto ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+      {/* Sidebar — w-60 on mobile (off-canvas drawer); on desktop collapses to a
+          ~64px icon rail (lg:w-16) when `collapsed`. Width animates for reflow. */}
+      <aside className={`fixed inset-y-0 left-0 z-30 w-60 ${collapsed ? 'lg:w-16' : 'lg:w-60'} bg-white dark:bg-[#0d0d1f] border-r border-gray-200 dark:border-white/5 flex flex-col transform transition-all duration-300 lg:translate-x-0 lg:sticky lg:top-0 lg:h-screen lg:self-start lg:z-auto ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
 
-        {/* Brand */}
-        <div className="p-4 border-b border-gray-100 dark:border-white/5">
-          <div className="flex items-center gap-3">
-            <BuddyLogoSmall className="w-9 h-9" />
-            <div>
+        {/* Brand + desktop collapse toggle */}
+        <div className={`border-b border-gray-100 dark:border-white/5 ${collapsed ? 'p-4 lg:px-2 lg:py-3' : 'p-4'}`}>
+          <div className={`flex items-center gap-3 ${collapsed ? 'lg:flex-col lg:gap-2' : ''}`}>
+            <BuddyLogoSmall className="w-9 h-9 shrink-0" />
+            <div className={`min-w-0 ${collapsed ? 'lg:hidden' : ''}`}>
               <div className="font-black text-gray-900 dark:text-white text-base leading-tight tracking-tight
                 text-transparent bg-clip-text bg-gradient-to-r from-cyan-500 to-fuchsia-500">
                 BUDDY
               </div>
               <div className="text-[10px] text-gray-400 dark:text-slate-500 tracking-wide">Manas Express</div>
             </div>
+            {/* Desktop-only: collapse/expand the rail. */}
+            <button
+              onClick={toggleCollapsed}
+              title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              className={`hidden lg:inline-flex items-center justify-center w-8 h-8 rounded-lg text-gray-400 dark:text-slate-400 hover:text-gray-700 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-white/5 transition-colors ${collapsed ? '' : 'ml-auto'}`}
+            >
+              {Icons.menu}
+            </button>
           </div>
         </div>
 
@@ -285,7 +310,7 @@ export default function Layout() {
               {orderedGroups.map((group, i) => {
                 const items = grouped[group] || []
                 return (
-                  <NavSection key={group} id={group.toLowerCase()} label={group} withDivider={i > 0} visibleCount={items.length}>
+                  <NavSection key={group} id={group.toLowerCase()} label={group} withDivider={i > 0} visibleCount={items.length} collapsed={collapsed}>
                     {items.map(p => (
                       <NavItem
                         key={p.page_key}
@@ -295,15 +320,16 @@ export default function Layout() {
                         end={p.page_key === 'profitability'}
                         onClick={close}
                         count={p.page_key === 'command_center' ? openTaskCount : 0}
+                        collapsed={collapsed}
                       />
                     ))}
                   </NavSection>
                 )
               })}
               {staticGroups.map((g, i) => (
-                <NavSection key={g.label} id={g.label.toLowerCase().replace(/\s+/g, '-')} label={g.label} withDivider={orderedGroups.length > 0 || i > 0} visibleCount={g.items.length}>
+                <NavSection key={g.label} id={g.label.toLowerCase().replace(/\s+/g, '-')} label={g.label} withDivider={orderedGroups.length > 0 || i > 0} visibleCount={g.items.length} collapsed={collapsed}>
                   {g.items.map(p => (
-                    <NavItem key={p.page_key} to={p.route} label={p.label} icon={PAGE_ICON[p.page_key]} onClick={close} />
+                    <NavItem key={p.page_key} to={p.route} label={p.label} icon={PAGE_ICON[p.page_key]} onClick={close} collapsed={collapsed} />
                   ))}
                 </NavSection>
               ))}
@@ -311,9 +337,10 @@ export default function Layout() {
           )}
         </nav>
 
-        {/* Footer — Simple/Advanced toggle + manage link, then admin Settings */}
+        {/* Footer — Simple/Advanced toggle + manage link (hidden in the rail),
+            then admin Settings (icon-only when collapsed). */}
         <div className="shrink-0 p-2.5 border-t border-gray-200 dark:border-white/5 space-y-2">
-          <div className="flex gap-1 p-0.5 rounded-xl bg-gray-100 dark:bg-white/5">
+          <div className={`flex gap-1 p-0.5 rounded-xl bg-gray-100 dark:bg-white/5 ${collapsed ? 'lg:hidden' : ''}`}>
             {[['simple', '⚡', 'Simple'], ['advanced', '☰', 'Advanced']].map(([m, ic, lbl]) => (
               <button
                 key={m}
@@ -330,11 +357,11 @@ export default function Layout() {
           </div>
           <button
             onClick={() => setShowManage(true)}
-            className="w-full text-left px-2 text-[11px] text-gray-500 dark:text-slate-400 hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors"
+            className={`w-full text-left px-2 text-[11px] text-gray-500 dark:text-slate-400 hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors ${collapsed ? 'lg:hidden' : ''}`}
           >
             Manage simple view ›
           </button>
-          {isAdmin && <NavItem to="/settings" label="Settings" icon={Icons.gear} onClick={close} />}
+          {isAdmin && <NavItem to="/settings" label="Settings" icon={Icons.gear} onClick={close} collapsed={collapsed} />}
         </div>
 
       </aside>
