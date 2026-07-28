@@ -207,7 +207,7 @@ export default function LumpersPage() {
           <table className="w-full text-xs">
             <thead className={`${S.tableHead} sticky top-0 z-10`}>
               <tr>
-                {['Date', 'Driver', 'Load # / Broker', 'Carrier', 'Dispatcher', 'Category', 'Amount', 'EFS', 'Total', 'Charge to', 'RC', 'Status', 'Docs', 'By'].map((h, i) => (
+                {['Date', 'Driver', 'Octopus # / Broker', 'Carrier', 'Dispatcher', 'Category', 'Amount', 'EFS', 'Total', 'Charge to', 'RC', 'Status', 'Docs', 'By'].map((h, i) => (
                   <th key={h} className={`${S.th} !py-2.5 whitespace-nowrap ${i >= 6 && i <= 8 ? 'text-right' : ''}`}>{h}</th>
                 ))}
               </tr>

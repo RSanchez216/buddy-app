@@ -4,7 +4,7 @@ import { S } from '../../../lib/styles'
 // Searchable single-select combobox over { id, name } options. Controlled via
 // value (id) + onChange(id, option). Type-ahead filters the list; ✕ clears.
 // Used for the drawer's editable Carrier / Driver / Dispatcher pickers.
-export default function SearchSelect({ options, value, onChange, placeholder = 'Search…', disabled = false, className = '' }) {
+export default function SearchSelect({ options, value, onChange, placeholder = 'Search…', disabled = false, className = '', dropUp = false }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const inputRef = useRef(null)
@@ -20,6 +20,14 @@ export default function SearchSelect({ options, value, onChange, placeholder = '
     onChange(o ? o.id : null, o || null)
     setQuery('')
     setOpen(false)
+  }
+  // Clearing (✕) empties the value AND reopens the menu so a new pick is one
+  // step away.
+  function clear() {
+    onChange(null, null)
+    setQuery('')
+    setOpen(true)
+    inputRef.current?.focus()
   }
 
   return (
@@ -39,13 +47,15 @@ export default function SearchSelect({ options, value, onChange, placeholder = '
       {selected && !disabled && (
         <button
           type="button"
-          onMouseDown={e => { e.preventDefault(); pick(null) }}
+          onMouseDown={e => { e.preventDefault(); clear() }}
           className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full text-xs text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-gray-100 dark:hover:bg-white/10"
           aria-label="Clear"
         >✕</button>
       )}
       {open && !disabled && (
-        <div className="absolute z-50 mt-1 w-full rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-[#12132e] shadow-lg overflow-hidden max-h-56 overflow-y-auto">
+        // dropUp opens above the input — needed near a container bottom edge
+        // (e.g. the modal footer's "Recorded by") where a downward menu is clipped.
+        <div className={`absolute z-50 w-full rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-[#12132e] shadow-lg overflow-hidden max-h-56 overflow-y-auto ${dropUp ? 'bottom-full mb-1' : 'top-full mt-1'}`}>
           {filtered.length === 0 ? (
             <p className="px-3 py-2 text-xs text-gray-400 dark:text-slate-500">No matches</p>
           ) : (

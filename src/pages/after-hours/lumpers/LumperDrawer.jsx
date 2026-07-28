@@ -107,8 +107,8 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
     }
   }, [open, isEdit, row, me?.id])
 
-  // On open: lock background scroll, remember the trigger, focus the TMS load
-  // field; on close: restore scroll + return focus to the trigger.
+  // On open: lock background scroll, remember the trigger, focus the Octopus load
+  // number field; on close: restore scroll + return focus to the trigger.
   useEffect(() => {
     if (!open) return
     previouslyFocused.current = document.activeElement
@@ -301,12 +301,16 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
               {/* Step 1 — tinted lookup panel */}
               <div className="rounded-xl border border-orange-200 dark:border-orange-500/30 bg-orange-50/40 dark:bg-orange-500/[0.05] p-4">
                 <Step n={1} title="Start with the load">
-                  <div className="grid grid-cols-[1fr_168px] gap-3">
+                  <div className="grid grid-cols-[1.2fr_1fr_168px] gap-3">
                     <div>
-                      <label className={S.label}>TMS load number</label>
+                      <label className={S.label}>Octopus load number</label>
                       <input ref={loadInputRef} className={S.input} value={loadNumber} placeholder="2607-1306"
                         onChange={e => onLoadNumberChange(e.target.value)}
                         onBlur={() => { if (debounceRef.current) clearTimeout(debounceRef.current); runLookup(loadNumber) }} />
+                    </div>
+                    <div>
+                      <label className={S.label}>Broker load number</label>
+                      <input className={S.input} value={invoiceNumber} onChange={e => setInvoiceNumber(e.target.value)} placeholder="Broker's load number" />
                     </div>
                     <div>
                       <label className={S.label}>Date paid</label>
@@ -381,37 +385,30 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
                 </div>
                 <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1.5">Default — change only if EFS charged something else.</p>
 
-                <div className="grid grid-cols-2 gap-4 mt-3">
-                  <div>
-                    <label className={S.label}>Category *</label>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {categories.map(c => (
-                        <button key={c.id} type="button" onClick={() => setCategoryId(categoryId === c.id ? null : c.id)}
-                          className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${categoryId === c.id ? 'bg-orange-500 text-white border-orange-500' : 'border-gray-300 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5'}`}>
-                          {c.name}
-                        </button>
-                      ))}
-                      {canEdit && !addingCat && (
-                        <button type="button" onClick={() => setAddingCat(true)} title="Add a category"
-                          className="w-7 h-7 inline-flex items-center justify-center rounded-full border border-dashed border-gray-300 dark:border-slate-600 text-gray-400 hover:text-orange-500 hover:border-orange-400">
-                          +
-                        </button>
-                      )}
-                      {canEdit && addingCat && (
-                        <span className="inline-flex items-center gap-1">
-                          <input autoFocus value={newCat} onChange={e => setNewCat(e.target.value)}
-                            onKeyDown={e => { if (e.key === 'Enter') submitAddCategory(); if (e.key === 'Escape') { e.stopPropagation(); setAddingCat(false); setNewCat('') } }}
-                            placeholder="New category" className={`${S.input} !py-1 !w-36 text-xs`} />
-                          <button type="button" onClick={submitAddCategory} className="text-xs font-medium text-orange-600 dark:text-orange-400 hover:underline">Add</button>
-                          <button type="button" onClick={() => { setAddingCat(false); setNewCat('') }} className="text-xs text-gray-400 hover:text-gray-600">✕</button>
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <div>
-                    <label className={S.label}>Invoice / reference #</label>
-                    <input className={S.input} value={invoiceNumber} onChange={e => setInvoiceNumber(e.target.value)} placeholder="Broker's reference number" />
-                    <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1">Broker&apos;s reference number.</p>
+                <div className="mt-3">
+                  <label className={S.label}>Category *</label>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {categories.map(c => (
+                      <button key={c.id} type="button" onClick={() => setCategoryId(categoryId === c.id ? null : c.id)}
+                        className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${categoryId === c.id ? 'bg-orange-500 text-white border-orange-500' : 'border-gray-300 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5'}`}>
+                        {c.name}
+                      </button>
+                    ))}
+                    {canEdit && !addingCat && (
+                      <button type="button" onClick={() => setAddingCat(true)} title="Add a category"
+                        className="w-7 h-7 inline-flex items-center justify-center rounded-full border border-dashed border-gray-300 dark:border-slate-600 text-gray-400 hover:text-orange-500 hover:border-orange-400">
+                        +
+                      </button>
+                    )}
+                    {canEdit && addingCat && (
+                      <span className="inline-flex items-center gap-1">
+                        <input autoFocus value={newCat} onChange={e => setNewCat(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Enter') submitAddCategory(); if (e.key === 'Escape') { e.stopPropagation(); setAddingCat(false); setNewCat('') } }}
+                          placeholder="New category" className={`${S.input} !py-1 !w-36 text-xs`} />
+                        <button type="button" onClick={submitAddCategory} className="text-xs font-medium text-orange-600 dark:text-orange-400 hover:underline">Add</button>
+                        <button type="button" onClick={() => { setAddingCat(false); setNewCat('') }} className="text-xs text-gray-400 hover:text-gray-600">✕</button>
+                      </span>
+                    )}
                   </div>
                 </div>
               </Step>
@@ -496,7 +493,7 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
             <div className="flex items-center gap-2 min-w-0">
               <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500 shrink-0">Recorded by</span>
               <div className="w-48">
-                <SearchSelect options={usersOptions} value={recorderId} onChange={id => setRecorderId(id)} placeholder="Recorder…" />
+                <SearchSelect options={usersOptions} value={recorderId} onChange={id => setRecorderId(id)} placeholder="Recorder…" dropUp />
               </div>
               {recorderId === me?.id && <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 shrink-0">YOU</span>}
               <span className="text-[11px] text-gray-400 dark:text-slate-500 tabular-nums ml-3 whitespace-nowrap">{nowLabel}</span>
