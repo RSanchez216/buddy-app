@@ -274,7 +274,7 @@ function CombinedLoads() {
         <TableSkeleton rows={6} cols={5} />
       ) : (
         <>
-          <CandidatesSection candidates={candidates || []} onRefresh={loadData} />
+          <CandidatesSection candidates={candidates || []} groups={groups || []} onRefresh={loadData} />
 
           {/* Section 2: Dismissed */}
           <DismissedSection dismissed={dismissed || []} onRefresh={loadData} />
@@ -290,13 +290,32 @@ function CombinedLoads() {
   )
 }
 
-function CandidatesSection({ candidates, onRefresh }) {
+function CandidatesSection({ candidates, groups, onRefresh }) {
   const [showForm, setShowForm] = useState(false)
   const [showDismiss, setShowDismiss] = useState(false)
   const [selectedPair, setSelectedPair] = useState(null)
+  const [viewGroup, setViewGroup] = useState(null) // existing group opened via "View group"
 
-  const activeCandidates = candidates.filter(c => !c.already_grouped)
-  const { visible: visibleCandidates, expanded, toggle, total, hasMore } = useCappedList(activeCandidates)
+  // Don't filter out already-grouped pairs — the overlap is real and adding a
+  // third load to an existing group is a legitimate action. They get a warning
+  // instead. (This filter used to be a no-op because the detector always
+  // returned already_grouped=false; now that it works, filtering would hide
+  // the only route to those rows.)
+  const flaggedCount = candidates.filter(c => c.already_grouped).length
+  const { visible: visibleCandidates, expanded, toggle, total, hasMore } = useCappedList(candidates)
+
+  // "View group" opens the EXISTING group (its members), not the candidate pair.
+  // Prefer the fully-hydrated group from the page's groups list; fall back to
+  // the members string the detector returned if it isn't loaded.
+  const openGroup = (groupId, membersStr) => {
+    const g = groups.find(x => x.id === groupId)
+    setViewGroup(g || {
+      id: groupId,
+      label: membersStr || '',
+      loads: String(membersStr || '').split('+').map(s => ({ load_number: s.trim() })).filter(l => l.load_number),
+      true_combined_miles: null, totalMiles: 0, totalRevenue: 0, correctedRpm: null,
+    })
+  }
 
   const handleCombine = (pair) => {
     setSelectedPair(pair)
@@ -329,10 +348,13 @@ function CandidatesSection({ candidates, onRefresh }) {
       <div className={`${S.card}`}>
         <div className="px-4 py-3 border-b border-gray-100 dark:border-white/5">
           <h2 className="text-lg font-bold text-gray-900 dark:text-white">Candidates to review</h2>
-          <p className="text-sm text-gray-500 dark:text-slate-500 mt-1">{activeCandidates.length} pairs ready to combine</p>
+          <p className="text-sm text-gray-500 dark:text-slate-500 mt-1">
+            {candidates.length} pairs ready to combine
+            {flaggedCount > 0 && ` · ${flaggedCount} involve a load you've already combined`}
+          </p>
         </div>
 
-        {activeCandidates.length === 0 ? (
+        {candidates.length === 0 ? (
           <div className="p-8 text-center text-sm text-gray-400 dark:text-slate-500">
             No combined load candidates in the selected period.
           </div>
@@ -352,32 +374,42 @@ function CandidatesSection({ candidates, onRefresh }) {
                 </tr>
               </thead>
               <tbody>
-                {visibleCandidates.map((pair, idx) => (
-                  <tr key={idx} className={S.tableRow}>
-                    <td className="px-4 py-2 font-medium text-gray-900 dark:text-slate-200">
+                {visibleCandidates.map((pair, idx) => {
+                  const flagged = !!pair.already_grouped
+                  return (
+                  <tr key={idx} className={`${S.tableRow} ${flagged ? 'bg-[#FFFDF7] dark:bg-amber-500/[0.06]' : ''}`}>
+                    <td className={`px-4 py-2 font-medium text-gray-900 dark:text-slate-200 ${flagged ? 'shadow-[inset_3px_0_0_0_#F59E0B]' : ''}`}>
                       <span className="inline-flex items-center gap-1.5">
                         {pair.driver_name}
                         {pair.driver_name && <CopyButton value={pair.driver_name} label="Copy driver name" />}
                       </span>
                     </td>
-                    <td className="px-3 py-2 text-gray-600 dark:text-slate-400">
+                    <td className="px-3 py-2 text-gray-600 dark:text-slate-400 align-top">
                       <div>{pair.load_a}</div>
                       <div className="text-[10px] text-gray-600 dark:text-slate-400">{pair.lane_a}</div>
                       <LoadSchedule pickupDate={pair.pickup_a} pickupTime={pair.pickup_time_a} deliveryDate={pair.delivery_a} deliveryTime={pair.delivery_time_a} />
+                      {flagged && pair.a_group_members && (
+                        <AlreadyGroupedNote members={pair.a_group_members} onView={() => openGroup(pair.a_group_id, pair.a_group_members)} />
+                      )}
                     </td>
-                    <td className="px-3 py-2 text-gray-600 dark:text-slate-400">
+                    <td className="px-3 py-2 text-gray-600 dark:text-slate-400 align-top">
                       <div>{pair.load_b}</div>
                       <div className="text-[10px] text-gray-600 dark:text-slate-400">{pair.lane_b}</div>
                       <LoadSchedule pickupDate={pair.pickup_b} pickupTime={pair.pickup_time_b} deliveryDate={pair.delivery_b} deliveryTime={pair.delivery_time_b} />
+                      {flagged && pair.b_group_members && (
+                        <AlreadyGroupedNote members={pair.b_group_members} onView={() => openGroup(pair.b_group_id, pair.b_group_members)} />
+                      )}
                     </td>
-                    <td className="px-3 py-2 text-right text-gray-600 dark:text-slate-400">{pair.overlap_days}d</td>
-                    <td className="px-3 py-2 text-center">{pair.same_trailer ? '✓' : '—'}</td>
-                    <td className="px-3 py-2 text-right font-mono text-gray-900 dark:text-slate-200">${pair.combined_linehaul.toFixed(0)}</td>
-                    <td className="px-3 py-2 text-right font-mono text-amber-600 dark:text-amber-400">{fmtRpm(pair.naive_rpm)}</td>
-                    <td className="px-3 py-2 flex gap-1.5">
+                    <td className="px-3 py-2 text-right text-gray-600 dark:text-slate-400 align-top">{pair.overlap_days}d</td>
+                    <td className="px-3 py-2 text-center align-top">{pair.same_trailer ? '✓' : '—'}</td>
+                    <td className="px-3 py-2 text-right font-mono text-gray-900 dark:text-slate-200 align-top">${pair.combined_linehaul.toFixed(0)}</td>
+                    <td className="px-3 py-2 text-right font-mono text-amber-600 dark:text-amber-400 align-top">{fmtRpm(pair.naive_rpm)}</td>
+                    <td className="px-3 py-2 flex gap-1.5 align-top">
                       <button
                         onClick={() => handleCombine(pair)}
-                        className="px-2.5 py-1 text-xs font-semibold bg-orange-500 hover:bg-orange-600 text-white rounded-lg transition-colors"
+                        className={flagged
+                          ? 'px-2.5 py-1 text-xs font-semibold bg-white dark:bg-white/5 border border-[#E3E6EA] dark:border-slate-600 text-[#6B7280] dark:text-slate-300 rounded-lg hover:bg-gray-50 dark:hover:bg-white/10 transition-colors'
+                          : 'px-2.5 py-1 text-xs font-semibold bg-orange-500 hover:bg-orange-600 text-white rounded-lg transition-colors'}
                       >
                         Combine
                       </button>
@@ -389,7 +421,8 @@ function CandidatesSection({ candidates, onRefresh }) {
                       </button>
                     </td>
                   </tr>
-                ))}
+                  )
+                })}
               </tbody>
             </table>
             <ShowMoreToggle expanded={expanded} total={total} hasMore={hasMore} onToggle={toggle} />
@@ -401,6 +434,10 @@ function CandidatesSection({ candidates, onRefresh }) {
         <CreateGroupForm pair={selectedPair} onClose={() => setShowForm(false)} onSave={handleSave} />
       )}
 
+      {viewGroup && (
+        <CreateGroupForm group={viewGroup} onClose={() => setViewGroup(null)} onSave={() => { setViewGroup(null); onRefresh() }} />
+      )}
+
       {showDismiss && selectedPair && (
         <DismissModal pair={selectedPair} onClose={handleDismissClose} onSave={handleDismissSave} />
       )}
@@ -408,16 +445,42 @@ function CandidatesSection({ candidates, onRefresh }) {
   )
 }
 
-function CreateGroupForm({ pair, onClose, onSave }) {
-  const [loads, setLoads] = useState([pair.load_a, pair.load_b])
+// Amber inline note under a load cell whose load is already in a combine group.
+// Fixed light-mode palette per spec; dark variants keep it readable on a dark row.
+function AlreadyGroupedNote({ members, onView }) {
+  return (
+    <div className="mt-1 inline-flex flex-wrap items-center gap-x-1.5 gap-y-0.5 rounded-[7px] px-2 py-1 text-[11.3px] leading-tight bg-[#FEF6E7] dark:bg-amber-500/10 border border-[#FBE3B4] dark:border-amber-500/25 text-[#92610A] dark:text-amber-300">
+      <span>Already combined as <span className="font-semibold text-[#7C4A06] dark:text-amber-200">{members}</span></span>
+      <span aria-hidden className="text-[#D6B25E] dark:text-amber-500/50">·</span>
+      <button type="button" onClick={onView} className="font-semibold text-[#EA6A0A] dark:text-orange-400 hover:underline">
+        View group
+      </button>
+    </div>
+  )
+}
+
+// Serves two modes: creating a group from a candidate `pair`, or opening an
+// existing `group` (the "View group" action). In group mode it seeds from the
+// group and updates it on save, so adding a third load attaches to the existing
+// group rather than spawning a duplicate.
+function CreateGroupForm({ pair, group, onClose, onSave }) {
+  const isGroup = !!group
+  const [loads, setLoads] = useState(
+    isGroup ? (group.loads || []).map(l => l.load_number) : [pair.load_a, pair.load_b]
+  )
   const [loadInput, setLoadInput] = useState('')
-  const [trueMiles, setTrueMiles] = useState('')
-  const [label, setLabel] = useState(`${pair.driver_name} · ${pair.lane_a} + ${pair.lane_b}`)
-  const [notes, setNotes] = useState('')
+  const [trueMiles, setTrueMiles] = useState(
+    isGroup && group.true_combined_miles != null ? String(group.true_combined_miles) : ''
+  )
+  const [label, setLabel] = useState(
+    isGroup ? (group.label || '') : `${pair.driver_name} · ${pair.lane_a} + ${pair.lane_b}`
+  )
+  const [notes, setNotes] = useState(isGroup ? (group.notes || '') : '')
   const [saving, setSaving] = useState(false)
 
-  const combinedLinehaul = pair.combined_linehaul
-  const displayMiles = trueMiles ? Number(trueMiles) : pair.summed_miles
+  const combinedLinehaul = isGroup ? (group.totalRevenue || 0) : pair.combined_linehaul
+  const defaultMiles = isGroup ? (group.totalMiles || 0) : pair.summed_miles
+  const displayMiles = trueMiles ? Number(trueMiles) : defaultMiles
   const correctedRpm = displayMiles > 0 ? combinedLinehaul / displayMiles : null
 
   const handleAddLoad = async () => {
@@ -454,21 +517,28 @@ function CreateGroupForm({ pair, onClose, onSave }) {
       const { data: currentUser } = await supabase.auth.getUser()
       if (!currentUser?.user?.id) throw new Error('Not authenticated')
 
-      // Create group
-      const { data: groupData, error: groupErr } = await supabase
-        .from('load_combine_groups')
-        .insert([{
-          label,
-          notes,
-          true_combined_miles: trueMiles ? Number(trueMiles) : null,
-          created_by: currentUser.user.id,
-        }])
-        .select()
+      // Group mode: update the existing group and (re)attach its members — so a
+      // newly added third load joins THIS group instead of creating a new one.
+      const groupId = isGroup
+        ? group.id
+        : (await (async () => {
+            const { data: groupData, error: groupErr } = await supabase
+              .from('load_combine_groups')
+              .insert([{ label, notes, true_combined_miles: trueMiles ? Number(trueMiles) : null, created_by: currentUser.user.id }])
+              .select()
+            if (groupErr) throw groupErr
+            return groupData[0].id
+          })())
 
-      if (groupErr) throw groupErr
-      const groupId = groupData[0].id
+      if (isGroup) {
+        const { error: updGroupErr } = await supabase
+          .from('load_combine_groups')
+          .update({ label, notes, true_combined_miles: trueMiles ? Number(trueMiles) : null, updated_at: new Date() })
+          .eq('id', groupId)
+        if (updGroupErr) throw updGroupErr
+      }
 
-      // Update loads to reference this group
+      // Point member loads at the group.
       const { error: updateErr } = await supabase
         .from('loads')
         .update({ combine_group_id: groupId })
@@ -478,7 +548,7 @@ function CreateGroupForm({ pair, onClose, onSave }) {
 
       onSave()
     } catch (err) {
-      console.error('Failed to create group:', err)
+      console.error(isGroup ? 'Failed to update group:' : 'Failed to create group:', err)
       alert('Error: ' + err.message)
     } finally {
       setSaving(false)
@@ -489,7 +559,7 @@ function CreateGroupForm({ pair, onClose, onSave }) {
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className={`${S.card} w-full max-w-md max-h-screen overflow-y-auto`}>
         <div className="px-6 py-4 border-b border-gray-100 dark:border-white/5 flex items-center justify-between">
-          <h3 className="text-lg font-bold text-gray-900 dark:text-white">Combine loads</h3>
+          <h3 className="text-lg font-bold text-gray-900 dark:text-white">{isGroup ? 'Combined group' : 'Combine loads'}</h3>
           <button onClick={onClose} className="text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 text-xl leading-none">×</button>
         </div>
 
@@ -527,10 +597,10 @@ function CreateGroupForm({ pair, onClose, onSave }) {
               type="number"
               value={trueMiles}
               onChange={e => setTrueMiles(e.target.value)}
-              placeholder={`${pair.summed_miles} (default)`}
+              placeholder={`${defaultMiles} (default)`}
               className={`${S.input} w-full text-sm`}
             />
-            <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1">From TMS. If blank, uses combined leg miles ({pair.summed_miles}).</p>
+            <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1">From TMS. If blank, uses combined leg miles ({defaultMiles}).</p>
           </div>
 
           {/* Label */}
@@ -559,7 +629,7 @@ function CreateGroupForm({ pair, onClose, onSave }) {
             <div className="text-blue-900 dark:text-blue-300">
               <div className="font-semibold">Corrected RPM</div>
               <div className="text-lg font-mono mt-1">
-                {correctedRpm ? `${fmtRpm(correctedRpm)}/mi` : '—'} {correctedRpm && <span className="text-[10px] ml-2">(was {fmtRpm(pair.naive_rpm)}/mi)</span>}
+                {correctedRpm ? `${fmtRpm(correctedRpm)}/mi` : '—'} {correctedRpm && !isGroup && <span className="text-[10px] ml-2">(was {fmtRpm(pair.naive_rpm)}/mi)</span>}
               </div>
             </div>
           </div>
