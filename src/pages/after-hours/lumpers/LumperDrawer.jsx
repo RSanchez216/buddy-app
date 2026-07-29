@@ -462,7 +462,7 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
                 <div className="mt-4">
                   <label className={S.label}>Revised rate con <span className="text-gray-400 dark:text-slate-500 font-normal normal-case">· ask the broker before you leave the dock</span></label>
                   <input ref={rcNumberRef} className={S.input} value={revisedRcNumber} onChange={e => setRevisedRcNumber(e.target.value)}
-                    placeholder="Rate con number — leave blank if the broker wouldn't issue one" />
+                    placeholder="Updated Rate Confirmation File - Leave blank if the broker wouldn't issue one" />
                   <div className="mt-2">
                     <DocTarget label="PDF file" file={rcFile} path={rcPath} onFile={setRcFile} onView={viewDoc} onClear={() => setRcFile(null)} />
                   </div>
