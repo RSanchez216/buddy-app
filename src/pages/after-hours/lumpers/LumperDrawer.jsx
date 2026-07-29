@@ -5,9 +5,10 @@ import { useAuth } from '../../../contexts/AuthContext'
 import { useToast } from '../../../contexts/ToastContext'
 import { S } from '../../../lib/styles'
 import SearchSelect from './SearchSelect'
+import ActivityTrail from './ActivityTrail'
 import {
   loadLookup, addCategory, setLumperStatus, statusMeta, money, todayChicago, fmtChicagoTs,
-  DOC_BUCKET, CHARGE_TO, CHARGE_TO_DESC, STATUS_OPTIONS,
+  fetchLumperById, DOC_BUCKET, CHARGE_TO, CHARGE_TO_DESC, STATUS_OPTIONS,
 } from './lumperData'
 
 const ORANGE_BTN = 'px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 disabled:bg-gray-200 dark:disabled:bg-slate-700 disabled:text-gray-400 dark:disabled:text-slate-500 text-white rounded-xl transition-all'
@@ -56,6 +57,12 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
   const [rcPath, setRcPath] = useState(null)
   const [recorderId, setRecorderId] = useState(null)
 
+  // The live row — starts as the `row` prop (edit) or null (create), and gets
+  // replaced after each save so the trail + accounting metadata stay current
+  // without closing the modal. activityTick forces the trail to re-fetch.
+  const [rowLive, setRowLive] = useState(null)
+  const [activityTick, setActivityTick] = useState(0)
+
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const debounceRef = useRef(null)
@@ -72,6 +79,7 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
     if (!open) return
     setError(''); setSaving(false); setAddingCat(false); setNewCat('')
     setReceiptFile(null); setRcFile(null)
+    setRowLive(isEdit && row ? row : null); setActivityTick(0)
     if (isEdit && row) {
       setLoadNumber(row.load_number || '')
       setDatePaid(row.event_date || todayChicago())
@@ -138,7 +146,7 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
   }
 
   const totalDisplay = (num(amount) || 0) + (num(efsFee) || 0)
-  const totalForPanel = row?.total_amount ?? totalDisplay
+  const totalForPanel = rowLive?.total_amount ?? totalDisplay
   const nowLabel = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date()) + ' CT'
   const hasRc = !!(revisedRcNumber.trim() || rcPath || rcFile)
 
@@ -255,8 +263,10 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
         recorded_by_name: recorder?.full_name || null,
       }
 
-      let eventId = row?.id
-      if (isEdit) {
+      // Update when we already have an id (edit, or a create that was already
+      // saved once in this open session); insert only on the very first save.
+      let eventId = rowLive?.id || row?.id
+      if (eventId) {
         const { error: e } = await supabase.from('lumper_events').update(payload).eq('id', eventId)
         if (e) throw e
       } else {
@@ -278,9 +288,9 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
       // Accounting section: status / charge_to / accounting note go through the
       // permission-gated RPC, and only when something actually changed.
       if (canEdit) {
-        const origStatus = isEdit ? (row.status || 'open') : 'open'
-        const origCharge = isEdit ? (row.charge_to || null) : null
-        const origAcct = isEdit ? (row.accounting_notes || '') : ''
+        const origStatus = rowLive?.status || 'open'
+        const origCharge = rowLive?.charge_to || null
+        const origAcct = rowLive?.accounting_notes || ''
         const acctChanged = (accountingNotes || '') !== origAcct
         const statusChanged = status !== origStatus
         const chargeChanged = (chargeTo || null) !== origCharge
@@ -291,6 +301,14 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
       }
 
       toast.success(isEdit ? 'Lumper updated' : 'Lumper recorded')
+      // Keep the modal open — re-hydrate the row (for status_set_by/at, totals,
+      // orig-comparison baselines) and bump the trail so it re-fetches. The list
+      // reloads in the background via onSaved.
+      try {
+        const fresh = await fetchLumperById(eventId)
+        if (fresh) setRowLive(fresh)
+      } catch { /* trail/meta stay on the previous snapshot; not fatal */ }
+      setActivityTick(t => t + 1)
       onSaved?.()
     } catch (e) {
       setError(e?.message || 'Save failed.')
@@ -302,9 +320,9 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
 
   if (!open) return null
 
-  const dockRecorderName = usersById.get(recorderId)?.full_name || row?.recorded_by_name || 'Unknown'
-  const dockTs = row?.created_at ? fmtChicagoTs(row.created_at) : nowLabel
-  const statusSetByName = row?.status_set_by ? (usersById.get(row.status_set_by)?.full_name || 'someone') : null
+  const dockRecorderName = usersById.get(recorderId)?.full_name || rowLive?.recorded_by_name || 'Unknown'
+  const dockTs = rowLive?.created_at ? fmtChicagoTs(rowLive.created_at) : nowLabel
+  const statusSetByName = rowLive?.status_set_by ? (usersById.get(rowLive.status_set_by)?.full_name || 'someone') : null
   const chargeDesc = chargeTo ? (CHARGE_TO_DESC[chargeTo] || '').replace('{total}', money(totalForPanel)) : ''
 
   return createPortal(
@@ -559,9 +577,12 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
                     : <p className="text-xs text-gray-600 dark:text-slate-400 whitespace-pre-wrap">{accountingNotes.trim() || <span className="italic text-gray-400 dark:text-slate-500">No accounting note yet.</span>}</p>}
                 </div>
 
-                {statusSetByName && row?.status_set_at && (
-                  <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-3">Status set by {statusSetByName} · {fmtChicagoTs(row.status_set_at)}</p>
+                {statusSetByName && rowLive?.status_set_at && (
+                  <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-3">Status set by {statusSetByName} · {fmtChicagoTs(rowLive.status_set_at)}</p>
                 )}
+
+                {/* Activity trail — read-only; edit-only / after the first save */}
+                <ActivityTrail lumperId={rowLive?.id || null} refetchTick={activityTick} />
               </Step>
             </div>
           </div>

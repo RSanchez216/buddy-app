@@ -239,7 +239,7 @@ export default function LumpersPage() {
         refLists={refLists}
         onCategoriesChange={setCategories}
         onClose={closeDrawer}
-        onSaved={() => { closeDrawer(); reload() }}
+        onSaved={reload}
       />
     </div>
   )

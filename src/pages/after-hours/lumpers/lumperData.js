@@ -82,6 +82,21 @@ export async function loadLookup(loadNumber) {
   return data // jsonb: { found, drivers[], load_id, carrier_id, carrier_name, customer_id, broker_name, dispatcher_id, dispatcher_name, load_number }
 }
 
+// One lumper row (with the same joins) — used to re-hydrate the drawer after a
+// save without closing it.
+export async function fetchLumperById(id) {
+  const { data, error } = await supabase.from('lumper_events').select(EVENT_SELECT).eq('id', id).maybeSingle()
+  if (error) throw error
+  return data || null
+}
+
+// Append-only activity trail (newest-first). Read-only — the DB trigger writes it.
+export async function fetchLumperActivity(id) {
+  const { data, error } = await supabase.rpc('get_lumper_activity', { p_lumper_id: id })
+  if (error) throw error
+  return data || []
+}
+
 // Reference lists for the drawer's editable pickers (all small).
 export async function fetchRefLists() {
   const [carriers, dispatchers, drivers, users] = await Promise.all([
