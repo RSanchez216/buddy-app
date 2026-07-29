@@ -94,6 +94,8 @@ const CommandCenter = lazyWithReload(() => import('./pages/command-center/Comman
 const RigPage = lazyWithReload(() => import('./pages/rig/RigPage'))
 // Lazy — Lumpers (After Hours) is a standalone night-shift surface; its own chunk.
 const LumpersPage = lazyWithReload(() => import('./pages/after-hours/lumpers/LumpersPage'))
+// Lazy — Shift Board (After Hours) night-shift worklist; its own chunk.
+const ShiftBoardPage = lazyWithReload(() => import('./pages/after-hours/shift-board/ShiftBoardPage'))
 
 export default function App() {
   return (
@@ -155,6 +157,15 @@ export default function App() {
                   <ErrorBoundary label="the Lumpers page">
                     <Suspense fallback={<div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500" /></div>}>
                       <LumpersPage />
+                    </Suspense>
+                  </ErrorBoundary>
+                </RequirePageAccess>
+              } />
+              <Route path="after-hours/shift-board" element={
+                <RequirePageAccess pageKey="shift_board">
+                  <ErrorBoundary label="the Shift Board">
+                    <Suspense fallback={<div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500" /></div>}>
+                      <ShiftBoardPage />
                     </Suspense>
                   </ErrorBoundary>
                 </RequirePageAccess>

@@ -60,7 +60,7 @@ const PAGE_ICON = {
   combined_loads: Icons.merge,
   dashboard: Icons.dashboard, vendor_master: Icons.vendors, invoice_inbox: Icons.invoices,
   transaction_feed: Icons.txns, monthly_report: Icons.report,
-  lumpers: Icons.moon,
+  lumpers: Icons.moon, shift_board: Icons.report,
 }
 // nav_group render order (matches the previous hardcoded sidebar). Groups not
 // listed here fall to the end, alphabetically.
@@ -71,7 +71,7 @@ const SECTION_ORDER = ['Today', 'Money', 'Profitability', 'Fleet', 'Payables']
 // the section is empty/hidden for users without the grant). "After Hours" holds
 // the new night-shift surfaces (Lumpers now, Night Shift to follow).
 const STATIC_NAV_GROUPS = [
-  { label: 'After Hours', pageKeys: ['lumpers'] },
+  { label: 'After Hours', pageKeys: ['shift_board', 'lumpers'] },
 ]
 const STATIC_NAV_KEYS = new Set(STATIC_NAV_GROUPS.flatMap(g => g.pageKeys))
 
