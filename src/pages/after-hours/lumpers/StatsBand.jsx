@@ -15,13 +15,19 @@ export default function StatsBand({ summary, rangeDays }) {
   }
 
   const aging = summary.aging || {}
-  const advanced = Number(summary.advanced_amount) || 0
-  const paid = Number(summary.paid_amount) || 0
   // EFS fees come straight from the RPC's efs_fees (the per-row fee is editable —
   // one historical row is $64.79 — so never derive it as count × $2.00).
   const efs = Number(summary.efs_fees) || 0
-  const paidPct = advanced > 0 ? Math.round((paid / advanced) * 100) : 0
   const annualized = rangeDays > 0 ? efs * (365 / rangeDays) : 0
+
+  // Reimbursed = broker-paid + charged to driver/dispatcher (money recovered);
+  // Unpaid = company-absorbed only. recovery_rate is pre-rounded (null if $0 advanced).
+  const recRate = summary.recovery_rate
+  const recoveredSub = recRate != null
+    ? `${summary.recovered_count} · ${recRate}% of advanced`
+    : `${summary.recovered_count} recovered`
+  const people = Number(summary.recovered_from_people_amount) || 0
+  const peopleNote = people > 0 ? `incl. ${money(people, 0)} charged to drivers/dispatchers` : null
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
@@ -42,13 +48,14 @@ export default function StatsBand({ summary, rangeDays }) {
       <StatCard label="Advanced" value={money(summary.advanced_amount, 0)} sub={`${summary.advanced_count} records`} />
       <StatCard
         label="Reimbursed" tone="green"
-        value={money(summary.paid_amount, 0)}
-        sub={`${summary.paid_count} · ${paidPct}% of advanced`}
+        value={money(summary.recovered_amount, 0)}
+        sub={recoveredSub}
+        note={peopleNote}
       />
       <StatCard
         label="Unpaid" tone="red"
-        value={money(summary.unpaid_amount, 0)}
-        sub={`${summary.unpaid_count} absorbed`}
+        value={money(summary.absorbed_amount, 0)}
+        sub={`${summary.absorbed_count} absorbed`}
       />
       <StatCard
         label="EFS check fees"
