@@ -30,6 +30,23 @@ export const URGENCIES = [
 export const kindLabel = (k) => KINDS.find(x => x.value === k)?.label || k || '—'
 export const urgencyMeta = (u) => URGENCIES.find(x => x.value === u) || { value: u, label: u || '—', dot: '#94A3B8' }
 
+// Request lifecycle badge (help_requests.status, a GENERATED column):
+// new → orange, seen → amber, handled → green, dismissed → grey (not red — a
+// dismissal isn't a failure state).
+export const REQUEST_STATUS = {
+  new:       { label: 'New',       cls: 'bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-400 border-orange-200 dark:border-orange-500/25' },
+  seen:      { label: 'Seen',      cls: 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-500/25' },
+  handled:   { label: 'Handled',   cls: 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/25' },
+  dismissed: { label: 'DISMISSED', cls: 'bg-gray-100 dark:bg-slate-700/40 text-gray-500 dark:text-slate-400 border-gray-200 dark:border-slate-600/40' },
+}
+export function requestStatusMeta(status) { return REQUEST_STATUS[status] || REQUEST_STATUS.new }
+
+// Edit / dismiss / restore are the raiser's or a manager's to make. The RPCs
+// enforce this too; this just decides what to show.
+export function canManageRequest(r, meId, isManager) {
+  return !!isManager || (!!meId && r?.raised_by === meId)
+}
+
 // Driver status badge (from current_status / driver_status_at_raise).
 export const STATUS_BADGE = {
   active:     { label: 'ACTIVE',     cls: 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/25' },
@@ -84,13 +101,15 @@ export async function fetchOpenShiftId() {
   return data?.id || null
 }
 
-const REQ_SELECT = 'id, driver_id, driver_name, load_id, kind, urgency, note, raised_by, raised_at, seen_at, seen_by, handled_at, handled_by, resolution, shift_id, driver_status_at_raise, status, created_at'
+const REQ_SELECT = 'id, driver_id, driver_name, load_id, kind, urgency, note, raised_by, raised_at, seen_at, seen_by, handled_at, handled_by, resolution, shift_id, driver_status_at_raise, status, dismissed_at, dismissed_by, dismissal_reason, last_edited_at, last_edited_by, created_at'
 
-// Resolve raised_by / seen_by / handled_by uuids → names in one users fetch
-// (three FKs into users make direct embeds ambiguous, so join client-side).
+const PEOPLE_KEYS = ['raised_by', 'seen_by', 'handled_by', 'dismissed_by', 'last_edited_by']
+
+// Resolve the actor uuids → names in one users fetch (several FKs into users
+// make direct embeds ambiguous, so join client-side).
 async function hydratePeople(rows) {
   const ids = new Set()
-  for (const r of rows) { for (const k of ['raised_by', 'seen_by', 'handled_by']) if (r[k]) ids.add(r[k]) }
+  for (const r of rows) { for (const k of PEOPLE_KEYS) if (r[k]) ids.add(r[k]) }
   if (!ids.size) return rows.map(r => ({ ...r }))
   const { data } = await supabase.from('users').select('id, full_name').in('id', [...ids])
   const byId = new Map((data || []).map(u => [u.id, u.full_name]))
@@ -99,6 +118,8 @@ async function hydratePeople(rows) {
     raised_by_name: byId.get(r.raised_by) || null,
     seen_by_name: byId.get(r.seen_by) || null,
     handled_by_name: byId.get(r.handled_by) || null,
+    dismissed_by_name: byId.get(r.dismissed_by) || null,
+    last_edited_by_name: byId.get(r.last_edited_by) || null,
   }))
 }
 
@@ -151,6 +172,38 @@ export async function markRequestHandled(id, userId, resolution, shiftId) {
   const { error } = await supabase.from('help_requests').update(patch).eq('id', id)
   if (error) throw error
   announceRequestsChanged()
+}
+
+// Edit / dismiss / restore go through SECURITY DEFINER RPCs that enforce the
+// rules and stamp attribution — NEVER write those columns directly. Each returns
+// { ok: true } or { ok: false, reason }. On refusal we throw the reason verbatim
+// so the caller can surface it as-is (two people can act on one row at once).
+function rpcResult(data, fallback) {
+  if (data && data.ok === false) throw new Error(data.reason || fallback)
+  return data
+}
+export async function editHelpRequest(id, { kind, urgency, note }) {
+  const { data, error } = await supabase.rpc('update_help_request', {
+    p_id: id, p_kind: kind ?? null, p_urgency: urgency ?? null, p_note: note ?? null,
+  })
+  if (error) throw error
+  rpcResult(data, 'Could not edit the request.')
+  announceRequestsChanged()
+  return data
+}
+export async function dismissHelpRequest(id, reason) {
+  const { data, error } = await supabase.rpc('dismiss_help_request', { p_id: id, p_reason: reason?.trim() || null })
+  if (error) throw error
+  rpcResult(data, 'Could not dismiss the request.')
+  announceRequestsChanged()
+  return data
+}
+export async function restoreHelpRequest(id) {
+  const { data, error } = await supabase.rpc('restore_help_request', { p_id: id })
+  if (error) throw error
+  rpcResult(data, 'Could not restore the request.')
+  announceRequestsChanged()
+  return data
 }
 
 // ── Formatting ─────────────────────────────────────────────────────────────

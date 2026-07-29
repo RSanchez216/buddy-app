@@ -249,7 +249,7 @@ function DriverRow({ row, onPick }) {
   const locked = row.selectable === false
   const dispatcher = row.last_dispatcher
   const ago = daysAgoPhrase(row.days_since_delivery)
-  const muted = dispatcher ? `last load booked by ${dispatcher}${ago ? `, ${ago}` : ''}` : 'no load on record'
+  const muted = dispatcher ? `last load booked by ${dispatcher}${ago ? `, ${ago}` : ''}` : 'no load in the last 90 days'
   return (
     <button type="button" onClick={onPick} disabled={locked}
       className={`w-full text-left px-3 py-2 flex items-start gap-2 ${locked ? 'opacity-60 cursor-not-allowed' : 'hover:bg-gray-50 dark:hover:bg-white/5'}`}>
