@@ -91,12 +91,18 @@ export default function SetPassword() {
       if (updErr) throw new Error(updErr.message)
       if (!user) throw new Error('No active session — open the invite link again.')
 
-      // Activate the public.users row tied to this auth user
-      const { error: activateErr } = await supabase
-        .from('users')
-        .update({ status: 'active' })
-        .eq('id', user.id)
-      if (activateErr) console.warn('[SetPassword] activation update failed:', activateErr)
+      // Flip public.users.status pending -> active. A direct UPDATE is rejected
+      // by guard_user_privileged_columns (42501); activate_my_account() is the
+      // SECURITY DEFINER path that's allowed to. Idempotent — returns 'active'
+      // and no-ops if already active, so Reset password is safe too.
+      const { error: activateErr } = await supabase.rpc('activate_my_account')
+      if (activateErr) {
+        // Do NOT navigate — page access is gated on status='active', so the app
+        // would just bounce straight back here. Surface the real error instead.
+        setError(`Password saved, but the account could not be activated: ${activateErr.message}. Contact an admin.`)
+        setSubmitting(false)
+        return
+      }
 
       // Refresh the AuthContext profile so ProtectedRoute sees status='active'
       // before we navigate. Without this, the next render would bounce back here.
