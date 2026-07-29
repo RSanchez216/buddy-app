@@ -8,10 +8,13 @@ import EndShiftModal from './EndShiftModal'
 import {
   SHIFT_TYPES, GROUPS, groupKeyFor, shiftName, shiftWindow,
   fetchSettings, fetchOpenShift, startShift, fetchShiftSummary, fetchWeekSummary, fetchBoard,
-  upsertDriverCheck, removeDriverCheck, logActivity, markRequestHandled,
+  upsertDriverCheck, removeDriverCheck, logActivity,
   thisWeekChicago, todayChicago, fmtDayLabel, fmtClock, elapsedSince,
   buildGroupCopy, buildWeekCopy, copyText,
 } from './shiftBoardData'
+// Handling a request from the board goes through the SAME path as the Requests
+// page (sets handled_at/handled_by + shift_id, and announces the change).
+import { markRequestHandled, REQUESTS_CHANGED_EVENT } from '../requests/requestsData'
 
 const ORANGE_BTN = 'flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 text-white rounded-xl transition-all shadow-lg shadow-orange-500/20'
 
@@ -68,6 +71,14 @@ export default function ShiftBoardPage() {
     setBoard(bd); setSummary(sm)
   }, [shift])
 
+  // A request raised/handled anywhere refreshes the board so "Raised by dispatch"
+  // updates within one refresh while the board is open.
+  useEffect(() => {
+    const h = () => reloadBoard()
+    window.addEventListener(REQUESTS_CHANGED_EVENT, h)
+    return () => window.removeEventListener(REQUESTS_CHANGED_EVENT, h)
+  }, [reloadBoard])
+
   async function doStart(type) {
     setStarting(true)
     try {
@@ -95,8 +106,9 @@ export default function ShiftBoardPage() {
     if (!shift) return
     try {
       await logActivity({ shiftId: shift.id, type, loadId: row.load_id, loadNumber: row.load_number, driverId: row.driver_id, userId: me?.id })
-      // Booking against a raised request marks that request handled.
-      if (type === 'load_booked' && row.open_request_id) await markRequestHandled(row.open_request_id, me?.id)
+      // Booking against a raised request marks that request handled — same code
+      // path as the Requests page, stamped with the current shift.
+      if (type === 'load_booked' && row.open_request_id) await markRequestHandled(row.open_request_id, me?.id, null, shift.id)
       const labels = { load_booked: 'Load booked', pod_collected: 'POD logged', bol_collected: 'BOL logged', escalated: 'Escalated' }
       toast.success(labels[type] || 'Logged')
       await reloadBoard()
@@ -182,7 +194,7 @@ export default function ShiftBoardPage() {
       )}
 
       {flagFor && <FlagPopover row={flagFor} onClose={() => setFlagFor(null)} onSave={saveFlag} />}
-      <EndShiftModal open={showEnd} shift={shift} users={users}
+      <EndShiftModal open={showEnd} shift={shift} users={users.filter(u => u.id !== me?.id)}
         onClose={() => setShowEnd(false)} onEnded={() => { setShowEnd(false); load() }} />
     </div>
   )

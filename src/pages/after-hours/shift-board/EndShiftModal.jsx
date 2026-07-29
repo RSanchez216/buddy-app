@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { S } from '../../../lib/styles'
 import { useToast } from '../../../contexts/ToastContext'
-import { fetchHandoffText, endShift, copyText, shiftName } from './shiftBoardData'
+import { fetchHandoffText, endShift, copyText, shiftName, pdfSafeText } from './shiftBoardData'
 
 // End-shift handoff. The Telegram block comes from shift_handoff_text (already
 // formatted server-side — we show it verbatim, never rebuild it in JS), then
@@ -40,7 +40,8 @@ export default function EndShiftModal({ open, shift, users = [], onClose, onEnde
       doc.setFont('courier', 'normal'); doc.setFontSize(10)
       const M = 40, width = doc.internal.pageSize.getWidth() - 2 * M
       const pageH = doc.internal.pageSize.getHeight()
-      const lines = doc.splitTextToSize(text || '', width)
+      // Strip emoji/dingbats the WinAnsi built-in font can't render (Telegram keeps them).
+      const lines = doc.splitTextToSize(pdfSafeText(text), width)
       let y = 50
       for (const ln of lines) {
         if (y > pageH - 40) { doc.addPage(); y = 50 }

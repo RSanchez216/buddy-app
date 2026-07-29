@@ -8,6 +8,7 @@ import { DRIVER_STATUSES, DRIVER_STATUS_LABELS, terminationFields, todayLocalYmd
 import DriverFormModal from './DriverFormModal'
 import DriverProfileHeader from './DriverProfileHeader'
 import ErrorBoundary from '../../components/ErrorBoundary'
+import { openAskAfterHours } from '../after-hours/requests/requestsData'
 
 // Canonical unit-number normalization — mirrors the importer / DB canonical key
 // lower(btrim(regexp_replace(x,'^#+',''))): strip leading '#'(s) → collapse
@@ -140,15 +141,21 @@ export default function DriverDetail() {
     <div className="space-y-6">
       <div className="flex items-start justify-between">
         <Link to="/fleet/drivers" className="text-xs text-orange-600 hover:underline">← Drivers</Link>
-        {canEdit && (
-          <div className="flex items-center gap-2">
-            <StatusQuickChange driver={row} userId={user?.id} onSaved={load} />
-            <button onClick={() => setShowEdit(true)} className={S.btnPrimary}>
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
-              Edit
-            </button>
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          <button onClick={() => openAskAfterHours({ driverId: row.id, driverName: row.full_name })} className={S.btnSecondary} title="Raise this driver for the After-Hours team">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
+            Ask After-Hours
+          </button>
+          {canEdit && (
+            <>
+              <StatusQuickChange driver={row} userId={user?.id} onSaved={load} />
+              <button onClick={() => setShowEdit(true)} className={S.btnPrimary}>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                Edit
+              </button>
+            </>
+          )}
+        </div>
       </div>
       <DriverProfileHeader driver={row} activity={activity} />
 

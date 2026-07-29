@@ -96,6 +96,8 @@ const RigPage = lazyWithReload(() => import('./pages/rig/RigPage'))
 const LumpersPage = lazyWithReload(() => import('./pages/after-hours/lumpers/LumpersPage'))
 // Lazy — Shift Board (After Hours) night-shift worklist; its own chunk.
 const ShiftBoardPage = lazyWithReload(() => import('./pages/after-hours/shift-board/ShiftBoardPage'))
+// Lazy — Requests (After Hours) dispatcher↔night-team help requests; its own chunk.
+const RequestsPage = lazyWithReload(() => import('./pages/after-hours/requests/RequestsPage'))
 
 export default function App() {
   return (
@@ -166,6 +168,15 @@ export default function App() {
                   <ErrorBoundary label="the Shift Board">
                     <Suspense fallback={<div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500" /></div>}>
                       <ShiftBoardPage />
+                    </Suspense>
+                  </ErrorBoundary>
+                </RequirePageAccess>
+              } />
+              <Route path="after-hours/requests" element={
+                <RequirePageAccess pageKey="after_hours_requests">
+                  <ErrorBoundary label="the Requests page">
+                    <Suspense fallback={<div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500" /></div>}>
+                      <RequestsPage />
                     </Suspense>
                   </ErrorBoundary>
                 </RequirePageAccess>

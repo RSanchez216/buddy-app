@@ -10,6 +10,8 @@ import UserMenu from './UserMenu'
 import PresenceFacepile from './presence/PresenceFacepile'
 import PresenceDrawer from './presence/PresenceDrawer'
 import ManageSimpleViewModal from './ManageSimpleViewModal'
+import AskAfterHoursModal from '../pages/after-hours/requests/AskAfterHoursModal'
+import { ASK_AFTER_HOURS_EVENT, openAskAfterHours } from '../pages/after-hours/requests/requestsData'
 
 // ── Icons ──────────────────────────────────────────────────────────────────
 const Icons = {
@@ -60,7 +62,7 @@ const PAGE_ICON = {
   combined_loads: Icons.merge,
   dashboard: Icons.dashboard, vendor_master: Icons.vendors, invoice_inbox: Icons.invoices,
   transaction_feed: Icons.txns, monthly_report: Icons.report,
-  lumpers: Icons.moon, shift_board: Icons.report,
+  lumpers: Icons.moon, shift_board: Icons.report, after_hours_requests: Icons.lifeline,
 }
 // nav_group render order (matches the previous hardcoded sidebar). Groups not
 // listed here fall to the end, alphabetically.
@@ -71,7 +73,7 @@ const SECTION_ORDER = ['Today', 'Money', 'Profitability', 'Fleet', 'Payables']
 // the section is empty/hidden for users without the grant). "After Hours" holds
 // the new night-shift surfaces (Lumpers now, Night Shift to follow).
 const STATIC_NAV_GROUPS = [
-  { label: 'After Hours', pageKeys: ['shift_board', 'lumpers'] },
+  { label: 'After Hours', pageKeys: ['shift_board', 'after_hours_requests', 'lumpers'] },
 ]
 const STATIC_NAV_KEYS = new Set(STATIC_NAV_GROUPS.flatMap(g => g.pageKeys))
 
@@ -182,8 +184,19 @@ export default function Layout() {
   const [showManage, setShowManage] = useState(false)
   const [presenceOpen, setPresenceOpen] = useState(false) // "who's online" drawer
   const [openTaskCount, setOpenTaskCount] = useState(0) // non-closed tasks → nav bubble
+  // Ask After-Hours modal — openable from any page (header, Drivers, profile)
+  // via a global event so no page has to prop-drill the opener.
+  const [askOpen, setAskOpen] = useState(false)
+  const [askPrefill, setAskPrefill] = useState(null)
 
   const close = () => setSidebarOpen(false)
+
+  // Global "open the Ask After-Hours form" listener (detail = optional prefill).
+  useEffect(() => {
+    const handler = (e) => { setAskPrefill(e.detail || null); setAskOpen(true) }
+    window.addEventListener(ASK_AFTER_HOURS_EVENT, handler)
+    return () => window.removeEventListener(ASK_AFTER_HOURS_EVENT, handler)
+  }, [])
 
   // Keep the Command Center open-count bubble roughly live: on load, whenever the
   // page mutates a task (custom event), and on a gentle interval. Non-blocking.
@@ -386,8 +399,16 @@ export default function Layout() {
               components can fill it via a portal in a future PR. */}
           <div className="flex-1" />
 
-          {/* Right cluster: presence facepile + bell + user menu */}
-          <div className="flex items-center gap-1">
+          {/* Right cluster: Ask After-Hours + presence facepile + bell + user menu */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => openAskAfterHours()}
+              title="Raise a driver for the After-Hours team"
+              className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm font-semibold bg-orange-500 hover:bg-orange-400 text-white rounded-lg transition-colors shadow-sm shadow-orange-500/20"
+            >
+              <span aria-hidden>✉</span>
+              <span className="hidden sm:inline">Ask After-Hours</span>
+            </button>
             <PresenceFacepile onOpen={() => setPresenceOpen(true)} />
             <NotificationBell />
             <UserMenu />
@@ -408,6 +429,8 @@ export default function Layout() {
       />
 
       <PresenceDrawer open={presenceOpen} onClose={() => setPresenceOpen(false)} />
+
+      <AskAfterHoursModal open={askOpen} prefill={askPrefill} onClose={() => setAskOpen(false)} />
     </div>
   )
 }

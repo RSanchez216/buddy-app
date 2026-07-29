@@ -108,12 +108,8 @@ export async function logActivity({ shiftId, type, loadId, loadNumber, driverId,
   })
   if (error) throw error
 }
-// status on help_requests is GENERATED — set handled_at/handled_by only.
-export async function markRequestHandled(requestId, userId) {
-  const { error } = await supabase.from('help_requests')
-    .update({ handled_at: new Date().toISOString(), handled_by: userId ?? null }).eq('id', requestId)
-  if (error) throw error
-}
+// Marking a help request handled lives in ../requests/requestsData
+// (markRequestHandled) so the board and the Requests page share one code path.
 
 // ── Formatting ─────────────────────────────────────────────────────────────
 export function todayChicago() {
@@ -166,6 +162,34 @@ export function cityOf(s) {
 export function money(n, dp = 0) {
   if (n == null) return '$0'
   return Number(n).toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: dp, maximumFractionDigits: dp })
+}
+
+// ── PDF text sanitising ──────────────────────────────────────────────────────
+// jsPDF's built-in fonts are WinAnsi (cp1252) only. Latin-1 plus the cp1252
+// "smart punctuation" (em/en dash, bullet, middot, curly quotes…) all map to a
+// single byte and render fine — verified against the encoder. Anything outside
+// that repertoire (emoji 🌙 💰, the ⚠ dingbat) is written as raw UTF-16 bytes and
+// comes out as mojibake, so we strip it from the PDF variant only. The Telegram
+// copy keeps its emoji. Stripping a glyph also swallows the single space it left
+// behind, so '🌙 AFTER-HOURS' becomes 'AFTER-HOURS', not ' AFTER-HOURS'.
+const WINANSI_EXTRA = new Set([
+  0x20AC, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160,
+  0x2039, 0x0152, 0x017D, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
+  0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x017E, 0x0178,
+])
+export function pdfSafeText(text) {
+  let out = ''
+  let swallow = false
+  for (const ch of String(text ?? '')) { // iterates by code point (surrogate-safe)
+    const cp = ch.codePointAt(0)
+    if (cp <= 0xFF || WINANSI_EXTRA.has(cp)) {
+      if (swallow && ch === ' ') { swallow = false; continue }
+      out += ch; swallow = false
+    } else {
+      swallow = true // drop the un-encodable glyph and the space that trails it
+    }
+  }
+  return out
 }
 
 // ── Copy-to-clipboard (plain text only — Telegram renders no tables/markdown) ─
