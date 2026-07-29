@@ -13,7 +13,25 @@ import {
 
 const ORANGE_BTN = 'px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 disabled:bg-gray-200 dark:disabled:bg-slate-700 disabled:text-gray-400 dark:disabled:text-slate-500 text-white rounded-xl transition-all'
 const EYEBROW = 'text-[10px] font-bold uppercase tracking-widest'
-const num = (v) => (v === '' || v == null ? null : Number(v))
+// null for empty/partial/non-finite so a half-typed money string ("128.", ".")
+// never coerces to NaN and reaches the DB or the total.
+const num = (v) => {
+  if (v === '' || v == null) return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
+}
+// Money text field held as a raw STRING while editing (so a trailing '.' isn't
+// stripped). Normalise a comma decimal to a dot, drop anything non-numeric, and
+// keep at most one dot — so `,` and `.` both work on any keyboard layout.
+const normalizeMoneyInput = (s) => String(s)
+  .replace(',', '.')
+  .replace(/[^0-9.]/g, '')
+  .replace(/(\..*)\./g, '$1')
+// On blur: coerce to a 2dp string, or '' when it isn't a finite number.
+const formatMoneyBlur = (s) => {
+  const n = parseFloat(s)
+  return Number.isFinite(n) ? n.toFixed(2) : ''
+}
 const sanitizeName = (n) => String(n || 'file').replace(/[^\w.-]+/g, '_').slice(-80)
 
 export default function LumperDrawer({ open, mode, row, categories, refLists, onCategoriesChange, onClose, onSaved }) {
@@ -252,7 +270,7 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
         driver_name: driverName.trim() || null,
         category_id: categoryId || null,
         amount: num(amount),
-        efs_fee: efsFee === '' ? 0 : num(efsFee),
+        efs_fee: num(efsFee) ?? 0, // empty/partial -> 0 (fee column is non-null)
         efs_code: efsCode.trim() || null,
         invoice_number: invoiceNumber.trim() || null,
         revised_rc_number: revisedRcNumber.trim() || null,
@@ -428,11 +446,15 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
                   </div>
                   <div>
                     <label className={S.label}>Amount paid *</label>
-                    <input type="number" min="0" step="0.01" className={S.input} value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00" />
+                    <input type="text" inputMode="decimal" className={S.input} value={amount}
+                      onChange={e => setAmount(normalizeMoneyInput(e.target.value))}
+                      onBlur={() => setAmount(formatMoneyBlur(amount))} placeholder="0.00" />
                   </div>
                   <div>
                     <label className={S.label}>EFS check fee</label>
-                    <input type="number" min="0" step="0.01" className={S.input} value={efsFee} onChange={e => setEfsFee(e.target.value)} />
+                    <input type="text" inputMode="decimal" className={S.input} value={efsFee}
+                      onChange={e => setEfsFee(normalizeMoneyInput(e.target.value))}
+                      onBlur={() => setEfsFee(formatMoneyBlur(efsFee))} />
                   </div>
                   <div>
                     <label className={S.label}>Total <span className="text-gray-400 dark:text-slate-500 font-normal normal-case">· calculated</span></label>
