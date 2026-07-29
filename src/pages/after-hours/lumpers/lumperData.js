@@ -8,16 +8,30 @@ export const DOC_BUCKET = 'lumper-documents'
 
 // Fixed column enums (check-constrained on the table). These are NOT the
 // category lookup — categories always come from lumper_categories.
+// charge_to: only valid when status = 'unpaid' ('broker' was removed).
 export const CHARGE_TO = [
-  ['broker', 'Broker'],
   ['driver', 'Driver'],
-  ['dispatcher', 'Dispatcher'],
   ['company', 'Company'],
+  ['dispatcher', 'Dispatcher'],
 ]
+export const CHARGE_TO_DESC = {
+  driver: 'Deducted on the next settlement.',
+  company: 'MANAS eats the {total}.',
+  dispatcher: 'Charged back to the dispatcher who booked it.',
+}
 export const RC_STATUS = [
   ['pending', 'Pending'],
   ['received', 'Received'],
   ['not_required', 'Not required'],
+]
+
+// Status model (status is now a normal text column: open|pending|paid|unpaid,
+// NOT NULL DEFAULT 'open'). The dropdown shows a dot + label + description.
+export const STATUS_OPTIONS = [
+  { value: 'open',    label: 'Open',    dot: '#94A3B8', desc: 'Recorded. Broker is expected to pay. Nobody is chasing it yet.' },
+  { value: 'pending', label: 'Pending', dot: '#F59E0B', desc: 'Reimbursement asked for. Waiting on the broker.' },
+  { value: 'paid',    label: 'Paid',    dot: '#16A34A', desc: 'Broker paid in full. Case closed. Factoring buying the invoice does not count as paid.' },
+  { value: 'unpaid',  label: 'Unpaid',  dot: '#DC2626', desc: 'Broker will not cover it. Opens a second field to pick who absorbs the cost.' },
 ]
 
 // ── Fetches ────────────────────────────────────────────────────────────────
@@ -30,6 +44,7 @@ const EVENT_SELECT = `
   category_id, amount, efs_fee, total_amount, efs_code, invoice_number,
   paid_by_user_id, paid_from_department_id, rc_status, charge_to,
   reimbursed_at, reimbursed_amount, resolved_at, status,
+  revised_rc_number, accounting_notes, status_set_by, status_set_at,
   receipt_path, revised_rc_path, notes, created_by, recorded_by, recorded_by_name, source, created_at,
   carrier:carriers ( name ),
   customer:customers ( name ),
@@ -95,20 +110,34 @@ export async function addCategory(name) {
 }
 
 // ── Status ───────────────────────────────────────────────────────────────
-// Mirror of the generated column so the drawer can show a live DERIVED status
-// (the DB computes the stored value — we NEVER write status).
-export function deriveStatus({ charge_to, resolved_at, reimbursed_at }) {
-  if (charge_to === 'company' && resolved_at) return 'written_off'
-  if (reimbursed_at || resolved_at) return 'paid'
-  return 'open'
+// Status/charge_to are set ONLY through set_lumper_status (the permission check
+// lives in the RPC). p_charge_to is required when status='unpaid', null
+// otherwise; p_accounting_notes = null leaves the existing note untouched.
+export async function setLumperStatus(id, status, chargeTo, accountingNotes) {
+  const { error } = await supabase.rpc('set_lumper_status', {
+    p_id: id,
+    p_status: status,
+    p_charge_to: chargeTo ?? null,
+    p_accounting_notes: accountingNotes ?? null,
+  })
+  if (error) throw error
 }
 
 export const STATUS_META = {
-  open:        { label: 'Open',        pill: 'bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-400 border border-orange-200 dark:border-orange-500/20' },
-  paid:        { label: 'Paid',        pill: 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20' },
-  written_off: { label: 'Written off', pill: 'bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-500/20' },
+  open:    { label: 'Open',    dot: '#94A3B8', pill: 'bg-gray-100 dark:bg-slate-700/50 text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-600/40' },
+  pending: { label: 'Pending', dot: '#F59E0B', pill: 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/20' },
+  paid:    { label: 'Paid',    dot: '#16A34A', pill: 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20' },
+  unpaid:  { label: 'Unpaid',  dot: '#DC2626', pill: 'bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-500/20' },
 }
-export function statusMeta(s) { return STATUS_META[s] || { label: s || '—', pill: 'bg-gray-100 dark:bg-slate-700/50 text-gray-500 dark:text-slate-400 border border-gray-200 dark:border-slate-600/30' } }
+export function statusMeta(s) { return STATUS_META[s] || { label: s || '—', dot: '#94A3B8', pill: 'bg-gray-100 dark:bg-slate-700/50 text-gray-500 dark:text-slate-400 border border-gray-200 dark:border-slate-600/30' } }
+
+// Timestamptz → 'Jul 28, 2026, 4:03 PM CT' (America/Chicago).
+export function fmtChicagoTs(ts) {
+  if (!ts) return ''
+  try {
+    return new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(ts)) + ' CT'
+  } catch { return '' }
+}
 
 // ── Formatting ─────────────────────────────────────────────────────────────
 export function money(n, dp = 2) {

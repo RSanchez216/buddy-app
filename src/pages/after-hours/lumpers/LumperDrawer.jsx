@@ -6,16 +6,17 @@ import { useToast } from '../../../contexts/ToastContext'
 import { S } from '../../../lib/styles'
 import SearchSelect from './SearchSelect'
 import {
-  loadLookup, addCategory, deriveStatus, statusMeta, money, todayChicago,
-  DOC_BUCKET, CHARGE_TO, RC_STATUS,
+  loadLookup, addCategory, setLumperStatus, statusMeta, money, todayChicago, fmtChicagoTs,
+  DOC_BUCKET, CHARGE_TO, CHARGE_TO_DESC, STATUS_OPTIONS,
 } from './lumperData'
 
 const ORANGE_BTN = 'px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 disabled:bg-gray-200 dark:disabled:bg-slate-700 disabled:text-gray-400 dark:disabled:text-slate-500 text-white rounded-xl transition-all'
+const EYEBROW = 'text-[10px] font-bold uppercase tracking-widest'
 const num = (v) => (v === '' || v == null ? null : Number(v))
 const sanitizeName = (n) => String(n || 'file').replace(/[^\w.-]+/g, '_').slice(-80)
 
 export default function LumperDrawer({ open, mode, row, categories, refLists, onCategoriesChange, onClose, onSaved }) {
-  const { profile: me, canEdit } = useAuth()
+  const { profile: me, canEdit } = useAuth() // canEdit = is_admin_or_manager
   const toast = useToast()
   const isEdit = mode === 'edit'
 
@@ -32,7 +33,7 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
   const [driverId, setDriverId] = useState(null)
   const [driverName, setDriverName] = useState('')
 
-  // Step 2 — payment
+  // Step 2 — payment (+ receipt / revised rate con / dock notes, moved here)
   const [efsCode, setEfsCode] = useState('')
   const [amount, setAmount] = useState('')
   const [efsFee, setEfsFee] = useState('2.00')
@@ -40,20 +41,19 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
   const [invoiceNumber, setInvoiceNumber] = useState('')
   const [addingCat, setAddingCat] = useState(false)
   const [newCat, setNewCat] = useState('')
+  const [revisedRcNumber, setRevisedRcNumber] = useState('')
+  const [notes, setNotes] = useState('') // dock note
 
-  // Step 3 — recovery
-  const [chargeTo, setChargeTo] = useState('broker')
-  const [rcStatus, setRcStatus] = useState('pending')
-  const [reimbursedAt, setReimbursedAt] = useState('')
-  const [reimbursedAmount, setReimbursedAmount] = useState('')
-  const [resolvedAt, setResolvedAt] = useState('')
+  // Step 3 — accounting (status/charge/accounting note via RPC)
+  const [status, setStatus] = useState('open')
+  const [chargeTo, setChargeTo] = useState(null)
+  const [accountingNotes, setAccountingNotes] = useState('')
 
-  // Docs + notes + recorder
+  // Docs + recorder
   const [receiptFile, setReceiptFile] = useState(null)
   const [receiptPath, setReceiptPath] = useState(null)
   const [rcFile, setRcFile] = useState(null)
   const [rcPath, setRcPath] = useState(null)
-  const [notes, setNotes] = useState('')
   const [recorderId, setRecorderId] = useState(null)
 
   const [saving, setSaving] = useState(false)
@@ -61,6 +61,7 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
   const debounceRef = useRef(null)
   const modalRef = useRef(null)
   const loadInputRef = useRef(null)
+  const rcNumberRef = useRef(null)
   const previouslyFocused = useRef(null)
 
   const usersOptions = useMemo(() => (refLists.users || []).map(u => ({ id: u.id, name: u.full_name })), [refLists.users])
@@ -88,22 +89,22 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
       setEfsFee(row.efs_fee != null ? String(row.efs_fee) : '2.00')
       setCategoryId(row.category_id || null)
       setInvoiceNumber(row.invoice_number || '')
-      setChargeTo(row.charge_to || 'broker')
-      setRcStatus(row.rc_status || 'pending')
-      setReimbursedAt(row.reimbursed_at || '')
-      setReimbursedAmount(row.reimbursed_amount != null ? String(row.reimbursed_amount) : '')
-      setResolvedAt(row.resolved_at || '')
+      setRevisedRcNumber(row.revised_rc_number || '')
+      setNotes(row.notes || '')
+      setStatus(row.status || 'open')
+      setChargeTo(row.charge_to || null)
+      setAccountingNotes(row.accounting_notes || '')
       setReceiptPath(row.receipt_path || null)
       setRcPath(row.revised_rc_path || null)
-      setNotes(row.notes || '')
       setRecorderId(row.recorded_by || me?.id || null)
     } else {
       setLoadNumber(''); setDatePaid(todayChicago()); setLookup({ status: 'idle', drivers: [] })
       setLoadId(null); setCarrierId(null); setCustomerId(null); setBroker('')
       setDispatcherId(null); setDispatcherName(''); setDriverId(null); setDriverName('')
       setEfsCode(''); setAmount(''); setEfsFee('2.00'); setCategoryId(null); setInvoiceNumber('')
-      setChargeTo('broker'); setRcStatus('pending'); setReimbursedAt(''); setReimbursedAmount(''); setResolvedAt('')
-      setReceiptPath(null); setRcPath(null); setNotes(''); setRecorderId(me?.id || null)
+      setRevisedRcNumber(''); setNotes('')
+      setStatus('open'); setChargeTo(null); setAccountingNotes('')
+      setReceiptPath(null); setRcPath(null); setRecorderId(me?.id || null)
     }
   }, [open, isEdit, row, me?.id])
 
@@ -137,8 +138,9 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
   }
 
   const totalDisplay = (num(amount) || 0) + (num(efsFee) || 0)
-  const derivedStatus = deriveStatus({ charge_to: chargeTo, resolved_at: resolvedAt || null, reimbursed_at: reimbursedAt || null })
+  const totalForPanel = row?.total_amount ?? totalDisplay
   const nowLabel = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date()) + ' CT'
+  const hasRc = !!(revisedRcNumber.trim() || rcPath || rcFile)
 
   async function runLookup(rawNum) {
     const n = rawNum.trim()
@@ -171,6 +173,17 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
     debounceRef.current = setTimeout(() => runLookup(v), 600)
   }
 
+  function onStatusChange(v) {
+    setStatus(v)
+    if (v !== 'unpaid') setChargeTo(null) // clear when leaving Unpaid
+  }
+
+  // Jump the accounting mirror to the section-2 revised-rate-con field.
+  function jumpToRc() {
+    rcNumberRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    setTimeout(() => rcNumberRef.current?.focus(), 300)
+  }
+
   async function submitAddCategory() {
     const name = newCat.trim()
     if (!name) return
@@ -186,6 +199,7 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
 
   async function viewDoc(path) {
     try {
+      // Private bucket → signed URL only, never getPublicUrl.
       const { data, error: e } = await supabase.storage.from(DOC_BUCKET).createSignedUrl(path, 3600)
       if (e) throw e
       if (data?.signedUrl) window.open(data.signedUrl, '_blank', 'noopener')
@@ -206,11 +220,17 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
     if (!(num(amount) > 0)) { setError('Enter the amount paid.'); return }
     if (!datePaid) { setError('Pick the date paid.'); return }
     if (!categoryId) { setError('Pick a category.'); return }
+    // An unpaid lumper must land on somebody (the DB rejects it too).
+    if (canEdit && status === 'unpaid' && !chargeTo) {
+      setError('Pick who absorbs the unpaid lumper before saving.'); return
+    }
 
     setSaving(true)
     try {
       const recorder = recorderId ? usersById.get(recorderId) : null
-      // NEVER send status, total_amount, or updated_at — all DB-computed.
+      // Sections 1 & 2 only. status / charge_to / rc_status / resolved_at /
+      // total_amount are NEVER written here — defaults, the RPC, and triggers
+      // own them.
       const payload = {
         event_date: datePaid,
         load_id: loadId || null,
@@ -227,11 +247,7 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
         efs_fee: efsFee === '' ? 0 : num(efsFee),
         efs_code: efsCode.trim() || null,
         invoice_number: invoiceNumber.trim() || null,
-        rc_status: rcStatus,
-        charge_to: chargeTo,
-        reimbursed_at: reimbursedAt || null,
-        reimbursed_amount: num(reimbursedAmount),
-        resolved_at: resolvedAt || null,
+        revised_rc_number: revisedRcNumber.trim() || null,
         notes: notes.trim() || null,
         paid_by_user_id: recorderId || null,
         paid_from_department_id: recorder?.department_id || null,
@@ -250,13 +266,28 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
         eventId = data.id
       }
 
-      // Uploads happen after we have an id (path is {id}/{kind}-{filename}).
+      // Uploads after we have an id (path is {id}/{kind}-{filename}).
       const patch = {}
       if (receiptFile) patch.receipt_path = await uploadDoc(eventId, 'receipt', receiptFile)
       if (rcFile) patch.revised_rc_path = await uploadDoc(eventId, 'revised_rc', rcFile)
       if (Object.keys(patch).length) {
         const { error: e2 } = await supabase.from('lumper_events').update(patch).eq('id', eventId)
         if (e2) throw e2
+      }
+
+      // Accounting section: status / charge_to / accounting note go through the
+      // permission-gated RPC, and only when something actually changed.
+      if (canEdit) {
+        const origStatus = isEdit ? (row.status || 'open') : 'open'
+        const origCharge = isEdit ? (row.charge_to || null) : null
+        const origAcct = isEdit ? (row.accounting_notes || '') : ''
+        const acctChanged = (accountingNotes || '') !== origAcct
+        const statusChanged = status !== origStatus
+        const chargeChanged = (chargeTo || null) !== origCharge
+        if (statusChanged || chargeChanged || acctChanged) {
+          // null note leaves the existing one untouched; send the value only when it changed.
+          await setLumperStatus(eventId, status, status === 'unpaid' ? chargeTo : null, acctChanged ? (accountingNotes || '') : null)
+        }
       }
 
       toast.success(isEdit ? 'Lumper updated' : 'Lumper recorded')
@@ -270,6 +301,11 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
   }
 
   if (!open) return null
+
+  const dockRecorderName = usersById.get(recorderId)?.full_name || row?.recorded_by_name || 'Unknown'
+  const dockTs = row?.created_at ? fmtChicagoTs(row.created_at) : nowLabel
+  const statusSetByName = row?.status_set_by ? (usersById.get(row.status_set_by)?.full_name || 'someone') : null
+  const chargeDesc = chargeTo ? (CHARGE_TO_DESC[chargeTo] || '').replace('{total}', money(totalForPanel)) : ''
 
   return createPortal(
     <div className="fixed inset-0 z-[90] flex items-center justify-center">
@@ -296,8 +332,10 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
           {error && <div className="px-5 pt-4"><div className={S.errorBox}>{error}</div></div>}
 
           <div className="grid min-[1100px]:grid-cols-[1fr_452px]">
-            {/* Left column — Steps 1 & 2 */}
+            {/* Left column — Steps 1 & 2 (whoever paid, after hours) */}
             <div className="p-5 space-y-5">
+              <p className={`${EYEBROW} text-gray-400 dark:text-slate-500`}>Filled in by whoever paid · after hours</p>
+
               {/* Step 1 — tinted lookup panel */}
               <div className="rounded-xl border border-orange-200 dark:border-orange-500/30 bg-orange-50/40 dark:bg-orange-500/[0.05] p-4">
                 <Step n={1} title="Start with the load">
@@ -363,7 +401,7 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
 
               <div className="border-t border-gray-200 dark:border-white/10" />
 
-              {/* Step 2 — the payment */}
+              {/* Step 2 — the payment (+ receipt / revised rate con / notes) */}
               <Step n={2} title="The payment">
                 <div className="grid grid-cols-[1.15fr_1fr_0.9fr_1fr] gap-3">
                   <div>
@@ -411,78 +449,120 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
                     )}
                   </div>
                 </div>
+
+                <div className="border-t border-dashed border-gray-300 dark:border-white/10 my-4" />
+
+                {/* Receipt */}
+                <div>
+                  <label className={S.label}>Receipt</label>
+                  <DocTarget label="Receipt" file={receiptFile} path={receiptPath} onFile={setReceiptFile} onView={viewDoc} onClear={() => setReceiptFile(null)} />
+                </div>
+
+                {/* Revised rate con — number + upload */}
+                <div className="mt-4">
+                  <label className={S.label}>Revised rate con <span className="text-gray-400 dark:text-slate-500 font-normal normal-case">· ask the broker before you leave the dock</span></label>
+                  <input ref={rcNumberRef} className={S.input} value={revisedRcNumber} onChange={e => setRevisedRcNumber(e.target.value)}
+                    placeholder="Rate con number — leave blank if the broker wouldn't issue one" />
+                  <div className="mt-2">
+                    <DocTarget label="PDF file" file={rcFile} path={rcPath} onFile={setRcFile} onView={viewDoc} onClear={() => setRcFile(null)} />
+                  </div>
+                </div>
+
+                {/* Dock notes */}
+                <div className="mt-4">
+                  <label className={S.label}>Notes <span className="text-gray-400 dark:text-slate-500 font-normal normal-case">· what the morning team needs to know</span></label>
+                  <textarea rows={2} className={`${S.textarea} min-h-[74px]`} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Anything the morning team needs to know…" />
+                </div>
               </Step>
             </div>
 
-            {/* Right column — Step 3, Documents, Notes */}
-            <div className="p-5 space-y-5 min-[1100px]:border-l max-[1099px]:border-t border-gray-200 dark:border-white/10 min-[1100px]:bg-gray-50/60 min-[1100px]:dark:bg-[#0E1626]">
-              {/* Step 3 — getting it back */}
+            {/* Right column — Step 3 (accounting) */}
+            <div className="p-5 space-y-4 min-[1100px]:border-l max-[1099px]:border-t border-gray-200 dark:border-white/10 min-[1100px]:bg-gray-50/60 min-[1100px]:dark:bg-[#0E1626]">
+              <p className={`${EYEBROW} text-orange-600 dark:text-orange-400`}>Accounting</p>
+              {!canEdit && <p className="text-[11px] text-gray-400 dark:text-slate-500">Accounting updates this section.</p>}
+
               <Step n={3} title="Getting it back">
+                {/* STATUS */}
                 <div>
-                  <label className={S.label}>Charge to <span className="text-gray-400 dark:text-slate-500 font-normal normal-case">· who ends up paying</span></label>
-                  <div className="flex flex-wrap gap-1.5">
-                    {CHARGE_TO.map(([v, l]) => (
-                      <button key={v} type="button" onClick={() => setChargeTo(v)}
-                        className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${chargeTo === v ? 'bg-orange-500 text-white border-orange-500' : 'border-gray-300 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5'}`}>
-                        {l}
-                      </button>
-                    ))}
-                  </div>
+                  <label className={S.label}>Status</label>
+                  {canEdit
+                    ? <StatusSelect value={status} onChange={onStatusChange} dropUp={false} />
+                    : <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${statusMeta(status).pill}`}><span className="w-2 h-2 rounded-full" style={{ background: statusMeta(status).dot }} />{statusMeta(status).label}</span>}
+
+                  {status === 'open' && (
+                    <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-1.5">The broker is expected to pay. Nothing is charged to anyone until accounting says otherwise.</p>
+                  )}
+                  {status === 'paid' && (
+                    <div className="mt-2 p-3 rounded-lg bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20">
+                      <p className="text-xs text-emerald-800 dark:text-emerald-300"><span className="font-bold">Closed.</span> Broker reimbursed {money(totalForPanel)} in full. Nothing charged to the driver, dispatcher or company.</p>
+                      <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-1.5">Factoring buying the invoice is not payment — leave it on Pending until the broker actually settles.</p>
+                    </div>
+                  )}
                 </div>
 
-                <div className="grid grid-cols-2 gap-3 mt-3">
-                  <div>
-                    <label className={S.label}>Revised rate con</label>
-                    <select className={`${S.input} appearance-none`} value={rcStatus} onChange={e => setRcStatus(e.target.value)}>
-                      {RC_STATUS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-                    </select>
+                {/* CHARGE TO — only on Unpaid */}
+                {status === 'unpaid' && (
+                  <div className="mt-3">
+                    <label className={S.label}>Charge to *</label>
+                    {canEdit ? (
+                      <>
+                        <select className={`${S.input} appearance-none`} value={chargeTo || ''} onChange={e => setChargeTo(e.target.value || null)}>
+                          <option value="">Pick who absorbs it</option>
+                          {CHARGE_TO.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                        </select>
+                        {chargeTo
+                          ? <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-1.5">{chargeDesc}</p>
+                          : <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1.5">Required. An unpaid lumper has to land on somebody before it can be saved.</p>}
+                      </>
+                    ) : (
+                      <p className="text-sm text-gray-700 dark:text-slate-300">{CHARGE_TO.find(c => c[0] === chargeTo)?.[1] || '—'}</p>
+                    )}
                   </div>
-                  <div>
-                    <label className={S.label}>Status <span className="text-gray-400 dark:text-slate-500 font-normal normal-case">· derived</span></label>
-                    <div className="flex items-center h-[42px]">
-                      <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ${statusMeta(derivedStatus).pill}`}>{statusMeta(derivedStatus).label}</span>
-                    </div>
-                  </div>
-                </div>
-                <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1.5">Closes itself when reimbursement is recorded.</p>
+                )}
 
-                {isEdit && (
-                  <div className="grid grid-cols-2 gap-3 mt-3">
-                    <div>
-                      <label className={S.label}>Reimbursed on</label>
-                      <input type="date" className={S.input} value={reimbursedAt} max={todayChicago()} onChange={e => setReimbursedAt(e.target.value)} />
+                {/* REVISED RATE CON mirror (entered in step 2) */}
+                <div className="mt-3">
+                  <label className={S.label}>Revised rate con <span className="text-gray-400 dark:text-slate-500 font-normal normal-case">· entered in step 2</span></label>
+                  {hasRc ? (
+                    <div className="text-xs flex items-center gap-2">
+                      <span className="text-gray-700 dark:text-slate-300 truncate">
+                        {revisedRcNumber.trim() && (rcPath || rcFile) ? `${revisedRcNumber.trim()} · PDF attached` : (rcPath || rcFile) ? 'PDF attached' : revisedRcNumber.trim()}
+                      </span>
+                      <button type="button" onClick={jumpToRc} className="ml-auto text-orange-600 dark:text-orange-400 font-medium hover:underline shrink-0">Replace</button>
                     </div>
-                    <div>
-                      <label className={S.label}>Reimbursed amount</label>
-                      <input type="number" min="0" step="0.01" className={S.input} value={reimbursedAmount} onChange={e => setReimbursedAmount(e.target.value)} placeholder="0.00" />
+                  ) : (
+                    <div className="text-xs flex items-center gap-2">
+                      <span className="text-gray-400 dark:text-slate-500 italic">Nothing attached — after hours couldn&apos;t get one</span>
+                      <button type="button" onClick={jumpToRc} className="ml-auto text-orange-600 dark:text-orange-400 font-medium hover:underline shrink-0">Add it</button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="border-t border-dashed border-gray-300 dark:border-white/10 my-4" />
+
+                {/* NOTE FROM THE DOCK — read-only */}
+                {notes.trim() && (
+                  <div>
+                    <label className={S.label}>Note from the dock <span className="text-gray-400 dark:text-slate-500 font-normal normal-case">· read only</span></label>
+                    <div className="rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 p-3">
+                      <p className="text-xs text-gray-700 dark:text-slate-300 whitespace-pre-wrap">{notes}</p>
+                      <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-1.5">{dockRecorderName} · {dockTs}</p>
                     </div>
                   </div>
                 )}
-                {chargeTo === 'company' && (
-                  <div className="mt-3">
-                    <label className={S.label}>Resolved / written-off on</label>
-                    <input type="date" className={S.input} value={resolvedAt} max={todayChicago()} onChange={e => setResolvedAt(e.target.value)} />
-                    <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1">A resolved date on a company charge marks it written off (absorbed).</p>
-                  </div>
+
+                {/* ACCOUNTING NOTE */}
+                <div className={notes.trim() ? 'mt-3' : ''}>
+                  <label className={S.label}>Accounting note</label>
+                  {canEdit
+                    ? <textarea rows={2} className={`${S.textarea} min-h-[64px]`} value={accountingNotes} onChange={e => setAccountingNotes(e.target.value)} placeholder="Recovery, disputes, who was told what…" />
+                    : <p className="text-xs text-gray-600 dark:text-slate-400 whitespace-pre-wrap">{accountingNotes.trim() || <span className="italic text-gray-400 dark:text-slate-500">No accounting note yet.</span>}</p>}
+                </div>
+
+                {statusSetByName && row?.status_set_at && (
+                  <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-3">Status set by {statusSetByName} · {fmtChicagoTs(row.status_set_at)}</p>
                 )}
               </Step>
-
-              <div className="border-t border-gray-200 dark:border-white/10" />
-
-              {/* Documents — stacked to fit the narrower column */}
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 dark:text-slate-400 mb-2">Documents</p>
-                <div className="space-y-3">
-                  <DocTarget label="Receipt" file={receiptFile} path={receiptPath} onFile={setReceiptFile} onView={viewDoc} onClear={() => setReceiptFile(null)} />
-                  <DocTarget label="Revised rate con" file={rcFile} path={rcPath} onFile={setRcFile} onView={viewDoc} onClear={() => setRcFile(null)} />
-                </div>
-              </div>
-
-              {/* Notes */}
-              <div>
-                <label className={S.label}>Notes</label>
-                <textarea rows={2} className={`${S.textarea} min-h-[74px]`} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Anything the morning team needs to know…" />
-              </div>
             </div>
           </div>
         </div>
@@ -530,6 +610,38 @@ function AutoField({ label, auto, children }) {
         {auto && <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 tracking-normal">AUTO</span>}
       </label>
       {children}
+    </div>
+  )
+}
+
+// Status dropdown — dot + label + description per option; 8px dots.
+function StatusSelect({ value, onChange, dropUp }) {
+  const [open, setOpen] = useState(false)
+  const cur = STATUS_OPTIONS.find(o => o.value === value) || STATUS_OPTIONS[0]
+  return (
+    <div className="relative">
+      <button type="button" onClick={() => setOpen(o => !o)} onBlur={() => setTimeout(() => setOpen(false), 150)}
+        className={`${S.input} flex items-center gap-2 text-left`}>
+        <span className="w-2 h-2 rounded-full shrink-0" style={{ background: cur.dot }} />
+        <span className="text-gray-900 dark:text-slate-100">{cur.label}</span>
+        {value === 'open' && <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-gray-200 dark:bg-white/10 text-gray-500 dark:text-slate-400 tracking-normal">DEFAULT</span>}
+        <svg className="ml-auto w-4 h-4 text-gray-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
+      </button>
+      {open && (
+        <div className={`absolute z-50 w-full rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-[#12132e] shadow-lg overflow-hidden ${dropUp ? 'bottom-full mb-1' : 'top-full mt-1'}`}>
+          {STATUS_OPTIONS.map(o => (
+            <button key={o.value} type="button" onMouseDown={e => { e.preventDefault(); onChange(o.value); setOpen(false) }}
+              className={`w-full text-left px-3 py-2 hover:bg-gray-50 dark:hover:bg-white/5 ${o.value === value ? 'bg-gray-50 dark:bg-white/5' : ''}`}>
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full shrink-0" style={{ background: o.dot }} />
+                <span className="text-sm font-medium text-gray-900 dark:text-slate-100">{o.label}</span>
+                {o.value === 'open' && <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-gray-200 dark:bg-white/10 text-gray-500 dark:text-slate-400 tracking-normal">DEFAULT</span>}
+              </div>
+              <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-0.5 ml-4">{o.desc}</p>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

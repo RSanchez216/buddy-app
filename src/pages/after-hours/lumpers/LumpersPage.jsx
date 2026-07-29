@@ -165,8 +165,9 @@ export default function LumpersPage() {
         <Select value={status} onChange={e => setStatus(e.target.value)} className="w-auto">
           <option value="all">All statuses</option>
           <option value="open">Open</option>
+          <option value="pending">Pending</option>
           <option value="paid">Paid</option>
-          <option value="written_off">Written off</option>
+          <option value="unpaid">Unpaid</option>
         </Select>
         <Select value={carrierId} onChange={e => setCarrierId(e.target.value)} className="w-auto">
           <option value="all">All carriers</option>
@@ -259,7 +260,7 @@ function GroupBlock({ group, byMonth, usersById, onRowClick }) {
                 <span className="text-[11px] font-medium text-gray-500 dark:text-slate-400 tabular-nums">
                   Advanced <span className="text-gray-800 dark:text-slate-200">{money(monthRow.advanced, 0)}</span>
                   <span className="mx-1.5 text-gray-300 dark:text-slate-600">·</span>
-                  Outstanding <span className="text-orange-600 dark:text-orange-400">{money(monthRow.open, 0)}</span>
+                  Open <span className="text-orange-600 dark:text-orange-400">{money(monthRow.open, 0)}</span>
                 </span>
               )}
             </div>
@@ -274,7 +275,8 @@ function GroupBlock({ group, byMonth, usersById, onRowClick }) {
 function LumperRow({ row, usersById, onClick }) {
   const meta = statusMeta(row.status)
   const disp = dispatcherDisplay(row)
-  const age = row.status === 'open' ? ageDays(row.event_date) : null
+  // Age/overdue applies to outstanding rows (open + pending).
+  const age = (row.status === 'open' || row.status === 'pending') ? ageDays(row.event_date) : null
   const overdue = age != null && age > 30
   const ageTone = age == null ? '' : age > 30 ? 'text-red-600 dark:text-red-400 font-semibold' : age >= 7 ? 'text-amber-600 dark:text-amber-400' : 'text-gray-400 dark:text-slate-500'
   const rcTone = { received: 'text-emerald-600 dark:text-emerald-400', pending: 'text-amber-600 dark:text-amber-400', not_required: 'text-gray-400 dark:text-slate-500' }[row.rc_status] || ''
@@ -311,7 +313,9 @@ function LumperRow({ row, usersById, onClick }) {
       <td className="px-3 py-2.5 text-gray-600 dark:text-slate-400 whitespace-nowrap">{chargeLabel}</td>
       <td className="px-3 py-2.5 whitespace-nowrap"><span className={`text-[11px] font-medium ${rcTone}`}>{rcLabel}</span></td>
       <td className="px-3 py-2.5 whitespace-nowrap">
-        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${meta.pill}`}>{meta.label}</span>
+        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold ${meta.pill}`}>
+          <span className="w-2 h-2 rounded-full" style={{ background: meta.dot }} />{meta.label}
+        </span>
         {age != null && <p className={`text-[10px] mt-0.5 ${ageTone}`}>{age}d{overdue ? ' overdue' : ''}</p>}
       </td>
       <td className="px-3 py-2.5">

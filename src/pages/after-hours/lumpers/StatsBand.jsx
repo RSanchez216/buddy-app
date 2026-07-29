@@ -29,9 +29,9 @@ export default function StatsBand({ summary, rangeDays }) {
       <div className="sm:col-span-2 lg:col-span-2 rounded-2xl border-2 border-orange-300 dark:border-orange-500/40 bg-gradient-to-br from-orange-50 to-orange-100/60 dark:from-orange-500/[0.12] dark:to-orange-500/[0.04] p-5">
         <div className="flex items-baseline justify-between gap-2">
           <p className="text-[11px] font-bold uppercase tracking-widest text-orange-700/80 dark:text-orange-400/80">Outstanding</p>
-          <p className="text-xs font-semibold text-orange-700/70 dark:text-orange-400/70 tabular-nums">{summary.open_count} open</p>
+          <p className="text-xs font-semibold text-orange-700/70 dark:text-orange-400/70 tabular-nums">{summary.outstanding_count} open + pending</p>
         </div>
-        <p className="text-4xl font-black text-orange-600 dark:text-orange-400 font-mono tabular-nums leading-tight mt-1">{money(summary.open_amount, 2)}</p>
+        <p className="text-4xl font-black text-orange-600 dark:text-orange-400 font-mono tabular-nums leading-tight mt-1">{money(summary.outstanding_amount, 2)}</p>
         <div className="grid grid-cols-3 gap-2 mt-4">
           <AgingTile label="0–14 days" value={aging.d0_14} tone="neutral" />
           <AgingTile label="15–30 days" value={aging.d15_30} tone="amber" />
@@ -46,9 +46,9 @@ export default function StatsBand({ summary, rangeDays }) {
         sub={`${summary.paid_count} · ${paidPct}% of advanced`}
       />
       <StatCard
-        label="Written off" tone="red"
-        value={money(summary.writeoff_amount, 0)}
-        sub={`${summary.writeoff_count} absorbed`}
+        label="Unpaid" tone="red"
+        value={money(summary.unpaid_amount, 0)}
+        sub={`${summary.unpaid_count} absorbed`}
       />
       <StatCard
         label="EFS check fees"
