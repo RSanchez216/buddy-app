@@ -5,9 +5,12 @@ import { useToast } from '../../../contexts/ToastContext'
 import { S } from '../../../lib/styles'
 import PriorityGroup from './PriorityGroup'
 import EndShiftModal from './EndShiftModal'
+import TimesNeededGroup from './TimesNeededGroup'
+import CheckpointEditor from './CheckpointEditor'
 import {
   SHIFT_TYPES, GROUPS, groupKeyFor, shiftName, shiftWindow,
   fetchSettings, fetchOpenShift, startShift, fetchShiftSummary, fetchWeekSummary, fetchBoard,
+  fetchCheckpointExceptions,
   upsertDriverCheck, removeDriverCheck, logActivity,
   thisWeekChicago, todayChicago, fmtDayLabel, fmtClock, elapsedSince,
   buildGroupCopy, buildWeekCopy, copyText,
@@ -27,13 +30,18 @@ export default function ShiftBoardPage() {
   const [summary, setSummary] = useState(null)  // shift summary
   const [week, setWeek] = useState(null)
   const [board, setBoard] = useState([])
+  const [exceptions, setExceptions] = useState([]) // checkpoint exception queue (phase 3)
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const [starting, setStarting] = useState(false)
   const [showEnd, setShowEnd] = useState(false)
   const [flagFor, setFlagFor] = useState(null)  // row being flagged
+  const [cpOpen, setCpOpen] = useState(true)    // Times-needed group expanded
+  const [editTarget, setEditTarget] = useState(null) // load being checkpointed
   const [, setNowTick] = useState(0)
+
+  const trackCheckpoints = !!settings?.track_checkpoints
 
   const weekRange = useMemo(() => thisWeekChicago(), [])
   const dateLabel = useMemo(() => fmtDayLabel(todayChicago()), [])
@@ -45,8 +53,12 @@ export default function ShiftBoardPage() {
         fetchSettings(), fetchWeekSummary(weekRange.start, weekRange.end), fetchOpenShift(me?.id),
       ])
       setSettings(st || {}); setWeek(wk); setShift(sh)
-      const [bd, sm] = await Promise.all([fetchBoard(sh?.id ?? null), sh ? fetchShiftSummary(sh.id) : Promise.resolve(null)])
-      setBoard(bd); setSummary(sm)
+      const [bd, sm, ex] = await Promise.all([
+        fetchBoard(sh?.id ?? null),
+        sh ? fetchShiftSummary(sh.id) : Promise.resolve(null),
+        st?.track_checkpoints ? fetchCheckpointExceptions() : Promise.resolve([]),
+      ])
+      setBoard(bd); setSummary(sm); setExceptions(ex)
     } catch (e) {
       setError(true); toast.error("Couldn't load the shift board", e)
     } finally { setLoading(false) }
@@ -67,9 +79,13 @@ export default function ShiftBoardPage() {
   }, [])
 
   const reloadBoard = useCallback(async () => {
-    const [bd, sm] = await Promise.all([fetchBoard(shift?.id ?? null), shift ? fetchShiftSummary(shift.id) : Promise.resolve(null)])
-    setBoard(bd); setSummary(sm)
-  }, [shift])
+    const [bd, sm, ex] = await Promise.all([
+      fetchBoard(shift?.id ?? null),
+      shift ? fetchShiftSummary(shift.id) : Promise.resolve(null),
+      settings?.track_checkpoints ? fetchCheckpointExceptions() : Promise.resolve([]),
+    ])
+    setBoard(bd); setSummary(sm); setExceptions(ex)
+  }, [shift, settings?.track_checkpoints])
 
   // A request raised/handled anywhere refreshes the board so "Raised by dispatch"
   // updates within one refresh while the board is open.
@@ -85,8 +101,11 @@ export default function ShiftBoardPage() {
       const res = await startShift(type)
       const sh = { id: res.shift_id, shift_type: res.shift_type, started_at: res.started_at, status: 'active' }
       setShift(sh)
-      const [bd, sm] = await Promise.all([fetchBoard(sh.id), fetchShiftSummary(sh.id)])
-      setBoard(bd); setSummary(sm)
+      const [bd, sm, ex] = await Promise.all([
+        fetchBoard(sh.id), fetchShiftSummary(sh.id),
+        settings?.track_checkpoints ? fetchCheckpointExceptions() : Promise.resolve([]),
+      ])
+      setBoard(bd); setSummary(sm); setExceptions(ex)
       toast.success(res.resumed ? 'Resumed your open shift' : 'Shift started')
     } catch (e) {
       toast.error("Couldn't start the shift", e)
@@ -137,6 +156,22 @@ export default function ShiftBoardPage() {
     return GROUPS.map(g => ({ g, rows: map.get(g.key) || [] })).filter(x => x.rows.length > 0)
   }, [board])
 
+  // Board row per load — lets a Times-needed row prefill the editor with the
+  // load's existing checkpoint timestamps.
+  const boardByLoad = useMemo(() => {
+    const m = new Map()
+    for (const r of board) if (r.load_id) m.set(r.load_id, r)
+    return m
+  }, [board])
+  const openFromRow = (r) => {
+    if (!r.load_id) return
+    setEditTarget({ loadId: r.load_id, loadNumber: r.load_number, driverName: r.driver_name, pickupIn: r.cp_pickup_in, pickupOut: r.cp_pickup_out, deliveryIn: r.cp_delivery_in, deliveryOut: r.cp_delivery_out })
+  }
+  const openFromException = (e) => {
+    const r = boardByLoad.get(e.load_id)
+    setEditTarget({ loadId: e.load_id, loadNumber: e.load_number, driverName: e.driver_name, pickupIn: r?.cp_pickup_in ?? null, pickupOut: r?.cp_pickup_out ?? null, deliveryIn: r?.cp_delivery_in ?? null, deliveryOut: r?.cp_delivery_out ?? null })
+  }
+
   async function copyGroup(g, rows) {
     try { await copyText(buildGroupCopy({ heading: g.heading, rows, shiftLabel, dateLabel })); toast.success('Group copied') }
     catch (e) { toast.error("Couldn't copy", e) }
@@ -177,22 +212,32 @@ export default function ShiftBoardPage() {
           {/* 3. Shift stats */}
           {shift && summary && <ShiftStats summary={summary} />}
 
-          {/* 4. Priority groups */}
-          {grouped.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-gray-300 dark:border-white/10 p-8 text-center text-sm text-gray-400 dark:text-slate-500">No active drivers on the board.</div>
-          ) : (
-            <div className="space-y-3">
-              {grouped.map(({ g, rows }) => (
-                <PriorityGroup key={g.key} group={g} rows={rows}
-                  expanded={expanded.has(g.key)} onToggle={() => toggleGroup(g.key)}
-                  onCopy={() => copyGroup(g, rows)} settings={settings} shift={shift}
-                  onOk={onOk} onAction={onAction} onFlag={setFlagFor} />
-              ))}
-            </div>
-          )}
+          {/* 4. Priority groups — "Times needed" sits directly under Raised by
+              dispatch, above Uncovered (only when the phase is on). */}
+          {(() => {
+            const timesNeeded = trackCheckpoints && exceptions.length > 0
+              ? <TimesNeededGroup key="times_needed" exceptions={exceptions} expanded={cpOpen} onToggle={() => setCpOpen(o => !o)} onOpen={openFromException} />
+              : null
+            if (grouped.length === 0 && !timesNeeded) {
+              return <div className="rounded-2xl border border-dashed border-gray-300 dark:border-white/10 p-8 text-center text-sm text-gray-400 dark:text-slate-500">No active drivers on the board.</div>
+            }
+            const groupEl = ({ g, rows }) => (
+              <PriorityGroup key={g.key} group={g} rows={rows}
+                expanded={expanded.has(g.key)} onToggle={() => toggleGroup(g.key)}
+                onCopy={() => copyGroup(g, rows)} settings={settings} shift={shift}
+                onOk={onOk} onAction={onAction} onFlag={setFlagFor} onCheckpoints={openFromRow} />
+            )
+            const raised = grouped.filter(x => x.g.key === 'raised').map(groupEl)
+            const rest = grouped.filter(x => x.g.key !== 'raised').map(groupEl)
+            return <div className="space-y-3">{[...raised, timesNeeded, ...rest].filter(Boolean)}</div>
+          })()}
         </>
       )}
 
+      {editTarget && (
+        <CheckpointEditor target={editTarget} shiftId={shift?.id ?? null}
+          onClose={() => setEditTarget(null)} onSaved={reloadBoard} toast={toast} />
+      )}
       {flagFor && <FlagPopover row={flagFor} onClose={() => setFlagFor(null)} onSave={saveFlag} />}
       <EndShiftModal open={showEnd} shift={shift} users={users.filter(u => u.id !== me?.id)}
         onClose={() => setShowEnd(false)} onEnded={() => { setShowEnd(false); load() }} />

@@ -8,7 +8,7 @@ const TONE = {
   plain:  { head: 'text-gray-700 dark:text-slate-300',    badge: 'bg-gray-100 dark:bg-white/5 text-gray-600 dark:text-slate-300',          ring: 'border-gray-200 dark:border-white/10' },
 }
 
-export default function PriorityGroup({ group, rows, expanded, onToggle, onCopy, settings, shift, onOk, onAction, onFlag }) {
+export default function PriorityGroup({ group, rows, expanded, onToggle, onCopy, settings, shift, onOk, onAction, onFlag, onCheckpoints }) {
   const t = TONE[group.tone] || TONE.plain
   const n = rows.length
 
@@ -41,7 +41,7 @@ export default function PriorityGroup({ group, rows, expanded, onToggle, onCopy,
             </thead>
             <tbody>
               {rows.map(r => (
-                <BoardRow key={r.driver_id} r={r} settings={settings} shift={shift} onOk={onOk} onAction={onAction} onFlag={onFlag} />
+                <BoardRow key={r.driver_id} r={r} settings={settings} shift={shift} onOk={onOk} onAction={onAction} onFlag={onFlag} onCheckpoints={onCheckpoints} />
               ))}
             </tbody>
           </table>
@@ -51,9 +51,9 @@ export default function PriorityGroup({ group, rows, expanded, onToggle, onCopy,
   )
 }
 
-function Chip({ label, on, muted }) {
+function Chip({ label, on, muted, title }) {
   return (
-    <span className={`inline-flex items-center justify-center min-w-[26px] h-5 px-1 rounded text-[9px] font-bold border ${
+    <span title={title || undefined} className={`inline-flex items-center justify-center min-w-[26px] h-5 px-1 rounded text-[9px] font-bold border ${
       muted ? 'text-gray-300 dark:text-slate-600 border-gray-200 dark:border-white/10'
         : on ? 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-500/30'
           : 'text-gray-400 dark:text-slate-500 border-gray-200 dark:border-white/10'
@@ -70,7 +70,7 @@ function ActBtn({ children, onClick, disabled, title }) {
   )
 }
 
-function BoardRow({ r, settings, shift, onOk, onAction, onFlag }) {
+function BoardRow({ r, settings, shift, onOk, onAction, onFlag, onCheckpoints }) {
   const muted = r.in_scope === false
   const okChecked = r.checked_this_shift && r.check_is_ok === true
   const flagged = r.checked_this_shift && r.check_is_ok === false
@@ -90,15 +90,17 @@ function BoardRow({ r, settings, shift, onOk, onAction, onFlag }) {
       <td className="px-3 py-2 whitespace-nowrap text-gray-600 dark:text-slate-400">
         {o || d ? <>{o || '—'} <span className="text-gray-300 dark:text-slate-600">→</span> {d || '—'}</> : '—'}
       </td>
-      {/* Checkpoints — only when tracked */}
+      {/* Checkpoints — only when tracked; the chips open the times editor */}
       <td className="px-3 py-2 whitespace-nowrap">
         {settings?.track_checkpoints ? (
-          <div className="flex items-center gap-1">
-            <Chip label="PU↑" on={!!r.cp_pickup_in} />
-            <Chip label="PU↓" on={!!r.cp_pickup_out} />
-            <Chip label="DL↑" on={!!r.cp_delivery_in} />
-            <Chip label="DL↓" on={!!r.cp_delivery_out} />
-          </div>
+          <button type="button" onClick={() => r.load_id && r.in_scope !== false && onCheckpoints?.(r)} disabled={!r.load_id || r.in_scope === false}
+            title={r.in_scope === false ? 'Picked up before go-live — not in scope' : r.load_id ? 'Enter checkpoint times' : 'No load'}
+            className="flex items-center gap-1 disabled:cursor-not-allowed disabled:opacity-60">
+            <Chip label="PU↑" on={!!r.cp_pickup_in} title={fmtClock(r.cp_pickup_in)} />
+            <Chip label="PU↓" on={!!r.cp_pickup_out} title={fmtClock(r.cp_pickup_out)} />
+            <Chip label="DL↑" on={!!r.cp_delivery_in} title={fmtClock(r.cp_delivery_in)} />
+            <Chip label="DL↓" on={!!r.cp_delivery_out} title={fmtClock(r.cp_delivery_out)} />
+          </button>
         ) : <span className="text-gray-300 dark:text-slate-600">—</span>}
       </td>
       {/* Paperwork — each chip only when its flag is on */}

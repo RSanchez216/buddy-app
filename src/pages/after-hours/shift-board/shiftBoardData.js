@@ -111,6 +111,33 @@ export async function logActivity({ shiftId, type, loadId, loadNumber, driverId,
 // Marking a help request handled lives in ../requests/requestsData
 // (markRequestHandled) so the board and the Requests page share one code path.
 
+// ── Checkpoints (phase 3) ────────────────────────────────────────────────────
+// The exception queue — the small set of loads whose checkpoint times are
+// actually in question right now. Returns [] when the phase is off.
+export async function fetchCheckpointExceptions() {
+  const { data, error } = await supabase.rpc('checkpoint_exceptions')
+  if (error) throw error
+  return data || []
+}
+// Upsert (one row per load) via the RPC — NEVER write load_checkpoints directly
+// (collected_count / pickup_minutes / delivery_minutes are GENERATED). Null args
+// leave existing values alone. Returns { ok:true, pickup_minutes, delivery_minutes }
+// or throws the RPC's reason verbatim (e.g. "pickup out is before pickup in").
+export async function saveLoadCheckpoints({ loadId, pickupIn, pickupOut, deliveryIn, deliveryOut, notes, shiftId }) {
+  const { data, error } = await supabase.rpc('save_load_checkpoints', {
+    p_load_id: loadId,
+    p_pickup_in: pickupIn ?? null,
+    p_pickup_out: pickupOut ?? null,
+    p_delivery_in: deliveryIn ?? null,
+    p_delivery_out: deliveryOut ?? null,
+    p_notes: notes ?? null,
+    p_shift_id: shiftId ?? null,
+  })
+  if (error) throw error
+  if (data && data.ok === false) throw new Error(data.reason || 'Could not save the times.')
+  return data
+}
+
 // ── Formatting ─────────────────────────────────────────────────────────────
 export function todayChicago() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago' }).format(new Date())
@@ -162,6 +189,41 @@ export function cityOf(s) {
 export function money(n, dp = 0) {
   if (n == null) return '$0'
   return Number(n).toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: dp, maximumFractionDigits: dp })
+}
+// Whole minutes → 'Xh Ym' (or 'Ym'). null-safe; used for waiting time and the
+// detained durations the RPC returns.
+export function fmtDuration(mins) {
+  if (mins == null || mins === '') return null
+  const total = Math.max(0, Math.floor(Number(mins)))
+  if (Number.isNaN(total)) return null
+  const h = Math.floor(total / 60), m = total % 60
+  return h > 0 ? `${h}h ${m}m` : `${m}m`
+}
+// ── Chicago ↔ datetime-local (checkpoint editor) ─────────────────────────────
+// The editor shows Chicago wall-clock time regardless of the browser's own
+// timezone. toChicagoLocalInput formats an instant into a 'YYYY-MM-DDTHH:mm'
+// string for <input type="datetime-local">; chicagoLocalToISO reads that naive
+// string back as America/Chicago and returns a UTC ISO string to send.
+export function toChicagoLocalInput(d) {
+  if (!d) return ''
+  const dt = d instanceof Date ? d : new Date(d)
+  if (isNaN(dt.getTime())) return ''
+  const p = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(dt)
+  const g = (t) => p.find(x => x.type === t)?.value
+  return `${g('year')}-${g('month')}-${g('day')}T${g('hour')}:${g('minute')}`
+}
+function chicagoOffsetMinutes(date) {
+  const p = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).formatToParts(date)
+  const g = (t) => Number(p.find(x => x.type === t)?.value)
+  const asIfUTC = Date.UTC(g('year'), g('month') - 1, g('day'), g('hour'), g('minute'), g('second'))
+  return (asIfUTC - date.getTime()) / 60000 // Chicago offset in minutes (e.g. -300 CDT, -360 CST)
+}
+export function chicagoLocalToISO(local) {
+  if (!local) return null
+  const asUTC = new Date(`${local}:00Z`) // treat the naive wall time as UTC first…
+  if (isNaN(asUTC.getTime())) return null
+  const offset = chicagoOffsetMinutes(asUTC) // …then correct by Chicago's offset at that time
+  return new Date(asUTC.getTime() - offset * 60000).toISOString()
 }
 
 // ── PDF text sanitising ──────────────────────────────────────────────────────
