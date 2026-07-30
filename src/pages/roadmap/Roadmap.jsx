@@ -6,6 +6,8 @@ import { useToast } from '../../contexts/ToastContext'
 import RoadmapMap from './RoadmapMap'
 import InitiativeModal from './InitiativeModal'
 import PhasesModal from './PhasesModal'
+import HubModal from './HubModal'
+import LinesModal from './LinesModal'
 import {
   fetchRoadmap, fetchDepartments, computeLayout, savePositions, autoTidyPositions, recomputeStatuses,
   STATUS_LABEL, PRIORITY_LABEL,
@@ -37,6 +39,8 @@ export default function Roadmap() {
   const [prioFilter, setPrioFilter] = useState('')
   const [editing, setEditing] = useState(null)   // initiative | 'new' | null
   const [phasesFor, setPhasesFor] = useState(null)
+  const [hubOpen, setHubOpen] = useState(false)
+  const [linesOpen, setLinesOpen] = useState(false)
   const [confirmTidy, setConfirmTidy] = useState(false)
   const svgRef = useRef(null)
 
@@ -53,8 +57,16 @@ export default function Roadmap() {
   const lines = useMemo(() => data?.lines || [], [data])
   const initiatives = useMemo(() => data?.initiatives || [], [data])
   const progress = data?.progress || {}
+  const settings = data?.settings || {}
   const layout = useMemo(() => computeLayout(lines, initiatives), [lines, initiatives])
   const selected = initiatives.find(it => it.id === selectedId) || null
+
+  // Clicking a station selects it (fills the inspector); for editors it also
+  // opens the edit modal, prefilled. Read-only users only get the selection.
+  const onStationSelect = useCallback((id) => {
+    setSelectedId(id)
+    if (canEdit) setEditing(initiatives.find(it => it.id === id) || null)
+  }, [canEdit, initiatives])
 
   const dimmed = useCallback((it) => {
     if (deptFilter && it.department_id !== deptFilter) return true
@@ -117,12 +129,12 @@ export default function Roadmap() {
     <div className={`${S.card} relative p-2`}>
       {/* Station key (top-left, HTML overlay) */}
       <div className="absolute left-3 top-3 z-10 rounded-lg bg-white/90 dark:bg-[#0d0d1f]/90 backdrop-blur border border-gray-200 dark:border-white/10 px-3 py-2 text-[11px] text-gray-600 dark:text-slate-400 space-y-1">
-        <div className="font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wide text-[10px] mb-1">Station key</div>
-        <KeyRow symbol={<span className="inline-block w-3 h-3 rounded-full bg-gray-400" />} label="Planned — hollow" />
-        <KeyRow symbol={<span className="inline-block w-3 h-3 rounded-full border-2 border-gray-400" />} label="Building — pale ring" />
-        <KeyRow symbol={<span className="inline-block w-3 h-3 rounded-full bg-gray-700 dark:bg-slate-300" />} label="Live — solid" />
-        <KeyRow symbol={<span className="inline-flex w-3 h-3 rounded-full bg-red-600 items-center justify-center text-white text-[8px] font-bold">!</span>} label="Needs a fix" />
-        <KeyRow symbol={<span className="inline-block w-3 h-3 rounded-full border-2 border-dashed border-gray-400" />} label="Parked" />
+        <div className="font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wide text-[10px] mb-1">Station key · rings = phases</div>
+        <KeyRow symbol={<span className="inline-block w-3 h-3 rounded-full bg-gray-700 dark:bg-slate-300" />} label="Solid centre — phase 1 built" />
+        <KeyRow symbol={<span className="inline-block w-3 h-3 rounded-full border-2 border-gray-400" />} label="Pale ring — a phase not built yet" />
+        <KeyRow symbol={<span className="inline-block w-3 h-3 rounded-full border-2 border-gray-500 bg-gray-300 dark:bg-slate-500" />} label="Rings fill inside-out as phases ship" />
+        <KeyRow symbol={<span className="inline-flex w-3 h-3 rounded-full bg-red-600 items-center justify-center text-white text-[8px] font-bold">!</span>} label="Red badge — needs a fix" />
+        <KeyRow symbol={<span className="inline-block w-3 h-3 rounded-full border-2 border-dashed border-gray-400" />} label="Dashed — parked" />
       </div>
 
       {/* Auto-tidy (top-right) */}
@@ -143,8 +155,10 @@ export default function Roadmap() {
       <div className="overflow-x-auto pt-1" onClick={() => setSelectedId(null)}>
         <RoadmapMap
           layout={layout} initiatives={initiatives} selectedId={selectedId}
-          onSelect={setSelectedId} canEdit={canEdit} dimmed={(deptFilter || prioFilter) ? dimmed : null}
+          onSelect={onStationSelect} canEdit={canEdit} dimmed={(deptFilter || prioFilter) ? dimmed : null}
           svgRef={svgRef} onDragEnd={onDragEnd}
+          hubTitle={settings.hub_title || 'THE FULL PICTURE'} hubSubtitle={settings.hub_subtitle || ''}
+          onHubClick={canEdit ? () => setHubOpen(true) : undefined}
         />
       </div>
     </div>
@@ -169,7 +183,7 @@ export default function Roadmap() {
             <span className="w-1.5 h-1.5 rounded-full bg-orange-500" /> BUDDY · Vision
           </div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Roadmap</h1>
-          <p className="text-sm text-gray-500 dark:text-slate-500 mt-0.5 max-w-2xl">Every moving part of the machine — what&apos;s running, what&apos;s building, and what it&apos;s waiting on.</p>
+          <p className="text-sm text-gray-500 dark:text-slate-500 mt-0.5 max-w-2xl">{settings.page_subtitle || "Every moving part of the machine — what's running, what's building, and what it's waiting on."}</p>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={exportPdf} className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5">↓ PDF</button>
@@ -184,7 +198,9 @@ export default function Roadmap() {
         <div className={`${S.card} p-10 text-center`}><p className="text-sm text-gray-600 dark:text-slate-400 mb-3">{error}</p><button onClick={load} className={S.btnSecondary}>Retry</button></div>
       ) : (
         <>
-          <Meter progress={progress} />
+          <Meter progress={progress} initiatives={initiatives} />
+
+          <LineLegend lines={layout.ordered} canEdit={canEdit} onEdit={() => setLinesOpen(true)} />
 
           {/* Filters */}
           <div className="flex flex-wrap items-center gap-2">
@@ -209,9 +225,12 @@ export default function Roadmap() {
 
       <InitiativeModal open={!!editing} onClose={() => setEditing(null)}
         initiative={editing === 'new' ? null : editing} lines={lines} departments={departments}
-        allInitiatives={initiatives} onSaved={async () => { await recomputeSafe(); load() }} />
+        allInitiatives={initiatives} onSaved={async () => { await recomputeSafe(); load() }}
+        onManagePhases={(it) => setPhasesFor(it)} />
       <PhasesModal open={!!phasesFor} onClose={() => setPhasesFor(null)} initiative={phasesFor}
         onSaved={async () => { await recomputeSafe(); load() }} />
+      <HubModal open={hubOpen} onClose={() => setHubOpen(false)} settings={settings} onSaved={load} />
+      <LinesModal open={linesOpen} onClose={() => setLinesOpen(false)} lines={lines} onSaved={load} />
     </div>
   )
 }
@@ -222,31 +241,128 @@ function KeyRow({ symbol, label }) {
   return <div className="flex items-center gap-2">{symbol}<span>{label}</span></div>
 }
 
-function Meter({ progress }) {
-  const total = progress.stations_total || 0
-  const seg = [
-    { n: progress.stations_open || 0, cls: 'bg-emerald-500' },
-    { n: progress.stations_building || 0, cls: 'bg-amber-500' },
-    { n: progress.needs_fix || 0, cls: 'bg-red-500' },
-    { n: progress.parked || 0, cls: 'bg-gray-400 dark:bg-slate-600' },
-    { n: progress.stations_planned || 0, cls: 'bg-gray-200 dark:bg-white/10' },
-  ]
+// Tooltip helper: sorted names, 2 columns if >8, capped at 14 with "…and N more".
+function TipList({ items }) {
+  const sorted = [...items].sort((a, b) => a.localeCompare(b))
+  const cap = 14
+  const shown = sorted.slice(0, cap)
+  const more = sorted.length - shown.length
+  const cols = sorted.length > 8
   return (
-    <div className={`${S.card} p-4 flex flex-wrap items-center gap-x-8 gap-y-3`}>
-      <div>
-        <div className="text-3xl font-bold text-gray-900 dark:text-white tabular-nums">{progress.stations_open ?? 0}<span className="text-gray-300 dark:text-slate-600">/{total}</span></div>
-        <div className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">Stations open</div>
-      </div>
-      <div className="flex-1 min-w-[240px]">
-        <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-white/5">
-          {seg.map((s, i) => total > 0 && s.n > 0 && <div key={i} className={s.cls} style={{ width: `${(s.n / total) * 100}%` }} />)}
+    <div className="pointer-events-none absolute z-30 left-0 top-full mt-1.5 w-max max-w-md rounded-lg bg-gray-900 dark:bg-black text-white shadow-2xl px-3 py-2 text-[11px]">
+      {shown.length === 0 ? <div className="text-slate-400">None</div> : (
+        <div className={cols ? 'grid grid-cols-2 gap-x-4 gap-y-0.5' : 'space-y-0.5'}>
+          {shown.map((n, i) => <div key={i} className="whitespace-nowrap">{n}</div>)}
         </div>
-        <div className="mt-1.5 text-[11px] text-gray-500 dark:text-slate-400">
-          {progress.stations_building ?? 0} building · {progress.needs_fix ?? 0} need a fix · {progress.stations_planned ?? 0} still on the table
+      )}
+      {more > 0 && <div className="mt-1 text-slate-400">…and {more} more</div>}
+    </div>
+  )
+}
+
+// A hoverable/focusable meter segment or chip that reveals its member names.
+function Hoverable({ children, items, className = '', style }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <span className={`relative ${className}`} tabIndex={0} style={{ cursor: 'pointer', outline: 'none', ...style }}
+      onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}
+      onFocus={() => setOpen(true)} onBlur={() => setOpen(false)}>
+      {children}
+      {open && <TipList items={items} />}
+    </span>
+  )
+}
+
+function Meter({ progress, initiatives }) {
+  const total = progress.stations_total || 0
+  const phTotal = progress.phases_total || 0
+
+  // Member lists computed client-side (no extra queries).
+  const namesByStatus = (s) => initiatives.filter(it => it.status === s).map(it => it.name)
+  const namesByFlag = (f) => initiatives.filter(it => it.flag === f).map(it => it.name)
+  const phaseNames = (s) => initiatives
+    .map(it => { const c = (it.phases || []).filter(p => p.status === s).length; return c ? `${it.name} (${c} ${s})` : null })
+    .filter(Boolean)
+
+  const bar = [
+    { n: progress.stations_open || 0, cls: 'bg-emerald-500', items: namesByStatus('live') },
+    { n: progress.stations_building || 0, cls: 'bg-amber-500', items: namesByStatus('building') },
+    { n: progress.stations_planned || 0, cls: 'bg-gray-200 dark:bg-white/10', items: namesByStatus('planned') },
+  ]
+  const ph = [
+    { n: progress.phases_done || 0, cls: 'bg-emerald-500', items: phaseNames('done') },
+    { n: progress.phases_building || 0, cls: 'bg-amber-500', items: phaseNames('building') },
+    { n: progress.phases_planned || 0, cls: 'bg-gray-200 dark:bg-white/10', items: phaseNames('planned') },
+  ]
+
+  return (
+    <div className={`${S.card} p-4 space-y-4`}>
+      {/* Stations — progress axis (3 segments summing to total) */}
+      <div className="flex flex-wrap items-start gap-x-8 gap-y-3">
+        <div>
+          <div className="text-3xl font-bold text-gray-900 dark:text-white tabular-nums">{progress.stations_open ?? 0}<span className="text-gray-300 dark:text-slate-600">/{total}</span></div>
+          <div className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">Stations open</div>
+        </div>
+        <div className="flex-1 min-w-[240px]">
+          <div className="text-[11px] text-gray-500 dark:text-slate-400 mb-1">{progress.stations_open ?? 0} of {total} stations open</div>
+          <div className="flex h-2.5 w-full rounded-full bg-gray-100 dark:bg-white/5">
+            {bar.map((s, i) => total > 0 && s.n > 0 && (
+              <Hoverable key={i} items={s.items} className="h-full" style={{ width: `${(s.n / total) * 100}%` }}>
+                <span className={`block w-full h-full ${s.cls}`} />
+              </Hoverable>
+            ))}
+          </div>
+          <div className="mt-1.5 text-[11px] text-gray-500 dark:text-slate-400 flex items-center gap-2 flex-wrap">
+            <span>{progress.stations_building ?? 0} building · {progress.stations_planned ?? 0} still on the table</span>
+          </div>
+          {/* Flags — condition axis, visually separated */}
+          <div className="mt-2 flex items-center gap-3 flex-wrap border-t border-gray-100 dark:border-white/5 pt-2">
+            <Hoverable items={namesByFlag('needs_fix')}>
+              <span className="inline-flex items-center gap-1.5 text-[11px] text-gray-600 dark:text-slate-400"><span className="w-2.5 h-2.5 rounded-full bg-red-500" />{progress.needs_fix ?? 0} need a fix</span>
+            </Hoverable>
+            <Hoverable items={namesByFlag('parked')}>
+              <span className="inline-flex items-center gap-1.5 text-[11px] text-gray-600 dark:text-slate-400"><span className="w-2.5 h-2.5 rounded-full border-2 border-dashed border-gray-400" />{progress.parked ?? 0} parked</span>
+            </Hoverable>
+            <span className="text-[10px] italic text-gray-400 dark:text-slate-500">Flags sit on top of the counts above — a station that needs a fix is still open.</span>
+          </div>
         </div>
       </div>
-      <div className="text-sm text-gray-500 dark:text-slate-400">
-        <span className="font-semibold text-gray-900 dark:text-white tabular-nums">{progress.phases_done ?? 0}</span> of {progress.phases_total ?? 0} phases done
+
+      {/* Phases — a third unit, its own bar */}
+      <div className="border-t border-gray-100 dark:border-white/5 pt-3">
+        <div className="text-[11px] text-gray-500 dark:text-slate-400 mb-1">
+          <span className="font-semibold text-gray-900 dark:text-white tabular-nums">{progress.phases_done ?? 0}</span> of {phTotal} phases done
+        </div>
+        <div className="flex h-1.5 w-full max-w-[420px] rounded-full bg-gray-100 dark:bg-white/5">
+          {ph.map((s, i) => phTotal > 0 && s.n > 0 && (
+            <Hoverable key={i} items={s.items} className="h-full" style={{ width: `${(s.n / phTotal) * 100}%` }}>
+              <span className={`block w-full h-full ${s.cls}`} />
+            </Hoverable>
+          ))}
+        </div>
+        <div className="mt-1 text-[10px] italic text-gray-400 dark:text-slate-500">A station with five phases counts once above, but five times here.</div>
+      </div>
+    </div>
+  )
+}
+
+function LineLegend({ lines, canEdit, onEdit }) {
+  return (
+    <div className={`${S.card} p-4`}>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">The lines</h2>
+        {canEdit && <button onClick={onEdit} className="text-xs font-medium text-orange-600 dark:text-orange-400 hover:underline">Edit lines</button>}
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        {lines.map(l => (
+          <div key={l.id} className="min-w-0">
+            <div className="flex items-center gap-2 mb-0.5">
+              <span className="inline-block w-6 h-1.5 rounded-full shrink-0" style={{ background: l.color }} />
+              <span className="font-semibold text-sm text-gray-900 dark:text-slate-200 truncate">{l.name}</span>
+            </div>
+            {l.description && <p className="text-xs text-gray-500 dark:text-slate-400 leading-snug">{l.description}</p>}
+          </div>
+        ))}
       </div>
     </div>
   )

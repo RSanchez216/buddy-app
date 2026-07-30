@@ -5,7 +5,7 @@ import { S } from '../../lib/styles'
 import { supabase } from '../../lib/supabase'
 import {
   insertInitiative, updateInitiative, addInitiativeLine, removeInitiativeLine,
-  addDependency, removeDependency, insertPhase, PRIORITY_LABEL,
+  addDependency, removeDependency, insertPhase, archiveInitiative, PRIORITY_LABEL,
 } from './roadmapData'
 
 const PRIORITIES = ['critical', 'high', 'medium', 'low']
@@ -17,7 +17,7 @@ function parseQuarter(q) {
   return m ? { q: m[1], y: m[2] } : { q: '', y: '' }
 }
 
-export default function InitiativeModal({ open, onClose, initiative, lines, departments, allInitiatives, onSaved }) {
+export default function InitiativeModal({ open, onClose, initiative, lines, departments, allInitiatives, onSaved, onManagePhases }) {
   const isEdit = !!initiative
   const [name, setName] = useState('')
   const [controls, setControls] = useState('')
@@ -35,6 +35,15 @@ export default function InitiativeModal({ open, onClose, initiative, lines, depa
   const [extraPhases, setExtraPhases] = useState([]) // [{name}]
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [archiveConfirm, setArchiveConfirm] = useState(false)
+
+  useEffect(() => { if (open) setArchiveConfirm(false) }, [open])
+
+  async function doArchive() {
+    setSaving(true); setError('')
+    try { await archiveInitiative(initiative.id); onSaved?.(); onClose() }
+    catch (e) { setError(e?.message || 'Archive failed') } finally { setSaving(false) }
+  }
 
   useEffect(() => {
     if (!open) return
@@ -207,6 +216,21 @@ export default function InitiativeModal({ open, onClose, initiative, lines, depa
         <p className="text-[11px] text-gray-500 dark:text-slate-400 leading-relaxed">
           It will land on <strong className="font-semibold">{primaryLine?.name || 'the selected line'}</strong> as a planned station (starts hollow), and you can drag it left/right on the map to place it.
         </p>
+
+        {isEdit && (
+          <div className="flex items-center gap-3 border-t border-gray-100 dark:border-white/5 pt-3">
+            <button type="button" onClick={() => onManagePhases?.(initiative)} className={`${S.btnSecondary} text-xs`}>Manage phases</button>
+            {archiveConfirm ? (
+              <span className="ml-auto flex items-center gap-2 text-xs">
+                <span className="text-gray-500 dark:text-slate-400">Archive this initiative?</span>
+                <button type="button" onClick={doArchive} className="font-semibold text-red-600 dark:text-red-400">Archive</button>
+                <button type="button" onClick={() => setArchiveConfirm(false)} className="text-gray-400">Cancel</button>
+              </span>
+            ) : (
+              <button type="button" onClick={() => setArchiveConfirm(true)} className="ml-auto text-xs text-red-600 dark:text-red-400 hover:underline">Archive</button>
+            )}
+          </div>
+        )}
 
         <div className={S.modalFooter}>
           <button onClick={onClose} className={S.btnCancel}>Cancel</button>

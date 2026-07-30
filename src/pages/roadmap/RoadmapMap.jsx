@@ -11,6 +11,20 @@ const LABEL_MUTED = 'fill-gray-400 dark:fill-slate-500'
 
 const outerRadius = (phaseCount) => PHASE_RADII[Math.min(phaseCount, PHASE_RADII.length) - 1] || PHASE_RADII[0]
 
+// Wrap a subtitle to two centred lines by balancing word length (no delimiter
+// splitting, so any text works). Short strings stay on one line.
+function balanceTwoLines(text) {
+  const words = String(text || '').trim().split(/\s+/).filter(Boolean)
+  if (words.length <= 3) return words.length ? [words.join(' ')] : []
+  const total = words.join(' ').length
+  let acc = 0, cut = words.length
+  for (let i = 0; i < words.length; i++) {
+    acc += words[i].length + 1
+    if (acc >= total / 2) { cut = i + 1; break }
+  }
+  return [words.slice(0, cut).join(' '), words.slice(cut).join(' ')].filter(Boolean)
+}
+
 // Map a pointer event to SVG user-space x (handles scaling/letterboxing).
 function svgX(svg, clientX, clientY) {
   const pt = svg.createSVGPoint(); pt.x = clientX; pt.y = clientY
@@ -21,12 +35,15 @@ function svgX(svg, clientX, clientY) {
 
 export default function RoadmapMap({
   layout, initiatives, selectedId, onSelect, canEdit, dimmed, svgRef, onDragEnd,
+  hubTitle = 'THE FULL PICTURE', hubSubtitle = '', onHubClick,
 }) {
   const { ordered, laneYById, hubX, hubY, vbWidth, vbHeight } = layout
   const wrapRef = useRef(null)
   const [drag, setDrag] = useState(null)   // { id, x }
   const [hover, setHover] = useState(null)  // { it, left, top }
   const dragInfo = useRef(null)             // { id, offset }
+  const movedRef = useRef(false)            // true when the last pointer gesture was a drag
+  const hubLines = balanceTwoLines(hubSubtitle)
 
   const byId = useMemo(() => new Map(initiatives.map(it => [it.id, it])), [initiatives])
   const posX = (it) => (drag && drag.id === it.id ? drag.x : Number(it.pos_x) || 0)
@@ -50,7 +67,8 @@ export default function RoadmapMap({
     const svg = svgRef.current
     const ux = svgX(svg, e.clientX, e.clientY)
     if (ux == null) return
-    dragInfo.current = { id: it.id, offset: (Number(it.pos_x) || 0) - ux }
+    movedRef.current = false
+    dragInfo.current = { id: it.id, offset: (Number(it.pos_x) || 0) - ux, startX: ux }
     setDrag({ id: it.id, x: Number(it.pos_x) || 0 })
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp, { once: true })
@@ -61,6 +79,7 @@ export default function RoadmapMap({
     if (!info || !svg) return
     const ux = svgX(svg, e.clientX, e.clientY)
     if (ux == null) return
+    if (Math.abs(ux - info.startX) > 4) movedRef.current = true  // distinguish drag from click
     let x = ux + info.offset
     x = Math.round(x / 10) * 10                       // snap to 10px grid
     x = Math.max(40, Math.min(hubX - 60, x))          // clamp
@@ -119,14 +138,16 @@ export default function RoadmapMap({
             className={MUTED_STROKE} strokeWidth={2.5} opacity={0.3} />
         })}
 
-        {/* Hub */}
-        <g>
+        {/* Hub — editable title/subtitle from settings */}
+        <g style={{ cursor: onHubClick ? 'pointer' : 'default' }}
+          onClick={onHubClick ? (e) => { e.stopPropagation(); onHubClick() } : undefined}>
           <circle cx={hubX} cy={hubY} r={27} className={`${CARD_FILL} ${INK_STROKE}`} strokeWidth={5} />
           <circle cx={hubX} cy={hubY} r={13} fill="#F97316" />
           <text x={hubX} y={hubY + 47} textAnchor="middle" className="fill-gray-900 dark:fill-white"
-            style={{ fontSize: 13.5, fontWeight: 700, letterSpacing: '.05em' }}>THE FULL PICTURE</text>
-          <text x={hubX} y={hubY + 64} textAnchor="middle" className={LABEL_MUTED} style={{ fontSize: 11 }}>true margin — per load,</text>
-          <text x={hubX} y={hubY + 78} textAnchor="middle" className={LABEL_MUTED} style={{ fontSize: 11 }}>per driver, per lane</text>
+            style={{ fontSize: 13.5, fontWeight: 700, letterSpacing: '.05em' }}>{hubTitle}</text>
+          {hubLines.map((ln, i) => (
+            <text key={i} x={hubX} y={hubY + 64 + i * 14} textAnchor="middle" className={LABEL_MUTED} style={{ fontSize: 11 }}>{ln}</text>
+          ))}
         </g>
 
         {/* Stations */}
@@ -138,7 +159,7 @@ export default function RoadmapMap({
             dim={dimmed ? dimmed(it) : false}
             draggable={canEdit}
             onPointerDown={(e) => startDrag(e, it)}
-            onClick={(e) => { e.stopPropagation(); onSelect?.(it.id) }}
+            onClick={(e) => { e.stopPropagation(); if (movedRef.current) { movedRef.current = false; return } onSelect?.(it.id) }}
             onMouseEnter={(e) => showHover(e, it)}
             onMouseLeave={() => setHover(null)}
           />

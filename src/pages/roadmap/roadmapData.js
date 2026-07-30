@@ -112,6 +112,12 @@ export async function updateLine(id, patch) {
   if (error) throw error
 }
 
+// Settings — single row keyed id = true.
+export async function updateSettings(patch) {
+  const { error } = await supabase.from('roadmap_settings').update(patch).eq('id', true)
+  if (error) throw error
+}
+
 // Even-spacing tidy respecting dependencies: never place a station left of one
 // it depends on. Returns [{ id, pos_x }] for changed initiatives only.
 export function autoTidyPositions(lines, initiatives) {
