@@ -9,8 +9,8 @@ import PhasesModal from './PhasesModal'
 import HubModal from './HubModal'
 import LinesModal from './LinesModal'
 import {
-  fetchRoadmap, fetchDepartments, fetchSnapshots, computeLayout, savePositions, autoTidyPositions, recomputeStatuses,
-  setPhaseStatus, STATUS_LABEL, PHASE_STATUS_LABEL, PRIORITY_LABEL,
+  fetchRoadmap, fetchDepartments, fetchSnapshots, computeLayout, savePositions, computeTidyLayout, recomputeStatuses,
+  snapshotLayout, restoreLayout, setPhaseStatus, STATUS_LABEL, PHASE_STATUS_LABEL, PRIORITY_LABEL,
 } from './roadmapData'
 
 const STATUS_PILL = {
@@ -42,7 +42,9 @@ export default function Roadmap() {
   const [phasesFor, setPhasesFor] = useState(null)
   const [hubOpen, setHubOpen] = useState(false)
   const [linesOpen, setLinesOpen] = useState(false)
-  const [confirmTidy, setConfirmTidy] = useState(false)
+  const [tidyPreview, setTidyPreview] = useState(null) // { positions, moved, lines } proposal
+  const [tidyBusy, setTidyBusy] = useState(false)
+  const [undoSnap, setUndoSnap] = useState(null)       // snapshot id to undo the last tidy
   const svgRef = useRef(null)
 
   const load = useCallback(async () => {
@@ -93,14 +95,37 @@ export default function Roadmap() {
     catch (e) { setData(d => ({ ...d, initiatives: prev })); toast.error("Couldn't save the position", e) }
   }, [initiatives, toast])
 
-  async function runTidy() {
-    setConfirmTidy(false)
-    const positions = autoTidyPositions(lines, initiatives)
-    if (!positions.length) return
-    const prev = initiatives
-    setData(d => ({ ...d, initiatives: d.initiatives.map(it => { const p = positions.find(q => q.id === it.id); return p ? { ...it, pos_x: p.pos_x } : it }) }))
-    try { await savePositions(positions) }
-    catch (e) { setData(d => ({ ...d, initiatives: prev })); toast.error("Couldn't tidy the map", e) }
+  // Step 1: preview. Compute the proposal but change nothing.
+  function previewTidy() {
+    const result = computeTidyLayout(lines, initiatives)
+    if (!result.ok) { toast.error(result.reason || "Auto-tidy couldn't produce a clean layout"); return }
+    if (result.moved === 0) { toast.success('Already tidy — nothing to move'); return }
+    setTidyPreview(result)
+  }
+
+  // Step 2: apply. Snapshot first (so Undo works), then persist and reload.
+  async function applyTidy() {
+    if (!tidyPreview) return
+    setTidyBusy(true)
+    try {
+      const snapId = await snapshotLayout('Before Auto-tidy')
+      await savePositions(tidyPreview.positions)
+      setTidyPreview(null)
+      setUndoSnap(snapId || 'latest')
+      await load()
+    } catch (e) { toast.error("Couldn't tidy the map", e) }
+    finally { setTidyBusy(false) }
+  }
+
+  async function undoTidy() {
+    setTidyBusy(true)
+    try {
+      await restoreLayout(undoSnap && undoSnap !== 'latest' ? undoSnap : null)
+      setUndoSnap(null)
+      await load()
+      toast.success('Layout restored')
+    } catch (e) { toast.error("Couldn't restore the layout", e) }
+    finally { setTidyBusy(false) }
   }
 
   async function exportPdf() {
@@ -151,17 +176,25 @@ export default function Roadmap() {
         <KeyRow symbol={<span className="inline-block w-3 h-3 rounded-full border-2 border-dashed border-gray-400" />} label="Dashed — parked" />
       </div>
 
-      {/* Auto-tidy (top-right) */}
+      {/* Auto-tidy (top-right) — two-step: preview, then apply */}
       {canEdit && (
-        <div className="absolute right-3 top-3 z-10">
-          {confirmTidy ? (
-            <div className="flex items-center gap-1.5 rounded-lg bg-white dark:bg-[#0d0d1f] border border-gray-200 dark:border-white/10 px-2 py-1.5 text-xs shadow">
-              <span className="text-gray-500 dark:text-slate-400">Overwrite placement?</span>
-              <button onClick={runTidy} className="font-semibold text-orange-600 dark:text-orange-400">Tidy</button>
-              <button onClick={() => setConfirmTidy(false)} className="text-gray-400">Cancel</button>
+        <div className="absolute right-3 top-3 z-10 w-[min(320px,calc(100%-24px))] flex flex-col items-end">
+          {tidyPreview ? (
+            <div className="w-full rounded-lg bg-white dark:bg-[#0d0d1f] border border-gray-200 dark:border-white/10 px-3 py-2.5 text-xs shadow-lg">
+              <p className="font-semibold text-gray-900 dark:text-white mb-1">Auto-tidy preview</p>
+              <p className="text-gray-600 dark:text-slate-400">{tidyPreview.moved} station{tidyPreview.moved === 1 ? '' : 's'} will move. Everything lands between each line&apos;s start and 1550.</p>
+              <div className="mt-1.5 max-h-28 overflow-y-auto text-[11px] text-gray-500 dark:text-slate-400 space-y-0.5">
+                {tidyPreview.lines.filter(l => l.n > 0).map(l => (
+                  <div key={l.id}>{l.name}: {l.n === 1 ? `stays at ${l.start}` : `spacing ${l.step}`}</div>
+                ))}
+              </div>
+              <div className="mt-2 flex justify-end gap-2">
+                <button onClick={() => setTidyPreview(null)} disabled={tidyBusy} className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-300">Cancel</button>
+                <button onClick={applyTidy} disabled={tidyBusy} className="font-semibold text-orange-600 dark:text-orange-400 disabled:opacity-50">{tidyBusy ? 'Applying…' : 'Apply'}</button>
+              </div>
             </div>
           ) : (
-            <button onClick={() => setConfirmTidy(true)} className="rounded-lg border border-gray-200 dark:border-slate-700 px-2.5 py-1.5 text-xs font-medium text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5">Auto-tidy</button>
+            <button onClick={previewTidy} className="rounded-lg border border-gray-200 dark:border-slate-700 px-2.5 py-1.5 text-xs font-medium text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5">Auto-tidy</button>
           )}
         </div>
       )}
@@ -228,6 +261,15 @@ export default function Roadmap() {
             </select>
             {(deptFilter || prioFilter) && <button onClick={() => { setDeptFilter(''); setPrioFilter('') }} className="text-xs text-gray-400 hover:text-gray-700 dark:hover:text-slate-200">Clear</button>}
           </div>
+
+          {/* Persistent undo bar after a tidy */}
+          {canEdit && undoSnap && (
+            <div className="flex items-center gap-3 rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50/70 dark:bg-amber-500/10 px-4 py-2.5 text-sm">
+              <span className="text-amber-800 dark:text-amber-300">Layout tidied.</span>
+              <button onClick={undoTidy} disabled={tidyBusy} className="font-semibold text-orange-600 dark:text-orange-400 hover:underline disabled:opacity-50">{tidyBusy ? 'Restoring…' : 'Undo'}</button>
+              <button onClick={() => setUndoSnap(null)} className="ml-auto text-gray-400 hover:text-gray-600 dark:hover:text-slate-300" aria-label="Dismiss">✕</button>
+            </div>
+          )}
 
           {mapCard}
 

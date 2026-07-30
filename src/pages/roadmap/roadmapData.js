@@ -199,45 +199,122 @@ export async function updateSettings(patch) {
   if (error) throw error
 }
 
-// Even-spacing tidy respecting dependencies: never place a station left of one
-// it depends on. Returns [{ id, pos_x }] for changed initiatives only.
-export function autoTidyPositions(lines, initiatives) {
+// ── Auto-tidy ────────────────────────────────────────────────────────────────
+export const TIDY_END_X = 1550     // every line aims to end here
+export const TIDY_MIN_GAP = 100    // minimum clearance between stations on a line
+// The station-key HTML overlay covers roughly x 26–222 on the top two lanes.
+// Honouring each line's track_start_x keeps it clear (Intelligence starts at 700),
+// so there's no separate collision logic — but warn if a top-lane line is set
+// below this.
+export const KEY_RESERVED_X = 230
+export const KEY_LANES = 2
+const STATUS_RANK = { live: 0, done: 0, building: 1, planned: 2 }
+
+// Full tidy per the revision-7 algorithm. Returns a proposal — never mutates.
+// { ok, reason, positions: [{id,pos_x}] (changed only), moved, lines: per-line
+// summary, xById }. Pass 4 aborts (ok:false) rather than emit a broken layout.
+export function computeTidyLayout(lines, initiatives) {
+  const activeLines = [...lines].filter(l => l.is_active !== false).sort((a, b) => a.sort_order - b.sort_order)
   const byId = new Map(initiatives.map(it => [it.id, it]))
-  const START = 120, STEP = 150
-  // Topological rank per initiative from dependencies (Kahn-ish; cycle-safe).
+  const startOf = new Map(activeLines.map(l => [l.id, Number(l.track_start_x) || 0]))
+  const X = new Map()
+
+  // Pass 1 — space each primary line across [track_start_x, END_X].
+  const perLine = []
+  for (const L of activeLines) {
+    const start = startOf.get(L.id)
+    const S = initiatives.filter(it => it.primary_line_id === L.id)
+      .sort((a, b) => (STATUS_RANK[a.status] ?? 1) - (STATUS_RANK[b.status] ?? 1) || (Number(a.pos_x) || 0) - (Number(b.pos_x) || 0))
+    let step = 0
+    if (S.length === 1) X.set(S[0].id, start)
+    else if (S.length > 1) {
+      step = (TIDY_END_X - start) / (S.length - 1)
+      if (step < TIDY_MIN_GAP) step = TIDY_MIN_GAP // crowded line runs past END_X rather than colliding
+      S.forEach((it, i) => X.set(it.id, start + i * step))
+    }
+    perLine.push({ id: L.id, name: L.name, n: S.length, step: Math.round(step), start })
+  }
+
+  // Pass 2 — dependencies, in topological order. Nothing sits left of what it waits on.
   const rank = new Map()
   const rankOf = (id, seen = new Set()) => {
     if (rank.has(id)) return rank.get(id)
-    if (seen.has(id)) return 0 // cycle guard
+    if (seen.has(id)) return 0
     seen.add(id)
-    const it = byId.get(id)
-    const deps = (it?.depends_on || []).filter(d => byId.has(d))
+    const deps = (byId.get(id)?.depends_on || []).filter(d => byId.has(d))
     const r = deps.length ? Math.max(...deps.map(d => rankOf(d, seen) + 1)) : 0
-    rank.set(id, r)
-    return r
+    rank.set(id, r); return r
   }
   initiatives.forEach(it => rankOf(it.id))
-  // Per line, order stations by (rank, current pos_x) and lay out evenly, but
-  // never left of the max x of anything it depends on.
-  const out = []
-  const placed = new Map()
-  const linesSorted = [...lines].sort((a, b) => a.sort_order - b.sort_order)
-  for (const line of linesSorted) {
-    const onLine = initiatives
-      .filter(it => it.primary_line_id === line.id || (it.extra_line_ids || []).includes(line.id))
-      .sort((a, b) => (rank.get(a.id) - rank.get(b.id)) || (Number(a.pos_x) - Number(b.pos_x)))
-    let x = START
-    for (const it of onLine) {
-      const depMax = (it.depends_on || []).reduce((m, d) => Math.max(m, placed.get(d) ?? 0), 0)
-      x = Math.max(x, depMax + STEP)
-      const finalX = placed.get(it.id) != null ? Math.max(placed.get(it.id), x) : x
-      placed.set(it.id, finalX)
-      x = finalX + STEP
+  const topo = initiatives.filter(it => X.has(it.id)).sort((a, b) => rank.get(a.id) - rank.get(b.id))
+  for (const A of topo) {
+    for (const depId of (A.depends_on || [])) {
+      if (X.has(depId) && X.get(A.id) <= X.get(depId)) X.set(A.id, X.get(depId) + TIDY_MIN_GAP)
+    }
+  }
+
+  // Pass 3 — interchanges. A station has one x; open a MIN_GAP gap around it on
+  // each other line it appears on by shifting THAT line's own stations.
+  for (const I of initiatives) {
+    const extra = (I.extra_line_ids || []).filter(id => startOf.has(id))
+    if (!extra.length || !X.has(I.id)) continue
+    const xi = X.get(I.id)
+    for (const E of extra) {
+      const others = initiatives.filter(it => it.id !== I.id && it.primary_line_id === E && X.has(it.id))
+      let boundary = xi + TIDY_MIN_GAP
+      for (const s of others.filter(s => X.get(s.id) >= xi).sort((a, b) => X.get(a.id) - X.get(b.id))) {
+        if (X.get(s.id) < boundary) X.set(s.id, boundary)
+        boundary = X.get(s.id) + TIDY_MIN_GAP
+      }
+      let lb = xi - TIDY_MIN_GAP
+      for (const s of others.filter(s => X.get(s.id) < xi).sort((a, b) => X.get(b.id) - X.get(a.id))) {
+        if (X.get(s.id) > lb) X.set(s.id, lb)
+        lb = X.get(s.id) - TIDY_MIN_GAP
+      }
+    }
+  }
+
+  // Pass 4 — validity. Abort (change nothing) rather than write a broken layout.
+  for (const L of activeLines) {
+    const onL = initiatives.filter(it => (it.primary_line_id === L.id || (it.extra_line_ids || []).includes(L.id)) && X.has(it.id))
+      .sort((a, b) => X.get(a.id) - X.get(b.id))
+    for (let i = 1; i < onL.length; i++) {
+      if (X.get(onL[i].id) - X.get(onL[i - 1].id) < TIDY_MIN_GAP - 0.5) {
+        return { ok: false, reason: 'Auto-tidy would leave stations too close together — nothing changed.', positions: [], moved: 0, lines: perLine }
+      }
     }
   }
   for (const it of initiatives) {
-    const nx = placed.get(it.id)
-    if (nx != null && Math.round(nx) !== Math.round(Number(it.pos_x))) out.push({ id: it.id, pos_x: Math.round(nx) })
+    if (!X.has(it.id)) continue
+    const primStart = startOf.get(it.primary_line_id)
+    if (primStart != null && X.get(it.id) < primStart - 0.5) {
+      return { ok: false, reason: 'Auto-tidy would place a station before its line starts — nothing changed.', positions: [], moved: 0, lines: perLine }
+    }
   }
-  return out
+
+  const positions = []
+  for (const it of initiatives) {
+    if (!X.has(it.id)) continue
+    const nx = Math.round(X.get(it.id))
+    if (nx !== Math.round(Number(it.pos_x) || 0)) positions.push({ id: it.id, pos_x: nx })
+  }
+  return { ok: true, reason: null, positions, moved: positions.length, lines: perLine, xById: Object.fromEntries([...X].map(([k, v]) => [k, Math.round(v)])) }
+}
+
+// ── Layout snapshots (undo / restore) ────────────────────────────────────────
+export async function snapshotLayout(label) {
+  const { data, error } = await supabase.rpc('roadmap_snapshot_layout', { p_label: label || 'Layout snapshot' })
+  if (error) throw error
+  return data // uuid
+}
+export async function restoreLayout(snapshotId = null) {
+  const { data, error } = await supabase.rpc('roadmap_restore_layout', { p_snapshot_id: snapshotId })
+  if (error) throw error
+  return data // rows restored
+}
+export async function fetchLayoutSnapshots() {
+  const { data, error } = await supabase.from('roadmap_layout_snapshot')
+    .select('id, label, taken_at').order('taken_at', { ascending: false }).limit(20)
+  if (error) throw error
+  return data || []
 }

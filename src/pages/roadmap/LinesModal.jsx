@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import Modal from '../../components/Modal'
 import { S } from '../../lib/styles'
-import { updateLine, createLine, deleteLine, moveStationsToLine, deltaE, DE_MIN } from './roadmapData'
+import { updateLine, createLine, deleteLine, moveStationsToLine, deltaE, DE_MIN, fetchLayoutSnapshots, restoreLayout, KEY_RESERVED_X, KEY_LANES } from './roadmapData'
 
 // Curated palette for a NEW line. Every swatch is ≥ΔE 31.6 (CIELAB) from the
 // current five lines and the reserved needs-fix red — measured, not eyeballed.
@@ -12,6 +12,7 @@ const PALETTE = [
   { hex: '#C2186F', name: 'Rose' },
 ]
 const HEX_RE = /^#[0-9A-Fa-f]{6}$/
+const fmtSnapTime = (ts) => { try { return new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(ts)) } catch { return '' } }
 
 // Rename / recolour / re-describe / reorder existing lines (batched), plus create
 // a new line, move its stations, hide, or delete. Structural actions (create /
@@ -24,6 +25,9 @@ export default function LinesModal({ open, onClose, lines, initiatives, onSaved 
   const [adding, setAdding] = useState(false)
   const [moveFor, setMoveFor] = useState(null) // line id whose move panel is open
   const [seedKey, setSeedKey] = useState(undefined)
+  const [restoreOpen, setRestoreOpen] = useState(false)
+  const [snaps, setSnaps] = useState(null) // layout snapshots (lazy)
+  const [restoreBusy, setRestoreBusy] = useState(false)
 
   // Seed the editable rows when the modal opens or the source lines change —
   // during render (React's "adjust state on prop change") rather than an effect.
@@ -85,6 +89,18 @@ export default function LinesModal({ open, onClose, lines, initiatives, onSaved 
     }
   }
 
+  async function doRestore(id) {
+    setRestoreBusy(true); setError('')
+    try { await restoreLayout(id); onSaved?.(); onClose() }
+    catch (e) { setError(e?.message || 'Could not restore the layout') }
+    finally { setRestoreBusy(false) }
+  }
+  function toggleRestore() {
+    const next = !restoreOpen
+    setRestoreOpen(next)
+    if (next && snaps === null) fetchLayoutSnapshots().then(setSnaps).catch(() => setSnaps([]))
+  }
+
   if (!open) return null
   return (
     <Modal open={open} onClose={onClose} title="Edit lines" size="lg">
@@ -94,6 +110,10 @@ export default function LinesModal({ open, onClose, lines, initiatives, onSaved 
         {rows.map((r, i) => {
           const count = countFor(r.id)
           const lockMsg = count > 0 ? `${count} station${count === 1 ? '' : 's'} still on this line — move them first` : ''
+          // Warn if a top-two-lane line starts under the station-key overlay.
+          const laneIdx = ordered.findIndex(l => l.id === r.id)
+          const startX = Number(ordered.find(l => l.id === r.id)?.track_start_x)
+          const keyWarn = laneIdx > -1 && laneIdx < KEY_LANES && Number.isFinite(startX) && startX < KEY_RESERVED_X
           return (
             <div key={r.id} className={`${S.card} p-3`}>
               <div className="flex items-start gap-3">
@@ -116,6 +136,7 @@ export default function LinesModal({ open, onClose, lines, initiatives, onSaved 
                 </div>
               </div>
               {rowErr?.id === r.id && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{rowErr.message}</p>}
+              {keyWarn && <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">Starts at x{Math.round(startX)} — under the station key on a top lane. Stations here may hide behind it; set the track start to {KEY_RESERVED_X} or more.</p>}
               {moveFor === r.id && (
                 <MovePanel line={ordered.find(l => l.id === r.id)} lines={ordered} initiatives={initiatives}
                   onCancel={() => setMoveFor(null)}
@@ -133,6 +154,26 @@ export default function LinesModal({ open, onClose, lines, initiatives, onSaved 
             ＋ Add line
           </button>
         )}
+
+        {/* Restore a previous layout (station positions + track starts) */}
+        <div className="border-t border-gray-100 dark:border-white/5 pt-3">
+          <button onClick={toggleRestore} className="text-xs font-semibold text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200">
+            {restoreOpen ? 'Hide layout history' : 'Restore a previous layout…'}
+          </button>
+          {restoreOpen && (
+            <div className="mt-2 space-y-1.5">
+              {snaps === null ? <p className="text-xs text-gray-400 dark:text-slate-500">Loading…</p>
+                : snaps.length === 0 ? <p className="text-xs text-gray-400 dark:text-slate-500">No saved layouts yet.</p>
+                  : snaps.map(s => (
+                    <div key={s.id} className="flex items-center gap-3 text-xs">
+                      <span className="text-gray-700 dark:text-slate-300 min-w-0 flex-1 truncate">{s.label || 'Layout'}</span>
+                      <span className="text-gray-400 dark:text-slate-500 shrink-0">{fmtSnapTime(s.taken_at)}</span>
+                      <button onClick={() => doRestore(s.id)} disabled={restoreBusy} className="font-semibold text-orange-600 dark:text-orange-400 hover:underline disabled:opacity-50 shrink-0">Restore</button>
+                    </div>
+                  ))}
+            </div>
+          )}
+        </div>
 
         <div className={S.modalFooter}>
           <button onClick={onClose} className={S.btnCancel}>Cancel</button>
