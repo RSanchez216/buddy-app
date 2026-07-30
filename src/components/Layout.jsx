@@ -66,7 +66,7 @@ const PAGE_ICON = {
 }
 // nav_group render order (matches the previous hardcoded sidebar). Groups not
 // listed here fall to the end, alphabetically.
-const SECTION_ORDER = ['Today', 'Money', 'Profitability', 'Fleet', 'Payables', 'Vision']
+const SECTION_ORDER = ['Today', 'Money', 'Profitability', 'Fleet', 'Payables']
 
 // Frontend static-nav groups: page_keys pulled OUT of their DB nav_group and
 // shown under a dedicated section instead (access still comes from my_pages, so
@@ -74,6 +74,7 @@ const SECTION_ORDER = ['Today', 'Money', 'Profitability', 'Fleet', 'Payables', '
 // the new night-shift surfaces (Lumpers now, Night Shift to follow).
 const STATIC_NAV_GROUPS = [
   { label: 'After Hours', pageKeys: ['shift_board', 'after_hours_requests', 'lumpers'] },
+  { label: 'Vision', pageKeys: ['roadmap'] }, // pinned last, after After Hours
 ]
 const STATIC_NAV_KEYS = new Set(STATIC_NAV_GROUPS.flatMap(g => g.pageKeys))
 
