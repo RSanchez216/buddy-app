@@ -10,7 +10,7 @@ import HubModal from './HubModal'
 import LinesModal from './LinesModal'
 import {
   fetchRoadmap, fetchDepartments, fetchSnapshots, computeLayout, savePositions, autoTidyPositions, recomputeStatuses,
-  STATUS_LABEL, PRIORITY_LABEL,
+  setPhaseStatus, STATUS_LABEL, PHASE_STATUS_LABEL, PRIORITY_LABEL,
 } from './roadmapData'
 
 const STATUS_PILL = {
@@ -74,6 +74,16 @@ export default function Roadmap() {
     if (prioFilter && it.priority !== prioFilter) return true
     return false
   }, [deptFilter, prioFilter])
+
+  // One-click phase advance from the inspector. Writes only the phase status; a
+  // trigger recomputes the station status + meter. Quiet refetch (no spinner) so
+  // the meter moves in place without a reload.
+  const onSetPhase = useCallback(async (phaseId, status) => {
+    try {
+      await setPhaseStatus(phaseId, status)
+      setData(await fetchRoadmap())
+    } catch (e) { toast.error("Couldn't update the phase", e) }
+  }, [toast])
 
   // Drag end → optimistic pos_x, persist, roll back on error.
   const onDragEnd = useCallback(async (id, x) => {
@@ -223,7 +233,7 @@ export default function Roadmap() {
 
           {/* Inspector */}
           <Inspector selected={selected} lines={lines} departments={departments} initiatives={initiatives} canEdit={canEdit}
-            onEdit={() => setEditing(selected)} onManagePhases={() => setPhasesFor(selected)} />
+            onEdit={() => setEditing(selected)} onManagePhases={() => setPhasesFor(selected)} onSetPhase={onSetPhase} />
 
           {/* What moved — daily snapshot diffs */}
           <WhatMoved snapshots={snapshots} initiatives={initiatives} onSelect={setSelectedId} />
@@ -375,7 +385,63 @@ function LineLegend({ lines, canEdit, onEdit }) {
   )
 }
 
-function Inspector({ selected, lines, departments, initiatives, canEdit, onEdit, onManagePhases }) {
+const PHASE_PILL = {
+  done: 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/20',
+  building: 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-500/20',
+  planned: 'bg-gray-100 dark:bg-white/5 text-gray-500 dark:text-slate-400 border-gray-200 dark:border-white/10',
+}
+
+// Three-state phase control — one click to Done (or back to Building/Planned).
+// Writes straight to roadmap_phases.status via the parent; the station status
+// and meter recompute themselves.
+function PhaseToggle({ status, onSet }) {
+  const [busy, setBusy] = useState(false)
+  const opts = [['planned', 'Planned'], ['building', 'Building'], ['done', 'Done']]
+  async function set(v) {
+    if (v === status || busy) return
+    setBusy(true)
+    try { await onSet(v) } finally { setBusy(false) }
+  }
+  return (
+    <div className="inline-flex rounded-lg border border-gray-200 dark:border-slate-700 overflow-hidden shrink-0">
+      {opts.map(([v, l], i) => {
+        const active = status === v
+        const cls = active
+          ? (v === 'done' ? 'bg-emerald-500 text-white' : v === 'building' ? 'bg-amber-500 text-white' : 'bg-gray-400 text-white')
+          : 'text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5'
+        return (
+          <button key={v} type="button" disabled={busy} onClick={() => set(v)}
+            className={`px-2 py-1 text-[11px] font-semibold disabled:opacity-50 ${i > 0 ? 'border-l border-gray-200 dark:border-slate-700' : ''} ${cls}`}>
+            {l}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+function PhaseList({ phases, canEdit, onSetPhase }) {
+  const sorted = [...(phases || [])].sort((a, b) => a.phase_no - b.phase_no)
+  if (!sorted.length) return null
+  return (
+    <div className="mt-4 border-t border-gray-100 dark:border-white/5 pt-4">
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500 mb-2">Phases</div>
+      <div className="space-y-2">
+        {sorted.map(p => (
+          <div key={p.id} className="flex items-center gap-3">
+            <span className="w-5 h-5 rounded-full bg-gray-100 dark:bg-white/5 text-gray-500 dark:text-slate-400 text-[10px] font-bold inline-flex items-center justify-center shrink-0">{p.phase_no}</span>
+            <span className="text-sm text-gray-700 dark:text-slate-300 min-w-0 flex-1 truncate">{p.name}</span>
+            {canEdit
+              ? <PhaseToggle status={p.status} onSet={(s) => onSetPhase(p.id, s)} />
+              : <span className={`text-[10px] uppercase tracking-wide font-bold px-2 py-0.5 rounded-full border shrink-0 ${PHASE_PILL[p.status] || PHASE_PILL.planned}`}>{PHASE_STATUS_LABEL[p.status] || p.status}</span>}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function Inspector({ selected, lines, departments, initiatives, canEdit, onEdit, onManagePhases, onSetPhase }) {
   if (!selected) return <div className={`${S.card} p-5 text-sm text-gray-400 dark:text-slate-500`}>Click a station to see what it controls, what it&apos;s waiting on, and where it&apos;s headed.</div>
   const line = lines.find(l => l.id === selected.primary_line_id)
   const dept = departments.find(d => d.id === selected.department_id)
@@ -402,6 +468,7 @@ function Inspector({ selected, lines, departments, initiatives, canEdit, onEdit,
         <Col label="Target" value={selected.target_quarter || '—'} />
         <Col label="Owner" value={selected.owner_user_id ? 'Assigned' : 'Unassigned'} />
       </div>
+      <PhaseList phases={selected.phases} canEdit={canEdit} onSetPhase={onSetPhase} />
     </div>
   )
 }

@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import Modal from '../../components/Modal'
 import { S } from '../../lib/styles'
-import { updateLine, createLine, deleteLine, moveStationsToLine, deltaE, nearestConflict, RESERVED_RED, DE_MIN } from './roadmapData'
+import { updateLine, createLine, deleteLine, moveStationsToLine, deltaE, DE_MIN } from './roadmapData'
 
 // Curated palette for a NEW line. Every swatch is ≥ΔE 31.6 (CIELAB) from the
 // current five lines and the reserved needs-fix red — measured, not eyeballed.
@@ -20,37 +20,52 @@ export default function LinesModal({ open, onClose, lines, initiatives, onSaved 
   const [rows, setRows] = useState([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [rowErr, setRowErr] = useState(null) // { id, message } — pins a colour/save error to its line
   const [adding, setAdding] = useState(false)
   const [moveFor, setMoveFor] = useState(null) // line id whose move panel is open
+  const [seedKey, setSeedKey] = useState(undefined)
 
-  useEffect(() => {
-    if (!open) return
-    setRows([...lines].sort((a, b) => a.sort_order - b.sort_order)
-      .map(l => ({ id: l.id, name: l.name || '', color: l.color || '#94a3b8', description: l.description || '' })))
-    setError(''); setAdding(false); setMoveFor(null)
-  }, [open, lines])
+  // Seed the editable rows when the modal opens or the source lines change —
+  // during render (React's "adjust state on prop change") rather than an effect.
+  const key = open ? lines : null
+  if (key !== seedKey) {
+    setSeedKey(key)
+    setRows(open ? [...lines].sort((a, b) => a.sort_order - b.sort_order)
+      .map(l => ({ id: l.id, name: l.name || '', color: l.color || '#94a3b8', description: l.description || '' })) : [])
+    setError(''); setRowErr(null); setAdding(false); setMoveFor(null)
+  }
 
   const ordered = [...lines].sort((a, b) => a.sort_order - b.sort_order)
   const countFor = (id) => (initiatives || []).filter(it => it.primary_line_id === id).length
 
-  const patch = (i, k, v) => setRows(a => a.map((r, j) => j === i ? { ...r, [k]: v } : r))
+  const patch = (i, k, v) => {
+    setRows(a => a.map((r, j) => j === i ? { ...r, [k]: v } : r))
+    setRowErr(prev => (prev && prev.id === rows[i]?.id ? null : prev)) // clear the row's error as it's edited
+  }
   const move = (i, dir) => setRows(a => { const j = i + dir; if (j < 0 || j >= a.length) return a; const n = [...a];[n[i], n[j]] = [n[j], n[i]]; return n })
 
   async function save() {
-    setSaving(true); setError('')
-    try {
-      const orig = new Map(lines.map(l => [l.id, l]))
-      for (let i = 0; i < rows.length; i++) {
-        const r = rows[i], o = orig.get(r.id)
-        const p = {}
-        if (r.name.trim() !== o.name) p.name = r.name.trim()
-        if (r.color !== o.color) p.color = r.color
-        if ((r.description || '') !== (o.description || '')) p.description = r.description.trim() || null
-        if (o.sort_order !== i + 1) p.sort_order = i + 1
-        if (Object.keys(p).length) await updateLine(r.id, p)
+    setSaving(true); setError(''); setRowErr(null)
+    const orig = new Map(lines.map(l => [l.id, l]))
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i], o = orig.get(r.id)
+      const p = {}
+      if (r.name.trim() !== o.name) p.name = r.name.trim()
+      if (r.color !== o.color) p.color = r.color
+      if ((r.description || '') !== (o.description || '')) p.description = r.description.trim() || null
+      if (o.sort_order !== i + 1) p.sort_order = i + 1
+      if (!Object.keys(p).length) continue
+      try {
+        await updateLine(r.id, p)
+      } catch (e) {
+        // The colour-separation trigger returns a readable message — pin it to
+        // the offending line instead of a raw error at the top.
+        setRowErr({ id: r.id, message: e?.message || 'Save failed' })
+        setSaving(false)
+        return
       }
-      onSaved?.(); onClose()
-    } catch (e) { setError(e?.message || 'Save failed') } finally { setSaving(false) }
+    }
+    onSaved?.(); onClose(); setSaving(false)
   }
 
   // Structural actions — immediate, refetch on success, surface the reason on fail.
@@ -100,6 +115,7 @@ export default function LinesModal({ open, onClose, lines, initiatives, onSaved 
                   </div>
                 </div>
               </div>
+              {rowErr?.id === r.id && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{rowErr.message}</p>}
               {moveFor === r.id && (
                 <MovePanel line={ordered.find(l => l.id === r.id)} lines={ordered} initiatives={initiatives}
                   onCancel={() => setMoveFor(null)}
@@ -111,7 +127,7 @@ export default function LinesModal({ open, onClose, lines, initiatives, onSaved 
         })}
 
         {adding ? (
-          <CreateLineForm lines={ordered} onCancel={() => setAdding(false)} onDone={() => { setAdding(false); onSaved?.() }} onError={setError} />
+          <CreateLineForm lines={ordered} onCancel={() => setAdding(false)} onDone={() => { setAdding(false); onSaved?.() }} />
         ) : (
           <button onClick={() => { setError(''); setAdding(true) }} className="w-full rounded-xl border border-dashed border-gray-300 dark:border-slate-600 py-2.5 text-sm font-semibold text-orange-600 dark:text-orange-400 hover:bg-orange-50/50 dark:hover:bg-orange-500/5 transition-colors">
             ＋ Add line
@@ -141,33 +157,33 @@ function RowBtn({ children, onClick, disabled, title, danger }) {
 }
 
 // A new line uses the curated palette (or a validated custom hex) and a position.
-function CreateLineForm({ lines, onCancel, onDone, onError }) {
+function CreateLineForm({ lines, onCancel, onDone }) {
   const [name, setName] = useState('')
   const [color, setColor] = useState('')
   const [description, setDescription] = useState('')
   const [afterLineId, setAfterLineId] = useState('')
   const [custom, setCustom] = useState('')
   const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState('')
+  const [err, setErr] = useState('')       // name-level
+  const [colorErr, setColorErr] = useState('') // colour field — mirrors the server message
 
-  // Refs a new colour must stay clear of: every current line + the reserved red.
-  const conflictRefs = [...lines.map(l => ({ hex: l.color, label: l.name })), { hex: RESERVED_RED, label: 'the needs-fix red' }]
   // Grey a palette swatch when it's within ΔE of a line already on the map (also
   // catches an exact in-use colour, ΔE 0).
   const swatchTaken = (hex) => lines.some(l => deltaE(hex, l.color) < DE_MIN)
 
+  // The colour-separation rule is enforced by a trigger on roadmap_lines, so the
+  // server is the authority — we surface its readable message verbatim rather
+  // than pre-judging the colour here.
   async function submit() {
-    setErr('')
+    setErr(''); setColorErr('')
     if (!name.trim()) { setErr('A line needs a name'); return }
     const chosen = HEX_RE.test(color) ? color : (HEX_RE.test(custom.trim()) ? custom.trim().toUpperCase() : color)
-    if (!HEX_RE.test(chosen)) { setErr('Colour must be a hex value like #0D9488'); return }
-    const clash = nearestConflict(chosen, conflictRefs)
-    if (clash) { setErr(`That colour is too close to ${clash.label} — pick a more distinct one.`); return }
+    if (!HEX_RE.test(chosen)) { setColorErr('Colour must be a hex value like #0D9488'); return }
     setBusy(true)
     try {
       await createLine({ name: name.trim(), color: chosen, description, afterLineId: afterLineId || null })
       onDone()
-    } catch (e) { setErr(e?.message || 'Could not create the line'); onError?.(e?.message || 'Could not create the line') }
+    } catch (e) { setColorErr(e?.message || 'Could not create the line') }
     finally { setBusy(false) }
   }
 
@@ -189,16 +205,17 @@ function CreateLineForm({ lines, onCancel, onDone, onError }) {
             const selected = color === p.hex.toUpperCase()
             return (
               <button key={p.hex} type="button" disabled={taken} title={taken ? `${p.name} — too close to a line in use` : p.name}
-                onClick={() => { setColor(p.hex.toUpperCase()); setErr('') }}
+                onClick={() => { setColor(p.hex.toUpperCase()); setColorErr('') }}
                 className={`w-7 h-7 rounded-full border-2 transition-all disabled:opacity-25 disabled:cursor-not-allowed ${selected ? 'ring-2 ring-offset-2 ring-gray-400 dark:ring-slate-400 ring-offset-white dark:ring-offset-[#0d0d1f] border-white dark:border-[#0d0d1f]' : 'border-white/70 dark:border-white/20'}`}
                 style={{ background: p.hex }} />
             )
           })}
         </div>
         <div className="flex items-center gap-2 mt-2">
-          <input className={`${S.input} w-32 font-mono text-xs`} value={custom} onChange={e => setCustom(e.target.value)} placeholder="#0D9488" />
+          <input className={`${S.input} w-32 font-mono text-xs`} value={custom} onChange={e => { setCustom(e.target.value); setColorErr('') }} placeholder="#0D9488" />
           <span className="text-[11px] text-gray-400 dark:text-slate-500">custom hex (optional)</span>
         </div>
+        {colorErr && <p className="mt-1.5 text-xs text-red-600 dark:text-red-400">{colorErr}</p>}
       </div>
 
       <div>

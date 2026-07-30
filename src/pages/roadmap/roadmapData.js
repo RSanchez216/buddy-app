@@ -85,6 +85,14 @@ export async function deletePhase(id) {
   const { error } = await supabase.from('roadmap_phases').delete().eq('id', id)
   if (error) throw error
 }
+// Advance a single phase. 'done' stamps completed_at; moving off 'done' clears it.
+// initiatives.status is trigger-owned — never written here.
+export async function setPhaseStatus(id, status) {
+  const { error } = await supabase.from('roadmap_phases')
+    .update({ status, completed_at: status === 'done' ? new Date().toISOString() : null })
+    .eq('id', id)
+  if (error) throw error
+}
 
 // Extra lines (roadmap_initiative_lines)
 export async function addInitiativeLine(initiativeId, lineId) {

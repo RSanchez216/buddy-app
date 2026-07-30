@@ -59,7 +59,7 @@ export default function RoadmapMap({
     mq.addEventListener?.('change', on)
     return () => mq.removeEventListener?.('change', on)
   }, [])
-  const buildingCount = useMemo(() => initiatives.filter(it => it.status === 'building').length, [initiatives])
+  const buildingCount = useMemo(() => initiatives.filter(it => it.status === 'building' && it.flag !== 'parked').length, [initiatives])
   const staticArc = reduced || buildingCount > 6
 
   // Appearances: one per line the station touches.
@@ -272,8 +272,9 @@ function Station({ it, x, y, color, selected, dim, draggable, staticArc, onPoint
       {selected && <circle cx={x} cy={y} r={R + 12} fill={color} opacity={0.15} />}
       {rings}
 
-      {/* Building marker — below the badges in z-order so needs-fix paints on top */}
-      {it.status === 'building' && <BuildingArc x={x} y={y} r={R} color={color} animate={!staticArc} />}
+      {/* Building marker — below the badges in z-order so needs-fix paints on top.
+          Parked is 'building [parked]': keep the dashed rings, but stop the motion. */}
+      {it.status === 'building' && it.flag !== 'parked' && <BuildingArc x={x} y={y} r={R} color={color} animate={!staticArc} />}
 
       {/* >4 phases → count badge at lower-right of the outer ring */}
       {count > PHASE_RADII.length && (
