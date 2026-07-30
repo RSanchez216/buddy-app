@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { PHASE_RADII, trackPath, PHASE_STATUS_LABEL } from './roadmapData'
 
 // Theme-aware neutral classes for SVG fills/strokes (line colours stay inline hex).
@@ -47,6 +47,20 @@ export default function RoadmapMap({
 
   const byId = useMemo(() => new Map(initiatives.map(it => [it.id, it])), [initiatives])
   const posX = (it) => (drag && drag.id === it.id ? drag.x : Number(it.pos_x) || 0)
+
+  // "Building" stations orbit a slow arc. Freeze it when the viewer prefers
+  // reduced motion, or when there are so many building at once (>6) that spinners
+  // become noise rather than signal.
+  const [reduced, setReduced] = useState(() => typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches)
+  useEffect(() => {
+    const mq = window.matchMedia?.('(prefers-reduced-motion: reduce)')
+    if (!mq) return
+    const on = () => setReduced(mq.matches)
+    mq.addEventListener?.('change', on)
+    return () => mq.removeEventListener?.('change', on)
+  }, [])
+  const buildingCount = useMemo(() => initiatives.filter(it => it.status === 'building').length, [initiatives])
+  const staticArc = reduced || buildingCount > 6
 
   // Appearances: one per line the station touches.
   const appearances = useMemo(() => {
@@ -105,6 +119,9 @@ export default function RoadmapMap({
 
   return (
     <div ref={wrapRef} className="relative w-full">
+      {/* Orbit keyframes — the class rotates the arc <g> around its own centre.
+          Reduced motion halts it here too, as a backstop to the JS check. */}
+      <style>{`@keyframes roadmap-orbit{to{transform:rotate(360deg)}}.roadmap-orbit{animation:roadmap-orbit 4s linear infinite;transform-box:fill-box;transform-origin:center}@media (prefers-reduced-motion:reduce){.roadmap-orbit{animation:none}}`}</style>
       <svg
         ref={svgRef}
         viewBox={`0 0 ${vbWidth} ${vbHeight}`}
@@ -157,7 +174,7 @@ export default function RoadmapMap({
             it={it} x={posX(it)} y={y} color={lineColor(lineId)}
             selected={selectedId === it.id}
             dim={dimmed ? dimmed(it) : false}
-            draggable={canEdit}
+            draggable={canEdit} staticArc={staticArc}
             onPointerDown={(e) => startDrag(e, it)}
             onClick={(e) => { e.stopPropagation(); if (movedRef.current) { movedRef.current = false; return } onSelect?.(it.id) }}
             onMouseEnter={(e) => showHover(e, it)}
@@ -180,7 +197,41 @@ function depPath(x1, y1, x2, y2) {
   return `M ${x1} ${y1} H ${midX} L ${x2} ${y2}`
 }
 
-function Station({ it, x, y, color, selected, dim, draggable, onPointerDown, onClick, onMouseEnter, onMouseLeave }) {
+// Polar point with 0° at the top (12 o'clock), clockwise.
+function polar(cx, cy, r, deg) { const a = (deg - 90) * Math.PI / 180; return [cx + r * Math.cos(a), cy + r * Math.sin(a)] }
+function arcPath(cx, cy, r, startDeg, sweepDeg) {
+  const [x0, y0] = polar(cx, cy, r, startDeg)
+  const [x1, y1] = polar(cx, cy, r, startDeg + sweepDeg)
+  return `M ${x0.toFixed(2)} ${y0.toFixed(2)} A ${r} ${r} 0 ${sweepDeg > 180 ? 1 : 0} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`
+}
+
+// A ~100° arc with an arrowhead, orbiting just outside the outer ring — the
+// "being built right now" marker. An invisible full circle anchors the group's
+// bounding box on the station so `transform-box: fill-box` orbits the centre.
+function BuildingArc({ x, y, r, color, animate }) {
+  const rr = r + 7
+  const start = -50, sweep = 100
+  const end = start + sweep
+  const [ex, ey] = polar(x, y, rr, end)
+  const a = (end - 90) * Math.PI / 180
+  const tang = [-Math.sin(a), Math.cos(a)] // clockwise tangent (direction of travel)
+  const norm = [Math.cos(a), Math.sin(a)]  // outward radius
+  const s = 5
+  const tip = [ex + tang[0] * s, ey + tang[1] * s]
+  const b1 = [ex + norm[0] * s * 0.7, ey + norm[1] * s * 0.7]
+  const b2 = [ex - norm[0] * s * 0.7, ey - norm[1] * s * 0.7]
+  const pts = [tip, b1, b2].map(p => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ')
+  return (
+    <g className={animate ? 'roadmap-orbit' : undefined} style={{ transformBox: 'fill-box', transformOrigin: 'center' }}>
+      {/* radius clears the arrowhead so the bbox stays centred on the station */}
+      <circle cx={x} cy={y} r={rr + 6} fill="none" stroke="none" />
+      <path d={arcPath(x, y, rr, start, sweep)} fill="none" stroke={color} strokeWidth={2.5} strokeLinecap="round" opacity={0.9} />
+      <polygon points={pts} fill={color} opacity={0.9} />
+    </g>
+  )
+}
+
+function Station({ it, x, y, color, selected, dim, draggable, staticArc, onPointerDown, onClick, onMouseEnter, onMouseLeave }) {
   const phases = [...(it.phases || [])].sort((a, b) => a.phase_no - b.phase_no)
   const count = phases.length || 1
   const shown = Math.min(count, PHASE_RADII.length)
@@ -220,6 +271,9 @@ function Station({ it, x, y, color, selected, dim, draggable, onPointerDown, onC
     >
       {selected && <circle cx={x} cy={y} r={R + 12} fill={color} opacity={0.15} />}
       {rings}
+
+      {/* Building marker — below the badges in z-order so needs-fix paints on top */}
+      {it.status === 'building' && <BuildingArc x={x} y={y} r={R} color={color} animate={!staticArc} />}
 
       {/* >4 phases → count badge at lower-right of the outer ring */}
       {count > PHASE_RADII.length && (

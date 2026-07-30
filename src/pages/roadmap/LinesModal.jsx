@@ -1,16 +1,15 @@
 import { useEffect, useState } from 'react'
 import Modal from '../../components/Modal'
 import { S } from '../../lib/styles'
-import { updateLine, createLine, deleteLine, moveStationsToLine } from './roadmapData'
+import { updateLine, createLine, deleteLine, moveStationsToLine, deltaE, nearestConflict, RESERVED_RED, DE_MIN } from './roadmapData'
 
-// Curated palette for a NEW line — distinguishable from each other and the
-// current five, legible in dark mode. In-use swatches grey out; a validated
-// custom hex is the fallback.
+// Curated palette for a NEW line. Every swatch is ≥ΔE 31.6 (CIELAB) from the
+// current five lines and the reserved needs-fix red — measured, not eyeballed.
+// A swatch greys out when it's too close (ΔE < 25) to a line already on the map.
 const PALETTE = [
-  { hex: '#0D9488', name: 'Teal' }, { hex: '#BE123C', name: 'Crimson' },
-  { hex: '#B45309', name: 'Bronze' }, { hex: '#4F46E5', name: 'Indigo' },
-  { hex: '#0891B2', name: 'Cyan' }, { hex: '#A21CAF', name: 'Magenta' },
-  { hex: '#65A30D', name: 'Olive' }, { hex: '#475569', name: 'Slate' },
+  { hex: '#1194D6', name: 'Sky' }, { hex: '#8E5C29', name: 'Brown' },
+  { hex: '#8E2989', name: 'Plum' }, { hex: '#7F8C1F', name: 'Olive' },
+  { hex: '#C2186F', name: 'Rose' },
 ]
 const HEX_RE = /^#[0-9A-Fa-f]{6}$/
 
@@ -151,13 +150,19 @@ function CreateLineForm({ lines, onCancel, onDone, onError }) {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
 
-  const inUse = new Set(lines.map(l => (l.color || '').toUpperCase()))
+  // Refs a new colour must stay clear of: every current line + the reserved red.
+  const conflictRefs = [...lines.map(l => ({ hex: l.color, label: l.name })), { hex: RESERVED_RED, label: 'the needs-fix red' }]
+  // Grey a palette swatch when it's within ΔE of a line already on the map (also
+  // catches an exact in-use colour, ΔE 0).
+  const swatchTaken = (hex) => lines.some(l => deltaE(hex, l.color) < DE_MIN)
 
   async function submit() {
     setErr('')
     if (!name.trim()) { setErr('A line needs a name'); return }
     const chosen = HEX_RE.test(color) ? color : (HEX_RE.test(custom.trim()) ? custom.trim().toUpperCase() : color)
     if (!HEX_RE.test(chosen)) { setErr('Colour must be a hex value like #0D9488'); return }
+    const clash = nearestConflict(chosen, conflictRefs)
+    if (clash) { setErr(`That colour is too close to ${clash.label} — pick a more distinct one.`); return }
     setBusy(true)
     try {
       await createLine({ name: name.trim(), color: chosen, description, afterLineId: afterLineId || null })
@@ -180,10 +185,10 @@ function CreateLineForm({ lines, onCancel, onDone, onError }) {
         <label className={S.label}>Colour</label>
         <div className="flex flex-wrap gap-1.5">
           {PALETTE.map(p => {
-            const taken = inUse.has(p.hex.toUpperCase())
+            const taken = swatchTaken(p.hex)
             const selected = color === p.hex.toUpperCase()
             return (
-              <button key={p.hex} type="button" disabled={taken} title={taken ? `${p.name} — already in use` : p.name}
+              <button key={p.hex} type="button" disabled={taken} title={taken ? `${p.name} — too close to a line in use` : p.name}
                 onClick={() => { setColor(p.hex.toUpperCase()); setErr('') }}
                 className={`w-7 h-7 rounded-full border-2 transition-all disabled:opacity-25 disabled:cursor-not-allowed ${selected ? 'ring-2 ring-offset-2 ring-gray-400 dark:ring-slate-400 ring-offset-white dark:ring-offset-[#0d0d1f] border-white dark:border-[#0d0d1f]' : 'border-white/70 dark:border-white/20'}`}
                 style={{ background: p.hex }} />

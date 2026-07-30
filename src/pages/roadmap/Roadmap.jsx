@@ -9,7 +9,7 @@ import PhasesModal from './PhasesModal'
 import HubModal from './HubModal'
 import LinesModal from './LinesModal'
 import {
-  fetchRoadmap, fetchDepartments, computeLayout, savePositions, autoTidyPositions, recomputeStatuses,
+  fetchRoadmap, fetchDepartments, fetchSnapshots, computeLayout, savePositions, autoTidyPositions, recomputeStatuses,
   STATUS_LABEL, PRIORITY_LABEL,
 } from './roadmapData'
 
@@ -32,6 +32,7 @@ export default function Roadmap() {
 
   const [data, setData] = useState(null)
   const [departments, setDepartments] = useState([])
+  const [snapshots, setSnapshots] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [selectedId, setSelectedId] = useState(null)
@@ -47,8 +48,8 @@ export default function Roadmap() {
   const load = useCallback(async () => {
     setLoading(true); setError('')
     try {
-      const [rm, depts] = await Promise.all([fetchRoadmap(), fetchDepartments()])
-      setData(rm); setDepartments(depts)
+      const [rm, depts, snaps] = await Promise.all([fetchRoadmap(), fetchDepartments(), fetchSnapshots().catch(() => [])])
+      setData(rm); setDepartments(depts); setSnapshots(snaps)
     } catch (e) { setError(e?.message || 'Failed to load the roadmap') }
     finally { setLoading(false) }
   }, [])
@@ -98,6 +99,9 @@ export default function Roadmap() {
     try {
       const { default: jsPDF } = await import('jspdf')
       const clone = svg.cloneNode(true)
+      // Freeze the building-arc animation so it rasterises at a fixed angle
+      // rather than whatever frame the capture caught.
+      clone.querySelectorAll('.roadmap-orbit').forEach(el => { el.classList.remove('roadmap-orbit'); el.style.animation = 'none' })
       const src = svg.querySelectorAll('*'), dst = clone.querySelectorAll('*')
       const props = ['fill', 'stroke', 'stroke-width', 'stroke-opacity', 'stroke-dasharray', 'stroke-linecap', 'stroke-linejoin', 'opacity', 'font-size', 'font-weight', 'font-family', 'letter-spacing']
       for (let i = 0; i < src.length; i++) {
@@ -220,6 +224,9 @@ export default function Roadmap() {
           {/* Inspector */}
           <Inspector selected={selected} lines={lines} departments={departments} initiatives={initiatives} canEdit={canEdit}
             onEdit={() => setEditing(selected)} onManagePhases={() => setPhasesFor(selected)} />
+
+          {/* What moved — daily snapshot diffs */}
+          <WhatMoved snapshots={snapshots} initiatives={initiatives} onSelect={setSelectedId} />
         </>
       )}
 
@@ -395,6 +402,104 @@ function Inspector({ selected, lines, departments, initiatives, canEdit, onEdit,
         <Col label="Target" value={selected.target_quarter || '—'} />
         <Col label="Owner" value={selected.owner_user_id ? 'Assigned' : 'Unassigned'} />
       </div>
+    </div>
+  )
+}
+
+// ── What moved ───────────────────────────────────────────────────────────────
+const SNAP_PILL = {
+  live: 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/20',
+  done: 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/20',
+  building: 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-500/20',
+  planned: 'bg-gray-100 dark:bg-white/5 text-gray-500 dark:text-slate-400 border-gray-200 dark:border-white/10',
+  needs_fix: 'bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400 border-red-200 dark:border-red-500/20',
+  parked: 'bg-gray-100 dark:bg-white/5 text-gray-500 dark:text-slate-400 border-gray-200 dark:border-white/10',
+}
+function SnapPill({ value }) {
+  if (!value) return <span className="text-gray-300 dark:text-slate-600">—</span>
+  const label = String(value).replace(/_/g, ' ').replace(/^./, c => c.toUpperCase())
+  return <span className={`text-[10px] uppercase tracking-wide font-bold px-1.5 py-0.5 rounded-full border ${SNAP_PILL[value] || SNAP_PILL.planned}`}>{label}</span>
+}
+
+function fmtSnapDate(ymd) {
+  const m = String(ymd || '').match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (!m) return ymd || ''
+  return new Date(+m[1], +m[2] - 1, +m[3]).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+// Burn-up of stations_open over the last snapshots. Hidden under 3 points.
+function BurnUp({ snaps }) {
+  if (!snaps || snaps.length < 3) return null
+  const series = [...snaps].reverse() // chronological
+  const w = 220, h = 34, pad = 3
+  const total = series[series.length - 1].stations_total || Math.max(...series.map(s => s.stations_open || 0)) || 1
+  const n = series.length
+  const xAt = (i) => pad + (i / (n - 1)) * (w - 2 * pad)
+  const yAt = (v) => h - pad - (Math.min(v, total) / total) * (h - 2 * pad)
+  const pts = series.map((s, i) => `${xAt(i).toFixed(1)},${yAt(s.stations_open || 0).toFixed(1)}`).join(' ')
+  const last = series[n - 1]
+  return (
+    <div className="flex items-center gap-3">
+      <svg viewBox={`0 0 ${w} ${h}`} className="w-[220px] h-[34px]" preserveAspectRatio="none">
+        <line x1={pad} y1={yAt(total)} x2={w - pad} y2={yAt(total)} className="stroke-gray-200 dark:stroke-white/10" strokeWidth={1} strokeDasharray="3 3" />
+        <polyline points={pts} fill="none" className="stroke-emerald-500" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+        <circle cx={xAt(n - 1)} cy={yAt(last.stations_open || 0)} r={2.5} className="fill-emerald-500" />
+      </svg>
+      <span className="text-[11px] text-gray-400 dark:text-slate-500">stations open over {n} days</span>
+    </div>
+  )
+}
+
+function stationIdOf(change, initiatives) {
+  if (!change) return null
+  if (initiatives.some(it => it.id === change.id)) return change.id
+  const owner = initiatives.find(it => (it.phases || []).some(p => p.id === change.id))
+  return owner?.id || null
+}
+
+function WhatMoved({ snapshots, initiatives, onSelect }) {
+  const [open, setOpen] = useState(false)
+  const latest = snapshots[0] || null
+  const changes = latest?.changes || []
+  return (
+    <div className={`${S.card}`}>
+      <button onClick={() => setOpen(o => !o)} className="w-full flex items-center gap-2 px-4 py-3 text-left">
+        <svg className={`w-3.5 h-3.5 shrink-0 text-gray-400 transition-transform ${open ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+        <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">What moved</span>
+        {latest && <span className="text-xs text-gray-500 dark:text-slate-400">· {fmtSnapDate(latest.snapshot_date)}</span>}
+        {changes.length > 0 && <span className="ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-orange-500 text-white">{changes.length}</span>}
+      </button>
+
+      {open && (
+        <div className="px-4 pb-4 space-y-3 border-t border-gray-100 dark:border-white/5 pt-3">
+          <BurnUp snaps={snapshots} />
+          {!latest ? (
+            <p className="text-sm text-gray-400 dark:text-slate-500">No snapshots yet.</p>
+          ) : changes.length === 0 ? (
+            <p className="text-sm text-gray-400 dark:text-slate-500">Nothing moved since the last snapshot.</p>
+          ) : (
+            <div className="divide-y divide-gray-100 dark:divide-white/5">
+              {changes.map((c, i) => {
+                const sid = stationIdOf(c, initiatives)
+                return (
+                  <button key={i} onClick={() => sid && onSelect?.(sid)} disabled={!sid}
+                    className="w-full flex items-center gap-3 py-2 text-left disabled:cursor-default hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg px-1 -mx-1">
+                    <span className="text-sm text-gray-700 dark:text-slate-300 min-w-0 flex-1 truncate">
+                      {c.type === 'station_added' && <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 mr-1.5">NEW</span>}
+                      {c.name}
+                    </span>
+                    <span className="flex items-center gap-1.5 shrink-0">
+                      <SnapPill value={c.from} />
+                      <span className="text-gray-300 dark:text-slate-600">→</span>
+                      <SnapPill value={c.to} />
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
