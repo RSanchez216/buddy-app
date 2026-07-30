@@ -215,6 +215,38 @@ export async function restoreHelpRequest(id) {
   return data
 }
 
+// ── Detail panel (board) ─────────────────────────────────────────────────────
+export async function fetchHelpRequestDetail(id) {
+  const { data, error } = await supabase.rpc('help_request_detail', { p_id: id })
+  if (error) throw error
+  return data
+}
+export async function seeHelpRequest(id) {
+  const { data, error } = await supabase.rpc('see_help_request', { p_id: id })
+  if (error) throw error
+  rpcResult(data, 'Could not mark the request seen.')
+  announceRequestsChanged()
+  return data
+}
+// Marks seen if needed, records handled + resolution, attaches the open shift AND
+// logs the shift activity in one call — never log_shift_activity separately after.
+export async function handleHelpRequest(id, resolution, activityType, loadId) {
+  const { data, error } = await supabase.rpc('handle_help_request', {
+    p_id: id, p_resolution: resolution, p_activity_type: activityType ?? null, p_load_id: loadId ?? null,
+  })
+  if (error) throw error
+  rpcResult(data, 'Could not handle the request.')
+  announceRequestsChanged()
+  return data
+}
+// Resolve a load_number → load id (the picker only carries the number). Lets a
+// new request store the driver's current load.
+export async function fetchLoadIdByNumber(loadNumber) {
+  if (!loadNumber) return null
+  const { data } = await supabase.from('loads').select('id').eq('load_number', loadNumber).limit(1).maybeSingle()
+  return data?.id || null
+}
+
 // ── Formatting ─────────────────────────────────────────────────────────────
 export function fmtClock(ts) {
   if (!ts) return ''

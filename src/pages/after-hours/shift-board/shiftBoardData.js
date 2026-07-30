@@ -100,13 +100,24 @@ export async function removeDriverCheck(shiftId, driverId) {
   const { error } = await supabase.from('shift_driver_checks').delete().eq('shift_id', shiftId).eq('driver_id', driverId)
   if (error) throw error
 }
-export async function logActivity({ shiftId, type, loadId, loadNumber, driverId, note, userId }) {
-  const { error } = await supabase.from('shift_activities').insert({
-    shift_id: shiftId, activity_type: type,
-    load_id: loadId ?? null, load_number: loadNumber ?? null, driver_id: driverId ?? null,
-    note: note ?? null, user_id: userId ?? null, occurred_at: new Date().toISOString(),
+// Record a shift activity via the RPC — NEVER insert shift_activities directly.
+// It finds the caller's open shift itself and attaches it when one is open
+// (shift_id is nullable), so actions record who/when even off-shift.
+// → { ok, id, attached_to_shift }. Types: load_booked, bol_collected,
+// pod_collected, broker_contacted, driver_assisted, escalated, rescan_requested.
+export async function logShiftActivity(type, loadId, driverId, note) {
+  const { data, error } = await supabase.rpc('log_shift_activity', {
+    p_activity_type: type, p_load_id: loadId ?? null, p_driver_id: driverId ?? null, p_note: note ?? null,
   })
   if (error) throw error
+  if (data && data.ok === false) throw new Error(data.reason || 'Could not record the activity.')
+  return data
+}
+// Whether the caller has an open shift (for the "not on shift" banner).
+export async function fetchMyOpenShift() {
+  const { data, error } = await supabase.rpc('my_open_shift')
+  if (error) throw error
+  return data || { shift_id: null }
 }
 // Marking a help request handled lives in ../requests/requestsData
 // (markRequestHandled) so the board and the Requests page share one code path.

@@ -7,17 +7,16 @@ import PriorityGroup from './PriorityGroup'
 import EndShiftModal from './EndShiftModal'
 import TimesNeededGroup from './TimesNeededGroup'
 import CheckpointEditor from './CheckpointEditor'
+import RequestDetailPanel from './RequestDetailPanel'
 import {
   SHIFT_TYPES, GROUPS, groupKeyFor, shiftName, shiftWindow,
   fetchSettings, fetchOpenShift, startShift, fetchShiftSummary, fetchWeekSummary, fetchBoard,
   fetchCheckpointExceptions,
-  upsertDriverCheck, removeDriverCheck, logActivity,
+  upsertDriverCheck, removeDriverCheck, logShiftActivity,
   thisWeekChicago, todayChicago, fmtDayLabel, fmtClock, elapsedSince,
   buildGroupCopy, buildWeekCopy, copyText,
 } from './shiftBoardData'
-// Handling a request from the board goes through the SAME path as the Requests
-// page (sets handled_at/handled_by + shift_id, and announces the change).
-import { markRequestHandled, REQUESTS_CHANGED_EVENT } from '../requests/requestsData'
+import { REQUESTS_CHANGED_EVENT } from '../requests/requestsData'
 
 const ORANGE_BTN = 'flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 text-white rounded-xl transition-all shadow-lg shadow-orange-500/20'
 
@@ -39,6 +38,7 @@ export default function ShiftBoardPage() {
   const [flagFor, setFlagFor] = useState(null)  // row being flagged
   const [cpOpen, setCpOpen] = useState(true)    // Times-needed group expanded
   const [editTarget, setEditTarget] = useState(null) // load being checkpointed
+  const [openRequestId, setOpenRequestId] = useState(null) // raised request detail panel
   const [, setNowTick] = useState(0)
 
   const trackCheckpoints = !!settings?.track_checkpoints
@@ -121,13 +121,12 @@ export default function ShiftBoardPage() {
     } catch (e) { toast.error("Couldn't update the review", e) }
   }
 
+  // Row actions record via log_shift_activity — no open shift required; the shift
+  // is attached automatically when one is open. Requests are handled from the
+  // detail panel (handle_help_request), not here.
   async function onAction(row, type) {
-    if (!shift) return
     try {
-      await logActivity({ shiftId: shift.id, type, loadId: row.load_id, loadNumber: row.load_number, driverId: row.driver_id, userId: me?.id })
-      // Booking against a raised request marks that request handled — same code
-      // path as the Requests page, stamped with the current shift.
-      if (type === 'load_booked' && row.open_request_id) await markRequestHandled(row.open_request_id, me?.id, null, shift.id)
+      await logShiftActivity(type, row.load_id, row.driver_id)
       const labels = { load_booked: 'Load booked', pod_collected: 'POD logged', bol_collected: 'BOL logged', escalated: 'Escalated' }
       toast.success(labels[type] || 'Logged')
       await reloadBoard()
@@ -212,6 +211,14 @@ export default function ShiftBoardPage() {
           {/* 3. Shift stats */}
           {shift && summary && <ShiftStats summary={summary} />}
 
+          {/* Off-shift notice — actions still record, just aren't counted */}
+          {!shift && (
+            <div className="flex items-center gap-2 rounded-xl border border-gray-200 dark:border-white/10 bg-gray-50/70 dark:bg-white/[0.03] px-4 py-2.5 text-sm text-gray-600 dark:text-slate-400">
+              <span>Not on shift — actions are still recorded, just not counted toward a shift.</span>
+              <button onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} className="font-semibold text-orange-600 dark:text-orange-400 hover:underline">Start a shift</button>
+            </div>
+          )}
+
           {/* 4. Priority groups — "Times needed" sits directly under Raised by
               dispatch, above Uncovered (only when the phase is on). */}
           {(() => {
@@ -225,7 +232,7 @@ export default function ShiftBoardPage() {
               <PriorityGroup key={g.key} group={g} rows={rows}
                 expanded={expanded.has(g.key)} onToggle={() => toggleGroup(g.key)}
                 onCopy={() => copyGroup(g, rows)} settings={settings} shift={shift}
-                onOk={onOk} onAction={onAction} onFlag={setFlagFor} onCheckpoints={openFromRow} />
+                onOk={onOk} onAction={onAction} onFlag={setFlagFor} onCheckpoints={openFromRow} onOpenRequest={setOpenRequestId} />
             )
             const raised = grouped.filter(x => x.g.key === 'raised').map(groupEl)
             const rest = grouped.filter(x => x.g.key !== 'raised').map(groupEl)
@@ -241,6 +248,8 @@ export default function ShiftBoardPage() {
       {flagFor && <FlagPopover row={flagFor} onClose={() => setFlagFor(null)} onSave={saveFlag} />}
       <EndShiftModal open={showEnd} shift={shift} users={users.filter(u => u.id !== me?.id)}
         onClose={() => setShowEnd(false)} onEnded={() => { setShowEnd(false); load() }} />
+      <RequestDetailPanel open={!!openRequestId} requestId={openRequestId}
+        onClose={() => setOpenRequestId(null)} onChanged={reloadBoard} toast={toast} />
     </div>
   )
 }

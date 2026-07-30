@@ -8,7 +8,7 @@ const TONE = {
   plain:  { head: 'text-gray-700 dark:text-slate-300',    badge: 'bg-gray-100 dark:bg-white/5 text-gray-600 dark:text-slate-300',          ring: 'border-gray-200 dark:border-white/10' },
 }
 
-export default function PriorityGroup({ group, rows, expanded, onToggle, onCopy, settings, shift, onOk, onAction, onFlag, onCheckpoints }) {
+export default function PriorityGroup({ group, rows, expanded, onToggle, onCopy, settings, shift, onOk, onAction, onFlag, onCheckpoints, onOpenRequest }) {
   const t = TONE[group.tone] || TONE.plain
   const n = rows.length
 
@@ -41,7 +41,7 @@ export default function PriorityGroup({ group, rows, expanded, onToggle, onCopy,
             </thead>
             <tbody>
               {rows.map(r => (
-                <BoardRow key={r.driver_id} r={r} settings={settings} shift={shift} onOk={onOk} onAction={onAction} onFlag={onFlag} onCheckpoints={onCheckpoints} />
+                <BoardRow key={r.driver_id} r={r} settings={settings} shift={shift} onOk={onOk} onAction={onAction} onFlag={onFlag} onCheckpoints={onCheckpoints} onOpenRequest={onOpenRequest} />
               ))}
             </tbody>
           </table>
@@ -70,7 +70,7 @@ function ActBtn({ children, onClick, disabled, title }) {
   )
 }
 
-function BoardRow({ r, settings, shift, onOk, onAction, onFlag, onCheckpoints }) {
+function BoardRow({ r, settings, shift, onOk, onAction, onFlag, onCheckpoints, onOpenRequest }) {
   const muted = r.in_scope === false
   const okChecked = r.checked_this_shift && r.check_is_ok === true
   const flagged = r.checked_this_shift && r.check_is_ok === false
@@ -112,25 +112,28 @@ function BoardRow({ r, settings, shift, onOk, onAction, onFlag, onCheckpoints })
           </div>
         ) : <span className="text-gray-300 dark:text-slate-600">—</span>}
       </td>
-      {/* Note */}
+      {/* Note — a raised request opens its detail panel */}
       <td className="px-3 py-2 max-w-[220px]">
         {r.open_request_id ? (
-          <div className="text-red-600 dark:text-red-400">
-            <p className="truncate" title={r.open_request_note || ''}>{r.open_request_note || 'Raised'}</p>
+          <button type="button" onClick={() => onOpenRequest?.(r.open_request_id)} className="text-left text-red-600 dark:text-red-400 hover:underline">
+            <p className="truncate" title={r.open_request_note || ''}>{r.open_request_note || 'Raised'} <span aria-hidden>▸</span></p>
             {r.open_request_by && <p className="text-[10px] text-red-500/80 dark:text-red-400/70">raised by {r.open_request_by} {fmtClock(r.open_request_at)}</p>}
-          </div>
+          </button>
         ) : r.check_note ? (
           <p className="truncate text-gray-500 dark:text-slate-400" title={r.check_note}>{r.check_note}</p>
         ) : <span className="text-gray-300 dark:text-slate-600">—</span>}
       </td>
-      {/* Actions */}
+      {/* Actions — Book/POD/BOL/Esc record with or without an open shift. Flag is
+          a driver review (shift-scoped). A raised request is booked from its panel. */}
       <td className="px-3 py-2 whitespace-nowrap">
         <div className="flex items-center gap-1">
-          <ActBtn onClick={() => onAction(r, 'load_booked')} disabled={!shift || !r.load_id} title="Log a booked load">Book</ActBtn>
-          <ActBtn onClick={() => onAction(r, 'pod_collected')} disabled={!shift || !r.load_id} title="POD collected">POD</ActBtn>
-          <ActBtn onClick={() => onAction(r, 'bol_collected')} disabled={!shift || !r.load_id} title="BOL collected">BOL</ActBtn>
-          <ActBtn onClick={() => onAction(r, 'escalated')} disabled={!shift} title="Escalate">Esc</ActBtn>
-          <ActBtn onClick={() => onFlag(r)} disabled={!shift} title="Flag an issue">Flag</ActBtn>
+          {r.open_request_id
+            ? <ActBtn onClick={() => onOpenRequest?.(r.open_request_id)} title="Open the request to book it">Book</ActBtn>
+            : <ActBtn onClick={() => onAction(r, 'load_booked')} disabled={!r.load_id} title="Log a booked load">Book</ActBtn>}
+          <ActBtn onClick={() => onAction(r, 'pod_collected')} disabled={!r.load_id} title="POD collected">POD</ActBtn>
+          <ActBtn onClick={() => onAction(r, 'bol_collected')} disabled={!r.load_id} title="BOL collected">BOL</ActBtn>
+          <ActBtn onClick={() => onAction(r, 'escalated')} title="Escalate">Esc</ActBtn>
+          <ActBtn onClick={() => onFlag(r)} disabled={!shift} title={shift ? 'Flag an issue' : 'Start a shift to flag'}>Flag</ActBtn>
         </div>
       </td>
       {/* OK */}

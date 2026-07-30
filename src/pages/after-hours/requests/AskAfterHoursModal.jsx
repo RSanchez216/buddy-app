@@ -6,7 +6,7 @@ import { S } from '../../../lib/styles'
 import {
   KINDS, URGENCIES, statusBadge, STATUS_LABEL,
   searchHelpDrivers, fetchDriverBrief, fetchStatusSince, fetchOnShift, createHelpRequest, editHelpRequest,
-  daysAgoPhrase, fmtAgo, fmtDateCT,
+  fetchLoadIdByNumber, daysAgoPhrase, fmtAgo, fmtDateCT,
 } from './requestsData'
 
 const SCOPES = [
@@ -112,6 +112,13 @@ export default function AskAfterHoursModal({ open, prefill, onClose }) {
     setSince(null)
     if (row.current_status && row.current_status !== 'active') {
       fetchStatusSince(row.driver_id).then(setSince).catch(() => {})
+    }
+    // The picker carries only the load number — resolve its id so the request
+    // links to the driver's current load.
+    if (!row.load_id && row.last_load_number) {
+      fetchLoadIdByNumber(row.last_load_number)
+        .then(id => { if (id) setSelected(s => (s && s.driver_id === row.driver_id ? { ...s, load_id: id } : s)) })
+        .catch(() => {})
     }
   }
 
@@ -254,7 +261,7 @@ export default function AskAfterHoursModal({ open, prefill, onClose }) {
           {/* Note */}
           <div>
             <label className={S.label}>Note <span className="font-normal normal-case text-gray-400">(optional)</span></label>
-            <textarea rows={3} className={`${S.textarea} min-h-[76px]`} value={note} onChange={e => setNote(e.target.value)} placeholder="What does the night team need to know?" />
+            <textarea rows={6} className={`${S.textarea} min-h-[150px]`} value={note} onChange={e => setNote(e.target.value)} placeholder="What does the night team need to know? (e.g. will need a lumper once arrived to the receiver at 11 pm)" />
           </div>
 
           {/* Who's on tonight */}
