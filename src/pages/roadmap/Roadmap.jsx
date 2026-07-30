@@ -64,12 +64,24 @@ export default function Roadmap() {
   const layout = useMemo(() => computeLayout(lines, initiatives), [lines, initiatives])
   const selected = initiatives.find(it => it.id === selectedId) || null
 
-  // Clicking a station selects it (fills the inspector); for editors it also
-  // opens the edit modal, prefilled. Read-only users only get the selection.
-  const onStationSelect = useCallback((id) => {
-    setSelectedId(id)
-    if (canEdit) setEditing(initiatives.find(it => it.id === id) || null)
-  }, [canEdit, initiatives])
+  // Clicking a station only selects it — it fills the inspector bar. Reading a
+  // station and marking a phase done are the constant actions; neither opens a
+  // form. Edit / Manage phases in the bar reach the forms.
+  const onStationSelect = useCallback((id) => setSelectedId(id), [])
+
+  // Keep the selected station clear of the sticky bar: after it appears, if the
+  // station sits behind the bar (or above the header), nudge the page scroll.
+  const barRef = useRef(null)
+  useEffect(() => {
+    if (!selectedId || !svgRef.current) return
+    const el = svgRef.current.querySelector(`[data-station-id="${selectedId}"]`)
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const barH = barRef.current?.offsetHeight || Math.round(window.innerHeight * 0.42)
+    const safeBottom = window.innerHeight - barH - 24
+    if (rect.bottom > safeBottom) window.scrollBy({ top: rect.bottom - safeBottom, behavior: 'smooth' })
+    else if (rect.top < 72) window.scrollBy({ top: rect.top - 72, behavior: 'smooth' })
+  }, [selectedId])
 
   const dimmed = useCallback((it) => {
     if (deptFilter && it.department_id !== deptFilter) return true
@@ -273,13 +285,16 @@ export default function Roadmap() {
 
           {mapCard}
 
-          {/* Inspector */}
-          <Inspector selected={selected} lines={lines} departments={departments} initiatives={initiatives} canEdit={canEdit}
-            onEdit={() => setEditing(selected)} onManagePhases={() => setPhasesFor(selected)} onSetPhase={onSetPhase} />
-
           {/* What moved — daily snapshot diffs */}
           <WhatMoved snapshots={snapshots} initiatives={initiatives} onSelect={setSelectedId} />
         </>
+      )}
+
+      {/* Inspector — a sticky bar overlaying the page while a station is selected */}
+      {!loading && !error && (
+        <InspectorBar selected={selected} lines={lines} departments={departments} initiatives={initiatives} canEdit={canEdit}
+          barRef={barRef} onDismiss={() => setSelectedId(null)}
+          onEdit={() => setEditing(selected)} onManagePhases={() => setPhasesFor(selected)} onSetPhase={onSetPhase} />
       )}
 
       <InitiativeModal open={!!editing} onClose={() => setEditing(null)}
@@ -499,34 +514,82 @@ function PhaseList({ phases, canEdit, onSetPhase }) {
   )
 }
 
-function Inspector({ selected, lines, departments, initiatives, canEdit, onEdit, onManagePhases, onSetPhase }) {
-  if (!selected) return <div className={`${S.card} p-5 text-sm text-gray-400 dark:text-slate-500`}>Click a station to see what it controls, what it&apos;s waiting on, and where it&apos;s headed.</div>
+// Relative age for a flag — "3 weeks ago". Age is the point: it's what stops a
+// flagged item quietly becoming permanent.
+function fmtRelAge(ts) {
+  if (!ts) return ''
+  const ms = Date.now() - new Date(ts).getTime()
+  if (Number.isNaN(ms) || ms < 0) return 'just now'
+  const d = Math.floor(ms / 86400000)
+  if (d < 1) return 'today'
+  if (d === 1) return 'yesterday'
+  if (d < 7) return `${d} days ago`
+  const w = Math.floor(d / 7); if (w < 5) return `${w} week${w === 1 ? '' : 's'} ago`
+  const mo = Math.floor(d / 30); if (mo < 12) return `${mo} month${mo === 1 ? '' : 's'} ago`
+  const y = Math.floor(d / 365); return `${y} year${y === 1 ? '' : 's'} ago`
+}
+const FLAG_CALLOUT = {
+  needs_fix: 'border-red-200 dark:border-red-500/25 bg-red-50/70 dark:bg-red-500/10',
+  parked: 'border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-white/5',
+}
+
+// Sticky bar overlaying the page while a station is selected — keeps the map and
+// the details on screen together. Dismiss with ✕ or Escape.
+function InspectorBar({ selected, lines, departments, initiatives, canEdit, barRef, onDismiss, onEdit, onManagePhases, onSetPhase }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onDismiss?.() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onDismiss])
+  if (!selected) return null
   const line = lines.find(l => l.id === selected.primary_line_id)
   const dept = departments.find(d => d.id === selected.department_id)
   const waiting = (selected.depends_on || []).map(id => initiatives.find(it => it.id === id)?.name).filter(Boolean)
+  const red = selected.flag === 'needs_fix'
   return (
-    <div className={`${S.card} p-5`}>
-      <div className="flex flex-wrap items-center gap-2 mb-2">
-        <h2 className="text-lg font-bold text-gray-900 dark:text-white">{selected.name}</h2>
-        <span className={`text-[10px] uppercase tracking-wide font-bold px-2 py-0.5 rounded-full border ${STATUS_PILL[selected.status] || STATUS_PILL.planned}`}>{STATUS_LABEL[selected.status] || selected.status}</span>
-        {selected.flag && <span className={`text-[10px] uppercase tracking-wide font-bold px-2 py-0.5 rounded-full border ${FLAG_PILL[selected.flag]}`}>{FLAG_LABEL[selected.flag]}</span>}
-        {canEdit && (
-          <div className="ml-auto flex gap-2">
-            <button onClick={onEdit} className={`${S.btnSecondary} text-xs`}>Edit</button>
-            <button onClick={onManagePhases} className={`${S.btnSecondary} text-xs`}>Manage phases</button>
+    <div className="fixed inset-x-0 bottom-0 z-40 px-2 sm:px-4 pb-2 sm:pb-4 pointer-events-none">
+      <div ref={barRef} className="pointer-events-auto mx-auto max-w-5xl flex flex-col max-h-[70vh] rounded-2xl border border-gray-200 dark:border-white/10 bg-white/95 dark:bg-[#0d0d1f]/95 backdrop-blur shadow-2xl">
+        <div className="p-4 pb-3 shrink-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-lg font-bold text-gray-900 dark:text-white">{selected.name}</h2>
+            <span className={`text-[10px] uppercase tracking-wide font-bold px-2 py-0.5 rounded-full border ${STATUS_PILL[selected.status] || STATUS_PILL.planned}`}>{STATUS_LABEL[selected.status] || selected.status}</span>
+            {selected.flag && <span className={`text-[10px] uppercase tracking-wide font-bold px-2 py-0.5 rounded-full border ${FLAG_PILL[selected.flag]}`}>{FLAG_LABEL[selected.flag]}</span>}
+            <div className="ml-auto flex items-center gap-2">
+              {canEdit && <button onClick={onEdit} className={`${S.btnSecondary} text-xs`}>Edit</button>}
+              {canEdit && <button onClick={onManagePhases} className={`${S.btnSecondary} text-xs`}>Manage phases</button>}
+              <button onClick={onDismiss} aria-label="Close" className="text-gray-400 hover:text-gray-700 dark:hover:text-slate-200"><svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
+            </div>
           </div>
-        )}
+
+          {/* Why it's flagged — red for needs_fix, muted grey for parked */}
+          {selected.flag && (
+            <div className={`mt-2 rounded-lg border p-2.5 ${FLAG_CALLOUT[selected.flag]}`}>
+              <p className={`text-xs font-bold ${red ? 'text-red-700 dark:text-red-300' : 'text-gray-600 dark:text-slate-300'}`}>
+                {FLAG_LABEL[selected.flag]}{selected.flag_set_at ? ` · flagged ${fmtRelAge(selected.flag_set_at)}` : ''}
+              </p>
+              {selected.flag_reason && <p className={`text-xs mt-0.5 ${red ? 'text-red-700/90 dark:text-red-400/90' : 'text-gray-500 dark:text-slate-400'}`}>{selected.flag_reason}</p>}
+            </div>
+          )}
+
+          {selected.controls && <p className="text-sm text-gray-600 dark:text-slate-400 mt-2 max-w-3xl">{selected.controls}</p>}
+          {/* notes — general context, not a defect; no alarm styling */}
+          {selected.notes && <p className="text-xs text-gray-500 dark:text-slate-400 italic mt-1.5">{selected.notes}</p>}
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-sm mt-3">
+            <Col label="Line" value={line?.name} swatch={line?.color} />
+            <Col label="Department" value={dept?.name || '—'} />
+            <Col label="Priority" value={PRIORITY_LABEL[selected.priority] || '—'} />
+            <Col label="Waiting on" value={waiting.length ? waiting.join(', ') : 'Nothing — clear to start'} />
+            <Col label="Target" value={selected.target_quarter || '—'} />
+            <Col label="Owner" value={selected.owner_user_id ? 'Assigned' : 'Unassigned'} />
+          </div>
+        </div>
+
+        {/* Phase list scrolls inside the bar rather than growing it */}
+        <div className="px-4 pb-4 overflow-y-auto min-h-0">
+          <PhaseList phases={selected.phases} canEdit={canEdit} onSetPhase={onSetPhase} />
+        </div>
       </div>
-      {selected.controls && <p className="text-sm text-gray-600 dark:text-slate-400 mb-4 max-w-3xl">{selected.controls}</p>}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 text-sm">
-        <Col label="Line" value={line?.name} swatch={line?.color} />
-        <Col label="Department" value={dept?.name || '—'} />
-        <Col label="Priority" value={PRIORITY_LABEL[selected.priority] || '—'} />
-        <Col label="Waiting on" value={waiting.length ? waiting.join(', ') : 'Nothing — clear to start'} />
-        <Col label="Target" value={selected.target_quarter || '—'} />
-        <Col label="Owner" value={selected.owner_user_id ? 'Assigned' : 'Unassigned'} />
-      </div>
-      <PhaseList phases={selected.phases} canEdit={canEdit} onSetPhase={onSetPhase} />
     </div>
   )
 }

@@ -267,6 +267,7 @@ function Station({ it, x, y, color, selected, dim, draggable, staticArc, inFligh
 
   return (
     <g
+      data-station-id={it.id}
       style={{ cursor: draggable ? 'grab' : 'pointer', opacity: dim ? 0.28 : 1, transition: 'opacity .2s' }}
       onPointerDown={onPointerDown} onClick={onClick}
       onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}
@@ -333,6 +334,13 @@ function HoverCard({ hover }) {
               <span className={`ml-auto shrink-0 ${PH_STATUS_CLR[p.status] || 'text-slate-400'}`}>{PHASE_STATUS_LABEL[p.status]}</span>
             </div>
           ))}
+        </div>
+      )}
+      {/* Why it's flagged — one truncated line after the phases (the map badge
+          already carries the flag itself) */}
+      {it.flag_reason && (
+        <div className={`mt-2 pt-2 border-t border-white/10 leading-tight ${it.flag === 'needs_fix' ? 'text-red-300' : 'text-slate-400'}`}>
+          {it.flag_reason.length > 90 ? `${it.flag_reason.slice(0, 90).trimEnd()}…` : it.flag_reason}
         </div>
       )}
     </div>

@@ -28,6 +28,7 @@ export default function InitiativeModal({ open, onClose, initiative, lines, depa
   const [ty, setTy] = useState('')
   const [priority, setPriority] = useState('medium')
   const [flag, setFlag] = useState('')
+  const [flagReason, setFlagReason] = useState('')
   const [extraLines, setExtraLines] = useState(new Set())
   const [deps, setDeps] = useState(new Set())
   const [depSearch, setDepSearch] = useState('')
@@ -51,11 +52,11 @@ export default function InitiativeModal({ open, onClose, initiative, lines, depa
       const pq = parseQuarter(initiative.target_quarter)
       setName(initiative.name || ''); setControls(initiative.controls || ''); setOutcome(initiative.outcome || '')
       setPrimaryLineId(initiative.primary_line_id || ''); setDepartmentId(initiative.department_id || '')
-      setTq(pq.q); setTy(pq.y); setPriority(initiative.priority || 'medium'); setFlag(initiative.flag || '')
+      setTq(pq.q); setTy(pq.y); setPriority(initiative.priority || 'medium'); setFlag(initiative.flag || ''); setFlagReason(initiative.flag_reason || '')
       setExtraLines(new Set(initiative.extra_line_ids || [])); setDeps(new Set(initiative.depends_on || []))
     } else {
       setName(''); setControls(''); setOutcome(''); setPrimaryLineId(lines[0]?.id || ''); setDepartmentId('')
-      setTq(''); setTy(''); setPriority('medium'); setFlag(''); setExtraLines(new Set()); setDeps(new Set())
+      setTq(''); setTy(''); setPriority('medium'); setFlag(''); setFlagReason(''); setExtraLines(new Set()); setDeps(new Set())
       setPhase1(''); setExtraPhases([])
     }
     setDepSearch(''); setError('')
@@ -84,6 +85,8 @@ export default function InitiativeModal({ open, onClose, initiative, lines, depa
       name: name.trim(), controls: controls.trim() || null, outcome: outcome.trim() || null,
       primary_line_id: primaryLineId, department_id: departmentId || null,
       priority, target_quarter: targetQuarter, flag: flag || null,
+      // Setting the flag to None clears flag_reason/flag_set_at via a DB trigger.
+      flag_reason: flag ? (flagReason.trim() || null) : null,
     }
     try {
       if (isEdit) {
@@ -173,6 +176,13 @@ export default function InitiativeModal({ open, onClose, initiative, lines, depa
             ))}
           </div>
         </Field>
+
+        {(flag === 'needs_fix' || flag === 'parked') && (
+          <Field label="Why is it flagged?" hint="a human explanation">
+            <textarea className={S.textarea} rows={3} value={flagReason} onChange={e => setFlagReason(e.target.value)} placeholder={flag === 'parked' ? 'Why it’s parked and when to revisit…' : 'What needs fixing…'} />
+            {!flagReason.trim() && <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">Add a note about what needs fixing, or this gets forgotten.</p>}
+          </Field>
+        )}
 
         <Field label="Also appears on">
           <div className="flex flex-wrap gap-1.5">
