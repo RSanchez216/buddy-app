@@ -56,7 +56,7 @@ const PAGE_ICON = {
   payment_calendar: Icons.calendar, office_expenses: Icons.vendors, debt_schedule: Icons.debt, driver_purchases: Icons.driverSale,
   profitability: Icons.cost, driver_spotlight: Icons.driver, contribution: Icons.report,
   'dedicated-lanes': Icons.warehouse, idle_review: Icons.cost, miles_performance: Icons.map,
-  dispatcher_scorecard: Icons.users,
+  dispatcher_scorecard: Icons.users, roadmap: Icons.map,
   trucks: Icons.truck, trailers: Icons.trailer, drivers: Icons.driver, teams: Icons.users,
   equipment_cost: Icons.cost, loads_import: Icons.truck, settlement_import: Icons.payment,
   combined_loads: Icons.merge,
@@ -66,7 +66,7 @@ const PAGE_ICON = {
 }
 // nav_group render order (matches the previous hardcoded sidebar). Groups not
 // listed here fall to the end, alphabetically.
-const SECTION_ORDER = ['Today', 'Money', 'Profitability', 'Fleet', 'Payables']
+const SECTION_ORDER = ['Today', 'Money', 'Profitability', 'Fleet', 'Payables', 'Vision']
 
 // Frontend static-nav groups: page_keys pulled OUT of their DB nav_group and
 // shown under a dedicated section instead (access still comes from my_pages, so

@@ -61,6 +61,8 @@ const LaneFlowMap = lazyWithReload(() => import('./pages/fleet/loads/lanes/LaneF
 // Lazy — the Boardroom pulls several rollups plus the lane and contribution
 // data layers at once; keep it out of the main bundle.
 const Boardroom = lazyWithReload(() => import('./pages/fleet/loads/boardroom/Boardroom'))
+// Lazy — the roadmap carries its own SVG transit-map renderer + jsPDF export.
+const Roadmap = lazyWithReload(() => import('./pages/roadmap/Roadmap'))
 // Lazy — Idle Review is a destination review screen, not a daily-driver list;
 // split it into its own chunk off the main bundle.
 const IdleReview = lazyWithReload(() => import('./pages/fleet/loads/idle/IdleReview'))
@@ -268,6 +270,15 @@ export default function App() {
                 <RequirePageAccess pageKey="dispatcher_scorecard">
                   <ErrorBoundary label="the Dispatcher Scorecard">
                     <DispatcherScorecard />
+                  </ErrorBoundary>
+                </RequirePageAccess>
+              } />
+              <Route path="roadmap" element={
+                <RequirePageAccess pageKey="roadmap">
+                  <ErrorBoundary label="the Roadmap">
+                    <Suspense fallback={<div className="p-8 text-sm text-gray-400 dark:text-slate-500">Loading the roadmap…</div>}>
+                      <Roadmap />
+                    </Suspense>
                   </ErrorBoundary>
                 </RequirePageAccess>
               } />
