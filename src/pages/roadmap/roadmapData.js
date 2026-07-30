@@ -30,8 +30,11 @@ export function trackPath(line, y, hubX, hubY) {
 }
 
 // ── status / flag vocab ──────────────────────────────────────────────────────
-export const STATUS_LABEL = { planned: 'Planned', building: 'Building', live: 'Live', done: 'Done', open: 'Live' }
-export const PHASE_STATUS_LABEL = { planned: 'Planned', building: 'Building', done: 'Done' }
+// Display labels. The stored status stays 'building' (a join/filter key); "building"
+// is never shown to a user. A station that's part-built reads "Part-built"; a phase
+// actually being worked reads "In progress".
+export const STATUS_LABEL = { planned: 'Planned', building: 'Part-built', live: 'Live', done: 'Done', open: 'Live' }
+export const PHASE_STATUS_LABEL = { planned: 'Planned', building: 'In progress', done: 'Done' }
 export const PRIORITY_LABEL = { critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low' }
 
 // ── reads ────────────────────────────────────────────────────────────────────

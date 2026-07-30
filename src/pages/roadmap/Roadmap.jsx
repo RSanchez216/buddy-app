@@ -197,7 +197,7 @@ export default function Roadmap() {
             <span className="w-1.5 h-1.5 rounded-full bg-orange-500" /> BUDDY · Vision
           </div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Roadmap</h1>
-          <p className="text-sm text-gray-500 dark:text-slate-500 mt-0.5 max-w-2xl">{settings.page_subtitle || "Every moving part of the machine — what's running, what's building, and what it's waiting on."}</p>
+          <p className="text-sm text-gray-500 dark:text-slate-500 mt-0.5 max-w-2xl">{settings.page_subtitle || "Every moving part of the machine — what's running, what's in flight, and what it's waiting on."}</p>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={exportPdf} className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5">↓ PDF</button>
@@ -258,8 +258,9 @@ function KeyRow({ symbol, label }) {
   return <div className="flex items-center gap-2">{symbol}<span>{label}</span></div>
 }
 
-// Tooltip helper: sorted names, 2 columns if >8, capped at 14 with "…and N more".
-function TipList({ items }) {
+// Tooltip helper: an optional caption line, then sorted names (2 cols if >8,
+// capped at 14 with "…and N more").
+function TipList({ items, caption }) {
   const sorted = [...items].sort((a, b) => a.localeCompare(b))
   const cap = 14
   const shown = sorted.slice(0, cap)
@@ -267,7 +268,8 @@ function TipList({ items }) {
   const cols = sorted.length > 8
   return (
     <div className="pointer-events-none absolute z-30 left-0 top-full mt-1.5 w-max max-w-md rounded-lg bg-gray-900 dark:bg-black text-white shadow-2xl px-3 py-2 text-[11px]">
-      {shown.length === 0 ? <div className="text-slate-400">None</div> : (
+      {caption && <div className="text-slate-300 mb-1">{caption}</div>}
+      {shown.length === 0 ? <div className="text-slate-400">{caption ? '' : 'None'}</div> : (
         <div className={cols ? 'grid grid-cols-2 gap-x-4 gap-y-0.5' : 'space-y-0.5'}>
           {shown.map((n, i) => <div key={i} className="whitespace-nowrap">{n}</div>)}
         </div>
@@ -278,14 +280,14 @@ function TipList({ items }) {
 }
 
 // A hoverable/focusable meter segment or chip that reveals its member names.
-function Hoverable({ children, items, className = '', style }) {
+function Hoverable({ children, items, caption, className = '', style }) {
   const [open, setOpen] = useState(false)
   return (
     <span className={`relative ${className}`} tabIndex={0} style={{ cursor: 'pointer', outline: 'none', ...style }}
       onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}
       onFocus={() => setOpen(true)} onBlur={() => setOpen(false)}>
       {children}
-      {open && <TipList items={items} />}
+      {open && <TipList items={items} caption={caption} />}
     </span>
   )
 }
@@ -294,16 +296,22 @@ function Meter({ progress, initiatives }) {
   const total = progress.stations_total || 0
   const phTotal = progress.phases_total || 0
 
-  // Member lists computed client-side (no extra queries).
+  // Member lists computed client-side (no extra queries). "building" never
+  // surfaces as a word — a part-built station reads "part-built", a phase in
+  // progress reads "in progress".
+  const SHORT_PH = { done: 'done', building: 'in progress', planned: 'planned' }
   const namesByStatus = (s) => initiatives.filter(it => it.status === s).map(it => it.name)
   const namesByFlag = (f) => initiatives.filter(it => it.flag === f).map(it => it.name)
   const phaseNames = (s) => initiatives
-    .map(it => { const c = (it.phases || []).filter(p => p.status === s).length; return c ? `${it.name} (${c} ${s})` : null })
+    .map(it => { const c = (it.phases || []).filter(p => p.status === s).length; return c ? `${it.name} (${c} ${SHORT_PH[s] || s})` : null })
     .filter(Boolean)
+  // In flight = a phase actively being worked, station not parked — the same
+  // predicate that drives the arc, so the number and the animation always agree.
+  const inFlightNames = initiatives.filter(it => it.flag !== 'parked' && (it.phases || []).some(p => p.status === 'building')).map(it => it.name)
 
   const bar = [
     { n: progress.stations_open || 0, cls: 'bg-emerald-500', items: namesByStatus('live') },
-    { n: progress.stations_building || 0, cls: 'bg-amber-500', items: namesByStatus('building') },
+    { n: progress.stations_building || 0, cls: 'bg-amber-500', items: namesByStatus('building'), caption: 'Started, not finished — some phases done, some not.' },
     { n: progress.stations_planned || 0, cls: 'bg-gray-200 dark:bg-white/10', items: namesByStatus('planned') },
   ]
   const ph = [
@@ -324,16 +332,24 @@ function Meter({ progress, initiatives }) {
           <div className="text-[11px] text-gray-500 dark:text-slate-400 mb-1">{progress.stations_open ?? 0} of {total} stations open</div>
           <div className="flex h-2.5 w-full rounded-full bg-gray-100 dark:bg-white/5">
             {bar.map((s, i) => total > 0 && s.n > 0 && (
-              <Hoverable key={i} items={s.items} className="h-full" style={{ width: `${(s.n / total) * 100}%` }}>
+              <Hoverable key={i} items={s.items} caption={s.caption} className="h-full" style={{ width: `${(s.n / total) * 100}%` }}>
                 <span className={`block w-full h-full ${s.cls}`} />
               </Hoverable>
             ))}
           </div>
           <div className="mt-1.5 text-[11px] text-gray-500 dark:text-slate-400 flex items-center gap-2 flex-wrap">
-            <span>{progress.stations_building ?? 0} building · {progress.stations_planned ?? 0} still on the table</span>
+            <span>{progress.stations_building ?? 0} part-built · {progress.stations_planned ?? 0} still on the table</span>
           </div>
-          {/* Flags — condition axis, visually separated */}
+          {/* Flags + what's actually in flight — condition axis, visually separated */}
           <div className="mt-2 flex items-center gap-3 flex-wrap border-t border-gray-100 dark:border-white/5 pt-2">
+            <Hoverable items={inFlightNames} caption="A phase is being worked right now.">
+              <span className="inline-flex items-center gap-1.5 text-[11px] text-gray-600 dark:text-slate-400">
+                <span aria-hidden className="text-amber-500">◠</span>
+                {inFlightNames.length === 0
+                  ? <span>Nothing in flight</span>
+                  : <span><span className="font-semibold text-gray-800 dark:text-slate-200">{inFlightNames.length} in flight</span> — {inFlightNames.slice(0, 2).join(', ')}{inFlightNames.length > 2 ? ` +${inFlightNames.length - 2}` : ''}</span>}
+              </span>
+            </Hoverable>
             <Hoverable items={namesByFlag('needs_fix')}>
               <span className="inline-flex items-center gap-1.5 text-[11px] text-gray-600 dark:text-slate-400"><span className="w-2.5 h-2.5 rounded-full bg-red-500" />{progress.needs_fix ?? 0} need a fix</span>
             </Hoverable>
@@ -391,12 +407,12 @@ const PHASE_PILL = {
   planned: 'bg-gray-100 dark:bg-white/5 text-gray-500 dark:text-slate-400 border-gray-200 dark:border-white/10',
 }
 
-// Three-state phase control — one click to Done (or back to Building/Planned).
+// Three-state phase control — one click to Done (or back to In progress/Planned).
 // Writes straight to roadmap_phases.status via the parent; the station status
 // and meter recompute themselves.
 function PhaseToggle({ status, onSet }) {
   const [busy, setBusy] = useState(false)
-  const opts = [['planned', 'Planned'], ['building', 'Building'], ['done', 'Done']]
+  const opts = [['planned', 'Planned'], ['building', 'In progress'], ['done', 'Done']]
   async function set(v) {
     if (v === status || busy) return
     setBusy(true)

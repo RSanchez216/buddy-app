@@ -48,9 +48,10 @@ export default function RoadmapMap({
   const byId = useMemo(() => new Map(initiatives.map(it => [it.id, it])), [initiatives])
   const posX = (it) => (drag && drag.id === it.id ? drag.x : Number(it.pos_x) || 0)
 
-  // "Building" stations orbit a slow arc. Freeze it when the viewer prefers
-  // reduced motion, or when there are so many building at once (>6) that spinners
-  // become noise rather than signal.
+  // A station orbits an arc only when a phase is actually being worked right now
+  // ("in flight") — not merely part-built. Parked always wins over motion. Freeze
+  // the arc under reduced motion, or when so many are in flight (>6) that the
+  // spinners become noise rather than signal.
   const [reduced, setReduced] = useState(() => typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches)
   useEffect(() => {
     const mq = window.matchMedia?.('(prefers-reduced-motion: reduce)')
@@ -59,8 +60,9 @@ export default function RoadmapMap({
     mq.addEventListener?.('change', on)
     return () => mq.removeEventListener?.('change', on)
   }, [])
-  const buildingCount = useMemo(() => initiatives.filter(it => it.status === 'building' && it.flag !== 'parked').length, [initiatives])
-  const staticArc = reduced || buildingCount > 6
+  const inFlight = (it) => it.flag !== 'parked' && (it.phases || []).some(p => p.status === 'building')
+  const inFlightCount = useMemo(() => initiatives.filter(inFlight).length, [initiatives])
+  const staticArc = reduced || inFlightCount > 6
 
   // Appearances: one per line the station touches.
   const appearances = useMemo(() => {
@@ -174,7 +176,7 @@ export default function RoadmapMap({
             it={it} x={posX(it)} y={y} color={lineColor(lineId)}
             selected={selectedId === it.id}
             dim={dimmed ? dimmed(it) : false}
-            draggable={canEdit} staticArc={staticArc}
+            draggable={canEdit} staticArc={staticArc} inFlight={inFlight(it)}
             onPointerDown={(e) => startDrag(e, it)}
             onClick={(e) => { e.stopPropagation(); if (movedRef.current) { movedRef.current = false; return } onSelect?.(it.id) }}
             onMouseEnter={(e) => showHover(e, it)}
@@ -231,7 +233,7 @@ function BuildingArc({ x, y, r, color, animate }) {
   )
 }
 
-function Station({ it, x, y, color, selected, dim, draggable, staticArc, onPointerDown, onClick, onMouseEnter, onMouseLeave }) {
+function Station({ it, x, y, color, selected, dim, draggable, staticArc, inFlight, onPointerDown, onClick, onMouseEnter, onMouseLeave }) {
   const phases = [...(it.phases || [])].sort((a, b) => a.phase_no - b.phase_no)
   const count = phases.length || 1
   const shown = Math.min(count, PHASE_RADII.length)
@@ -272,9 +274,10 @@ function Station({ it, x, y, color, selected, dim, draggable, staticArc, onPoint
       {selected && <circle cx={x} cy={y} r={R + 12} fill={color} opacity={0.15} />}
       {rings}
 
-      {/* Building marker — below the badges in z-order so needs-fix paints on top.
-          Parked is 'building [parked]': keep the dashed rings, but stop the motion. */}
-      {it.status === 'building' && it.flag !== 'parked' && <BuildingArc x={x} y={y} r={R} color={color} animate={!staticArc} />}
+      {/* In-flight marker — a phase is actively being worked. Below the badges in
+          z-order so needs-fix paints on top. A part-built-but-idle station (no
+          phase building) or a parked one shows no arc — just its dashed rings. */}
+      {inFlight && <BuildingArc x={x} y={y} r={R} color={color} animate={!staticArc} />}
 
       {/* >4 phases → count badge at lower-right of the outer ring */}
       {count > PHASE_RADII.length && (

@@ -4,7 +4,7 @@ import Select from '../../components/Select'
 import { S } from '../../lib/styles'
 import { insertPhase, updatePhase, deletePhase } from './roadmapData'
 
-const STATUSES = [['planned', 'Planned'], ['building', 'Building'], ['done', 'Done']]
+const STATUSES = [['planned', 'Planned'], ['building', 'In progress'], ['done', 'Done']]
 const QUARTERS = ['', 'Q1', 'Q2', 'Q3', 'Q4']
 
 // Local draft rows: { id?, name, description, status, target_quarter, _orig }
