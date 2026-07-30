@@ -5,7 +5,7 @@ import { useToast } from '../../../contexts/ToastContext'
 import { S } from '../../../lib/styles'
 import {
   KINDS, URGENCIES, statusBadge, STATUS_LABEL,
-  searchHelpDrivers, fetchDriverBrief, fetchStatusSince, fetchOnShift, createHelpRequest,
+  searchHelpDrivers, fetchDriverBrief, fetchStatusSince, fetchOnShift, createHelpRequest, editHelpRequest,
   daysAgoPhrase, fmtAgo, fmtDateCT,
 } from './requestsData'
 
@@ -15,12 +15,16 @@ const SCOPES = [
   { value: 'all', label: 'Include inactive & returning' },
 ]
 
-// The "Ask After-Hours" form. Controlled by Layout (open + optional prefill).
-// A dispatcher raises a help request against a driver; After-Hours picks it up.
+// The "Ask After-Hours" form — one component, two modes. Create (raise a new
+// request) or edit (prefill.edit carries the request row). In edit mode the
+// driver is only changeable while status is 'new'; the RPC enforces this too.
 export default function AskAfterHoursModal({ open, prefill, onClose }) {
   const { user, profile } = useAuth()
   const toast = useToast()
   const raisedBy = user?.id || profile?.id || null
+  const editRow = prefill?.edit || null
+  const isEdit = !!editRow
+  const lockDriver = isEdit && editRow.status !== 'new' // seen → driver read-only
 
   const [kind, setKind] = useState('uncovered')
   const [urgency, setUrgency] = useState('normal')
@@ -43,17 +47,28 @@ export default function AskAfterHoursModal({ open, prefill, onClose }) {
   const prefillDone = useRef(false)
   const previouslyFocused = useRef(null)
 
-  // Reset + seed on open. A prefill jumps to the widest scope and the driver's
-  // name so the exact driver surfaces and can be auto-selected.
+  // Reset + seed on open. Edit mode prefills every field from the request row;
+  // create mode optionally jumps to a prefilled driver.
   useEffect(() => {
     if (!open) return
-    setKind('uncovered'); setUrgency('normal'); setNote('')
-    setSelected(null); setSince(null); setError(''); setSubmitting(false)
-    setResults([]); prefillDone.current = false
-    if (prefill?.driverId) { setScope('all'); setQuery(prefill.driverName || '') }
-    else { setScope('mine'); setQuery('') }
+    setSince(null); setError(''); setSubmitting(false); setResults([])
     fetchOnShift().then(setOnShift).catch(() => setOnShift([]))
-  }, [open, prefill])
+    if (editRow) {
+      setKind(editRow.kind || 'uncovered')
+      setUrgency(editRow.urgency || 'normal')
+      setNote(editRow.note || '')
+      const sel = { driver_id: editRow.driver_id, full_name: editRow.driver_name, current_status: editRow.driver_status_at_raise || 'active', load_id: editRow.load_id }
+      setSelected(sel)
+      setScope('all'); setQuery('')
+      prefillDone.current = true // never auto-select from search in edit mode
+      if (sel.current_status && sel.current_status !== 'active') fetchStatusSince(sel.driver_id).then(setSince).catch(() => {})
+    } else {
+      setKind('uncovered'); setUrgency('normal'); setNote('')
+      setSelected(null); prefillDone.current = false
+      if (prefill?.driverId) { setScope('all'); setQuery(prefill.driverName || '') }
+      else { setScope('mine'); setQuery('') }
+    }
+  }, [open, prefill]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Debounced driver search on scope/query.
   useEffect(() => {
@@ -64,8 +79,8 @@ export default function AskAfterHoursModal({ open, prefill, onClose }) {
       try {
         const rows = await searchHelpDrivers(query, scope, 40)
         setResults(rows)
-        // Auto-select a pre-filled driver once its row appears.
-        if (prefill?.driverId && !prefillDone.current) {
+        // Auto-select a pre-filled driver once its row appears (create mode only).
+        if (!editRow && prefill?.driverId && !prefillDone.current) {
           const match = rows.find(r => r.driver_id === prefill.driverId)
           if (match) { prefillDone.current = true; pickDriver(match) }
           else {
@@ -103,6 +118,29 @@ export default function AskAfterHoursModal({ open, prefill, onClose }) {
   async function submit() {
     setError('')
     if (!selected) { setError('Pick a driver first.'); return }
+
+    // Edit mode — send only what changed (nulls leave values untouched). The
+    // driver only goes up when it actually changed; the RPC refuses a driver
+    // change after 'seen' and returns its reason, which we surface verbatim.
+    if (isEdit) {
+      const payload = {}
+      if (kind !== editRow.kind) payload.kind = kind
+      if (urgency !== editRow.urgency) payload.urgency = urgency
+      if ((note || '') !== (editRow.note || '')) payload.note = note || ''
+      if (selected.driver_id !== editRow.driver_id) { payload.driverId = selected.driver_id; payload.loadId = selected.load_id ?? null }
+      if (Object.keys(payload).length === 0) { onClose?.(); return } // nothing changed
+      setSubmitting(true)
+      try {
+        await editHelpRequest(editRow.id, payload)
+        toast.success('Request updated')
+        onClose?.()
+      } catch (e) {
+        setError(e?.message || 'Could not save the changes.')
+        toast.error(e?.message || "Couldn't save the changes")
+      } finally { setSubmitting(false) }
+      return
+    }
+
     if (!raisedBy) { setError('Your session expired — sign in again.'); return }
     setSubmitting(true)
     try {
@@ -140,8 +178,8 @@ export default function AskAfterHoursModal({ open, prefill, onClose }) {
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-white/5 shrink-0">
           <div>
-            <h3 id="ask-ah-title" className="text-base font-bold text-gray-900 dark:text-white">Ask After-Hours</h3>
-            <p className="text-xs text-gray-500 dark:text-slate-500">Raise a driver for the night team to cover or help with.</p>
+            <h3 id="ask-ah-title" className="text-base font-bold text-gray-900 dark:text-white">{isEdit ? 'Edit request' : 'Ask After-Hours'}</h3>
+            <p className="text-xs text-gray-500 dark:text-slate-500">{isEdit ? 'Update this request for the night team.' : 'Raise a driver for the night team to cover or help with.'}</p>
           </div>
           <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-700 dark:hover:text-slate-200">
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
@@ -169,7 +207,14 @@ export default function AskAfterHoursModal({ open, prefill, onClose }) {
           {/* Driver picker */}
           <div>
             <label className={S.label}>Driver</label>
-            {selected ? (
+            {lockDriver ? (
+              <>
+                <SelectedDriver row={selected} since={since} nonActive={nonActive} dup={false} />
+                <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-1.5">
+                  After-Hours has already seen this request, so the driver is locked. To change it, dismiss this one and raise a new request.
+                </p>
+              </>
+            ) : selected ? (
               <SelectedDriver row={selected} since={since} nonActive={nonActive} dup={dup} onClear={() => { setSelected(null); setSince(null); prefillDone.current = true; setTimeout(() => searchRef.current?.focus(), 20) }} />
             ) : (
               <>
@@ -234,7 +279,7 @@ export default function AskAfterHoursModal({ open, prefill, onClose }) {
           <button onClick={onClose} disabled={submitting} className={S.btnCancel}>Cancel</button>
           <button onClick={submit} disabled={submitting || !selected}
             className="px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 disabled:bg-gray-200 dark:disabled:bg-slate-700 disabled:text-gray-400 dark:disabled:text-slate-500 text-white rounded-xl transition-all">
-            {submitting ? 'Sending…' : 'Send to After-Hours'}
+            {isEdit ? (submitting ? 'Saving…' : 'Save changes') : (submitting ? 'Sending…' : 'Send to After-Hours')}
           </button>
         </div>
       </div>
@@ -283,7 +328,7 @@ function SelectedDriver({ row, since, nonActive, dup, onClear }) {
             <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-0.5 truncate">last load booked by {row.last_dispatcher}{daysAgoPhrase(row.days_since_delivery) ? `, ${daysAgoPhrase(row.days_since_delivery)}` : ''}</p>
           )}
         </div>
-        <button type="button" onClick={onClear} className="text-xs font-medium text-orange-600 dark:text-orange-400 hover:underline shrink-0">Change</button>
+        {onClear && <button type="button" onClick={onClear} className="text-xs font-medium text-orange-600 dark:text-orange-400 hover:underline shrink-0">Change</button>}
       </div>
 
       {/* Non-active — permissive, not blocking */}

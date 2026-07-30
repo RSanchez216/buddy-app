@@ -3,10 +3,10 @@ import { useAuth } from '../../../contexts/AuthContext'
 import { useToast } from '../../../contexts/ToastContext'
 import { S } from '../../../lib/styles'
 import {
-  openAskAfterHours, REQUESTS_CHANGED_EVENT, KINDS, URGENCIES,
+  openAskAfterHours, openEditRequest, REQUESTS_CHANGED_EVENT,
   statusBadge, kindLabel, urgencyMeta, requestStatusMeta, canManageRequest,
   fetchMyRequests, fetchIncoming, fetchOpenShiftId,
-  markRequestSeen, markRequestHandled, editHelpRequest, dismissHelpRequest, restoreHelpRequest,
+  markRequestSeen, markRequestHandled, dismissHelpRequest, restoreHelpRequest,
   fmtClock, fmtChicagoTs, firstLastInitial, fmtAgo,
 } from './requestsData'
 
@@ -107,7 +107,6 @@ function MyCard({ r, meId, isManager, onChanged, toast }) {
   const u = urgencyMeta(r.urgency)
   const handled = !!r.handled_at
   const seen = !!r.seen_at
-  const [editing, setEditing] = useState(false)
   const [dismissing, setDismissing] = useState(false)
   const editable = (r.status === 'new' || r.status === 'seen') && canManageRequest(r, meId, isManager)
 
@@ -143,14 +142,12 @@ function MyCard({ r, meId, isManager, onChanged, toast }) {
         </div>
       )}
 
-      {editing ? (
-        <EditForm r={r} onCancel={() => setEditing(false)} onSaved={() => { setEditing(false); onChanged() }} toast={toast} />
-      ) : editable ? (
+      {editable && (
         <div className="mt-3 flex items-center justify-end gap-2">
-          <button onClick={() => setEditing(true)} className={S.btnSecondary}>Edit</button>
+          <button onClick={() => openEditRequest(r)} className={S.btnSecondary}>Edit</button>
           <button onClick={() => setDismissing(true)} className={DISMISS_BTN}>Dismiss</button>
         </div>
-      ) : null}
+      )}
 
       {dismissing && <DismissConfirm r={r} onClose={() => setDismissing(false)} onDone={() => { setDismissing(false); onChanged() }} toast={toast} />}
     </div>
@@ -192,7 +189,6 @@ function IncomingCard({ r, meId, isManager, onChanged, toast }) {
   const [busy, setBusy] = useState(false)
   const [resolving, setResolving] = useState(false)
   const [resolution, setResolution] = useState('')
-  const [editing, setEditing] = useState(false)
   const [dismissing, setDismissing] = useState(false)
   const editable = (r.status === 'new' || r.status === 'seen') && canManageRequest(r, meId, isManager)
 
@@ -228,9 +224,7 @@ function IncomingCard({ r, meId, isManager, onChanged, toast }) {
         <RequestStatusChip status={r.status} />
       </div>
 
-      {editing ? (
-        <EditForm r={r} onCancel={() => setEditing(false)} onSaved={() => { setEditing(false); onChanged() }} toast={toast} />
-      ) : resolving ? (
+      {resolving ? (
         <div className="mt-3 space-y-2">
           <textarea rows={2} autoFocus className={`${S.textarea} min-h-[56px]`} value={resolution} onChange={e => setResolution(e.target.value)} placeholder="What happened — e.g. Load booked, Atlanta → Nashville" />
           <div className="flex justify-end gap-2">
@@ -240,7 +234,7 @@ function IncomingCard({ r, meId, isManager, onChanged, toast }) {
         </div>
       ) : (
         <div className="mt-3 flex items-center justify-end gap-2 flex-wrap">
-          {editable && <button onClick={() => setEditing(true)} disabled={busy} className={S.btnSecondary}>Edit</button>}
+          {editable && <button onClick={() => openEditRequest(r)} disabled={busy} className={S.btnSecondary}>Edit</button>}
           {editable && <button onClick={() => setDismissing(true)} disabled={busy} className={DISMISS_BTN}>Dismiss</button>}
           {!r.seen_at && <button onClick={seen} disabled={busy} className={S.btnSecondary}>Mark seen</button>}
           <button onClick={() => setResolving(true)} disabled={busy} className="px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 disabled:opacity-50 text-white rounded-xl transition-colors">Mark handled</button>
@@ -252,67 +246,10 @@ function IncomingCard({ r, meId, isManager, onChanged, toast }) {
   )
 }
 
-// ── Edit / dismiss / restore ─────────────────────────────────────────────────
+// ── Dismiss / restore ────────────────────────────────────────────────────────
+// Edit reuses the shared Ask After-Hours modal (openEditRequest) — one form, two
+// modes — so there's no inline edit panel here.
 const DISMISS_BTN = 'px-3 py-2 text-sm font-medium border border-gray-300 dark:border-slate-600 text-gray-500 dark:text-slate-400 rounded-xl hover:bg-gray-50 dark:hover:bg-white/5 transition-colors'
-
-// Three fields only — kind, urgency, note. Driver is intentionally not editable:
-// a wrong-driver request should be dismissed and re-raised so the timeline and
-// driver_status_at_raise keep describing the same driver.
-function EditForm({ r, onCancel, onSaved, toast }) {
-  const [kind, setKind] = useState(r.kind)
-  const [urgency, setUrgency] = useState(r.urgency)
-  const [note, setNote] = useState(r.note || '')
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState('')
-
-  async function save() {
-    setBusy(true); setErr('')
-    try {
-      await editHelpRequest(r.id, { kind, urgency, note })
-      toast.success('Request updated')
-      onSaved()
-    } catch (e) {
-      setErr(e.message); toast.error(e.message) // surface the RPC reason verbatim
-      setBusy(false)
-    }
-  }
-
-  return (
-    <div className="mt-3 space-y-3 rounded-lg border border-gray-200 dark:border-white/10 p-3">
-      {err && <div className={S.errorBox}>{err}</div>}
-      <div>
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500 mb-1.5">What's needed</p>
-        <div className="grid grid-cols-2 gap-2">
-          {KINDS.map(k => (
-            <button key={k.value} type="button" onClick={() => setKind(k.value)}
-              className={`rounded-xl border px-3 py-2 text-sm font-semibold transition-colors ${kind === k.value ? 'border-orange-400 bg-orange-50/60 dark:bg-orange-500/10 text-gray-900 dark:text-white' : 'border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5'}`}>
-              {k.label}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div>
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500 mb-1.5">Urgency</p>
-        <div className="flex gap-2">
-          {URGENCIES.map(x => (
-            <button key={x.value} type="button" onClick={() => setUrgency(x.value)}
-              className={`flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-sm font-medium transition-colors ${urgency === x.value ? 'border-orange-400 bg-orange-50/60 dark:bg-orange-500/10 text-gray-900 dark:text-white' : 'border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5'}`}>
-              <span className="w-2 h-2 rounded-full" style={{ background: x.dot }} />{x.label}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div>
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500 mb-1.5">Note</p>
-        <textarea rows={2} className={`${S.textarea} min-h-[56px]`} value={note} onChange={e => setNote(e.target.value)} placeholder="What does the night team need to know?" />
-      </div>
-      <div className="flex justify-end gap-2">
-        <button onClick={onCancel} disabled={busy} className={S.btnCancel}>Cancel</button>
-        <button onClick={save} disabled={busy} className="px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 disabled:opacity-50 text-white rounded-xl transition-colors">{busy ? 'Saving…' : 'Save changes'}</button>
-      </div>
-    </div>
-  )
-}
 
 // Reason is optional in the RPC but required here — a dismissal with no reason
 // is indistinguishable from a request that was simply lost.

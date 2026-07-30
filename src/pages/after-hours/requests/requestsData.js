@@ -11,6 +11,10 @@ export const ASK_AFTER_HOURS_EVENT = 'buddy:ask-after-hours'
 export function openAskAfterHours(prefill = null) {
   window.dispatchEvent(new CustomEvent(ASK_AFTER_HOURS_EVENT, { detail: prefill }))
 }
+// Open the same modal in edit mode, prefilled from an existing request row.
+export function openEditRequest(row) {
+  window.dispatchEvent(new CustomEvent(ASK_AFTER_HOURS_EVENT, { detail: { edit: row } }))
+}
 // Fired after a request is raised / seen / handled so any open board or Requests
 // page can reload in the background ("within one refresh").
 export const REQUESTS_CHANGED_EVENT = 'buddy:requests-changed'
@@ -182,9 +186,14 @@ function rpcResult(data, fallback) {
   if (data && data.ok === false) throw new Error(data.reason || fallback)
   return data
 }
-export async function editHelpRequest(id, { kind, urgency, note }) {
+export async function editHelpRequest(id, { kind, urgency, note, driverId, loadId }) {
   const { data, error } = await supabase.rpc('update_help_request', {
-    p_id: id, p_kind: kind ?? null, p_urgency: urgency ?? null, p_note: note ?? null,
+    p_id: id,
+    p_kind: kind ?? null,
+    p_urgency: urgency ?? null,
+    p_note: note ?? null,
+    p_driver_id: driverId ?? null,
+    p_load_id: loadId ?? null,
   })
   if (error) throw error
   rpcResult(data, 'Could not edit the request.')
