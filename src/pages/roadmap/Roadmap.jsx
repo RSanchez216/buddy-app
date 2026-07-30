@@ -230,7 +230,7 @@ export default function Roadmap() {
       <PhasesModal open={!!phasesFor} onClose={() => setPhasesFor(null)} initiative={phasesFor}
         onSaved={async () => { await recomputeSafe(); load() }} />
       <HubModal open={hubOpen} onClose={() => setHubOpen(false)} settings={settings} onSaved={load} />
-      <LinesModal open={linesOpen} onClose={() => setLinesOpen(false)} lines={lines} onSaved={load} />
+      <LinesModal open={linesOpen} onClose={() => setLinesOpen(false)} lines={lines} initiatives={initiatives} onSaved={load} />
     </div>
   )
 }

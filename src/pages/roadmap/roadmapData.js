@@ -107,8 +107,35 @@ export async function removeDependency(initiativeId, dependsOnId) {
 }
 
 // Lines
+// Create goes through the RPC (slug, sort position, colour validation, track_start_x
+// default) — never insert into roadmap_lines directly. Returns { id, key, sort_order,
+// track_start_x }. Raises readable messages ("A line needs a name", etc.) — surface
+// error.message as-is.
+export async function createLine({ name, color, description, afterLineId }) {
+  const { data, error } = await supabase.rpc('roadmap_create_line', {
+    p_name: name,
+    p_color: color,
+    p_description: description?.trim() || null,
+    p_after_line_id: afterLineId || null,
+  })
+  if (error) throw error
+  return data
+}
 export async function updateLine(id, patch) {
   const { error } = await supabase.from('roadmap_lines').update(patch).eq('id', id)
+  if (error) throw error
+}
+// on delete restrict — a line with stations can't be deleted. The caller turns the
+// FK violation into a plain sentence rather than showing the Postgres message.
+export async function deleteLine(id) {
+  const { error } = await supabase.from('roadmap_lines').delete().eq('id', id)
+  if (error) throw error
+}
+// Bulk-reassign stations to another line (primary_line_id). status is trigger-owned
+// and untouched here.
+export async function moveStationsToLine(ids, toLineId) {
+  if (!ids?.length) return
+  const { error } = await supabase.from('roadmap_initiatives').update({ primary_line_id: toLineId }).in('id', ids)
   if (error) throw error
 }
 
