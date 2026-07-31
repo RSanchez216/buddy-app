@@ -8,7 +8,7 @@ import SearchSelect from './SearchSelect'
 import ActivityTrail from './ActivityTrail'
 import {
   loadLookup, addCategory, setLumperStatus, statusMeta, money, todayChicago, fmtChicagoTs,
-  fetchLumperById, DOC_BUCKET, CHARGE_TO, CHARGE_TO_DESC, STATUS_OPTIONS,
+  DOC_BUCKET, CHARGE_TO, CHARGE_TO_DESC, STATUS_OPTIONS,
 } from './lumperData'
 
 const ORANGE_BTN = 'px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 disabled:bg-gray-200 dark:disabled:bg-slate-700 disabled:text-gray-400 dark:disabled:text-slate-500 text-white rounded-xl transition-all'
@@ -330,16 +330,13 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
         }
       }
 
-      toast.success(isEdit ? 'Lumper updated' : 'Lumper recorded')
-      // Keep the modal open — re-hydrate the row (for status_set_by/at, totals,
-      // orig-comparison baselines) and bump the trail so it re-fetches. The list
-      // reloads in the background via onSaved.
-      try {
-        const fresh = await fetchLumperById(eventId)
-        if (fresh) setRowLive(fresh)
-      } catch { /* trail/meta stay on the previous snapshot; not fatal */ }
-      setActivityTick(t => t + 1)
-      onSaved?.()
+      // Refresh the list + summary FIRST (awaited, so the board behind is current
+      // the instant the modal closes), then close — on this form a close reads as
+      // "the payment saved", so it must only ever happen on success. The write
+      // already landed, so a transient refresh hiccup shouldn't block the close.
+      try { await onSaved?.() } catch { /* the board catches up on the next load */ }
+      onClose?.()
+      toast.success(isEdit ? 'Lumper saved' : 'Lumper added')
     } catch (e) {
       setError(e?.message || 'Save failed.')
       toast.error("Couldn't save the lumper", e)
@@ -764,7 +761,7 @@ function DocTarget({ label, noun, file, path, inOctopus, onFile, onView, onClear
             )}
         </div>
         <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-1 truncate" title={filename}>
-          {filename}{uploadedBy ? ` · uploaded by ${uploadedBy}` : ''}{uploadedAt ? `, ${uploadedAt} CT` : ''}
+          {filename}{uploadedBy ? ` · uploaded by ${uploadedBy}` : ''}{uploadedAt ? `, ${uploadedAt}` : ''}
         </p>
         {canEdit && <OctopusCheck inOctopus={inOctopus} onToggle={onToggleOctopus} />}
       </div>
@@ -784,7 +781,7 @@ function DocTarget({ label, noun, file, path, inOctopus, onFile, onView, onClear
           )}
         </div>
         <p className="text-[11px] text-[#4338CA] dark:text-indigo-300 mt-1">
-          {noun} is in Octopus.{octopusBy ? ` Marked by ${octopusBy}` : ''}{octopusAt ? `, ${octopusAt} CT.` : (octopusBy ? '.' : '')}
+          {noun} is in Octopus.{octopusBy ? ` Marked by ${octopusBy}` : ''}{octopusAt ? `, ${octopusAt}.` : (octopusBy ? '.' : '')}
         </p>
       </div>
     )
