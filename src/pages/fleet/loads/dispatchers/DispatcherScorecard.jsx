@@ -15,11 +15,12 @@ import {
   fetchReviews, fetchReviewsRange, setDispatcherReview, fetchUserNames, deskKeyOf,
   periodBounds, periodLabelShort, monthShort,
   money, perDriver, rpm, int, pct,
-  fetchScorecardInterpretation,
+  fetchScorecardInterpretation, addDaysISO,
 } from './dispatcherData'
 
-const GRAINS = [['month', 'Monthly'], ['quarter', 'Quarterly'], ['half', 'Six-month'], ['year', 'Yearly']]
+const GRAINS = [['week', 'Weekly'], ['month', 'Monthly'], ['quarter', 'Quarterly'], ['half', 'Six-month'], ['year', 'Yearly'], ['custom', 'Custom']]
 const VALID_GRAINS = new Set(GRAINS.map(g => g[0]))
+const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || '')
 
 const PILL = {
   red:   'bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400 border-red-200 dark:border-red-500/20',
@@ -63,18 +64,37 @@ export default function DispatcherScorecard() {
   const [exportingPdf, setExportingPdf] = useState(false)
 
   const isMonthly = grain === 'month'
+  const isCustom = grain === 'custom'
+  // Custom range from the URL (both inclusive); defaults to the last 30 days.
+  const defEnd = todayISO()
+  const defStart = addDaysISO(defEnd, -29)
+  const cStart = isCustom ? (isDate(params.get('start')) ? params.get('start') : defStart) : null
+  const cEnd = isCustom ? (isDate(params.get('end')) ? params.get('end') : defEnd) : null
   const monthStart = anchorForRpc('month', anchor) // period_month for the review record
   // Month-starts inside the displayed window (1 for month; 3/6/12 otherwise).
-  const periodMonths = useMemo(() => periodBounds(grain, anchor).months, [grain, anchor])
+  const periodMonths = useMemo(() => periodBounds(grain, anchor, cStart, cEnd).months, [grain, anchor, cStart, cEnd])
 
   // Build a fresh URLSearchParams each time — mutating the object react-router
   // handed us can trigger an extra render (and a duplicate fetch).
   // Changing grain resets to the CURRENT period for the new grain (based on
-  // today), not the carried-over anchor — otherwise Year→Month would land on
-  // January. Stepping ◀ ▶ still moves within the selected grain.
-  const setGrain = (g) => setParams(prev => { const p = new URLSearchParams(prev); p.set('grain', g); p.set('anchor', anchorForRpc(g, todayISO())); return p }, { replace: true })
+  // today). Custom seeds the last 30 days; week/month/… reset the anchor.
+  const setGrain = (g) => setParams(prev => {
+    const p = new URLSearchParams(prev); p.set('grain', g)
+    if (g === 'custom') { p.delete('anchor'); p.set('start', defStart); p.set('end', defEnd) }
+    else { p.set('anchor', anchorForRpc(g, todayISO())); p.delete('start'); p.delete('end') }
+    return p
+  }, { replace: true })
   const step = (dir) => setParams(prev => { const p = new URLSearchParams(prev); p.set('grain', grain); p.set('anchor', stepAnchor(grain, anchor, dir)); return p }, { replace: true })
   const goCurrent = () => setParams(prev => { const p = new URLSearchParams(prev); p.set('grain', grain); p.set('anchor', anchorForRpc(grain, todayISO())); return p }, { replace: true })
+  // Custom picker: p_end inclusive; block end-before-start; cap span at 18 months.
+  const setCustom = (nextStart, nextEnd) => setParams(prev => {
+    const p = new URLSearchParams(prev)
+    let s = nextStart, e = nextEnd
+    if (e < s) e = s
+    if (e > addDaysISO(s, 548)) e = addDaysISO(s, 548) // ~18 months
+    p.set('grain', 'custom'); p.set('start', s); p.set('end', e)
+    return p
+  }, { replace: true })
 
   // Dedupe guard: fetch at most once per {grain, anchor, reloadTick}, so a
   // second nudge from the same toggle (e.g. an extra render on URL change)
@@ -83,16 +103,21 @@ export default function DispatcherScorecard() {
   const interpKeyRef = useRef(null)
 
   useEffect(() => {
-    const key = `${grain}|${anchor}|${reloadTick}`
+    const key = `${grain}|${anchor}|${cStart}|${cEnd}|${reloadTick}`
     if (scorecardKeyRef.current === key) return
     scorecardKeyRef.current = key
     let cancelled = false
     ;(async () => {
       setLoading(true); setError(''); setSelectedDesk(null)
       try {
-        const [sc, bk] = await Promise.all([fetchScorecard(grain, anchor), fetchAmazonBookers(grain, anchor)])
+        const sc = await fetchScorecard(grain, anchor, cStart, cEnd)
         if (cancelled) return
-        setRows(sc); setBookers(bk)
+        setRows(sc)
+        // Amazon bookers are best-effort — a hiccup (or a grain it doesn't
+        // support) must not sink the board.
+        fetchAmazonBookers(grain, anchor, cStart, cEnd)
+          .then(bk => { if (!cancelled) setBookers(bk) })
+          .catch(() => { if (!cancelled) setBookers([]) })
         // Monthly review sign-offs — one row per (desk, month), keyed by desk_key.
         if (grain === 'month') {
           const revs = await fetchReviews(monthStart)
@@ -104,7 +129,7 @@ export default function DispatcherScorecard() {
           setReviewerNames(await fetchUserNames(revs.map(r => r.reviewed_by)))
         } else {
           // Multi-month: roll every monthly review inside the window up per desk.
-          const { start, end } = periodBounds(grain, anchor)
+          const { start, end } = periodBounds(grain, anchor, cStart, cEnd)
           const revs = await fetchReviewsRange(start, end)
           if (cancelled) return
           const byDesk = {}
@@ -119,21 +144,21 @@ export default function DispatcherScorecard() {
       }
     })()
     return () => { cancelled = true }
-  }, [grain, anchor, reloadTick, monthStart])
+  }, [grain, anchor, cStart, cEnd, reloadTick, monthStart])
 
   // Blended interpretation — separate parallel fetch so a slow/failed read never
   // holds up the scorecard.
   useEffect(() => {
-    const key = `${grain}|${anchor}|${reloadTick}`
+    const key = `${grain}|${anchor}|${cStart}|${cEnd}|${reloadTick}`
     if (interpKeyRef.current === key) return
     interpKeyRef.current = key
     let cancelled = false
     setScInterp(null); setScInterpErr(false)
-    fetchScorecardInterpretation(grain, anchor)
+    fetchScorecardInterpretation(grain, anchor, cStart, cEnd)
       .then(d => { if (!cancelled) setScInterp(d) })
       .catch(e => { if (!cancelled) { console.error('scorecard interpretation failed:', e); setScInterpErr(true) } })
     return () => { cancelled = true }
-  }, [grain, anchor, reloadTick])
+  }, [grain, anchor, cStart, cEnd, reloadTick])
 
   const retry = () => setReloadTick(t => t + 1)
 
@@ -184,12 +209,16 @@ export default function DispatcherScorecard() {
   }
 
   // Grain word for the partial-period notice.
-  const PERIOD_WORD = { month: 'month', quarter: 'quarter', half: 'half', year: 'year' }
+  const PERIOD_WORD = { week: 'week', month: 'month', quarter: 'quarter', half: 'half', year: 'year', custom: 'range' }
+
+  // Header label: week/custom come from the interpretation payload (authoritative
+  // "Week of Jul 27" / "Jul 10 - Aug 20, 2026"); the rest from local math.
+  const periodText = scInterp?.period_label || periodLabel(grain, anchor)
 
   // The selected period is still "in progress" when it's the current one — its
-  // gross (and therefore the vs-prior delta) is partial, so we suppress deltas
-  // and keep them out of the read.
-  const inProgress = isCurrentPeriod(grain, anchor)
+  // gross (and the vs-prior delta) is partial, so we suppress deltas. The
+  // interpretation payload's `partial` is authoritative once loaded.
+  const inProgress = scInterp?.partial != null ? scInterp.partial : isCurrentPeriod(grain, anchor, cEnd)
 
   const desks = useMemo(() => (rows || []).filter(r => !r.is_amazon_team), [rows])
   const amazon = useMemo(() => (rows || []).find(r => r.is_amazon_team) || null, [rows])
@@ -378,13 +407,26 @@ export default function DispatcherScorecard() {
           ))}
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => step(-1)} className={S.btnSecondary} aria-label="Previous period">◀</button>
-          <span className="min-w-[8.5rem] text-center text-sm font-semibold text-gray-900 dark:text-white">{periodLabel(grain, anchor)}</span>
-          <button onClick={() => step(1)} disabled={inProgress} className={`${S.btnSecondary} disabled:opacity-40`} aria-label="Next period">▶</button>
-          {!inProgress && <button onClick={goCurrent} className={S.btnSecondary}>Current</button>}
+          {isCustom ? (
+            <>
+              <input type="date" value={cStart} max={cEnd} onChange={e => setCustom(e.target.value, cEnd)}
+                className="px-2 py-1.5 text-sm rounded-lg bg-white dark:bg-slate-800/80 border border-gray-300 dark:border-slate-700/40 text-gray-900 dark:text-slate-100" />
+              <span className="text-gray-400 text-xs">→</span>
+              <input type="date" value={cEnd} min={cStart} onChange={e => setCustom(cStart, e.target.value)}
+                className="px-2 py-1.5 text-sm rounded-lg bg-white dark:bg-slate-800/80 border border-gray-300 dark:border-slate-700/40 text-gray-900 dark:text-slate-100" />
+              <span className="min-w-[10rem] text-center text-sm font-semibold text-gray-900 dark:text-white">{periodText}</span>
+            </>
+          ) : (
+            <>
+              <button onClick={() => step(-1)} className={S.btnSecondary} aria-label="Previous period">◀</button>
+              <span className="min-w-[8.5rem] text-center text-sm font-semibold text-gray-900 dark:text-white">{periodText}</span>
+              <button onClick={() => step(1)} disabled={inProgress} className={`${S.btnSecondary} disabled:opacity-40`} aria-label="Next period">▶</button>
+              {!inProgress && <button onClick={goCurrent} className={S.btnSecondary}>Current</button>}
+            </>
+          )}
           {inProgress && (
             <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-400 border border-orange-200 dark:border-orange-500/25">
-              <span className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-pulse" /> in progress · to date
+              <span className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-pulse" /> in progress · {scInterp?.kind || 'to date'}
             </span>
           )}
         </div>
@@ -422,7 +464,7 @@ export default function DispatcherScorecard() {
           <button onClick={retry} className={S.btnSecondary}>Retry</button>
         </div>
       ) : !rows?.length ? (
-        <div className={`${S.card} p-10 text-center text-gray-400 dark:text-slate-600`}>No dispatcher activity in {periodLabel(grain, anchor)}.</div>
+        <div className={`${S.card} p-10 text-center text-gray-400 dark:text-slate-600`}>No dispatcher activity in {periodText}.</div>
       ) : (
         <>
           {/* Blended interpretation — leads the scorecard */}
@@ -433,7 +475,7 @@ export default function DispatcherScorecard() {
           {/* Company strip */}
           {company && (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              <Kpi label="Total gross" value={money(company.totalGross)} delta={company.grossDelta} sub={inProgress ? `${periodLabel(grain, anchor).replace(/ ·.*/, '')} to date` : undefined} accent="orange" />
+              <Kpi label="Total gross" value={money(company.totalGross)} delta={company.grossDelta} sub={inProgress ? `${scInterp?.kind || 'to date'}` : undefined} accent="orange" />
               <Kpi label="Active desks" value={int(company.activeDesks)} />
               <Kpi label="Blended RPM" value={rpm(company.blendedRpm)} sub={`floor ${rpm(company.floorRpm)}`} />
               <Kpi label="Total departed" value={int(company.totalTurn)} sub="drivers left" onClick={() => setShowDepartures(true)} hint="See who left" />
@@ -510,12 +552,18 @@ export default function DispatcherScorecard() {
                       const read = deskRead(d, floors, { inProgress })
                       const rev = reviews[deskKeyOf(d)]
                       const ru = isMonthly ? null : deskRollup(d)
+                      // Too little driver-time to read fairly — dim the row and flag
+                      // it so a thin sample isn't mistaken for a real signal.
+                      const thin = d.driver_months_exact != null && Number(d.driver_months_exact) < 0.5
                       return (
                         <tr key={d.desk_id} onClick={e => { e.currentTarget.focus(); setSelectedDesk(d) }}
                           tabIndex={0} role="button" aria-label={`Open ${d.desk_name} desk detail`}
                           onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedDesk(d) } }}
-                          className={`${S.tableRow} cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50 focus-visible:ring-inset`}>
-                          <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>{d.desk_name}</td>
+                          className={`${S.tableRow} cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50 focus-visible:ring-inset ${thin ? 'opacity-50' : ''}`}>
+                          <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>
+                            {d.desk_name}
+                            {thin && <span title={`Only ${Number(d.driver_months_exact).toFixed(2)} driver-months in this window — too thin to read.`} className="ml-1.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-gray-100 dark:bg-white/10 text-gray-500 dark:text-slate-400 align-middle">thin</span>}
+                          </td>
                           <td className={`${S.td} text-right tabular-nums text-gray-900 dark:text-slate-200`}>
                             {money(d.gross)}
                             {!inProgress && d.gross_delta_pct != null && (
@@ -565,6 +613,9 @@ export default function DispatcherScorecard() {
               home desk: the desk that booked most of their recent freight. That desk wears it even if the driver&apos;s final load
               happened to run on another desk.
             </p>
+            <p className="text-xs text-gray-500 dark:text-slate-500 leading-relaxed max-w-3xl mt-2">
+              Excludes 66 driver records bulk-stamped 5 Jun 2026 by an import, which were not real departures.
+            </p>
           </section>
 
           {/* What's baked in */}
@@ -583,7 +634,7 @@ export default function DispatcherScorecard() {
       )}
 
       <DeskDrawer
-        open={!!selectedDesk} desk={selectedDesk} floors={floors} grain={grain} anchor={anchor} inProgress={inProgress}
+        open={!!selectedDesk} desk={selectedDesk} floors={floors} grain={grain} anchor={anchor} rangeStart={cStart} rangeEnd={cEnd} periodText={periodText} inProgress={inProgress}
         monthly={isMonthly}
         review={selectedDesk ? reviews[deskKeyOf(selectedDesk)] : null}
         reviewerName={selectedDesk ? reviewerNames[reviews[deskKeyOf(selectedDesk)]?.reviewed_by] : ''}
@@ -604,6 +655,8 @@ export default function DispatcherScorecard() {
         open={showDepartures}
         grain={grain}
         anchor={anchor}
+        rangeStart={cStart}
+        rangeEnd={cEnd}
         onClose={() => setShowDepartures(false)}
       />
     </div>

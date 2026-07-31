@@ -17,8 +17,22 @@ export function todayISO() {
   return toISO(n.getFullYear(), n.getMonth() + 1, n.getDate())
 }
 function parts(iso) {
-  const [y, m] = String(iso).split('-').map(Number)
-  return { y, m }
+  const [y, m, d] = String(iso).split('-').map(Number)
+  return { y, m, d }
+}
+const firstOfMonth = (iso) => { const { y, m } = parts(iso); return toISO(y, m, 1) }
+export const addDaysISO = (iso, n) => { const { y, m, d } = parts(iso); const dt = new Date(y, m - 1, d + n); return toISO(dt.getFullYear(), dt.getMonth() + 1, dt.getDate()) }
+// Monday of the week containing the date (weeks run Monday–Sunday).
+export function mondayOf(iso) {
+  const { y, m, d } = parts(iso)
+  const dt = new Date(y, m - 1, d)
+  const dow = (dt.getDay() + 6) % 7
+  dt.setDate(dt.getDate() - dow)
+  return toISO(dt.getFullYear(), dt.getMonth() + 1, dt.getDate())
+}
+// Date args for the RPCs — only custom passes explicit bounds (p_end inclusive).
+export function rpcDates(grain, start, end) {
+  return grain === 'custom' ? { p_start: start, p_end: end } : {}
 }
 // First month of the grain's window that contains the anchor.
 function startMonth(grain, m) {
@@ -30,10 +44,15 @@ function startMonth(grain, m) {
 // Canonical anchor to send the RPC: first day of the target window (any date
 // inside the window is accepted; the window start is unambiguous).
 export function anchorForRpc(grain, anchorISO) {
+  if (grain === 'week' || grain === 'custom') return anchorISO
   const { y, m } = parts(anchorISO)
   return toISO(y, startMonth(grain, m), 1)
 }
 export function periodLabel(grain, anchorISO) {
+  // Custom ranges get their label from the RPC's period_label (it carries the
+  // exact inclusive bounds); this is only the pre-load placeholder.
+  if (grain === 'custom') return 'Custom range'
+  if (grain === 'week') { const { m, d } = parts(mondayOf(anchorISO)); return `Week of ${MON[m - 1]} ${d}` }
   const { y, m } = parts(anchorISO)
   const sm = startMonth(grain, m)
   if (grain === 'year') return `${y}`
@@ -42,25 +61,32 @@ export function periodLabel(grain, anchorISO) {
   return `${MON[sm - 1]} – ${MON[sm + span - 1]} ${y}`
 }
 export function stepAnchor(grain, anchorISO, dir) {
+  if (grain === 'week') return addDaysISO(mondayOf(anchorISO), dir * 7)
   const { y, m } = parts(anchorISO)
   const sm = startMonth(grain, m)
   const d = new Date(y, sm - 1 + dir * STEP_MONTHS[grain], 1)
   return toISO(d.getFullYear(), d.getMonth() + 1, 1)
 }
-export function isCurrentPeriod(grain, anchorISO) {
+// Still-running check. Week: its Monday is this week or later. Custom: the
+// inclusive end is today or later. Else: window start at/after the current one.
+export function isCurrentPeriod(grain, anchorISO, endISO) {
+  if (grain === 'week') return mondayOf(anchorISO) >= mondayOf(todayISO())
+  if (grain === 'custom') return !endISO || endISO >= todayISO()
   return anchorForRpc(grain, anchorISO) >= anchorForRpc(grain, todayISO())
 }
 
 // Half-open bounds of the grain's window + the list of month-starts inside it
 // (1 for month, 3/6/12 for quarter/half/year). Used to roll monthly reviews up
 // across a multi-month period and to render one pip per constituent month.
-export function periodBounds(grain, anchorISO) {
-  const start = anchorForRpc(grain, anchorISO)
-  const end = stepAnchor(grain, start, 1) // first day of the next window
+export function periodBounds(grain, anchorISO, start, end) {
+  let s, e
+  if (grain === 'custom') { s = firstOfMonth(start || todayISO()); e = stepAnchor('month', firstOfMonth(end || start || todayISO()), 1) }
+  else if (grain === 'week') { const mon = mondayOf(anchorISO); s = firstOfMonth(mon); e = stepAnchor('month', firstOfMonth(addDaysISO(mon, 6)), 1) }
+  else { s = anchorForRpc(grain, anchorISO); e = stepAnchor(grain, s, 1) }
   const months = []
-  let cur = start
-  while (cur < end) { months.push(cur); cur = stepAnchor('month', cur, 1) }
-  return { start, end, months }
+  let cur = s
+  while (cur < e) { months.push(cur); cur = stepAnchor('month', cur, 1) }
+  return { start: s, end: e, months }
 }
 
 // Short month label from a 'YYYY-MM-01' period_month (e.g. "May").
@@ -103,45 +129,45 @@ export const pct = (n) => (n == null ? null : `${n > 0 ? '+' : ''}${Number(n).to
 // surfaces the retry UI instead of spinning forever. The kit rejects at `ms`
 // even when the transport ignores the abort, so the hang-safe behavior stays in
 // one place. Call sites still pass `signal => builder.abortSignal(signal)`.
-export async function fetchScorecard(grain, anchorISO) {
+export async function fetchScorecard(grain, anchorISO, start, end) {
   const { data, error } = await withTimeout(signal =>
-    supabase.rpc('dispatcher_scorecard', { p_grain: grain, p_anchor: anchorForRpc(grain, anchorISO) }).abortSignal(signal))
+    supabase.rpc('dispatcher_scorecard', { p_grain: grain, p_anchor: anchorForRpc(grain, anchorISO), ...rpcDates(grain, start, end) }).abortSignal(signal))
   if (error) throw error
   return data || []
 }
-export async function fetchDeskDrivers(deskId, grain, anchorISO) {
+export async function fetchDeskDrivers(deskId, grain, anchorISO, start, end) {
   const { data, error } = await withTimeout(signal =>
-    supabase.rpc('dispatcher_desk_drivers', { p_desk: deskId, p_grain: grain, p_anchor: anchorForRpc(grain, anchorISO) }).abortSignal(signal))
+    supabase.rpc('dispatcher_desk_drivers', { p_desk: deskId, p_grain: grain, p_anchor: anchorForRpc(grain, anchorISO), ...rpcDates(grain, start, end) }).abortSignal(signal))
   if (error) throw error
   return data || []
 }
-export async function fetchAmazonBookers(grain, anchorISO) {
+export async function fetchAmazonBookers(grain, anchorISO, start, end) {
   const { data, error } = await withTimeout(signal =>
-    supabase.rpc('amazon_team_bookers', { p_grain: grain, p_anchor: anchorForRpc(grain, anchorISO) }).abortSignal(signal))
+    supabase.rpc('amazon_team_bookers', { p_grain: grain, p_anchor: anchorForRpc(grain, anchorISO), ...rpcDates(grain, start, end) }).abortSignal(signal))
   if (error) throw error
   return data || []
 }
 // Every driver terminated in the period, with the run they booked through their
 // desk. One call for the whole period — do NOT loop dispatcher_desk_drivers.
-export async function fetchDepartures(grain, anchorISO) {
+export async function fetchDepartures(grain, anchorISO, start, end) {
   const { data, error } = await withTimeout(signal =>
-    supabase.rpc('dispatcher_departures', { p_grain: grain, p_anchor: anchorForRpc(grain, anchorISO) }).abortSignal(signal))
+    supabase.rpc('dispatcher_departures', { p_grain: grain, p_anchor: anchorForRpc(grain, anchorISO), ...rpcDates(grain, start, end) }).abortSignal(signal))
   if (error) throw error
   return data || []
 }
 // One-row read of the departures: pre-written headline + detail sentences plus
 // the raw figures (veterans, gone_within_60d, …) the UI colours in place.
-export async function fetchDeparturesInterpretation(grain, anchorISO) {
+export async function fetchDeparturesInterpretation(grain, anchorISO, start, end) {
   const { data, error } = await withTimeout(signal =>
-    supabase.rpc('dispatcher_departures_interpretation', { p_grain: grain, p_anchor: anchorForRpc(grain, anchorISO) }).abortSignal(signal))
+    supabase.rpc('dispatcher_departures_interpretation', { p_grain: grain, p_anchor: anchorForRpc(grain, anchorISO), ...rpcDates(grain, start, end) }).abortSignal(signal))
   if (error) throw error
   return Array.isArray(data) ? (data[0] || null) : (data || null)
 }
 // Blended, MTD/YTD-aware read of the whole scorecard (performance + momentum +
 // efficiency + Amazon), one row. Same basis as the scorecard table.
-export async function fetchScorecardInterpretation(grain, anchorISO) {
+export async function fetchScorecardInterpretation(grain, anchorISO, start, end) {
   const { data, error } = await withTimeout(signal =>
-    supabase.rpc('dispatcher_scorecard_interpretation', { p_grain: grain, p_anchor: anchorForRpc(grain, anchorISO) }).abortSignal(signal))
+    supabase.rpc('dispatcher_scorecard_interpretation', { p_grain: grain, p_anchor: anchorForRpc(grain, anchorISO), ...rpcDates(grain, start, end) }).abortSignal(signal))
   if (error) throw error
   return Array.isArray(data) ? (data[0] || null) : (data || null)
 }
@@ -253,12 +279,17 @@ function readAnalysis(label, d, floors) {
 }
 
 // The 3 comparison chips shown under the analysis sentence.
-export function readChips(d, floors) {
+export function readChips(d, floors, grain) {
   const rpmDelta = Number(d.rpm || 0) - floors.floorRpm
   const turn = churnRate(d) * 100
+  // A weekly window is too short for a meaningful rate — a 1-driver week reads as
+  // 100%. Show the raw departure count instead, no percentage.
+  const departureChip = grain === 'week'
+    ? { label: 'Departed', value: `${Number(d.turnover || 0)}`, tone: Number(d.turnover || 0) === 0 ? 'green' : Number(d.turnover || 0) <= 1 ? 'amber' : 'red' }
+    : { label: 'Departure rate', value: `${Math.round(turn)}%`, tone: turn <= 40 ? 'green' : turn <= 80 ? 'amber' : 'red' }
   return [
     { label: 'RPM vs floor', value: `${rpmDelta >= 0 ? '+' : '−'}$${Math.abs(rpmDelta).toFixed(2)}`, tone: rpmDelta >= 0 ? 'green' : 'red' },
-    { label: 'Departure rate', value: `${Math.round(turn)}%`, tone: turn <= 40 ? 'green' : turn <= 80 ? 'amber' : 'red' },
+    departureChip,
     { label: '$/driver·mo', value: perDriver(d.per_driver_month), tone: Number(d.per_driver_month || 0) >= floors.floorPd ? 'green' : 'amber' },
   ]
 }

@@ -10,21 +10,21 @@ import BandPill from './BandPill'
 // the roster is independent of the table's sort/filter. Grows for the session.
 const rosterCache = new Map()   // key → resolved rows
 const rosterInflight = new Map() // key → in-flight Promise (dedupes prefetch vs open)
-const rosterKey = (deskId, grain, anchor) => `${deskId}:${grain}:${anchor}`
-function loadRoster(deskId, grain, anchor) {
-  const key = rosterKey(deskId, grain, anchor)
+const rosterKey = (deskId, grain, anchor, start, end) => `${deskId}:${grain}:${anchor}:${start || ''}:${end || ''}`
+function loadRoster(deskId, grain, anchor, start, end) {
+  const key = rosterKey(deskId, grain, anchor, start, end)
   if (rosterCache.has(key)) return Promise.resolve(rosterCache.get(key))
   let p = rosterInflight.get(key)
   if (!p) {
-    p = fetchDeskDrivers(deskId, grain, anchor)
+    p = fetchDeskDrivers(deskId, grain, anchor, start, end)
       .then(d => { rosterCache.set(key, d); rosterInflight.delete(key); return d })
       .catch(e => { rosterInflight.delete(key); throw e }) // don't cache failures — a real open retries
     rosterInflight.set(key, p)
   }
   return p
 }
-function prefetchRoster(deskId, grain, anchor) {
-  if (deskId) loadRoster(deskId, grain, anchor).catch(() => {})
+function prefetchRoster(deskId, grain, anchor, start, end) {
+  if (deskId) loadRoster(deskId, grain, anchor, start, end).catch(() => {})
 }
 
 // Centered modal for one desk — the content is wide-shaped (roster + departed
@@ -71,7 +71,7 @@ function lastDayISO(endExclusiveISO) {
   return `${dt.getUTCFullYear()}-${p(dt.getUTCMonth() + 1)}-${p(dt.getUTCDate())}`
 }
 
-export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgress = false, monthly = false, review, reviewerName, canEdit = false, monthLabel, onSaveReview, onClose, onPrev, onNext, hasPrev = false, hasNext = false, position = null, prevDesk = null, nextDesk = null }) {
+export default function DeskDrawer({ open, desk, floors, grain, anchor, rangeStart, rangeEnd, periodText, inProgress = false, monthly = false, review, reviewerName, canEdit = false, monthLabel, onSaveReview, onClose, onPrev, onNext, hasPrev = false, hasNext = false, position = null, prevDesk = null, nextDesk = null }) {
   const [rows, setRows] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -90,13 +90,13 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgre
   useEffect(() => {
     if (!open || !desk?.desk_id) return
     let cancelled = false
-    const key = rosterKey(desk.desk_id, grain, anchor)
+    const key = rosterKey(desk.desk_id, grain, anchor, rangeStart, rangeEnd)
     ;(async () => {
       // Cached (from a prior open or a neighbour prefetch) → render instantly.
       if (rosterCache.has(key)) { setRows(rosterCache.get(key)); setError(''); setLoading(false); return }
       setLoading(true); setError(''); setRows(null)
       try {
-        const d = await loadRoster(desk.desk_id, grain, anchor)
+        const d = await loadRoster(desk.desk_id, grain, anchor, rangeStart, rangeEnd)
         // A late response for a desk we've since arrowed away from is ignored.
         if (!cancelled) setRows(d)
       } catch (e) {
@@ -106,10 +106,10 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgre
       }
     })()
     // Warm the adjacent desks in the background so the next ← / → is instant.
-    prefetchRoster(prevDesk?.desk_id, grain, anchor)
-    prefetchRoster(nextDesk?.desk_id, grain, anchor)
+    prefetchRoster(prevDesk?.desk_id, grain, anchor, rangeStart, rangeEnd)
+    prefetchRoster(nextDesk?.desk_id, grain, anchor, rangeStart, rangeEnd)
     return () => { cancelled = true }
-  }, [open, desk?.desk_id, grain, anchor, prevDesk?.desk_id, nextDesk?.desk_id])
+  }, [open, desk?.desk_id, grain, anchor, rangeStart, rangeEnd, prevDesk?.desk_id, nextDesk?.desk_id])
 
   // On open: capture the originating element, move focus into the modal, and
   // listen for Escape / ← prev / → next. On close: return focus to where it came
@@ -143,13 +143,19 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgre
 
   const read = deskRead(desk, floors, { inProgress })
   const tone = TONE[read.tone] || TONE.green
-  const chips = readChips(desk, floors)
+  const chips = readChips(desk, floors, grain)
+  // A month-rounded driver-months figure reads as 0 or 1 over a week/custom
+  // window; the exact (2dp) figure is the honest one there.
+  const exactDM = grain === 'week' || grain === 'custom'
+  const driverMonths = exactDM
+    ? (desk.driver_months_exact != null ? Number(desk.driver_months_exact).toFixed(2) : '—')
+    : int(desk.driver_months)
   const active = (rows || []).filter(r => r.status === 'active').sort((a, b) => Number(b.gross) - Number(a.gross))
   // Biggest loss first — a $117k departure should read above a $45k one.
   const left = (rows || []).filter(r => r.status === 'left').sort((a, b) => Number(b.run_gross || 0) - Number(a.run_gross || 0))
   const hasLeft = left.length > 0
   const today = todayISO()
-  const bounds = periodBounds(grain, anchor)
+  const bounds = periodBounds(grain, anchor, rangeStart, rangeEnd)
   // Quiet-flag reference: today for an in-progress period, else the period's last day.
   const quietRef = inProgress ? today : lastDayISO(bounds.end)
 
@@ -181,7 +187,7 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgre
               <h3 className="text-lg font-bold text-gray-900 dark:text-white truncate">{desk.desk_name}</h3>
               <span className={`shrink-0 text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full border ${tone.pill}`}>{read.label}</span>
             </div>
-            <p className="text-xs text-gray-500 dark:text-slate-500 mt-0.5">Dispatch desk · booking + home-desk retention · {periodLabel(grain, anchor)}</p>
+            <p className="text-xs text-gray-500 dark:text-slate-500 mt-0.5">Dispatch desk · booking + home-desk retention · {periodText || periodLabel(grain, anchor)}</p>
           </div>
           <div className="flex items-center gap-1 shrink-0">
             {position && (
@@ -211,10 +217,13 @@ export default function DeskDrawer({ open, desk, floors, grain, anchor, inProgre
 
         {/* Body — the only scroll region */}
         <div ref={bodyRef} className="overflow-y-auto p-4 space-y-4">
-          {/* Recap strip */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {/* Recap strip. On week/custom the driver-months figure sits next to
+              $/drv·mo — the rate is per driver-month, so the denominator belongs
+              on screen (0.99 driver-months, not a rounded 1). */}
+          <div className={`grid grid-cols-2 gap-2 ${exactDM ? 'sm:grid-cols-5' : 'sm:grid-cols-4'}`}>
             <Recap label="Gross" value={money(desk.gross)} />
             <Recap label="$/drv·mo" value={perDriver(desk.per_driver_month)} />
+            {exactDM && <Recap label="Driver-months" value={driverMonths} />}
             <Recap label="Departed" value={int(desk.turnover)} />
             <Recap label="RPM" value={rpm(desk.rpm)} />
           </div>

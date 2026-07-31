@@ -67,7 +67,7 @@ function renderDetail(detail, names) {
 }
 const rowKey = (r) => `${r.driver_internal_id ?? r.driver_name}-${r.desk_id ?? r.desk_name}`
 
-export default function DeparturesModal({ open, grain, anchor, onClose }) {
+export default function DeparturesModal({ open, grain, anchor, rangeStart, rangeEnd, onClose }) {
   const [rows, setRows] = useState(null)
   const [interp, setInterp] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -88,8 +88,8 @@ export default function DeparturesModal({ open, grain, anchor, onClose }) {
         // Departures are required; the interpretation is an enhancement — if it
         // fails, still show the list rather than blanking the whole modal.
         const [d, ip] = await Promise.all([
-          fetchDepartures(grain, anchor),
-          fetchDeparturesInterpretation(grain, anchor).catch(() => null),
+          fetchDepartures(grain, anchor, rangeStart, rangeEnd),
+          fetchDeparturesInterpretation(grain, anchor, rangeStart, rangeEnd).catch(() => null),
         ])
         if (!cancelled) { setRows(d); setInterp(ip) }
       } catch (e) {
@@ -99,7 +99,7 @@ export default function DeparturesModal({ open, grain, anchor, onClose }) {
       }
     })()
     return () => { cancelled = true }
-  }, [open, grain, anchor, reloadKey])
+  }, [open, grain, anchor, rangeStart, rangeEnd, reloadKey])
 
   useEffect(() => {
     if (!open) return
@@ -128,7 +128,7 @@ export default function DeparturesModal({ open, grain, anchor, onClose }) {
   const anyShort = useMemo(() => counted.some(r => r.short_run), [counted])
 
   if (!open) return null
-  const period = periodLabel(grain, anchor)
+  const period = interp?.period_label || periodLabel(grain, anchor)
 
   function telegramText() {
     const L = []

@@ -7,7 +7,7 @@ import { money, int } from './dispatcherData'
 
 const RED = 'text-red-600 dark:text-red-400'
 const GREEN = 'text-emerald-600 dark:text-emerald-400'
-const GRAIN_WORD = { month: 'month', quarter: 'quarter', half: 'half', year: 'year' }
+const GRAIN_WORD = { week: 'week', month: 'month', quarter: 'quarter', half: 'half', year: 'year', custom: 'period' }
 const pct1 = (x) => `${Math.abs(Number(x)).toFixed(1)}%`
 const timesX = (x) => `${Number(x).toFixed(1)}×`
 
