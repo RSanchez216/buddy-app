@@ -60,6 +60,8 @@ const EVENT_SELECT = `
   reimbursed_at, reimbursed_amount, resolved_at, status,
   revised_rc_number, accounting_notes, status_set_by, status_set_at,
   receipt_path, revised_rc_path, notes, created_by, recorded_by, recorded_by_name, source, created_at,
+  receipt_in_octopus, receipt_octopus_by, receipt_octopus_at,
+  revised_rc_in_octopus, revised_rc_octopus_by, revised_rc_octopus_at,
   carrier:carriers ( name ),
   customer:customers ( name ),
   dispatcher:dispatchers ( name ),

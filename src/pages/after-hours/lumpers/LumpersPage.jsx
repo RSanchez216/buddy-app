@@ -317,8 +317,8 @@ function LumperRow({ row, usersById, onClick }) {
       </td>
       <td className="px-3 py-2.5">
         <div className="flex items-center gap-1">
-          <DocChip label="R" filled={!!row.receipt_path} title="Receipt" />
-          <DocChip label="RC" filled={!!row.revised_rc_path} title="Revised rate con" />
+          <DocChip label="R" title="Receipt" state={docState(row.receipt_path, row.receipt_in_octopus)} />
+          <DocChip label="RC" title="Revised rate con" state={docState(row.revised_rc_path, row.revised_rc_in_octopus)} />
         </div>
       </td>
       <td className="px-4 py-2.5 text-gray-600 dark:text-slate-400 whitespace-nowrap">{recorderLabel(row, usersById)}</td>
@@ -326,15 +326,18 @@ function LumperRow({ row, usersById, onClick }) {
   )
 }
 
-function DocChip({ label, filled, title }) {
+// File present → in BUDDY (green); else in-Octopus mark → purple; else missing.
+const docState = (path, inOctopus) => (path ? 'buddy' : inOctopus ? 'octopus' : 'missing')
+const DOC_CHIP = {
+  // In BUDDY — green. In Octopus — purple (a full peer of green). Missing — grey.
+  buddy:   { cls: 'text-[#157A3B] dark:text-emerald-400 border-[#BFE5CB] dark:border-emerald-500/30 bg-[#DFF3E6] dark:bg-emerald-500/15', tip: 'in BUDDY' },
+  octopus: { cls: 'text-[#4F46E5] dark:text-indigo-300 border-[#C5C8F6] dark:border-indigo-500/30 bg-[#E8EAFD] dark:bg-indigo-500/15', tip: 'in Octopus' },
+  missing: { cls: 'text-[#B6BCC5] dark:text-slate-600 border-[#EDEFF2] dark:border-white/10 bg-[#F4F5F7] dark:bg-transparent', tip: 'missing' },
+}
+function DocChip({ label, title, state }) {
+  const v = DOC_CHIP[state] || DOC_CHIP.missing
   return (
-    <span
-      title={`${title}${filled ? '' : ' — none'}`}
-      className={`inline-flex items-center justify-center min-w-[20px] h-5 px-1 rounded text-[9px] font-bold border ${
-        filled
-          ? 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-500/30'
-          : 'text-gray-300 dark:text-slate-600 border-gray-200 dark:border-white/10'
-      }`}
-    >{label}</span>
+    <span title={`${title}: ${v.tip}`}
+      className={`inline-flex items-center justify-center min-w-[20px] h-5 px-1 rounded text-[9px] font-bold border ${v.cls}`}>{label}</span>
   )
 }

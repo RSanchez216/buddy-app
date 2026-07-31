@@ -34,9 +34,11 @@ function fmtFieldVal(field, v) {
   return v
 }
 
+const OCTOPUS_FIELDS = new Set(['receipt_in_octopus', 'revised_rate_con_in_octopus'])
 function dotColor(e) {
   if (e.kind === 'created') return '#F97316'
   if (e.kind === 'status') return STATUS_DOT[e.new_value] || '#CBD2DA'
+  if (e.kind === 'document' && OCTOPUS_FIELDS.has(e.field)) return '#6366F1' // marked as in Octopus
   return '#CBD2DA'
 }
 
@@ -62,6 +64,14 @@ function describe(e) {
       return { node: <>{e.old_value != null ? 'edited' : 'added'} {which}</>, note: e.new_value }
     }
     case 'document': {
+      // Marking as in Octopus is an assertion, not a file — keep it distinct
+      // from uploads in the history, even though they look alike on screen.
+      if (OCTOPUS_FIELDS.has(e.field)) {
+        const doc = e.field === 'receipt_in_octopus' ? 'the receipt' : 'the revised rate con'
+        return e.new_value === 'true' || e.new_value === true
+          ? { node: <>marked {doc} as already in Octopus</> }
+          : { node: <>removed the Octopus mark on {doc}</>, muted: true }
+      }
       const which = e.field === 'receipt' ? 'a receipt' : 'a revised rate con'
       if (e.new_value == null) return { node: <>removed {which}</>, muted: true }
       return { node: <>{e.old_value != null ? 'replaced' : 'uploaded'} {which}</> }

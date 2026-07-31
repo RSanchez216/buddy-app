@@ -71,8 +71,10 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
   // Docs + recorder
   const [receiptFile, setReceiptFile] = useState(null)
   const [receiptPath, setReceiptPath] = useState(null)
+  const [receiptInOctopus, setReceiptInOctopus] = useState(false)
   const [rcFile, setRcFile] = useState(null)
   const [rcPath, setRcPath] = useState(null)
+  const [rcInOctopus, setRcInOctopus] = useState(false)
   const [recorderId, setRecorderId] = useState(null)
 
   // The live row — starts as the `row` prop (edit) or null (create), and gets
@@ -87,6 +89,7 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
   const modalRef = useRef(null)
   const loadInputRef = useRef(null)
   const rcNumberRef = useRef(null)
+  const receiptBlockRef = useRef(null)
   const previouslyFocused = useRef(null)
 
   const usersOptions = useMemo(() => (refLists.users || []).map(u => ({ id: u.id, name: u.full_name })), [refLists.users])
@@ -122,6 +125,8 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
       setAccountingNotes(row.accounting_notes || '')
       setReceiptPath(row.receipt_path || null)
       setRcPath(row.revised_rc_path || null)
+      setReceiptInOctopus(!!row.receipt_in_octopus)
+      setRcInOctopus(!!row.revised_rc_in_octopus)
       setRecorderId(row.recorded_by || me?.id || null)
     } else {
       setLoadNumber(''); setDatePaid(todayChicago()); setLookup({ status: 'idle', drivers: [] })
@@ -130,7 +135,7 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
       setEfsCode(''); setAmount(''); setEfsFee('2.00'); setCategoryId(null); setInvoiceNumber('')
       setRevisedRcNumber(''); setNotes('')
       setStatus('open'); setChargeTo(null); setAccountingNotes('')
-      setReceiptPath(null); setRcPath(null); setRecorderId(me?.id || null)
+      setReceiptPath(null); setRcPath(null); setReceiptInOctopus(false); setRcInOctopus(false); setRecorderId(me?.id || null)
     }
   }, [open, isEdit, row, me?.id])
 
@@ -205,6 +210,9 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
   }
 
   // Jump the accounting mirror to the section-2 revised-rate-con field.
+  function jumpToReceipt() {
+    receiptBlockRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
   function jumpToRc() {
     rcNumberRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
     setTimeout(() => rcNumberRef.current?.focus(), 300)
@@ -279,6 +287,10 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
         paid_from_department_id: recorder?.department_id || null,
         recorded_by: recorderId || null,
         recorded_by_name: recorder?.full_name || null,
+        // Only the two booleans — the trigger stamps who/when and clears them on
+        // undo, and flips rc_status to 'received' when the rate con is marked.
+        receipt_in_octopus: receiptInOctopus,
+        revised_rc_in_octopus: rcInOctopus,
       }
 
       // Update when we already have an id (edit, or a create that was already
@@ -342,6 +354,16 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
   const dockTs = rowLive?.created_at ? fmtChicagoTs(rowLive.created_at) : nowLabel
   const statusSetByName = rowLive?.status_set_by ? (usersById.get(rowLive.status_set_by)?.full_name || 'someone') : null
   const chargeDesc = chargeTo ? (CHARGE_TO_DESC[chargeTo] || '').replace('{total}', money(totalForPanel)) : ''
+
+  // Octopus-mark attribution (trigger-stamped by/at on the persisted row). Before
+  // a save persists a fresh tick, show it optimistically as "you · just now".
+  const myName = usersById.get(me?.id)?.full_name || 'you'
+  const octoBy = (persistedBy, flag) => (persistedBy ? (usersById.get(persistedBy)?.full_name || 'someone') : (flag ? myName : null))
+  const octoAt = (persistedAt, flag) => (persistedAt ? fmtChicagoTs(persistedAt) : (flag ? 'just now' : null))
+  const receiptOctopusBy = octoBy(rowLive?.receipt_octopus_by, receiptInOctopus)
+  const receiptOctopusAt = octoAt(rowLive?.receipt_octopus_at, receiptInOctopus)
+  const rcOctopusBy = octoBy(rowLive?.revised_rc_octopus_by, rcInOctopus)
+  const rcOctopusAt = octoAt(rowLive?.revised_rc_octopus_at, rcInOctopus)
 
   return createPortal(
     <div className="fixed inset-0 z-[90] flex items-center justify-center">
@@ -493,9 +515,11 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
                 <div className="border-t border-dashed border-gray-300 dark:border-white/10 my-4" />
 
                 {/* Receipt */}
-                <div>
+                <div ref={receiptBlockRef}>
                   <label className={S.label}>Receipt</label>
-                  <DocTarget label="Receipt" file={receiptFile} path={receiptPath} onFile={setReceiptFile} onView={viewDoc} onClear={() => setReceiptFile(null)} />
+                  <DocTarget label="Receipt" noun="Receipt" file={receiptFile} path={receiptPath} inOctopus={receiptInOctopus}
+                    onFile={setReceiptFile} onView={viewDoc} onClear={() => setReceiptFile(null)} onToggleOctopus={setReceiptInOctopus}
+                    canEdit={canEdit} uploadedBy={dockRecorderName} uploadedAt={dockTs} octopusBy={receiptOctopusBy} octopusAt={receiptOctopusAt} />
                 </div>
 
                 {/* Revised rate con — number + upload */}
@@ -504,7 +528,9 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
                   <input ref={rcNumberRef} className={S.input} value={revisedRcNumber} onChange={e => setRevisedRcNumber(e.target.value)}
                     placeholder="Updated Rate Confirmation File - Leave blank if the broker wouldn't issue one" />
                   <div className="mt-2">
-                    <DocTarget label="PDF file" file={rcFile} path={rcPath} onFile={setRcFile} onView={viewDoc} onClear={() => setRcFile(null)} />
+                    <DocTarget label="PDF file" noun="The revised rate con" file={rcFile} path={rcPath} inOctopus={rcInOctopus}
+                      onFile={setRcFile} onView={viewDoc} onClear={() => setRcFile(null)} onToggleOctopus={setRcInOctopus}
+                      canEdit={canEdit} uploadedBy={dockRecorderName} uploadedAt={dockTs} octopusBy={rcOctopusBy} octopusAt={rcOctopusAt} />
                   </div>
                 </div>
 
@@ -536,6 +562,18 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
                     <div className="mt-2 p-3 rounded-lg bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20">
                       <p className="text-xs text-emerald-800 dark:text-emerald-300"><span className="font-bold">Closed.</span> Broker reimbursed {money(totalForPanel)} in full. Nothing charged to the driver, dispatcher or company.</p>
                       <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-1.5">Factoring buying the invoice is not payment — leave it on Pending until the broker actually settles.</p>
+                    </div>
+                  )}
+
+                  {/* Signpost for whoever is about to chase the broker: the receipt
+                      isn't in BUDDY but it's in Octopus — pull it from there. */}
+                  {status === 'pending' && !receiptPath && !receiptFile && receiptInOctopus && (
+                    <div className="mt-2 p-3 rounded-lg border border-[#CBCEF7] bg-[#F7F7FE] dark:border-indigo-500/30 dark:bg-indigo-500/[0.06]">
+                      <p className="text-xs text-[#4338CA] dark:text-indigo-300">
+                        <span className="font-bold text-[#3730A3] dark:text-indigo-200">The receipt is in Octopus.</span>{' '}
+                        {receiptOctopusBy ? `Marked by ${receiptOctopusBy}` : 'Marked'}{receiptOctopusAt ? ` on ${receiptOctopusAt}` : ''} — pull it from there before emailing {broker.trim() || 'the broker'}.{' '}
+                        <button type="button" onClick={jumpToReceipt} className="font-medium text-[#4F46E5] dark:text-indigo-300 hover:underline">Upload a copy here</button>
+                      </p>
                     </div>
                   )}
                 </div>
@@ -689,30 +727,81 @@ function StatusSelect({ value, onChange, dropUp }) {
   )
 }
 
-function DocTarget({ label, file, path, onFile, onView, onClear }) {
+// Display precedence: file present → green (IN BUDDY); else in-Octopus → purple
+// (IN OCTOPUS, a full peer of green); else grey (Missing).
+function OctopusCheck({ inOctopus, onToggle }) {
   return (
-    <div className="rounded-xl border border-dashed border-gray-300 dark:border-slate-600 p-3">
+    <label className="mt-2 flex items-center gap-2 text-xs text-gray-600 dark:text-slate-400 cursor-pointer">
+      <input type="checkbox" checked={inOctopus} onChange={e => onToggle(e.target.checked)} className="accent-[#6366F1]" />
+      Already uploaded to Octopus
+    </label>
+  )
+}
+function FileInput({ children, onFile, className }) {
+  return (
+    <label className={`cursor-pointer ${className}`}>
+      {children}
+      <input type="file" accept="image/*,application/pdf" className="hidden" onChange={e => e.target.files?.[0] && onFile(e.target.files[0])} />
+    </label>
+  )
+}
+function DocTarget({ label, noun, file, path, inOctopus, onFile, onView, onClear, onToggleOctopus, canEdit, uploadedBy, uploadedAt, octopusBy, octopusAt }) {
+  const hasFile = !!(file || path)
+  const filename = file?.name || (path ? String(path).split('/').pop().replace(/^(receipt|revised_rc)-/, '') : '')
+
+  if (hasFile) {
+    return (
+      <div className="rounded-xl border p-3 border-[#C9E7D3] bg-[#F5FCF7] dark:border-emerald-500/30 dark:bg-emerald-500/[0.06]">
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[#E3F6E9] text-[#157A3B] dark:bg-emerald-500/15 dark:text-emerald-400">IN BUDDY</span>
+          {file
+            ? (canEdit && <button type="button" onClick={onClear} className="ml-auto text-gray-400 hover:text-red-500 text-xs shrink-0" aria-label="Remove">✕</button>)
+            : (
+              <div className="ml-auto flex items-center gap-3 text-xs shrink-0">
+                <button type="button" onClick={() => onView(path)} className="text-orange-600 dark:text-orange-400 font-medium hover:underline">View current</button>
+                {canEdit && <FileInput onFile={onFile} className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-300">Replace</FileInput>}
+              </div>
+            )}
+        </div>
+        <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-1 truncate" title={filename}>
+          {filename}{uploadedBy ? ` · uploaded by ${uploadedBy}` : ''}{uploadedAt ? `, ${uploadedAt} CT` : ''}
+        </p>
+        {canEdit && <OctopusCheck inOctopus={inOctopus} onToggle={onToggleOctopus} />}
+      </div>
+    )
+  }
+
+  if (inOctopus) {
+    return (
+      <div className="rounded-xl border p-3 border-[#CBCEF7] bg-[#F7F7FE] dark:border-indigo-500/30 dark:bg-indigo-500/[0.06]">
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[#E8EAFD] text-[#4338CA] dark:bg-indigo-500/15 dark:text-indigo-300">IN OCTOPUS</span>
+          {canEdit && (
+            <div className="ml-auto flex items-center gap-3 text-xs shrink-0">
+              <FileInput onFile={onFile} className="text-orange-600 dark:text-orange-400 font-medium hover:underline">Upload a copy anyway</FileInput>
+              <button type="button" onClick={() => onToggleOctopus(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-300">Undo</button>
+            </div>
+          )}
+        </div>
+        <p className="text-[11px] text-[#4338CA] dark:text-indigo-300 mt-1">
+          {noun} is in Octopus.{octopusBy ? ` Marked by ${octopusBy}` : ''}{octopusAt ? `, ${octopusAt} CT.` : (octopusBy ? '.' : '')}
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="rounded-xl border border-dashed border-[#DDE1E6] dark:border-slate-600 bg-white dark:bg-transparent p-3">
       <p className="text-xs font-medium text-gray-700 dark:text-slate-300 mb-1.5">{label}</p>
-      {file ? (
-        <div className="flex items-center gap-2 text-xs">
-          <span className="truncate text-gray-600 dark:text-slate-400" title={file.name}>{file.name}</span>
-          <button type="button" onClick={onClear} className="ml-auto text-gray-400 hover:text-red-500 shrink-0" aria-label="Remove">✕</button>
-        </div>
-      ) : path ? (
-        <div className="flex items-center gap-2 text-xs">
-          <button type="button" onClick={() => onView(path)} className="text-orange-600 dark:text-orange-400 font-medium hover:underline">View current</button>
-          <label className="ml-auto text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 cursor-pointer shrink-0">
-            Replace
-            <input type="file" accept="image/*,application/pdf" className="hidden" onChange={e => e.target.files?.[0] && onFile(e.target.files[0])} />
-          </label>
-        </div>
-      ) : (
-        <label className="flex items-center justify-center gap-1.5 py-2 text-xs text-gray-400 dark:text-slate-500 cursor-pointer hover:text-orange-500">
+      {canEdit ? (
+        <FileInput onFile={onFile} className="flex items-center justify-center gap-1.5 py-2 text-xs text-gray-400 dark:text-slate-500 hover:text-orange-500">
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" /></svg>
           Upload image or PDF
-          <input type="file" accept="image/*,application/pdf" className="hidden" onChange={e => e.target.files?.[0] && onFile(e.target.files[0])} />
-        </label>
+        </FileInput>
+      ) : (
+        <p className="py-2 text-xs text-gray-400 dark:text-slate-500 text-center">None</p>
       )}
+      {canEdit && <OctopusCheck inOctopus={inOctopus} onToggle={onToggleOctopus} />}
     </div>
   )
 }
