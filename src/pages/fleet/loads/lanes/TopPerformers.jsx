@@ -16,6 +16,37 @@ function TeamIcon() {
   )
 }
 
+// Driver-type pills. Filter on member_types (populated for teams too), never on
+// driver_type (null for teams). Colours are self-contained (light bg + dark
+// text), so the same pill reads in both themes.
+const TYPE_META = {
+  'Owner Operator':  { abbr: 'Owner Op',   roster: 'O/O',        bg: '#FEF3E2', border: '#F7DFBB', text: '#B45309' },
+  'Leased Owner-Op': { abbr: 'Leased O/O', roster: 'Leased O/O', bg: '#F2EEFC', border: '#DCD2F6', text: '#6D28D9' },
+  'Contract Driver': { abbr: 'Contract',   roster: 'Contract',   bg: '#E9F1FD', border: '#C8DCF8', text: '#1D4ED8' },
+  'Company Driver':  { abbr: 'Company',    roster: 'Company',    bg: '#E8F6EC', border: '#C5E7CF', text: '#15803D' },
+}
+const TEAM_META = { bg: '#ffffff', border: '#D6DBE1', text: '#52606D' }
+const TYPE_ORDER = ['Owner Operator', 'Leased Owner-Op', 'Contract Driver', 'Company Driver']
+const isTeamRow = (r) => !!(r.is_team || r.team_id)
+const pillStyle = (m) => ({ background: m.bg, border: `1px solid ${m.border}`, color: m.text, borderRadius: 999, padding: '3px 10px', fontSize: 11.2, fontWeight: 600, lineHeight: 1 })
+
+function DriverTypeCell({ driver }) {
+  const types = driver.member_types || []
+  if (isTeamRow(driver)) {
+    const roster = types.map(t => TYPE_META[t]?.roster || t).join(' + ')
+    return (
+      <span className="inline-flex items-center gap-1.5">
+        <span style={pillStyle(TEAM_META)} className="inline-block whitespace-nowrap">Team</span>
+        {roster && <span style={{ fontSize: 10.3, color: '#9CA3AF' }} className="whitespace-nowrap">{roster}</span>}
+      </span>
+    )
+  }
+  const t = driver.driver_type || types[0]
+  const m = t && TYPE_META[t]
+  if (!m) return <span className="text-gray-400 dark:text-slate-600">—</span>
+  return <span title={t} style={pillStyle(m)} className="inline-block whitespace-nowrap">{m.abbr}</span>
+}
+
 function Pills({ value, onChange, options, title }) {
   return (
     <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700 text-xs shrink-0" title={title}>
@@ -74,6 +105,7 @@ function DriverRow({ driver, rank }) {
           <span className="truncate">{driver.driver_name}</span>
         </span>
       </td>
+      <td className="px-3 py-3 whitespace-nowrap"><DriverTypeCell driver={driver} /></td>
       <td className="px-3 py-3 text-right">
         <span className="font-semibold text-gray-900 dark:text-slate-200">{fmtMoney(driver.gross)}</span>
       </td>
@@ -217,23 +249,91 @@ function ExportDropdown({ data, isDriver, range, phases }) {
   )
 }
 
+const TYPE_FILTER_OPTIONS = [
+  ['all', 'All types'],
+  ['Owner Operator', 'Owner Operator'],
+  ['Leased Owner-Op', 'Leased Owner-Op'],
+  ['Contract Driver', 'Contract Driver'],
+  ['Company Driver', 'Company Driver'],
+  ['teams', 'Teams only'],
+]
+function TypeFilter({ value, onChange, counts }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  useEffect(() => {
+    if (!open) return
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [open])
+  const active = value !== 'all'
+  const label = value === 'all' ? 'All types' : value === 'teams' ? 'Teams only' : value
+  return (
+    <div className="relative shrink-0" ref={ref}>
+      <button
+        onClick={() => setOpen(o => !o)} title="Filter by driver type"
+        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium whitespace-nowrap ${
+          active
+            ? 'bg-[#FFF8F2] border-[#F97316] text-[#C2410C] dark:bg-orange-500/10 dark:border-orange-500/40 dark:text-orange-300'
+            : 'border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5'
+        }`}
+      >
+        {label}<span className="opacity-60">▾</span>
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full mt-1 z-20 w-64 rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-[#0d0d1f] shadow-xl overflow-hidden">
+          {TYPE_FILTER_OPTIONS.map(([k, lbl]) => (
+            <button key={k} onClick={() => { onChange(k); setOpen(false) }}
+              className={`w-full flex items-center justify-between gap-3 px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-white/5 ${value === k ? 'font-semibold text-orange-600 dark:text-orange-400' : 'text-gray-700 dark:text-slate-300'}`}>
+              <span>{lbl}</span>
+              <span className="tabular-nums text-gray-400 dark:text-slate-500">{counts[k] ?? 0}</span>
+            </button>
+          ))}
+          <p className="px-3 py-2 text-[10px] leading-snug text-gray-400 dark:text-slate-500 border-t border-gray-100 dark:border-white/5">
+            Teams count under each member&apos;s type, so a team of an owner operator and a contract driver appears in both. That is why the parts add to more than {counts.all ?? 0}.
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function LeaderboardSection({ title, data, isDriver, total, range, phases }) {
-  const [expandedSort, setExpandedSort] = useState('gross') // gross | loads | rpm
+  const [expandedSort, setExpandedSort] = useState('gross') // gross | loads | rpm | type
+  const [typeFilter, setTypeFilter] = useState('all')
   const [expanded, setExpanded] = useState(false)
 
+  // Live per-type counts (from the full result set) for the filter menu.
+  const typeCounts = useMemo(() => {
+    const rows = data || []
+    const c = { all: rows.length, teams: rows.filter(isTeamRow).length }
+    TYPE_ORDER.forEach(t => { c[t] = rows.filter(r => (r.member_types || []).includes(t)).length })
+    return c
+  }, [data])
+
+  // Filter on member_types (teams included), never on driver_type.
+  const filtered = useMemo(() => {
+    if (!isDriver || typeFilter === 'all' || !data) return data || []
+    if (typeFilter === 'teams') return data.filter(isTeamRow)
+    return data.filter(r => (r.member_types || []).includes(typeFilter))
+  }, [data, typeFilter, isDriver])
+
   const sortedData = useMemo(() => {
-    if (!data) return []
-    const sorted = [...data]
-    if (expandedSort === 'gross') {
-      sorted.sort((a, b) => (b.gross ?? 0) - (a.gross ?? 0))
-    } else if (expandedSort === 'loads') {
+    const sorted = [...filtered]
+    if (expandedSort === 'loads') {
       sorted.sort((a, b) => (b.legs ?? 0) - (a.legs ?? 0))
     } else if (expandedSort === 'rpm') {
       sorted.sort((a, b) => (b.rpm ?? 0) - (a.rpm ?? 0))
+    } else if (expandedSort === 'type') {
+      const ord = (r) => (isTeamRow(r) ? TYPE_ORDER.length : (TYPE_ORDER.indexOf(r.driver_type) + 1 || TYPE_ORDER.length + 1))
+      sorted.sort((a, b) => ord(a) - ord(b) || (b.gross ?? 0) - (a.gross ?? 0))
+    } else {
+      sorted.sort((a, b) => (b.gross ?? 0) - (a.gross ?? 0))
     }
     return sorted
-  }, [data, expandedSort])
+  }, [filtered, expandedSort])
 
+  const filteredTotal = filtered.length
   const displayData = expanded ? sortedData : sortedData.slice(0, 10)
 
   return (
@@ -245,10 +345,11 @@ function LeaderboardSection({ title, data, isDriver, total, range, phases }) {
             {title}
           </p>
           <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-1">
-            Delivered + in transit · {total} total
+            Delivered + in transit · {isDriver && typeFilter !== 'all' ? `${filteredTotal} of ${total}` : `${total} total`}
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {isDriver && <TypeFilter value={typeFilter} onChange={setTypeFilter} counts={typeCounts} />}
           <Pills
             value={expandedSort}
             onChange={setExpandedSort}
@@ -259,7 +360,7 @@ function LeaderboardSection({ title, data, isDriver, total, range, phases }) {
             ]}
             title="Sort metric"
           />
-          <ExportDropdown data={data} isDriver={isDriver} range={range} phases={phases} />
+          <ExportDropdown data={filtered} isDriver={isDriver} range={range} phases={phases} />
         </div>
       </div>
 
@@ -269,6 +370,12 @@ function LeaderboardSection({ title, data, isDriver, total, range, phases }) {
           <thead className={`${S.tableHead} sticky top-0 bg-white dark:bg-[#0d0d1f] z-10`}>
             <tr>
               <th className={`${S.th} !px-4`}>Rank</th>
+              {isDriver && (
+                <th className={`${S.th} !px-3 cursor-pointer select-none hover:text-gray-900 dark:hover:text-slate-200`}
+                  onClick={() => setExpandedSort('type')} title="Group by driver type">
+                  Driver type {expandedSort === 'type' ? '★' : '⇅'}
+                </th>
+              )}
               <th className={`${S.th} !px-3 text-right`}>
                 Gross {expandedSort === 'gross' ? '★' : ''}
               </th>
@@ -297,7 +404,7 @@ function LeaderboardSection({ title, data, isDriver, total, range, phases }) {
           <tbody>
             {displayData.length === 0 ? (
               <tr>
-                <td colSpan={isDriver ? 5 : 6} className="px-4 py-8 text-center text-sm text-gray-400 dark:text-slate-500">
+                <td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-400 dark:text-slate-500">
                   No {title.toLowerCase()} in this window
                 </td>
               </tr>
@@ -314,17 +421,17 @@ function LeaderboardSection({ title, data, isDriver, total, range, phases }) {
         </table>
       </div>
 
-      {/* Expander */}
-      {total > 10 && !expanded && (
+      {/* Expander — respects the active filter */}
+      {filteredTotal > 10 && !expanded && (
         <button
           onClick={() => setExpanded(true)}
           className="w-full px-4 py-3 text-xs text-center font-medium text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-500/10 border-t border-gray-100 dark:border-white/5"
         >
-          View full ranking ({total} total)
+          View full ranking ({filteredTotal} total)
         </button>
       )}
 
-      {expanded && total > 10 && (
+      {expanded && filteredTotal > 10 && (
         <button
           onClick={() => setExpanded(false)}
           className="w-full px-4 py-3 text-xs text-center font-medium text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-500/10 border-t border-gray-100 dark:border-white/5"
