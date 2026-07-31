@@ -25,13 +25,27 @@ export const RC_STATUS = [
   ['not_required', 'Not required'],
 ]
 
-// Status model (status is now a normal text column: open|pending|paid|unpaid,
-// NOT NULL DEFAULT 'open'). The dropdown shows a dot + label + description.
+// Status model (status is a normal text column: open|pending|paid|unpaid,
+// NOT NULL DEFAULT 'open'). The stored value stays 'unpaid' — a check-constraint
+// value and a join key across the summary/audit tables — but it is DISPLAYED as
+// "Other Payment Method" everywhere. Relabel at the display layer only (same
+// pattern as region West → Northwest). Everything that renders a status reads
+// its label from this one map — never a raw value.
+export const LUMPER_STATUS_LABEL = {
+  open: 'Open',
+  pending: 'Pending',
+  paid: 'Paid',
+  unpaid: 'Other Payment Method',
+}
+export const statusLabel = (s) => LUMPER_STATUS_LABEL[s] || (s ? s.charAt(0).toUpperCase() + s.slice(1) : '—')
+
+// The dropdown shows a dot + label + description.
 export const STATUS_OPTIONS = [
-  { value: 'open',    label: 'Open',    dot: '#94A3B8', desc: 'Recorded. Broker is expected to pay. Nobody is chasing it yet.' },
-  { value: 'pending', label: 'Pending', dot: '#F59E0B', desc: 'Reimbursement asked for. Waiting on the broker.' },
-  { value: 'paid',    label: 'Paid',    dot: '#16A34A', desc: 'Broker paid in full. Case closed. Factoring buying the invoice does not count as paid.' },
-  { value: 'unpaid',  label: 'Unpaid',  dot: '#DC2626', desc: 'Broker will not cover it. Opens a second field to pick who absorbs the cost.' },
+  { value: 'open',    label: LUMPER_STATUS_LABEL.open,    dot: '#94A3B8', desc: 'Recorded. Broker is expected to pay. Nobody is chasing it yet.' },
+  { value: 'pending', label: LUMPER_STATUS_LABEL.pending, dot: '#F59E0B', desc: 'Reimbursement asked for. Waiting on the broker.' },
+  { value: 'paid',    label: LUMPER_STATUS_LABEL.paid,    dot: '#16A34A', desc: 'Broker paid in full. Case closed. Factoring buying the invoice does not count as paid.' },
+  // Resolved outcome, not a failure — slate dot, not red.
+  { value: 'unpaid',  label: LUMPER_STATUS_LABEL.unpaid,  dot: '#64748B', desc: "Broker isn't covering it. Pick who does — the driver, the dispatcher, or the company." },
 ]
 
 // ── Fetches ────────────────────────────────────────────────────────────────
@@ -139,12 +153,13 @@ export async function setLumperStatus(id, status, chargeTo, accountingNotes) {
 }
 
 export const STATUS_META = {
-  open:    { label: 'Open',    dot: '#94A3B8', pill: 'bg-gray-100 dark:bg-slate-700/50 text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-600/40' },
-  pending: { label: 'Pending', dot: '#F59E0B', pill: 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/20' },
-  paid:    { label: 'Paid',    dot: '#16A34A', pill: 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20' },
-  unpaid:  { label: 'Unpaid',  dot: '#DC2626', pill: 'bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-500/20' },
+  open:    { label: LUMPER_STATUS_LABEL.open,    dot: '#94A3B8', pill: 'bg-gray-100 dark:bg-slate-700/50 text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-600/40' },
+  pending: { label: LUMPER_STATUS_LABEL.pending, dot: '#F59E0B', pill: 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/20' },
+  paid:    { label: LUMPER_STATUS_LABEL.paid,    dot: '#16A34A', pill: 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20' },
+  // Other Payment Method is a resolved outcome — slate, not red.
+  unpaid:  { label: LUMPER_STATUS_LABEL.unpaid,  dot: '#64748B', pill: 'bg-slate-100 dark:bg-slate-700/50 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-600/40' },
 }
-export function statusMeta(s) { return STATUS_META[s] || { label: s || '—', dot: '#94A3B8', pill: 'bg-gray-100 dark:bg-slate-700/50 text-gray-500 dark:text-slate-400 border border-gray-200 dark:border-slate-600/30' } }
+export function statusMeta(s) { return STATUS_META[s] || { label: statusLabel(s), dot: '#94A3B8', pill: 'bg-gray-100 dark:bg-slate-700/50 text-gray-500 dark:text-slate-400 border border-gray-200 dark:border-slate-600/30' } }
 
 // Timestamptz → 'Jul 28, 2026, 4:03 PM CT' (America/Chicago).
 export function fmtChicagoTs(ts) {

@@ -248,7 +248,7 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
     if (!categoryId) { setError('Pick a category.'); return }
     // An unpaid lumper must land on somebody (the DB rejects it too).
     if (canEdit && status === 'unpaid' && !chargeTo) {
-      setError('Pick who absorbs the unpaid lumper before saving.'); return
+      setError('Pick who covers this before saving.'); return
     }
 
     setSaving(true)
@@ -540,19 +540,19 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
                   )}
                 </div>
 
-                {/* CHARGE TO — only on Unpaid */}
+                {/* PAID BY — only on Other Payment Method (stored status 'unpaid') */}
                 {status === 'unpaid' && (
                   <div className="mt-3">
-                    <label className={S.label}>Charge to *</label>
+                    <label className={S.label}>Paid by *</label>
                     {canEdit ? (
                       <>
                         <select className={`${S.input} appearance-none`} value={chargeTo || ''} onChange={e => setChargeTo(e.target.value || null)}>
-                          <option value="">Pick who absorbs it</option>
+                          <option value="">Pick who covers it</option>
                           {CHARGE_TO.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                         </select>
                         {chargeTo
                           ? <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-1.5">{chargeDesc}</p>
-                          : <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1.5">Required. An unpaid lumper has to land on somebody before it can be saved.</p>}
+                          : <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1.5">Required. Pick who covers this before saving.</p>}
                       </>
                     ) : (
                       <p className="text-sm text-gray-700 dark:text-slate-300">{CHARGE_TO.find(c => c[0] === chargeTo)?.[1] || '—'}</p>

@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
-import { fetchLumperActivity, money, fmtDate, todayChicago } from './lumperData'
+import { fetchLumperActivity, money, fmtDate, todayChicago, statusLabel } from './lumperData'
 
 // Read-only activity trail for a lumper (get_lumper_activity, newest-first).
 // The trigger writes it; the client only reads and re-fetches after a save.
+// Historical rows store the raw status ('unpaid'); render through statusLabel so
+// they show "Other Payment Method" too.
 
-const STATUS_DOT = { open: '#94A3B8', pending: '#F59E0B', paid: '#16A34A', unpaid: '#DC2626' }
+const STATUS_DOT = { open: '#94A3B8', pending: '#F59E0B', paid: '#16A34A', unpaid: '#64748B' }
 const FIELD_LABELS = {
   amount: 'Amount paid', efs_fee: 'EFS check fee', revised_rc_number: 'Revised rate con #',
   event_date: 'Date paid', load_number: 'Octopus load number', driver_name: 'Driver',
@@ -50,9 +52,9 @@ function describe(e) {
         return { node: <>changed the charge to <Strong>{chargeLabel(det.charge_to)}</Strong></> }
       }
       if (e.new_value === 'unpaid') {
-        return { node: <>moved <Strong>{cap(e.old_value)}</Strong> → <Strong>Unpaid</Strong> · charged to <Strong>{chargeLabel(det.charge_to)}</Strong></> }
+        return { node: <>moved <Strong>{statusLabel(e.old_value)}</Strong> → <Strong>{statusLabel('unpaid')}</Strong> · paid by <Strong>{chargeLabel(det.charge_to)}</Strong></> }
       }
-      return { node: <>moved <Strong>{cap(e.old_value)}</Strong> → <Strong>{cap(e.new_value)}</Strong></> }
+      return { node: <>moved <Strong>{statusLabel(e.old_value)}</Strong> → <Strong>{statusLabel(e.new_value)}</Strong></> }
     }
     case 'note': {
       const which = e.field === 'accounting_notes' ? 'an accounting note' : 'a note from the dock'

@@ -8,7 +8,7 @@ import LumperDrawer from './LumperDrawer'
 import {
   fetchLumperEvents, fetchSummary, fetchCategories, fetchRefLists, rangeForDays,
   money, fmtDate, fmtMonth, ageDays, statusMeta, recorderLabel, dispatcherDisplay,
-  CHARGE_TO, RC_STATUS,
+  CHARGE_TO, RC_STATUS, LUMPER_STATUS_LABEL,
 } from './lumperData'
 
 const LUMPER_PRESETS = [
@@ -164,10 +164,7 @@ export default function LumpersPage() {
       <div className="flex flex-wrap items-center gap-2">
         <Select value={status} onChange={e => setStatus(e.target.value)} className="w-auto">
           <option value="all">All statuses</option>
-          <option value="open">Open</option>
-          <option value="pending">Pending</option>
-          <option value="paid">Paid</option>
-          <option value="unpaid">Unpaid</option>
+          {['open', 'pending', 'paid', 'unpaid'].map(s => <option key={s} value={s}>{LUMPER_STATUS_LABEL[s]}</option>)}
         </Select>
         <Select value={carrierId} onChange={e => setCarrierId(e.target.value)} className="w-auto">
           <option value="all">All carriers</option>
