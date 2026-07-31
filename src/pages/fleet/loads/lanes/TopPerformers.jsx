@@ -30,10 +30,12 @@ const TYPE_ORDER = ['Owner Operator', 'Leased Owner-Op', 'Contract Driver', 'Com
 const isTeamRow = (r) => !!(r.is_team || r.team_id)
 const pillStyle = (m) => ({ background: m.bg, border: `1px solid ${m.border}`, color: m.text, borderRadius: 999, padding: '3px 10px', fontSize: 11.2, fontWeight: 600, lineHeight: 1 })
 
+const typeRank = (t) => (TYPE_ORDER.indexOf(t) + 1 || TYPE_ORDER.length + 1)
 function DriverTypeCell({ driver }) {
   const types = driver.member_types || []
   if (isTeamRow(driver)) {
-    const roster = types.map(t => TYPE_META[t]?.roster || t).join(' + ')
+    // Owner-side type leads (O/O owns the truck): O/O → Leased O/O → Contract → Company.
+    const roster = [...types].sort((a, b) => typeRank(a) - typeRank(b)).map(t => TYPE_META[t]?.roster || t).join(' + ')
     return (
       <span className="inline-flex items-center gap-1.5">
         <span style={pillStyle(TEAM_META)} className="inline-block whitespace-nowrap">Team</span>
@@ -249,25 +251,24 @@ function ExportDropdown({ data, isDriver, range, phases }) {
   )
 }
 
-const TYPE_FILTER_OPTIONS = [
-  ['all', 'All types'],
-  ['Owner Operator', 'Owner Operator'],
-  ['Leased Owner-Op', 'Leased Owner-Op'],
-  ['Contract Driver', 'Contract Driver'],
-  ['Company Driver', 'Company Driver'],
-  ['teams', 'Teams only'],
-]
-function TypeFilter({ value, onChange, counts }) {
+const SHOW_OPTIONS = [['all', 'Everyone'], ['solo', 'Solo drivers only'], ['teams', 'Teams only']]
+function triggerLabel(types, show) {
+  if (types.length === 0 && show === 'all') return 'All types'
+  if (types.length === 0) return show === 'solo' ? 'Solo drivers' : 'Teams only'
+  const base = types.length === 1 ? types[0] : `${types.length} types`
+  return show === 'all' ? base : `${base} · ${show === 'solo' ? 'Solo' : 'Teams'}`
+}
+function TypeFilter({ selectedTypes, onToggleType, show, onSetShow, onClear, typeCounts, showCounts, shown, total, teamsTotal }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
   useEffect(() => {
     if (!open) return
     const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
-    document.addEventListener('mousedown', onDoc)
-    return () => document.removeEventListener('mousedown', onDoc)
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', onDoc); document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey) }
   }, [open])
-  const active = value !== 'all'
-  const label = value === 'all' ? 'All types' : value === 'teams' ? 'Teams only' : value
+  const active = selectedTypes.length > 0 || show !== 'all'
   return (
     <div className="relative shrink-0" ref={ref}>
       <button
@@ -278,19 +279,36 @@ function TypeFilter({ value, onChange, counts }) {
             : 'border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5'
         }`}
       >
-        {label}<span className="opacity-60">▾</span>
+        {triggerLabel(selectedTypes, show)}<span className="opacity-60">▾</span>
       </button>
       {open && (
-        <div className="absolute left-0 top-full mt-1 z-20 w-64 rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-[#0d0d1f] shadow-xl overflow-hidden">
-          {TYPE_FILTER_OPTIONS.map(([k, lbl]) => (
-            <button key={k} onClick={() => { onChange(k); setOpen(false) }}
-              className={`w-full flex items-center justify-between gap-3 px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-white/5 ${value === k ? 'font-semibold text-orange-600 dark:text-orange-400' : 'text-gray-700 dark:text-slate-300'}`}>
-              <span>{lbl}</span>
-              <span className="tabular-nums text-gray-400 dark:text-slate-500">{counts[k] ?? 0}</span>
-            </button>
+        <div className="absolute right-0 top-full mt-1 z-20 w-72 rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-[#0d0d1f] shadow-xl overflow-hidden">
+          <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">Driver type</p>
+          {TYPE_ORDER.map(t => (
+            <label key={t} className="flex items-center justify-between gap-3 px-3 py-1.5 text-xs cursor-pointer hover:bg-gray-50 dark:hover:bg-white/5 text-gray-700 dark:text-slate-300">
+              <span className="inline-flex items-center gap-2">
+                <input type="checkbox" checked={selectedTypes.includes(t)} onChange={() => onToggleType(t)} className="accent-orange-500" />{t}
+              </span>
+              <span className="tabular-nums text-gray-400 dark:text-slate-500">{typeCounts[t] ?? 0}</span>
+            </label>
           ))}
-          <p className="px-3 py-2 text-[10px] leading-snug text-gray-400 dark:text-slate-500 border-t border-gray-100 dark:border-white/5">
-            Teams count under each member&apos;s type, so a team of an owner operator and a contract driver appears in both. That is why the parts add to more than {counts.all ?? 0}.
+          <div className="border-t border-gray-100 dark:border-white/5 mt-1" />
+          <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">Show</p>
+          {SHOW_OPTIONS.map(([k, lbl]) => (
+            <label key={k} className="flex items-center justify-between gap-3 px-3 py-1.5 text-xs cursor-pointer hover:bg-gray-50 dark:hover:bg-white/5 text-gray-700 dark:text-slate-300">
+              <span className="inline-flex items-center gap-2">
+                <input type="radio" name="lane-driver-show" checked={show === k} onChange={() => onSetShow(k)} className="accent-orange-500" />{lbl}
+              </span>
+              <span className="tabular-nums text-gray-400 dark:text-slate-500">{showCounts[k] ?? 0}</span>
+            </label>
+          ))}
+          <div className="border-t border-gray-100 dark:border-white/5 mt-1" />
+          <div className="flex items-center justify-between px-3 py-2 text-[11px]">
+            <span className="font-medium text-gray-600 dark:text-slate-300 tabular-nums">{shown} of {total} shown</span>
+            {active && <button onClick={onClear} className="text-orange-600 dark:text-orange-400 hover:underline">Clear</button>}
+          </div>
+          <p className="px-3 pb-2 text-[10px] leading-snug text-gray-400 dark:text-slate-500">
+            A team counts under each member&apos;s type, so the {teamsTotal} teams appear under both Owner Operator and Contract Driver.
           </p>
         </div>
       )}
@@ -300,23 +318,39 @@ function TypeFilter({ value, onChange, counts }) {
 
 function LeaderboardSection({ title, data, isDriver, total, range, phases }) {
   const [expandedSort, setExpandedSort] = useState('gross') // gross | loads | rpm | type
-  const [typeFilter, setTypeFilter] = useState('all')
+  const [selectedTypes, setSelectedTypes] = useState([])    // OR over the four types
+  const [show, setShow] = useState('all')                   // all | solo | teams
   const [expanded, setExpanded] = useState(false)
 
-  // Live per-type counts (from the full result set) for the filter menu.
+  const toggleType = (t) => setSelectedTypes(a => a.includes(t) ? a.filter(x => x !== t) : [...a, t])
+  const clearFilter = () => { setSelectedTypes([]); setShow('all') }
+  const anyActive = selectedTypes.length > 0 || show !== 'all'
+
+  // Per-type counts are for the FULL board and stay stable while ticking (so the
+  // numbers don't jump on each click). Teams count under every member's type.
   const typeCounts = useMemo(() => {
     const rows = data || []
-    const c = { all: rows.length, teams: rows.filter(isTeamRow).length }
+    const c = { __teams: rows.filter(isTeamRow).length }
     TYPE_ORDER.forEach(t => { c[t] = rows.filter(r => (r.member_types || []).includes(t)).length })
     return c
   }, [data])
 
-  // Filter on member_types (teams included), never on driver_type.
+  // Filter on member_types (teams included), never on driver_type. No types ticked
+  // means all types. `show` splits solo vs team, independent of type.
+  const typeMatch = (r) => selectedTypes.length === 0 || selectedTypes.some(t => (r.member_types || []).includes(t))
   const filtered = useMemo(() => {
-    if (!isDriver || typeFilter === 'all' || !data) return data || []
-    if (typeFilter === 'teams') return data.filter(isTeamRow)
-    return data.filter(r => (r.member_types || []).includes(typeFilter))
-  }, [data, typeFilter, isDriver])
+    if (!isDriver || !data) return data || []
+    return data.filter(r => typeMatch(r)
+      && (show === 'all' || (show === 'solo' && !isTeamRow(r)) || (show === 'teams' && isTeamRow(r))))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, selectedTypes, show, isDriver])
+
+  // Show-counts reflect the current type selection (Everyone/Solo/Teams within it).
+  const showCounts = useMemo(() => {
+    const rows = (data || []).filter(typeMatch)
+    return { all: rows.length, solo: rows.filter(r => !isTeamRow(r)).length, teams: rows.filter(isTeamRow).length }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, selectedTypes])
 
   const sortedData = useMemo(() => {
     const sorted = [...filtered]
@@ -345,11 +379,13 @@ function LeaderboardSection({ title, data, isDriver, total, range, phases }) {
             {title}
           </p>
           <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-1">
-            Delivered + in transit · {isDriver && typeFilter !== 'all' ? `${filteredTotal} of ${total}` : `${total} total`}
+            Delivered + in transit · {isDriver && anyActive ? `${filteredTotal} of ${total}` : `${total} total`}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {isDriver && <TypeFilter value={typeFilter} onChange={setTypeFilter} counts={typeCounts} />}
+          {isDriver && <TypeFilter
+            selectedTypes={selectedTypes} onToggleType={toggleType} show={show} onSetShow={setShow} onClear={clearFilter}
+            typeCounts={typeCounts} showCounts={showCounts} shown={filteredTotal} total={total} teamsTotal={typeCounts.__teams} />}
           <Pills
             value={expandedSort}
             onChange={setExpandedSort}
@@ -405,7 +441,11 @@ function LeaderboardSection({ title, data, isDriver, total, range, phases }) {
             {displayData.length === 0 ? (
               <tr>
                 <td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-400 dark:text-slate-500">
-                  No {title.toLowerCase()} in this window
+                  {isDriver && anyActive ? (
+                    <>No drivers match this combination.{' '}
+                      <button onClick={clearFilter} className="text-orange-600 dark:text-orange-400 font-medium hover:underline">Clear filters</button>
+                    </>
+                  ) : `No ${title.toLowerCase()} in this window`}
                 </td>
               </tr>
             ) : (
