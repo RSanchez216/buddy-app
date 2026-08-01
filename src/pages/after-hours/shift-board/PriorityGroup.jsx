@@ -1,52 +1,38 @@
-import { cityOf, fmtClock } from './shiftBoardData'
+import { useState } from 'react'
+import { cityOf, fmtClock, todayChicago } from './shiftBoardData'
 
-const TONE = {
-  red:    { head: 'text-red-700 dark:text-red-400',       badge: 'bg-red-100 dark:bg-red-500/20 text-red-700 dark:text-red-300',       ring: 'border-red-200 dark:border-red-500/30 bg-red-50/50 dark:bg-red-500/[0.06]' },
-  orange: { head: 'text-orange-700 dark:text-orange-400', badge: 'bg-orange-100 dark:bg-orange-500/20 text-orange-700 dark:text-orange-300', ring: 'border-orange-200 dark:border-orange-500/30 bg-orange-50/50 dark:bg-orange-500/[0.06]' },
-  amber:  { head: 'text-amber-700 dark:text-amber-400',   badge: 'bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300',   ring: 'border-amber-200 dark:border-amber-500/30 bg-amber-50/50 dark:bg-amber-500/[0.06]' },
-  muted:  { head: 'text-gray-500 dark:text-slate-400',    badge: 'bg-gray-100 dark:bg-white/5 text-gray-500 dark:text-slate-400',          ring: 'border-gray-200 dark:border-white/10' },
-  plain:  { head: 'text-gray-700 dark:text-slate-300',    badge: 'bg-gray-100 dark:bg-white/5 text-gray-600 dark:text-slate-300',          ring: 'border-gray-200 dark:border-white/10' },
-}
-
-export default function PriorityGroup({ group, rows, expanded, onToggle, onCopy, settings, shift, onOk, onAction, onFlag, onCheckpoints, onOpenRequest }) {
-  const t = TONE[group.tone] || TONE.plain
-  const n = rows.length
+// Rendered as the body of the active tab — the tab bar already carries the
+// heading, count and colour, so this is just a slim toolbar (context + copy)
+// over the driver table.
+export default function PriorityGroup({ group, rows, settings, shift, onOk, onAction, onFlag, onCheckpoints, onOpenRequest }) {
+  const curYear = Number(todayChicago().slice(0, 4))
+  const cols = ['Driver', 'Disp', 'Carrier', 'Truck', 'Trailer', 'Status', 'Load', 'Origin → Destination', 'Checkpoints', 'Paperwork', 'Note', 'Actions', 'OK']
 
   return (
-    <div className={`rounded-2xl border ${t.ring} overflow-hidden`}>
-      {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-2.5">
-        <button onClick={onToggle} className="flex items-center gap-2 min-w-0 text-left">
-          <svg className={`w-3.5 h-3.5 shrink-0 text-gray-400 transition-transform ${expanded ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
-          <span className={`text-sm font-bold uppercase tracking-wide ${t.head}`}>{group.heading}</span>
-          <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded-full ${t.badge}`}>{n}</span>
-          {!expanded && <span className="text-xs text-gray-400 dark:text-slate-500 truncate">· {group.reason}</span>}
-        </button>
-        <button onClick={onCopy} title="Copy this group as plain text"
-          className="ml-auto shrink-0 inline-flex items-center gap-1 text-[11px] font-medium text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200">
-          📋 Copy group
-        </button>
-      </div>
-
-      {/* Rows */}
-      {expanded && (
-        <div className="overflow-x-auto border-t border-gray-100 dark:border-white/5">
-          <table className="w-full text-xs">
-            <thead className="bg-gray-50 dark:bg-white/[0.02] text-gray-400 dark:text-slate-500">
-              <tr>
-                {['Driver', 'Disp', 'Carrier', 'Eq', 'Status', 'Origin → Destination', 'Checkpoints', 'Paperwork', 'Note', 'Actions', 'OK'].map(h => (
-                  <th key={h} className="text-left font-semibold px-3 py-2 whitespace-nowrap">{h}</th>
+    <div>
+      <div className="rounded-2xl border border-gray-200 dark:border-white/10 overflow-hidden">
+        {rows.length === 0 ? (
+          <div className="p-8 text-center text-sm text-gray-400 dark:text-slate-500">
+            {group.key === 'raised' ? 'Nothing raised by dispatch right now — all clear.' : 'No drivers in this group.'}
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="bg-gray-50 dark:bg-white/[0.02] text-gray-400 dark:text-slate-500">
+                <tr>
+                  {cols.map(h => <th key={h} className="text-left font-semibold px-3 py-2 whitespace-nowrap">{h}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(r => (
+                  <BoardRow key={r.driver_id} r={r} curYear={curYear} settings={settings} shift={shift}
+                    onOk={onOk} onAction={onAction} onFlag={onFlag} onCheckpoints={onCheckpoints} onOpenRequest={onOpenRequest} />
                 ))}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map(r => (
-                <BoardRow key={r.driver_id} r={r} settings={settings} shift={shift} onOk={onOk} onAction={onAction} onFlag={onFlag} onCheckpoints={onCheckpoints} onOpenRequest={onOpenRequest} />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -60,6 +46,15 @@ function deliveryAge(days) {
   if (n < 0) { const a = Math.abs(n); return a === 1 ? 'delivers in 1 day' : `delivers in ${a} days` }
   if (n === 0) return 'delivered today'
   return n === 1 ? '1 day ago' : `${n} days ago`
+}
+
+// 'YYYY-MM-DD' → 'Jul 30', adding the year only when it isn't the current one.
+function fmtLoadDate(v, curYear) {
+  const m = String(v || '').match(/(\d{4})-(\d{2})-(\d{2})/)
+  if (!m) return ''
+  const opts = { month: 'short', day: 'numeric' }
+  if (Number(m[1]) !== curYear) opts.year = 'numeric'
+  return new Date(+m[1], +m[2] - 1, +m[3]).toLocaleDateString('en-US', opts)
 }
 
 function Chip({ label, on, muted, title }) {
@@ -81,14 +76,43 @@ function ActBtn({ children, onClick, disabled, title }) {
   )
 }
 
-function BoardRow({ r, settings, shift, onOk, onAction, onFlag, onCheckpoints, onOpenRequest }) {
+// Load number + a copy control that yields ONLY the number (paste-ready for
+// Octopus). The icon stays quiet until the row is hovered.
+function LoadCell({ number }) {
+  const [copied, setCopied] = useState(false)
+  const copy = async (e) => {
+    e.stopPropagation()
+    try {
+      await navigator.clipboard.writeText(String(number))
+      setCopied(true); setTimeout(() => setCopied(false), 1200)
+    } catch { /* clipboard blocked — no-op, never alert */ }
+  }
+  return (
+    <span className="inline-flex items-center gap-1 whitespace-nowrap">
+      <span className="font-mono text-gray-700 dark:text-slate-300">{number}</span>
+      {copied ? (
+        <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">Copied</span>
+      ) : (
+        <button type="button" onClick={copy} title="Copy load number"
+          className="opacity-0 group-hover/row:opacity-100 focus:opacity-100 transition-opacity text-gray-400 hover:text-gray-700 dark:hover:text-slate-200">
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+            <rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 012-2h10" />
+          </svg>
+        </button>
+      )}
+    </span>
+  )
+}
+
+function BoardRow({ r, curYear, settings, shift, onOk, onAction, onFlag, onCheckpoints, onOpenRequest }) {
   const muted = r.in_scope === false
   const okChecked = r.checked_this_shift && r.check_is_ok === true
   const flagged = r.checked_this_shift && r.check_is_ok === false
   const o = cityOf(r.origin), d = cityOf(r.destination)
+  const pu = fmtLoadDate(r.pickup_date, curYear), dl = fmtLoadDate(r.delivery_date, curYear)
 
   return (
-    <tr className={`border-b border-gray-100 dark:border-white/[0.03] ${muted ? 'opacity-50' : ''} ${flagged ? 'bg-red-50/40 dark:bg-red-500/[0.05]' : ''}`}>
+    <tr className={`group/row border-b border-gray-100 dark:border-white/[0.03] ${muted ? 'opacity-50' : ''} ${flagged ? 'bg-red-50/40 dark:bg-red-500/[0.05]' : ''}`}>
       <td className="px-3 py-2 whitespace-nowrap font-medium text-gray-900 dark:text-slate-200">
         {r.driver_name || '—'}
         {r.team_name && (
@@ -99,23 +123,27 @@ function BoardRow({ r, settings, shift, onOk, onAction, onFlag, onCheckpoints, o
       </td>
       <td className="px-3 py-2 whitespace-nowrap text-gray-500 dark:text-slate-400">{r.dispatcher_name || '—'}</td>
       <td className="px-3 py-2 whitespace-nowrap text-gray-500 dark:text-slate-400">{r.carrier_name || '—'}</td>
+      <td className="px-3 py-2 whitespace-nowrap text-gray-500 dark:text-slate-400 font-mono">{r.truck || '—'}</td>
       <td className="px-3 py-2 whitespace-nowrap text-gray-500 dark:text-slate-400 font-mono">{r.trailer || '—'}</td>
       <td className="px-3 py-2 whitespace-nowrap">
         {r.team_name
           ? <span className="text-gray-500 dark:text-slate-400">covered — <span className="text-gray-700 dark:text-slate-300 font-medium">{r.team_name}</span></span>
           : <span className="text-gray-600 dark:text-slate-300">{r.load_status || '—'}</span>}
       </td>
-      {/* Origin → Destination + honest load context. A teammate's or historic
-          load is never shown as if it were the driver's current one. */}
+      {/* Load — its own column with paste-ready copy */}
+      <td className="px-3 py-2 whitespace-nowrap">
+        {r.load_number == null ? <span className="text-gray-300 dark:text-slate-600">—</span> : <LoadCell number={r.load_number} />}
+      </td>
+      {/* Origin → Destination, with pickup/delivery dates and honest load context */}
       <td className="px-3 py-2 text-gray-600 dark:text-slate-400">
         {r.load_number == null ? (
           <span className="italic text-gray-400 dark:text-slate-500 whitespace-nowrap">no load on record</span>
         ) : (
           <div>
             <div className="whitespace-nowrap">
-              <span className="font-mono text-gray-500 dark:text-slate-400">{r.load_number}</span>
-              {(o || d) && <> <span className="text-gray-300 dark:text-slate-600">·</span> {o || '—'} <span className="text-gray-300 dark:text-slate-600">→</span> {d || '—'}</>}
+              {o || d ? <>{o || '—'} <span className="text-gray-300 dark:text-slate-600">→</span> {d || '—'}</> : '—'}
             </div>
+            {(pu || dl) && <div className="text-[10px] text-gray-400 dark:text-slate-500 whitespace-nowrap">{pu || '—'} → {dl || '—'}</div>}
             {r.load_is_historic ? (
               <div className="text-[10px] italic text-gray-400 dark:text-slate-500 whitespace-nowrap">last load — {deliveryAge(r.days_since_delivery)}</div>
             ) : r.load_is_teammates ? (

@@ -9,16 +9,14 @@ import TimesNeededGroup from './TimesNeededGroup'
 import CheckpointEditor from './CheckpointEditor'
 import RequestDetailPanel from './RequestDetailPanel'
 import {
-  SHIFT_TYPES, GROUPS, GROUP_META, groupKeyFor, shiftName, shiftWindow,
+  SHIFT_TYPES, GROUP_META, groupKeyFor, shiftName,
   fetchSettings, fetchOpenShift, startShift, fetchShiftSummary, fetchWeekSummary, fetchBoard,
   fetchCheckpointExceptions,
   upsertDriverCheck, removeDriverCheck, logShiftActivity,
-  thisWeekChicago, todayChicago, fmtDayLabel, fmtClock, elapsedSince,
+  thisWeekChicago, todayChicago, fmtDayLabel, elapsedSince,
   buildGroupCopy, buildWeekCopy, copyText,
 } from './shiftBoardData'
 import { REQUESTS_CHANGED_EVENT } from '../requests/requestsData'
-
-const ORANGE_BTN = 'flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 text-white rounded-xl transition-all shadow-lg shadow-orange-500/20'
 
 export default function ShiftBoardPage() {
   const { profile: me } = useAuth()
@@ -145,10 +143,6 @@ export default function ShiftBoardPage() {
 
   const shiftLabel = shift ? shiftName(shift.shift_type) : '—'
 
-  // Expanded/collapsed per group (seeded from defaults).
-  const [expanded, setExpanded] = useState(() => new Set(GROUPS.filter(g => g.expanded).map(g => g.key)))
-  const toggleGroup = (key) => setExpanded(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n })
-
   const grouped = useMemo(() => {
     // Group rows by key, carrying the RPC's group_order so the page order is
     // authoritative (never a hardcoded sequence). raised/uncovered share order 1;
@@ -164,6 +158,27 @@ export default function ShiftBoardPage() {
       .filter(x => x.g && x.rows.length > 0)
       .sort((a, b) => a.order - b.order)
   }, [board])
+
+  // Tabs replace the stacked groups. Order is group_order (already sorted in
+  // `grouped`). Empty tabs hide, except Raised by dispatch which stays visible at
+  // 0 so the associate can see nothing's waiting.
+  const tabs = useMemo(() => {
+    const list = grouped.map(x => ({ key: x.g.key, g: x.g, count: x.rows.length, order: x.order }))
+    if (!list.some(t => t.key === 'raised')) list.push({ key: 'raised', g: GROUP_META.raised, count: 0, order: 1 })
+    return list.sort((a, b) => a.order - b.order)
+  }, [grouped])
+
+  // The effective tab is the user's explicit pick when it's still a live tab,
+  // otherwise the default: Raised when it has something, else All active drivers.
+  // Derived (not stored) so it self-corrects after a reload without an effect.
+  const [selectedTab, setSelectedTab] = useState(null)
+  const activeTab = useMemo(() => {
+    if (selectedTab && tabs.some(t => t.key === selectedTab)) return selectedTab
+    const raised = tabs.find(t => t.key === 'raised')
+    return raised && raised.count > 0 ? 'raised' : (tabs.find(t => t.key === 'todo')?.key || tabs[0]?.key || null)
+  }, [selectedTab, tabs])
+  const activeRows = useMemo(() => grouped.find(x => x.g.key === activeTab)?.rows || [], [grouped, activeTab])
+  const activeMeta = activeTab ? GROUP_META[activeTab] : null
 
   // Board row per load — lets a Times-needed row prefill the editor with the
   // load's existing checkpoint timestamps.
@@ -191,65 +206,58 @@ export default function ShiftBoardPage() {
   }
 
   return (
-    <div className="space-y-5">
-      {/* Title */}
-      <div>
-        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-orange-600 dark:text-orange-400 mb-1">
-          <span className="w-1.5 h-1.5 rounded-full bg-orange-500" /> After Hours
-        </div>
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Shift Board</h1>
-        <p className="text-sm text-gray-500 dark:text-slate-500 mt-0.5">Every active driver, grouped by what needs doing tonight.</p>
-      </div>
-
+    <div className="space-y-3">
       {error ? (
-        <div className={S.errorBox}>Couldn&apos;t load the shift board. <button onClick={load} className="underline font-medium">Retry</button></div>
+        <>
+          <BoardHeader shift={shift} week={week} starting={starting} onStart={doStart} onEnd={() => setShowEnd(true)} onCopyWeek={copyWeek} />
+          <div className={S.errorBox}>Couldn&apos;t load the shift board. <button onClick={load} className="underline font-medium">Retry</button></div>
+        </>
       ) : loading ? (
-        <div className="space-y-4">
-          <div className="h-20 rounded-2xl bg-gray-100 dark:bg-white/[0.03] animate-pulse" />
+        <div className="space-y-3">
           <div className="h-24 rounded-2xl bg-gray-100 dark:bg-white/[0.03] animate-pulse" />
-          <div className="h-40 rounded-2xl bg-gray-100 dark:bg-white/[0.03] animate-pulse" />
+          <div className="h-10 rounded-xl bg-gray-100 dark:bg-white/[0.03] animate-pulse" />
+          <div className="h-64 rounded-2xl bg-gray-100 dark:bg-white/[0.03] animate-pulse" />
         </div>
       ) : (
         <>
-          {/* 1. Shift header */}
-          <ShiftHeader shift={shift} summary={summary} starting={starting} onStart={doStart}
-            onEnd={() => setShowEnd(true)} />
+          {/* Compact one-line header: title + shift control, then week stat strip */}
+          <BoardHeader shift={shift} week={week} starting={starting} onStart={doStart} onEnd={() => setShowEnd(true)} onCopyWeek={copyWeek} />
 
-          {/* 2. This-week block (above shift stats) */}
-          <WeekBlock week={week} onCopy={copyWeek} />
-
-          {/* 3. Shift stats */}
+          {/* Per-shift progress — only while on shift */}
           {shift && summary && <ShiftStats summary={summary} />}
 
-          {/* Off-shift notice — actions still record, just aren't counted */}
-          {!shift && (
-            <div className="flex items-center gap-2 rounded-xl border border-gray-200 dark:border-white/10 bg-gray-50/70 dark:bg-white/[0.03] px-4 py-2.5 text-sm text-gray-600 dark:text-slate-400">
-              <span>Not on shift — actions are still recorded, just not counted toward a shift.</span>
-              <button onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} className="font-semibold text-orange-600 dark:text-orange-400 hover:underline">Start a shift</button>
-            </div>
+          {/* Detention queue — surfaced above the tabs only when there's actually
+              something waiting at a dock. */}
+          {trackCheckpoints && exceptions.length > 0 && (
+            <TimesNeededGroup exceptions={exceptions} expanded={cpOpen} onToggle={() => setCpOpen(o => !o)} onOpen={openFromException} />
           )}
 
-          {/* 4. Priority groups — "Times needed" sits directly under Raised by
-              dispatch, above Uncovered (only when the phase is on). */}
-          {(() => {
-            const timesNeeded = trackCheckpoints
-              ? <TimesNeededGroup key="times_needed" exceptions={exceptions} expanded={cpOpen} onToggle={() => setCpOpen(o => !o)} onOpen={openFromException} />
-              : null
-            if (grouped.length === 0 && !timesNeeded) {
-              return <div className="rounded-2xl border border-dashed border-gray-300 dark:border-white/10 p-8 text-center text-sm text-gray-400 dark:text-slate-500">No active drivers on the board.</div>
-            }
-            const groupEl = ({ g, rows }) => (
-              <PriorityGroup key={g.key} group={g} rows={rows}
-                expanded={expanded.has(g.key)} onToggle={() => toggleGroup(g.key)}
-                onCopy={() => copyGroup(g, rows)} settings={settings} shift={shift}
-                onOk={onOk} onAction={onAction} onFlag={setFlagFor} onCheckpoints={openFromRow} onOpenRequest={setOpenRequestId} />
-            )
-            // Times needed sits directly under Raised by dispatch; the rest keep
-            // their group_order (already sorted in `grouped`).
-            const raised = grouped.filter(x => x.g.key === 'raised').map(groupEl)
-            const rest = grouped.filter(x => x.g.key !== 'raised').map(groupEl)
-            return <div className="space-y-3">{[...raised, timesNeeded, ...rest].filter(Boolean)}</div>
-          })()}
+          {/* Tabs replace the stacked groups; Copy group sits on the right */}
+          <div className="flex items-center gap-1 border-b border-gray-200 dark:border-white/10 overflow-x-auto">
+            {tabs.map(t => {
+              const on = t.key === activeTab
+              const tone = TAB_TONE[t.key] || TAB_TONE._default
+              return (
+                <button key={t.key} onClick={() => setSelectedTab(t.key)}
+                  className={`relative shrink-0 px-3 py-2 text-sm font-semibold whitespace-nowrap transition-colors ${on ? tone.text : 'text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300'}`}>
+                  {t.g.heading}
+                  <span className={`ml-1.5 text-[11px] font-bold px-1.5 py-0.5 rounded-full ${on ? tone.chip : 'bg-gray-100 dark:bg-white/5 text-gray-400 dark:text-slate-500'}`}>{t.count}</span>
+                  {on && <span className={`absolute left-0 right-0 -bottom-px h-0.5 ${tone.underline}`} />}
+                </button>
+              )
+            })}
+            {activeMeta && activeRows.length > 0 && (
+              <button onClick={() => copyGroup(activeMeta, activeRows)} title="Copy this tab as plain text"
+                className="ml-auto shrink-0 inline-flex items-center gap-1 px-2 text-[11px] font-medium text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200">
+                📋 Copy group
+              </button>
+            )}
+          </div>
+
+          {activeMeta && (
+            <PriorityGroup group={activeMeta} rows={activeRows} settings={settings} shift={shift}
+              onOk={onOk} onAction={onAction} onFlag={setFlagFor} onCheckpoints={openFromRow} onOpenRequest={setOpenRequestId} />
+          )}
         </>
       )}
 
@@ -266,77 +274,103 @@ export default function ShiftBoardPage() {
   )
 }
 
-// ── Shift header ────────────────────────────────────────────────────────────
-function ShiftHeader({ shift, summary, starting, onStart, onEnd }) {
-  if (!shift) {
-    return (
-      <div className={`${S.card} p-5`}>
-        <p className="text-sm font-semibold text-gray-900 dark:text-white">Start your shift</p>
-        <p className="text-xs text-gray-500 dark:text-slate-500 mt-0.5 mb-3">Pick the shift you&apos;re covering. Resumes automatically if you already have one open.</p>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          {SHIFT_TYPES.map(s => (
-            <button key={s.value} onClick={() => onStart(s.value)} disabled={starting}
-              className="rounded-xl border border-gray-300 dark:border-slate-700 px-3 py-3 text-left hover:border-orange-400 hover:bg-orange-50/50 dark:hover:bg-orange-500/10 transition-colors disabled:opacity-50">
-              <p className="text-sm font-semibold text-gray-900 dark:text-white">{s.name}</p>
-              <p className="text-[11px] text-gray-500 dark:text-slate-500">{s.window}</p>
-            </button>
+// ── Compact header ──────────────────────────────────────────────────────────
+const ORANGE_BTN_SM = 'inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold bg-orange-500 hover:bg-orange-400 text-white rounded-lg transition-colors disabled:opacity-50'
+// Tab colour per group. Red / green / grey are the three live today; the rest
+// keep sensible tones for when their phase or condition surfaces them.
+const TAB_TONE = {
+  raised:           { text: 'text-red-600 dark:text-red-400',       underline: 'bg-red-500',     chip: 'bg-red-100 dark:bg-red-500/20 text-red-700 dark:text-red-300' },
+  uncovered:        { text: 'text-orange-600 dark:text-orange-400',  underline: 'bg-orange-500',  chip: 'bg-orange-100 dark:bg-orange-500/20 text-orange-700 dark:text-orange-300' },
+  due:              { text: 'text-amber-600 dark:text-amber-400',    underline: 'bg-amber-500',   chip: 'bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300' },
+  idle:             { text: 'text-gray-600 dark:text-slate-300',     underline: 'bg-gray-400',    chip: 'bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-slate-300' },
+  reviewed:         { text: 'text-gray-600 dark:text-slate-300',     underline: 'bg-gray-400',    chip: 'bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-slate-300' },
+  todo:             { text: 'text-emerald-600 dark:text-emerald-400', underline: 'bg-emerald-500', chip: 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300' },
+  never_dispatched: { text: 'text-gray-600 dark:text-slate-300',     underline: 'bg-gray-400',    chip: 'bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-slate-300' },
+  _default:         { text: 'text-gray-600 dark:text-slate-300',     underline: 'bg-gray-400',    chip: 'bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-slate-300' },
+}
+
+// 'YYYY-MM-DD' → 'Jul 27' (Chicago-agnostic — the range is already date-only).
+function shortDay(v) {
+  const m = String(v || '').match(/(\d{4})-(\d{2})-(\d{2})/)
+  if (!m) return v || ''
+  return new Date(+m[1], +m[2] - 1, +m[3]).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+function BoardHeader({ shift, week, starting, onStart, onEnd, onCopyWeek }) {
+  const stats = [
+    ['SHIFTS', week?.shifts_logged ?? 0, 'Shifts logged this week'],
+    ['BOOKED', week?.loads_booked ?? 0, 'Loads booked by After-Hours this week'],
+    ['POD', week?.pods ?? 0, 'Proofs of delivery collected this week'],
+    ['BOL', week?.bols ?? 0, 'Bills of lading collected this week'],
+    ['CHKPT', week?.checkpoints ?? 0, 'Driver checkpoint times collected this week'],
+    ['ACC', week?.accessorials_count ?? 0, 'Detention, layover and TONU claims raised this week'],
+    ['LUMPERS', week?.lumpers_count ?? 0, 'Lumper payments recorded this week'],
+    ['REQUESTS', week?.requests_raised ?? 0, 'Help requests raised by dispatch this week'],
+  ]
+  return (
+    <div className={`${S.card} px-4 py-3`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest text-orange-600 dark:text-orange-400">
+            <span className="w-1.5 h-1.5 rounded-full bg-orange-500" /> After Hours
+          </div>
+          <h1 className="text-xl font-bold text-gray-900 dark:text-white leading-tight">Shift Board</h1>
+        </div>
+        <ShiftControl shift={shift} starting={starting} onStart={onStart} onEnd={onEnd} />
+      </div>
+
+      <div className="my-2.5 border-t border-gray-100 dark:border-white/5" />
+
+      <div className="flex flex-wrap items-center gap-y-1.5">
+        <div className="flex flex-wrap items-center">
+          {stats.map(([label, val, tip], i) => (
+            <div key={label} title={tip} className="flex items-center cursor-default">
+              {i > 0 && <span className="mx-2 text-gray-200 dark:text-white/10">·</span>}
+              <span className="text-sm font-bold text-gray-900 dark:text-white tabular-nums">{val}</span>
+              <span className="ml-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500">{label}</span>
+            </div>
           ))}
         </div>
+        <div className="ml-auto flex items-center gap-3 pl-3">
+          <span className="text-[11px] text-gray-400 dark:text-slate-500 whitespace-nowrap tabular-nums">{shortDay(week?.range_start)} – {shortDay(week?.range_end)}</span>
+          <button onClick={onCopyWeek} className="text-[11px] font-medium text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200 whitespace-nowrap">📋 Copy week</button>
+        </div>
       </div>
-    )
-  }
-  return (
-    <div className={`${S.card} p-5 flex flex-wrap items-center gap-x-6 gap-y-2`}>
-      <div className="flex items-center gap-2">
-        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-        <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-600 dark:text-emerald-400">On shift</span>
-      </div>
-      <Fact label="Shift" value={shiftName(shift.shift_type)} />
-      <Fact label="Associate" value={summary?.associate || '—'} />
-      <Fact label="Window" value={shiftWindow(shift.shift_type)} />
-      <Fact label="Elapsed" value={elapsedSince(shift.started_at)} />
-      <Fact label="Started" value={fmtClock(shift.started_at)} />
-      <div className="ml-auto flex items-center gap-2">
-        <button onClick={onEnd} className={ORANGE_BTN}>End shift &amp; hand off</button>
-      </div>
-    </div>
-  )
-}
-function Fact({ label, value }) {
-  return (
-    <div>
-      <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">{label}</p>
-      <p className="text-sm font-medium text-gray-800 dark:text-slate-200">{value}</p>
     </div>
   )
 }
 
-// ── Week block ──────────────────────────────────────────────────────────────
-function WeekBlock({ week, onCopy }) {
-  const cards = [
-    ['Shifts logged', week?.shifts_logged ?? 0],
-    ['Loads booked', week?.loads_booked ?? 0],
-    ['PODs', week?.pods ?? 0],
-    ['BOLs', week?.bols ?? 0],
-    ['Checkpoints', week?.checkpoints ?? 0],
-    ['Accessorials', week?.accessorials_count ?? 0],
-    ['Lumpers', week?.lumpers_count ?? 0],
-    ['Requests raised', week?.requests_raised ?? 0],
-  ]
+// Top-right shift control: status text + a Start-shift dropdown, or the live
+// on-shift state + End shift. Off-shift status carries the "still recorded" note
+// as a tooltip, so the old banner isn't needed.
+function ShiftControl({ shift, starting, onStart, onEnd }) {
+  const [open, setOpen] = useState(false)
+  if (shift) {
+    return (
+      <div className="flex items-center gap-2 shrink-0">
+        <span className="hidden sm:inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
+          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /> On shift · {shiftName(shift.shift_type)} · {elapsedSince(shift.started_at)}
+        </span>
+        <button onClick={onEnd} className={ORANGE_BTN_SM}>End shift</button>
+      </div>
+    )
+  }
   return (
-    <div className={`${S.card} p-4`}>
-      <div className="flex items-center justify-between mb-3">
-        <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 dark:text-slate-400">This week · {week?.range_start} → {week?.range_end}</p>
-        <button onClick={onCopy} className="text-[11px] font-medium text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200">📋 Copy week summary</button>
-      </div>
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2.5">
-        {cards.map(([label, val]) => (
-          <div key={label} className="rounded-xl border border-gray-200 dark:border-white/10 px-3 py-2.5">
-            <p className="text-lg font-bold text-gray-900 dark:text-white tabular-nums leading-none">{val}</p>
-            <p className="text-[10px] text-gray-500 dark:text-slate-500 uppercase tracking-wide mt-1">{label}</p>
-          </div>
-        ))}
-      </div>
+    <div className="relative flex items-center gap-2 shrink-0">
+      <span title="Actions are still recorded, just not counted toward a shift." className="text-[11px] font-medium text-gray-500 dark:text-slate-400 cursor-default whitespace-nowrap">Not on shift</span>
+      <button onClick={() => setOpen(o => !o)} disabled={starting} className={ORANGE_BTN_SM}>Start shift ▾</button>
+      {open && <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />}
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-30 w-52 rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-[#0B1120] shadow-xl py-1">
+          {SHIFT_TYPES.map(s => (
+            <button key={s.value} onClick={() => { setOpen(false); onStart(s.value) }} disabled={starting}
+              className="w-full flex items-baseline justify-between gap-2 px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-50">
+              <span className="text-sm font-medium text-gray-900 dark:text-white">{s.name}</span>
+              <span className="text-[11px] text-gray-400 dark:text-slate-500">{s.window}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
