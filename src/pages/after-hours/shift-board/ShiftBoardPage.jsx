@@ -361,7 +361,9 @@ function BoardHeader({ shift, week, starting, onStart, onEnd, onCopyWeek }) {
           </div>
           <h1 className="text-xl font-bold text-gray-900 dark:text-white leading-tight">Shift Board</h1>
         </div>
-        <ShiftControl shift={shift} starting={starting} onStart={onStart} onEnd={onEnd} />
+        {/* Keyed on shift-state so the pulse timer resets on every off→on→off
+            transition (and on remount / navigation back to the board). */}
+        <ShiftControl key={shift ? 'on' : 'off'} shift={shift} starting={starting} onStart={onStart} onEnd={onEnd} />
       </div>
 
       <div className="my-2.5 border-t border-gray-100 dark:border-white/5" />
@@ -385,23 +387,37 @@ function BoardHeader({ shift, week, starting, onStart, onEnd, onCopyWeek }) {
   )
 }
 
-// Top-right shift control: status + four one-click shift pills (hours on hover),
-// or the live on-shift state + End shift. Off-shift status carries the "still
-// recorded" note as a tooltip, so the old banner isn't needed.
+// Top-right shift control: a loud NOT ON SHIFT alarm + four one-click shift pills
+// (hours on hover), or the live on-shift state + End shift. Off-shift status
+// carries the "still recorded" note as a tooltip, so the old banner isn't needed.
 function ShiftControl({ shift, starting, onStart, onEnd }) {
+  // Pulse for ~10s after the (off-shift) mount, then settle to the static red
+  // state. On-shift never pulses. The component is keyed on shift-state, so this
+  // timer is torn down and re-seeded on every transition.
+  const [pulsing, setPulsing] = useState(true)
+  useEffect(() => {
+    if (shift) return
+    const id = setTimeout(() => setPulsing(false), 10000)
+    return () => clearTimeout(id)
+  }, [shift])
+
   if (shift) {
     return (
       <div className="flex items-center gap-2 shrink-0">
         <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /> On shift · {shiftName(shift.shift_type)} · {elapsedSince(shift.started_at)}
+          <span className="w-2 h-2 rounded-full bg-emerald-500" /> On shift · {shiftName(shift.shift_type)} · {elapsedSince(shift.started_at)}
         </span>
         <button onClick={onEnd} className={ORANGE_BTN_SM}>End shift</button>
       </div>
     )
   }
   return (
-    <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
-      <span title="Actions are still recorded, just not counted toward a shift." className="text-[11px] font-medium text-gray-500 dark:text-slate-400 cursor-default whitespace-nowrap">Not on shift</span>
+    <div className="flex items-center gap-3 shrink-0 flex-wrap justify-end">
+      <span aria-live="polite" title="Actions are still recorded, just not counted toward a shift."
+        className="inline-flex items-center gap-2 cursor-default whitespace-nowrap">
+        <span className={`w-[9px] h-[9px] rounded-full bg-red-500 ${pulsing ? 'not-on-shift-halo-pulse' : ''}`} />
+        <span className={`text-[15px] font-extrabold uppercase tracking-wide text-red-600 dark:text-red-400 ${pulsing ? 'not-on-shift-text-pulse' : ''}`}>Not on shift</span>
+      </span>
       <div className="flex items-center gap-1.5">
         {SHIFT_TYPES.map(s => (
           <button key={s.value} onClick={() => onStart(s.value)} disabled={starting} title={s.window}

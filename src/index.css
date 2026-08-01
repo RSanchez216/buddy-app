@@ -67,6 +67,27 @@ input:-webkit-autofill:focus {
   animation: soft-pulse 1.5s ease-in-out infinite;
 }
 
+/* ── "Not on shift" alarm ────────────────────────────────────────────────────
+   The loudest thing on the Shift Board until a shift is started. Text opacity
+   and the dot's halo pulse together on a ~2s loop; ONLY opacity and box-shadow
+   animate, so nothing reflows. The component stops the animation after ~10s and
+   holds the static red state; reduced-motion skips the animation entirely (the
+   base styles already are that static red state). */
+@keyframes not-on-shift-text {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.62; }
+}
+@keyframes not-on-shift-halo {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.22); }
+  50%      { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0.22); }
+}
+.not-on-shift-text-pulse { animation: not-on-shift-text 2s ease-in-out infinite; }
+.not-on-shift-halo-pulse { animation: not-on-shift-halo 2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .not-on-shift-text-pulse,
+  .not-on-shift-halo-pulse { animation: none; }
+}
+
 /* ── Lifeline (cash-runway) animations ──────────────────────────────────────
    The chart's intro reveal sweeps a clipPath rect left → right (the EKG
    draw-on); the submerged below-zero region breathes slowly (dread, not
