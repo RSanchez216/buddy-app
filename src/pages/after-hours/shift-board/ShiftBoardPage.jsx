@@ -10,7 +10,7 @@ import CheckpointEditor from './CheckpointEditor'
 import RequestDetailPanel from './RequestDetailPanel'
 import {
   SHIFT_TYPES, GROUP_META, groupKeyFor, shiftName, LIFECYCLE, LIFECYCLE_RANK,
-  fetchSettings, fetchOpenShift, startShift, fetchShiftSummary, fetchWeekSummary, fetchBoard,
+  fetchSettings, fetchOpenShift, startShift, fetchShiftSummary, fetchWeekSummary, fetchBoard, fetchBoardTabs,
   fetchCheckpointExceptions,
   upsertDriverCheck, removeDriverCheck, logShiftActivity,
   thisWeekChicago, todayChicago, fmtDayLabel, elapsedSince,
@@ -27,6 +27,7 @@ export default function ShiftBoardPage() {
   const [summary, setSummary] = useState(null)  // shift summary
   const [week, setWeek] = useState(null)
   const [board, setBoard] = useState([])
+  const [boardTabs, setBoardTabs] = useState(null) // per-tab progress + tone
   const [exceptions, setExceptions] = useState([]) // checkpoint exception queue (phase 3)
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
@@ -51,12 +52,13 @@ export default function ShiftBoardPage() {
         fetchSettings(), fetchWeekSummary(weekRange.start, weekRange.end), fetchOpenShift(me?.id),
       ])
       setSettings(st || {}); setWeek(wk); setShift(sh)
-      const [bd, sm, ex] = await Promise.all([
+      const [bd, sm, ex, tb] = await Promise.all([
         fetchBoard(sh?.id ?? null),
         sh ? fetchShiftSummary(sh.id) : Promise.resolve(null),
         st?.track_checkpoints ? fetchCheckpointExceptions() : Promise.resolve([]),
+        fetchBoardTabs(sh?.id ?? null).catch(() => null),
       ])
-      setBoard(bd); setSummary(sm); setExceptions(ex)
+      setBoard(bd); setSummary(sm); setExceptions(ex); setBoardTabs(tb)
     } catch (e) {
       setError(true); toast.error("Couldn't load the shift board", e)
     } finally { setLoading(false) }
@@ -77,12 +79,13 @@ export default function ShiftBoardPage() {
   }, [])
 
   const reloadBoard = useCallback(async () => {
-    const [bd, sm, ex] = await Promise.all([
+    const [bd, sm, ex, tb] = await Promise.all([
       fetchBoard(shift?.id ?? null),
       shift ? fetchShiftSummary(shift.id) : Promise.resolve(null),
       settings?.track_checkpoints ? fetchCheckpointExceptions() : Promise.resolve([]),
+      fetchBoardTabs(shift?.id ?? null).catch(() => null),
     ])
-    setBoard(bd); setSummary(sm); setExceptions(ex)
+    setBoard(bd); setSummary(sm); setExceptions(ex); setBoardTabs(tb)
   }, [shift, settings?.track_checkpoints])
 
   // A request raised/handled anywhere refreshes the board so "Raised by dispatch"
@@ -99,11 +102,12 @@ export default function ShiftBoardPage() {
       const res = await startShift(type)
       const sh = { id: res.shift_id, shift_type: res.shift_type, started_at: res.started_at, status: 'active' }
       setShift(sh)
-      const [bd, sm, ex] = await Promise.all([
+      const [bd, sm, ex, tb] = await Promise.all([
         fetchBoard(sh.id), fetchShiftSummary(sh.id),
         settings?.track_checkpoints ? fetchCheckpointExceptions() : Promise.resolve([]),
+        fetchBoardTabs(sh.id).catch(() => null),
       ])
-      setBoard(bd); setSummary(sm); setExceptions(ex)
+      setBoard(bd); setSummary(sm); setExceptions(ex); setBoardTabs(tb)
       toast.success(res.resumed ? 'Resumed your open shift' : 'Shift started')
     } catch (e) {
       toast.error("Couldn't start the shift", e)
@@ -163,10 +167,22 @@ export default function ShiftBoardPage() {
   // `grouped`). Empty tabs hide, except Raised by dispatch which stays visible at
   // 0 so the associate can see nothing's waiting.
   const tabs = useMemo(() => {
-    const list = grouped.map(x => ({ key: x.g.key, g: x.g, count: x.rows.length, order: x.order }))
-    if (!list.some(t => t.key === 'raised')) list.push({ key: 'raised', g: GROUP_META.raised, count: 0, order: 1 })
-    return list.sort((a, b) => a.order - b.order)
-  }, [grouped])
+    const base = grouped.map(x => ({ key: x.g.key, g: x.g, count: x.rows.length, order: x.order }))
+    // Raised stays visible even at 0 so the associate can see nothing's waiting.
+    if (!base.some(t => t.key === 'raised')) base.push({ key: 'raised', g: GROUP_META.raised, count: 0, order: 1 })
+    return base
+      .map(t => {
+        const prog = boardTabs?.[RPC_KEY[t.key]] || null
+        const tone = prog?.tone || GROUP_TONE_FALLBACK[t.key] || 'grey'
+        // Chip is progress ("done of total") where the RPC provides it, else the
+        // plain count. Raised counts handled/total; the rest reviewed/total.
+        const chip = !prog ? String(t.count)
+          : t.key === 'raised' ? `${prog.handled ?? 0} of ${prog.total ?? 0}`
+            : `${prog.reviewed ?? 0} of ${prog.total ?? 0}`
+        return { ...t, tone, chip }
+      })
+      .sort((a, b) => a.order - b.order)
+  }, [grouped, boardTabs])
 
   // The effective tab is the user's explicit pick when it's still a live tab,
   // otherwise the default: Raised when it has something, else All active drivers.
@@ -259,12 +275,14 @@ export default function ShiftBoardPage() {
           <div className="flex items-center gap-1 border-b border-gray-200 dark:border-white/10 overflow-x-auto">
             {tabs.map(t => {
               const on = t.key === activeTab
-              const tone = TAB_TONE[t.key] || TAB_TONE._default
+              const tone = TAB_STYLE[t.tone] || TAB_STYLE.grey
+              // Tone shows on every tab (a red Raised must draw the eye even when
+              // it isn't the open tab); the underline marks the active one.
               return (
                 <button key={t.key} onClick={() => setSelectedTab(t.key)}
-                  className={`relative shrink-0 px-3 py-2 text-sm font-semibold whitespace-nowrap transition-colors ${on ? tone.text : 'text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300'}`}>
+                  className={`relative shrink-0 px-3 py-2 text-sm font-semibold whitespace-nowrap transition-opacity ${tone.text} ${on ? '' : 'opacity-60 hover:opacity-100'}`}>
                   {t.g.heading}
-                  <span className={`ml-1.5 text-[11px] font-bold px-1.5 py-0.5 rounded-full ${on ? tone.chip : 'bg-gray-100 dark:bg-white/5 text-gray-400 dark:text-slate-500'}`}>{t.count}</span>
+                  <span className={`ml-1.5 text-[11px] font-bold px-1.5 py-0.5 rounded-full tabular-nums ${tone.chip}`}>{t.chip}</span>
                   {on && <span className={`absolute left-0 right-0 -bottom-px h-0.5 ${tone.underline}`} />}
                 </button>
               )
@@ -303,18 +321,18 @@ export default function ShiftBoardPage() {
 
 // ── Compact header ──────────────────────────────────────────────────────────
 const ORANGE_BTN_SM = 'inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold bg-orange-500 hover:bg-orange-400 text-white rounded-lg transition-colors disabled:opacity-50'
-// Tab colour per group. Red / green / grey are the three live today; the rest
-// keep sensible tones for when their phase or condition surfaces them.
-const TAB_TONE = {
-  raised:           { text: 'text-red-600 dark:text-red-400',       underline: 'bg-red-500',     chip: 'bg-red-100 dark:bg-red-500/20 text-red-700 dark:text-red-300' },
-  uncovered:        { text: 'text-orange-600 dark:text-orange-400',  underline: 'bg-orange-500',  chip: 'bg-orange-100 dark:bg-orange-500/20 text-orange-700 dark:text-orange-300' },
-  due:              { text: 'text-amber-600 dark:text-amber-400',    underline: 'bg-amber-500',   chip: 'bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300' },
-  idle:             { text: 'text-gray-600 dark:text-slate-300',     underline: 'bg-gray-400',    chip: 'bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-slate-300' },
-  reviewed:         { text: 'text-gray-600 dark:text-slate-300',     underline: 'bg-gray-400',    chip: 'bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-slate-300' },
-  todo:             { text: 'text-emerald-600 dark:text-emerald-400', underline: 'bg-emerald-500', chip: 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300' },
-  never_dispatched: { text: 'text-gray-600 dark:text-slate-300',     underline: 'bg-gray-400',    chip: 'bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-slate-300' },
-  _default:         { text: 'text-gray-600 dark:text-slate-300',     underline: 'bg-gray-400',    chip: 'bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-slate-300' },
+// Tab colour keyed by the RPC's `tone` (used as-is, never recomputed). Grey is
+// the "done" state. Non-progress groups fall back to a sensible tone by key.
+const TAB_STYLE = {
+  red:    { text: 'text-red-600 dark:text-red-400',       underline: 'bg-red-500',     chip: 'bg-red-100 dark:bg-red-500/20 text-red-700 dark:text-red-300' },
+  orange: { text: 'text-orange-600 dark:text-orange-400',  underline: 'bg-orange-500',  chip: 'bg-orange-100 dark:bg-orange-500/20 text-orange-700 dark:text-orange-300' },
+  amber:  { text: 'text-amber-600 dark:text-amber-400',    underline: 'bg-amber-500',   chip: 'bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300' },
+  green:  { text: 'text-emerald-600 dark:text-emerald-400', underline: 'bg-emerald-500', chip: 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300' },
+  grey:   { text: 'text-gray-600 dark:text-slate-300',     underline: 'bg-gray-400',    chip: 'bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-slate-300' },
 }
+// group key → tab-progress RPC key, and a tone fallback when there's no progress.
+const RPC_KEY = { raised: 'raised', todo: 'active', never_dispatched: 'never' }
+const GROUP_TONE_FALLBACK = { raised: 'red', uncovered: 'orange', due: 'amber', idle: 'grey', todo: 'green', never_dispatched: 'grey' }
 
 // 'YYYY-MM-DD' → 'Jul 27' (Chicago-agnostic — the range is already date-only).
 function shortDay(v) {
@@ -367,15 +385,14 @@ function BoardHeader({ shift, week, starting, onStart, onEnd, onCopyWeek }) {
   )
 }
 
-// Top-right shift control: status text + a Start-shift dropdown, or the live
-// on-shift state + End shift. Off-shift status carries the "still recorded" note
-// as a tooltip, so the old banner isn't needed.
+// Top-right shift control: status + four one-click shift pills (hours on hover),
+// or the live on-shift state + End shift. Off-shift status carries the "still
+// recorded" note as a tooltip, so the old banner isn't needed.
 function ShiftControl({ shift, starting, onStart, onEnd }) {
-  const [open, setOpen] = useState(false)
   if (shift) {
     return (
       <div className="flex items-center gap-2 shrink-0">
-        <span className="hidden sm:inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
+        <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
           <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /> On shift · {shiftName(shift.shift_type)} · {elapsedSince(shift.started_at)}
         </span>
         <button onClick={onEnd} className={ORANGE_BTN_SM}>End shift</button>
@@ -383,21 +400,16 @@ function ShiftControl({ shift, starting, onStart, onEnd }) {
     )
   }
   return (
-    <div className="relative flex items-center gap-2 shrink-0">
+    <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
       <span title="Actions are still recorded, just not counted toward a shift." className="text-[11px] font-medium text-gray-500 dark:text-slate-400 cursor-default whitespace-nowrap">Not on shift</span>
-      <button onClick={() => setOpen(o => !o)} disabled={starting} className={ORANGE_BTN_SM}>Start shift ▾</button>
-      {open && <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />}
-      {open && (
-        <div className="absolute right-0 top-full mt-1 z-30 w-52 rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-[#0B1120] shadow-xl py-1">
-          {SHIFT_TYPES.map(s => (
-            <button key={s.value} onClick={() => { setOpen(false); onStart(s.value) }} disabled={starting}
-              className="w-full flex items-baseline justify-between gap-2 px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-50">
-              <span className="text-sm font-medium text-gray-900 dark:text-white">{s.name}</span>
-              <span className="text-[11px] text-gray-400 dark:text-slate-500">{s.window}</span>
-            </button>
-          ))}
-        </div>
-      )}
+      <div className="flex items-center gap-1.5">
+        {SHIFT_TYPES.map(s => (
+          <button key={s.value} onClick={() => onStart(s.value)} disabled={starting} title={s.window}
+            className="px-2.5 py-1 text-[11px] font-semibold rounded-full border border-orange-300 dark:border-orange-500/40 text-orange-700 dark:text-orange-300 bg-orange-50/60 dark:bg-orange-500/10 hover:bg-orange-100 dark:hover:bg-orange-500/20 transition-colors disabled:opacity-50 whitespace-nowrap">
+            {s.name}
+          </button>
+        ))}
+      </div>
     </div>
   )
 }

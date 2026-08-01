@@ -21,12 +21,14 @@ export const shiftWindow = (t) => SHIFT_TYPES.find(s => s.value === t)?.window |
 // `uncovered` priority splits into two groups by whether a dispatcher raised it.
 // "Covered by teammate" is intentionally gone: those drivers are working, so
 // they sit in All other active drivers with a team chip, not a group of their own.
+// Reviewed drivers no longer split into their own group — the RPC keeps a ticked
+// driver in its real priority (with checked_this_shift = true) and orders
+// unchecked-first, so the denominator holds still while an associate works.
 export const GROUPS = [
   { key: 'raised',           heading: 'Raised by dispatch',            tone: 'red',    expanded: true,  reason: 'raised by a dispatcher — needs coverage now' },
   { key: 'uncovered',        heading: 'Uncovered',                     tone: 'orange', expanded: true,  reason: 'no coverage detected' },
   { key: 'due',              heading: 'Paperwork or checkpoints due',  tone: 'amber',  expanded: true,  reason: 'paperwork or a checkpoint is due' },
   { key: 'idle',             heading: 'Idle 4+ days',                  tone: 'muted',  expanded: false, reason: "sitting 4+ days — nothing booked" },
-  { key: 'reviewed',         heading: 'Reviewed this shift',           tone: 'plain',  expanded: false, reason: 'already checked off this shift' },
   { key: 'todo',             heading: 'All other active drivers',      tone: 'plain',  expanded: false, reason: 'active with a load, nothing flagged' },
   { key: 'never_dispatched', heading: 'Never dispatched',              tone: 'muted',  expanded: false, reason: 'no load in BUDDY history' },
 ]
@@ -54,7 +56,7 @@ export const lifecycleLabel = (k) => LIFECYCLE.find(l => l.key === k)?.label || 
 // is never dropped for want of a matching group.
 export function groupKeyFor(row) {
   if (row.priority === 'uncovered') return row.open_request_id ? 'raised' : 'uncovered'
-  if (row.priority === 'team_covered') return 'todo'
+  if (row.priority === 'team_covered' || row.priority === 'reviewed') return 'todo'
   return row.priority
 }
 
@@ -103,6 +105,14 @@ export async function fetchBoard(shiftId) {
   const { data, error } = await supabase.rpc('after_hours_board', { p_shift_id: shiftId ?? null })
   if (error) throw error
   return data || []
+}
+// Tab headers with progress + tone, measured against the open shift (or since
+// midnight Chicago when off-shift). Returns { raised, active, never } where each
+// carries counts and a `tone` — use the tone as-is, don't recompute the colour.
+export async function fetchBoardTabs(shiftId) {
+  const { data, error } = await supabase.rpc('after_hours_board_tabs', { p_shift_id: shiftId ?? null })
+  if (error) throw error
+  return data || null
 }
 export async function fetchHandoffText(shiftId) {
   const { data, error } = await supabase.rpc('shift_handoff_text', { p_shift_id: shiftId })

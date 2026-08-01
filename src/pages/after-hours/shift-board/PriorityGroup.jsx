@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { cityOf, fmtClock, todayChicago, lifecycleLabel } from './shiftBoardData'
 
-const COLS = ['Driver', 'Disp', 'Carrier', 'Truck', 'Trailer', 'Load state', 'Status', 'Load', 'Origin → Destination', 'Checkpoints', 'Paperwork', 'Note', 'Actions', 'OK']
+// Disp and Carrier stack under the driver name; Truck+Trailer collapse into
+// Equipment — eleven columns so the table fits 1440px with no sideways scroll.
+const COLS = ['Driver', 'Equipment', 'Load state', 'Status', 'Load', 'Origin → Destination', 'Checkpoints', 'Paperwork', 'Note', 'Actions', 'OK']
 
 // Rendered as the body of the active tab — the tab bar already carries the
 // heading, count and colour, so this is just the driver table. The LOAD STATE
@@ -18,7 +20,7 @@ export default function PriorityGroup({ group, rows, settings, shift, stateSort,
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-xs">
+            <table className="w-full text-xs [&_td]:align-top">
               <thead className="bg-gray-50 dark:bg-white/[0.02] text-gray-400 dark:text-slate-500">
                 <tr>
                   {COLS.map(h => h === 'Load state' ? (
@@ -27,6 +29,8 @@ export default function PriorityGroup({ group, rows, settings, shift, stateSort,
                         Load state{stateSort && <span aria-hidden>{stateSort === 'asc' ? '↑' : '↓'}</span>}
                       </button>
                     </th>
+                  ) : h === 'Equipment' ? (
+                    <th key={h} title="Truck / Trailer" className="text-left font-semibold px-3 py-2 whitespace-nowrap cursor-default">{h}</th>
                   ) : (
                     <th key={h} className="text-left font-semibold px-3 py-2 whitespace-nowrap">{h}</th>
                   ))}
@@ -169,20 +173,26 @@ function BoardRow({ r, curYear, settings, shift, onOk, onAction, onFlag, onCheck
 
   return (
     <tr className={`group/row border-b border-gray-100 dark:border-white/[0.03] ${muted ? 'opacity-50' : ''} ${flagged ? 'bg-red-50/40 dark:bg-red-500/[0.05]' : ''}`}>
-      <td className="px-3 py-2 whitespace-nowrap font-medium text-gray-900 dark:text-slate-200">
-        {r.driver_name || '—'}
-        {r.team_name && (
-          <span title={`Team ${r.team_name}`} className="ml-1.5 inline-flex items-center align-middle px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide border bg-gray-100 dark:bg-white/5 text-gray-500 dark:text-slate-400 border-gray-200 dark:border-white/10">
-            Team · {r.team_name}
-          </span>
+      {/* Driver — name (+ team chip) with dispatcher · carrier stacked under it */}
+      <td className="px-3 py-2 align-top">
+        <div className="flex items-center gap-1.5 whitespace-nowrap font-medium text-gray-900 dark:text-slate-200">
+          <span>{r.driver_name || '—'}</span>
+          {r.team_name && (
+            <span title={`Team ${r.team_name}`} className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide border bg-gray-100 dark:bg-white/5 text-gray-500 dark:text-slate-400 border-gray-200 dark:border-white/10">
+              Team · {r.team_name}
+            </span>
+          )}
+        </div>
+        {(r.dispatcher_name || r.carrier_name) && (
+          <div className="text-[10px] text-gray-400 dark:text-slate-500 whitespace-nowrap">
+            {[r.dispatcher_name, r.carrier_name].filter(Boolean).join(' · ')}
+          </div>
         )}
       </td>
-      <td className="px-3 py-2 whitespace-nowrap text-gray-500 dark:text-slate-400">{r.dispatcher_name || '—'}</td>
-      <td className="px-3 py-2 whitespace-nowrap text-gray-500 dark:text-slate-400">{r.carrier_name || '—'}</td>
-      <td className="px-3 py-2 whitespace-nowrap text-gray-500 dark:text-slate-400 font-mono">{r.truck || '—'}</td>
-      <td className="px-3 py-2 whitespace-nowrap text-gray-500 dark:text-slate-400 font-mono">{r.trailer || '—'}</td>
+      {/* Equipment — truck / trailer, display only */}
+      <td className="px-3 py-2 align-top whitespace-nowrap text-gray-500 dark:text-slate-400 font-mono">{r.truck || '—'} / {r.trailer || '—'}</td>
       {/* Load state — transit lifecycle from the RPC, pill only (row stays white) */}
-      <td className="px-3 py-2 whitespace-nowrap">
+      <td className="px-3 py-2 align-top whitespace-nowrap">
         <LoadStatePill r={r} trackPods={!!settings?.track_pods} curYear={curYear} />
       </td>
       <td className="px-3 py-2 whitespace-nowrap">
