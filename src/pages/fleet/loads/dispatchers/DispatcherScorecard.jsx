@@ -544,6 +544,8 @@ export default function DispatcherScorecard() {
                   <thead className={S.tableHead}>
                     <tr>
                       <Th onClick={() => toggleSort('desk')} arrow={arrow('desk')}>Desk</Th>
+                      <Th onClick={() => toggleSort('drivers_period')} arrow={arrow('drivers_period')} right
+                        title="Drivers who ran at least one load in this period, homed to this desk. Not the full roster — a driver who was off all period isn't counted.">Drivers</Th>
                       <Th onClick={() => toggleSort('gross')} arrow={arrow('gross')} right>Gross</Th>
                       <Th onClick={() => toggleSort('per_driver_month')} arrow={arrow('per_driver_month')} right>
                         $/driver·mo{weekOrCustom && <span className="font-normal text-gray-400 dark:text-slate-500"> · monthly pace</span>}
@@ -557,7 +559,7 @@ export default function DispatcherScorecard() {
                   </thead>
                   <tbody>
                     {shownDesks.length === 0 ? (
-                      <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400 dark:text-slate-600">No desks match this filter.</td></tr>
+                      <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-400 dark:text-slate-600">No desks match this filter.</td></tr>
                     ) : shownDesks.map(d => {
                       const read = deskRead(d, floors, { inProgress })
                       const rev = reviews[deskKeyOf(d)]
@@ -581,6 +583,7 @@ export default function DispatcherScorecard() {
                             {d.desk_name}
                             {thin && <span title={`Only ${dm.toFixed(2)} driver-months behind this figure — too thin to name.`} className="ml-1.5 align-middle text-[9.3px] font-semibold px-1.5 py-0.5 rounded-full border bg-[#FEF6E7] border-[#F7E4C0] text-[#92610A] dark:bg-amber-500/10 dark:border-amber-500/25 dark:text-amber-300">THIN</span>}
                           </td>
+                          <td className={`${S.td} text-right tabular-nums ${num}`}>{int(d.drivers_period)}</td>
                           <td className={`${S.td} text-right tabular-nums ${numStrong}`}>
                             {money(d.gross)}
                             {!inProgress && d.gross_delta_pct != null && (
@@ -745,10 +748,11 @@ function AmazonCard({ amazon, bookers, inProgress }) {
       <p className="text-xs text-gray-500 dark:text-slate-400 mb-4 max-w-3xl">
         Judged as one desk because bookings rotate among the team — no single member owns a load, so gross and retention are pooled.
       </p>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 mb-4">
         <Kpi label="Team gross" value={money(amazon.gross)} delta={inProgress ? null : amazon.gross_delta_pct} sub={inProgress ? 'to date' : undefined} accent="blue" />
         <Kpi label="RPM" value={rpm(amazon.rpm)} />
         <Kpi label="Loads" value={int(amazon.loads)} />
+        <Kpi label="Drivers" value={int(amazon.drivers_period)} sub="ran a load" />
         <Kpi label="Departed" value={int(amazon.turnover)} sub="drivers left" />
       </div>
       <h4 className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide mb-2">Who books well</h4>
@@ -834,9 +838,9 @@ function Metric({ label, value }) {
     </div>
   )
 }
-function Th({ children, onClick, arrow, right }) {
+function Th({ children, onClick, arrow, right, title }) {
   return (
-    <th className={`${S.th} ${right ? 'text-right' : ''} cursor-pointer select-none hover:text-gray-900 dark:hover:text-slate-200`} onClick={onClick}>
+    <th title={title} className={`${S.th} ${right ? 'text-right' : ''} cursor-pointer select-none hover:text-gray-900 dark:hover:text-slate-200`} onClick={onClick}>
       {children}{arrow && <span className="ml-1">{arrow}</span>}
     </th>
   )
