@@ -23,7 +23,7 @@ export const GROUPS = [
   { key: 'due',              heading: 'Paperwork or checkpoints due',  tone: 'amber',  expanded: true,  reason: 'paperwork or a checkpoint is due' },
   { key: 'idle',             heading: 'Idle 4+ days',                  tone: 'muted',  expanded: false, reason: "sitting 4+ days — nothing booked" },
   { key: 'team_covered',     heading: 'Covered by teammate',           tone: 'muted',  expanded: false, reason: 'partner is hauling — nothing to do' },
-  { key: 'never_dispatched', heading: 'Never dispatched',              tone: 'muted',  expanded: false, reason: 'no load on record yet' },
+  { key: 'never_dispatched', heading: 'Never dispatched',              tone: 'muted',  expanded: false, reason: 'no load in BUDDY history' },
   { key: 'todo',             heading: 'All other active drivers',      tone: 'plain',  expanded: false, reason: 'active with a load, nothing flagged' },
   { key: 'reviewed',         heading: 'Reviewed this shift',           tone: 'plain',  expanded: false, reason: 'already checked off this shift' },
 ]

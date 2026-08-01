@@ -51,6 +51,17 @@ export default function PriorityGroup({ group, rows, expanded, onToggle, onCopy,
   )
 }
 
+// days_since_delivery is negative when the load delivers in the future — never
+// render "-4 days ago". Positive = past, negative = upcoming.
+function deliveryAge(days) {
+  if (days == null || days === '') return ''
+  const n = Number(days)
+  if (Number.isNaN(n)) return ''
+  if (n < 0) { const a = Math.abs(n); return a === 1 ? 'delivers in 1 day' : `delivers in ${a} days` }
+  if (n === 0) return 'delivered today'
+  return n === 1 ? '1 day ago' : `${n} days ago`
+}
+
 function Chip({ label, on, muted, title }) {
   return (
     <span title={title || undefined} className={`inline-flex items-center justify-center min-w-[26px] h-5 px-1 rounded text-[9px] font-bold border ${
@@ -87,8 +98,26 @@ function BoardRow({ r, settings, shift, onOk, onAction, onFlag, onCheckpoints, o
           ? <span className="text-gray-500 dark:text-slate-400">covered — <span className="text-gray-700 dark:text-slate-300 font-medium">{r.team_name}</span></span>
           : <span className="text-gray-600 dark:text-slate-300">{r.load_status || '—'}</span>}
       </td>
-      <td className="px-3 py-2 whitespace-nowrap text-gray-600 dark:text-slate-400">
-        {o || d ? <>{o || '—'} <span className="text-gray-300 dark:text-slate-600">→</span> {d || '—'}</> : '—'}
+      {/* Origin → Destination + honest load context. A teammate's or historic
+          load is never shown as if it were the driver's current one. */}
+      <td className="px-3 py-2 text-gray-600 dark:text-slate-400">
+        {r.load_number == null ? (
+          <span className="italic text-gray-400 dark:text-slate-500 whitespace-nowrap">no load on record</span>
+        ) : (
+          <div>
+            <div className="whitespace-nowrap">
+              <span className="font-mono text-gray-500 dark:text-slate-400">{r.load_number}</span>
+              {(o || d) && <> <span className="text-gray-300 dark:text-slate-600">·</span> {o || '—'} <span className="text-gray-300 dark:text-slate-600">→</span> {d || '—'}</>}
+            </div>
+            {r.load_is_historic ? (
+              <div className="text-[10px] italic text-gray-400 dark:text-slate-500 whitespace-nowrap">last load — {deliveryAge(r.days_since_delivery)}</div>
+            ) : r.load_is_teammates ? (
+              <div className="text-[10px] text-gray-400 dark:text-slate-500 whitespace-nowrap">
+                driven by <span className="text-gray-500 dark:text-slate-400">{r.driven_by || '—'}</span>{r.team_name ? <> · team {r.team_name}</> : null}
+              </div>
+            ) : null}
+          </div>
+        )}
       </td>
       {/* Checkpoints — only when tracked; the chips open the times editor */}
       <td className="px-3 py-2 whitespace-nowrap">
@@ -130,8 +159,10 @@ function BoardRow({ r, settings, shift, onOk, onAction, onFlag, onCheckpoints, o
           {r.open_request_id
             ? <ActBtn onClick={() => onOpenRequest?.(r.open_request_id)} title="Open the request to book it">Book</ActBtn>
             : <ActBtn onClick={() => onAction(r, 'load_booked')} disabled={!r.load_id} title="Log a booked load">Book</ActBtn>}
-          <ActBtn onClick={() => onAction(r, 'pod_collected')} disabled={!r.load_id} title="POD collected">POD</ActBtn>
-          <ActBtn onClick={() => onAction(r, 'bol_collected')} disabled={!r.load_id} title="BOL collected">BOL</ActBtn>
+          {/* POD/BOL only exist once their phase is on — a dead-looking button
+              teaches people the page is broken, so hide them until then. */}
+          {settings?.track_pods && <ActBtn onClick={() => onAction(r, 'pod_collected')} disabled={!r.load_id} title="POD collected">POD</ActBtn>}
+          {settings?.track_bols && <ActBtn onClick={() => onAction(r, 'bol_collected')} disabled={!r.load_id} title="BOL collected">BOL</ActBtn>}
           <ActBtn onClick={() => onAction(r, 'escalated')} title="Escalate">Esc</ActBtn>
           <ActBtn onClick={() => onFlag(r)} disabled={!shift} title={shift ? 'Flag an issue' : 'Start a shift to flag'}>Flag</ActBtn>
         </div>

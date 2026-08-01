@@ -222,7 +222,7 @@ export default function ShiftBoardPage() {
           {/* 4. Priority groups — "Times needed" sits directly under Raised by
               dispatch, above Uncovered (only when the phase is on). */}
           {(() => {
-            const timesNeeded = trackCheckpoints && exceptions.length > 0
+            const timesNeeded = trackCheckpoints
               ? <TimesNeededGroup key="times_needed" exceptions={exceptions} expanded={cpOpen} onToggle={() => setCpOpen(o => !o)} onOpen={openFromException} />
               : null
             if (grouped.length === 0 && !timesNeeded) {

@@ -28,7 +28,13 @@ export default function TimesNeededGroup({ exceptions, expanded, onToggle, onOpe
         </button>
       </div>
 
-      {expanded && (
+      {/* Empty is the normal, healthy state — only loads actually sitting at a
+          dock land here. Say so calmly; it's not an error or a loading gap. */}
+      {n === 0 ? (
+        <div className="border-t border-amber-100 dark:border-amber-500/10 px-4 py-3 text-xs text-gray-500 dark:text-slate-400">
+          No drivers waiting at a stop right now.
+        </div>
+      ) : expanded && (
         <div className="overflow-x-auto border-t border-amber-100 dark:border-amber-500/10">
           <table className="w-full text-xs">
             <thead className="bg-white/40 dark:bg-white/[0.02] text-gray-400 dark:text-slate-500">
