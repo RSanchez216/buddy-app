@@ -14,23 +14,31 @@ export const SHIFT_TYPES = [
 export const shiftName = (t) => SHIFT_TYPES.find(s => s.value === t)?.name || t || '—'
 export const shiftWindow = (t) => SHIFT_TYPES.find(s => s.value === t)?.window || ''
 
-// Priority-group order + presentation. Collapsed groups render as a one-line
-// count + reason; hidden entirely when their count is 0. The `uncovered`
-// priority splits into two groups by whether a dispatcher raised it.
+// Priority-group presentation, keyed by group. The actual on-page ORDER comes
+// from the RPC's `group_order` (read per row), never this array's sequence — so
+// a group slots in correctly the moment a phase flag turns it on. Collapsed
+// groups render as a one-line count + reason and hide entirely at 0. The
+// `uncovered` priority splits into two groups by whether a dispatcher raised it.
+// "Covered by teammate" is intentionally gone: those drivers are working, so
+// they sit in All other active drivers with a team chip, not a group of their own.
 export const GROUPS = [
   { key: 'raised',           heading: 'Raised by dispatch',            tone: 'red',    expanded: true,  reason: 'raised by a dispatcher — needs coverage now' },
   { key: 'uncovered',        heading: 'Uncovered',                     tone: 'orange', expanded: true,  reason: 'no coverage detected' },
   { key: 'due',              heading: 'Paperwork or checkpoints due',  tone: 'amber',  expanded: true,  reason: 'paperwork or a checkpoint is due' },
   { key: 'idle',             heading: 'Idle 4+ days',                  tone: 'muted',  expanded: false, reason: "sitting 4+ days — nothing booked" },
-  { key: 'team_covered',     heading: 'Covered by teammate',           tone: 'muted',  expanded: false, reason: 'partner is hauling — nothing to do' },
-  { key: 'never_dispatched', heading: 'Never dispatched',              tone: 'muted',  expanded: false, reason: 'no load in BUDDY history' },
-  { key: 'todo',             heading: 'All other active drivers',      tone: 'plain',  expanded: false, reason: 'active with a load, nothing flagged' },
   { key: 'reviewed',         heading: 'Reviewed this shift',           tone: 'plain',  expanded: false, reason: 'already checked off this shift' },
+  { key: 'todo',             heading: 'All other active drivers',      tone: 'plain',  expanded: false, reason: 'active with a load, nothing flagged' },
+  { key: 'never_dispatched', heading: 'Never dispatched',              tone: 'muted',  expanded: false, reason: 'no load in BUDDY history' },
 ]
+// Key → presentation, for lookup once rows are grouped and ordered by group_order.
+export const GROUP_META = Object.fromEntries(GROUPS.map(g => [g.key, g]))
 
-// Which visual group a board row belongs to.
+// Which visual group a board row belongs to. `team_covered` no longer exists as
+// a group — map any stragglers into the general active pool defensively so a row
+// is never dropped for want of a matching group.
 export function groupKeyFor(row) {
   if (row.priority === 'uncovered') return row.open_request_id ? 'raised' : 'uncovered'
+  if (row.priority === 'team_covered') return 'todo'
   return row.priority
 }
 

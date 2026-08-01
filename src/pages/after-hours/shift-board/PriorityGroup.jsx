@@ -89,7 +89,14 @@ function BoardRow({ r, settings, shift, onOk, onAction, onFlag, onCheckpoints, o
 
   return (
     <tr className={`border-b border-gray-100 dark:border-white/[0.03] ${muted ? 'opacity-50' : ''} ${flagged ? 'bg-red-50/40 dark:bg-red-500/[0.05]' : ''}`}>
-      <td className="px-3 py-2 whitespace-nowrap font-medium text-gray-900 dark:text-slate-200">{r.driver_name || '—'}</td>
+      <td className="px-3 py-2 whitespace-nowrap font-medium text-gray-900 dark:text-slate-200">
+        {r.driver_name || '—'}
+        {r.team_name && (
+          <span title={`Team ${r.team_name}`} className="ml-1.5 inline-flex items-center align-middle px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide border bg-gray-100 dark:bg-white/5 text-gray-500 dark:text-slate-400 border-gray-200 dark:border-white/10">
+            Team · {r.team_name}
+          </span>
+        )}
+      </td>
       <td className="px-3 py-2 whitespace-nowrap text-gray-500 dark:text-slate-400">{r.dispatcher_name || '—'}</td>
       <td className="px-3 py-2 whitespace-nowrap text-gray-500 dark:text-slate-400">{r.carrier_name || '—'}</td>
       <td className="px-3 py-2 whitespace-nowrap text-gray-500 dark:text-slate-400 font-mono">{r.trailer || '—'}</td>

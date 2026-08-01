@@ -9,7 +9,7 @@ import TimesNeededGroup from './TimesNeededGroup'
 import CheckpointEditor from './CheckpointEditor'
 import RequestDetailPanel from './RequestDetailPanel'
 import {
-  SHIFT_TYPES, GROUPS, groupKeyFor, shiftName, shiftWindow,
+  SHIFT_TYPES, GROUPS, GROUP_META, groupKeyFor, shiftName, shiftWindow,
   fetchSettings, fetchOpenShift, startShift, fetchShiftSummary, fetchWeekSummary, fetchBoard,
   fetchCheckpointExceptions,
   upsertDriverCheck, removeDriverCheck, logShiftActivity,
@@ -150,9 +150,19 @@ export default function ShiftBoardPage() {
   const toggleGroup = (key) => setExpanded(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n })
 
   const grouped = useMemo(() => {
+    // Group rows by key, carrying the RPC's group_order so the page order is
+    // authoritative (never a hardcoded sequence). raised/uncovered share order 1;
+    // raised is pulled out first at render time, so no tiebreaker is needed here.
     const map = new Map()
-    for (const r of board) { const k = groupKeyFor(r); if (!map.has(k)) map.set(k, []); map.get(k).push(r) }
-    return GROUPS.map(g => ({ g, rows: map.get(g.key) || [] })).filter(x => x.rows.length > 0)
+    for (const r of board) {
+      const k = groupKeyFor(r)
+      if (!map.has(k)) map.set(k, { order: Number(r.group_order ?? 99), rows: [] })
+      map.get(k).rows.push(r)
+    }
+    return [...map.entries()]
+      .map(([key, v]) => ({ g: GROUP_META[key], rows: v.rows, order: v.order }))
+      .filter(x => x.g && x.rows.length > 0)
+      .sort((a, b) => a.order - b.order)
   }, [board])
 
   // Board row per load — lets a Times-needed row prefill the editor with the
@@ -234,6 +244,8 @@ export default function ShiftBoardPage() {
                 onCopy={() => copyGroup(g, rows)} settings={settings} shift={shift}
                 onOk={onOk} onAction={onAction} onFlag={setFlagFor} onCheckpoints={openFromRow} onOpenRequest={setOpenRequestId} />
             )
+            // Times needed sits directly under Raised by dispatch; the rest keep
+            // their group_order (already sorted in `grouped`).
             const raised = grouped.filter(x => x.g.key === 'raised').map(groupEl)
             const rest = grouped.filter(x => x.g.key !== 'raised').map(groupEl)
             return <div className="space-y-3">{[...raised, timesNeeded, ...rest].filter(Boolean)}</div>
