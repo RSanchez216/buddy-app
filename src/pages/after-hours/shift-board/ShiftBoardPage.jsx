@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../contexts/AuthContext'
 import { useToast } from '../../../contexts/ToastContext'
@@ -436,44 +437,67 @@ function ShiftControl({ shift, starting, onStart, onEnd }) {
   )
 }
 
-// Multi-select LOAD STATE filter — a quiet dropdown in the tab bar so no extra
-// row is spent. Empty selection means all states. No backdrop element: a `fixed`
-// backdrop lands in a different stacking context from this `absolute` menu (the
-// page scrolls inside main.overflow-auto) and paints over it, eating every
-// click. Instead we close on an outside pointerdown or Escape.
+// Multi-select LOAD STATE filter. The menu is PORTALED to document.body and
+// positioned `fixed` from the trigger's rect — the tab row (and the table
+// wrapper) are `overflow: auto`, which clips any in-flow absolute child to a few
+// pixels regardless of z-index. A portal is the only placement that survives an
+// arbitrary overflow ancestor. Closes on backdrop click, Escape; repositions on
+// scroll/resize so the fixed menu tracks the moving trigger.
 function LoadStateFilter({ selected, counts, onToggle }) {
   const [open, setOpen] = useState(false)
-  const ref = useRef(null)
+  const [pos, setPos] = useState(null) // { top, right } in viewport coords
+  const btnRef = useRef(null)
+  const n = selected.size
+
+  const openMenu = () => {
+    const r = btnRef.current?.getBoundingClientRect()
+    if (r) setPos({ top: r.bottom + 4, right: Math.max(8, window.innerWidth - r.right) })
+    setOpen(true)
+  }
+
   useEffect(() => {
     if (!open) return
-    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    const place = () => {
+      const r = btnRef.current?.getBoundingClientRect()
+      if (r) setPos({ top: r.bottom + 4, right: Math.max(8, window.innerWidth - r.right) })
+    }
     const onKey = (e) => { if (e.key === 'Escape') setOpen(false) }
-    document.addEventListener('pointerdown', onDown)
+    window.addEventListener('scroll', place, true) // capture — catches inner scrollers too
+    window.addEventListener('resize', place)
     document.addEventListener('keydown', onKey)
-    return () => { document.removeEventListener('pointerdown', onDown); document.removeEventListener('keydown', onKey) }
+    return () => {
+      window.removeEventListener('scroll', place, true)
+      window.removeEventListener('resize', place)
+      document.removeEventListener('keydown', onKey)
+    }
   }, [open])
-  const n = selected.size
+
   return (
-    <div ref={ref} className="relative shrink-0">
-      <button onClick={() => setOpen(o => !o)}
+    <div className="shrink-0">
+      <button ref={btnRef} onClick={() => (open ? setOpen(false) : openMenu())}
         className={`inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded-lg border transition-colors ${n ? 'border-orange-300 dark:border-orange-500/40 text-orange-700 dark:text-orange-300 bg-orange-50/60 dark:bg-orange-500/10' : 'border-gray-200 dark:border-white/10 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5'}`}>
         Load state{n ? ` · ${n}` : ''} ▾
       </button>
-      {open && (
-        <div className="absolute right-0 top-full mt-1 z-30 w-52 rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-[#0B1120] shadow-xl py-1">
-          {LIFECYCLE.map(l => (
-            <label key={l.key} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 dark:hover:bg-white/5 cursor-pointer">
-              <input type="checkbox" checked={selected.has(l.key)} onChange={() => onToggle(l.key)} className="w-3.5 h-3.5 accent-orange-500" />
-              <span className="flex-1 text-sm text-gray-700 dark:text-slate-300">{l.label}</span>
-              <span className="text-[11px] tabular-nums text-gray-400 dark:text-slate-500">{counts[l.key] || 0}</span>
-            </label>
-          ))}
-          {n > 0 && (
-            <button onClick={() => onToggle(null)} className="w-full text-left px-3 py-1.5 mt-0.5 border-t border-gray-100 dark:border-white/5 text-[11px] text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5">
-              Clear filter
-            </button>
-          )}
-        </div>
+      {open && pos && createPortal(
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div style={{ position: 'fixed', top: pos.top, right: pos.right }}
+            className="z-50 w-52 rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-[#0B1120] shadow-xl py-1">
+            {LIFECYCLE.map(l => (
+              <label key={l.key} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 dark:hover:bg-white/5 cursor-pointer">
+                <input type="checkbox" checked={selected.has(l.key)} onChange={() => onToggle(l.key)} className="w-3.5 h-3.5 accent-orange-500" />
+                <span className="flex-1 text-sm text-gray-700 dark:text-slate-300">{l.label}</span>
+                <span className="text-[11px] tabular-nums text-gray-400 dark:text-slate-500">{counts[l.key] || 0}</span>
+              </label>
+            ))}
+            {n > 0 && (
+              <button onClick={() => onToggle(null)} className="w-full text-left px-3 py-1.5 mt-0.5 border-t border-gray-100 dark:border-white/5 text-[11px] text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5">
+                Clear filter
+              </button>
+            )}
+          </div>
+        </>,
+        document.body,
       )}
     </div>
   )
