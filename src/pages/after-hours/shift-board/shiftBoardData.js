@@ -33,6 +33,22 @@ export const GROUPS = [
 // Key → presentation, for lookup once rows are grouped and ordered by group_order.
 export const GROUP_META = Object.fromEntries(GROUPS.map(g => [g.key, g]))
 
+// Load lifecycle in transit order — never alphabetical (Billing must not precede
+// Delivered). Drives the LOAD STATE column, its filter options and its sort. The
+// value comes straight from the board RPC's `lifecycle`; it is never recomputed
+// from load_status, which is billing-oriented and doesn't describe transit.
+export const LIFECYCLE = [
+  { key: 'upcoming',       label: 'Upcoming' },
+  { key: 'picks_up_today', label: 'Picks up today' },
+  { key: 'in_transit',     label: 'In transit' },
+  { key: 'delivers_today', label: 'Delivers today' },
+  { key: 'delivered',      label: 'Delivered' },
+  { key: 'billing',        label: 'Billing' },
+  { key: 'closed',         label: 'Closed' },
+]
+export const LIFECYCLE_RANK = Object.fromEntries(LIFECYCLE.map((l, i) => [l.key, i]))
+export const lifecycleLabel = (k) => LIFECYCLE.find(l => l.key === k)?.label || k
+
 // Which visual group a board row belongs to. `team_covered` no longer exists as
 // a group — map any stragglers into the general active pool defensively so a row
 // is never dropped for want of a matching group.

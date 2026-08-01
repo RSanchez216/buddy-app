@@ -1,12 +1,13 @@
 import { useState } from 'react'
-import { cityOf, fmtClock, todayChicago } from './shiftBoardData'
+import { cityOf, fmtClock, todayChicago, lifecycleLabel } from './shiftBoardData'
+
+const COLS = ['Driver', 'Disp', 'Carrier', 'Truck', 'Trailer', 'Load state', 'Status', 'Load', 'Origin → Destination', 'Checkpoints', 'Paperwork', 'Note', 'Actions', 'OK']
 
 // Rendered as the body of the active tab — the tab bar already carries the
-// heading, count and colour, so this is just a slim toolbar (context + copy)
-// over the driver table.
-export default function PriorityGroup({ group, rows, settings, shift, onOk, onAction, onFlag, onCheckpoints, onOpenRequest }) {
+// heading, count and colour, so this is just the driver table. The LOAD STATE
+// header is the one sortable column (by lifecycle sequence, never alphabetical).
+export default function PriorityGroup({ group, rows, settings, shift, stateSort, onToggleStateSort, onOk, onAction, onFlag, onCheckpoints, onOpenRequest }) {
   const curYear = Number(todayChicago().slice(0, 4))
-  const cols = ['Driver', 'Disp', 'Carrier', 'Truck', 'Trailer', 'Status', 'Load', 'Origin → Destination', 'Checkpoints', 'Paperwork', 'Note', 'Actions', 'OK']
 
   return (
     <div>
@@ -20,7 +21,15 @@ export default function PriorityGroup({ group, rows, settings, shift, onOk, onAc
             <table className="w-full text-xs">
               <thead className="bg-gray-50 dark:bg-white/[0.02] text-gray-400 dark:text-slate-500">
                 <tr>
-                  {cols.map(h => <th key={h} className="text-left font-semibold px-3 py-2 whitespace-nowrap">{h}</th>)}
+                  {COLS.map(h => h === 'Load state' ? (
+                    <th key={h} className="text-left font-semibold px-3 py-2 whitespace-nowrap">
+                      <button type="button" onClick={onToggleStateSort} className="inline-flex items-center gap-1 hover:text-gray-700 dark:hover:text-slate-200">
+                        Load state{stateSort && <span aria-hidden>{stateSort === 'asc' ? '↑' : '↓'}</span>}
+                      </button>
+                    </th>
+                  ) : (
+                    <th key={h} className="text-left font-semibold px-3 py-2 whitespace-nowrap">{h}</th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
@@ -55,6 +64,53 @@ function fmtLoadDate(v, curYear) {
   const opts = { month: 'short', day: 'numeric' }
   if (Number(m[1]) !== curYear) opts.year = 'numeric'
   return new Date(+m[1], +m[2] - 1, +m[3]).toLocaleDateString('en-US', opts)
+}
+
+// LOAD STATE pill styling per lifecycle (Option 2 — pill only, rows stay white).
+// Pale tints get a matching dot so they stay legible in dark mode.
+const PILL = {
+  upcoming:       { dot: 'bg-blue-500',    cls: 'bg-blue-50 dark:bg-blue-500/15 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-500/30' },
+  picks_up_today: { dot: 'bg-amber-500',   cls: 'bg-amber-50 dark:bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-500/30' },
+  in_transit:     { dot: 'bg-emerald-500', cls: 'bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-500/30' },
+  delivers_today: { dot: 'bg-orange-500',  cls: 'bg-orange-50 dark:bg-orange-500/15 text-orange-700 dark:text-orange-300 border-orange-200 dark:border-orange-500/30' },
+  delivered:      { dot: 'bg-red-500',     cls: 'bg-red-50 dark:bg-red-500/15 text-red-700 dark:text-red-300 border-red-200 dark:border-red-500/30' },
+  billing:        { dot: 'bg-purple-500',  cls: 'bg-purple-50 dark:bg-purple-500/15 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-500/30' },
+  closed:         { dot: 'bg-gray-400',    cls: 'bg-gray-100 dark:bg-white/5 text-gray-600 dark:text-slate-300 border-gray-200 dark:border-white/10' },
+}
+// Both clamp at/under 0 so a future delivery never reads as "-6 days ago".
+const inDaysPhrase = (n) => { const x = Number(n); if (Number.isNaN(x)) return ''; return x <= 0 ? 'today' : x === 1 ? 'in 1 day' : `in ${x} days` }
+const agoDaysPhrase = (n) => { const x = Number(n); if (Number.isNaN(x)) return ''; return x <= 0 ? 'today' : x === 1 ? '1 day ago' : `${x} days ago` }
+
+// Relative timing lives in the tooltip, keeping the pill itself short.
+function lifecycleTooltip(r, curYear) {
+  const puDate = fmtLoadDate(r.pickup_date, curYear)
+  const dlDate = fmtLoadDate(r.delivery_date, curYear)
+  switch (r.lifecycle) {
+    case 'upcoming':       return `Picks up ${inDaysPhrase(r.days_to_pickup)}${puDate ? ` — ${puDate}` : ''}`.trim()
+    case 'picks_up_today': return `Picks up today${puDate ? ` — ${puDate}` : ''}`
+    case 'in_transit':     return dlDate ? `In transit — delivers ${dlDate}` : 'In transit'
+    case 'delivers_today': return `Delivers today${dlDate ? ` — ${dlDate}` : ''}`
+    case 'delivered':      return `Delivered ${agoDaysPhrase(r.days_since_delivery)}${dlDate ? ` — ${dlDate}` : ''}`.trim()
+    case 'billing':        return `Delivered ${agoDaysPhrase(r.days_since_delivery)}, awaiting billing`
+    case 'closed':         return dlDate ? `Closed — delivered ${dlDate}` : 'Closed'
+    default:               return ''
+  }
+}
+
+function LoadStatePill({ r, trackPods, curYear }) {
+  if (!r.lifecycle) return <span className="text-gray-300 dark:text-slate-600">—</span>
+  const p = PILL[r.lifecycle] || PILL.closed
+  // "· POD due" is only truthful once the POD phase is on and this load's POD
+  // isn't in yet — never hardcode it.
+  const label = (r.lifecycle === 'delivered' && trackPods && !r.pod_done)
+    ? `${lifecycleLabel(r.lifecycle)} · POD due`
+    : lifecycleLabel(r.lifecycle)
+  return (
+    <span title={lifecycleTooltip(r, curYear)} className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[10px] font-medium whitespace-nowrap ${p.cls}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${p.dot}`} />
+      {label}
+    </span>
+  )
 }
 
 function Chip({ label, on, muted, title }) {
@@ -125,6 +181,10 @@ function BoardRow({ r, curYear, settings, shift, onOk, onAction, onFlag, onCheck
       <td className="px-3 py-2 whitespace-nowrap text-gray-500 dark:text-slate-400">{r.carrier_name || '—'}</td>
       <td className="px-3 py-2 whitespace-nowrap text-gray-500 dark:text-slate-400 font-mono">{r.truck || '—'}</td>
       <td className="px-3 py-2 whitespace-nowrap text-gray-500 dark:text-slate-400 font-mono">{r.trailer || '—'}</td>
+      {/* Load state — transit lifecycle from the RPC, pill only (row stays white) */}
+      <td className="px-3 py-2 whitespace-nowrap">
+        <LoadStatePill r={r} trackPods={!!settings?.track_pods} curYear={curYear} />
+      </td>
       <td className="px-3 py-2 whitespace-nowrap">
         {r.team_name
           ? <span className="text-gray-500 dark:text-slate-400">covered — <span className="text-gray-700 dark:text-slate-300 font-medium">{r.team_name}</span></span>

@@ -9,7 +9,7 @@ import TimesNeededGroup from './TimesNeededGroup'
 import CheckpointEditor from './CheckpointEditor'
 import RequestDetailPanel from './RequestDetailPanel'
 import {
-  SHIFT_TYPES, GROUP_META, groupKeyFor, shiftName,
+  SHIFT_TYPES, GROUP_META, groupKeyFor, shiftName, LIFECYCLE, LIFECYCLE_RANK,
   fetchSettings, fetchOpenShift, startShift, fetchShiftSummary, fetchWeekSummary, fetchBoard,
   fetchCheckpointExceptions,
   upsertDriverCheck, removeDriverCheck, logShiftActivity,
@@ -180,6 +180,29 @@ export default function ShiftBoardPage() {
   const activeRows = useMemo(() => grouped.find(x => x.g.key === activeTab)?.rows || [], [grouped, activeTab])
   const activeMeta = activeTab ? GROUP_META[activeTab] : null
 
+  // LOAD STATE filter (multi-select; empty = all) + sort (off → asc → desc, by
+  // lifecycle sequence, never alphabetical). Default sort is unchanged (off).
+  const [stateFilter, setStateFilter] = useState(() => new Set())
+  const [stateSort, setStateSort] = useState(null)
+  const toggleStateFilter = (key) => setStateFilter(prev => {
+    if (key == null) return new Set()
+    const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n
+  })
+  const toggleStateSort = () => setStateSort(s => (s === 'asc' ? 'desc' : s === 'desc' ? null : 'asc'))
+  const stateCounts = useMemo(() => {
+    const c = {}
+    for (const r of activeRows) if (r.lifecycle) c[r.lifecycle] = (c[r.lifecycle] || 0) + 1
+    return c
+  }, [activeRows])
+  const displayRows = useMemo(() => {
+    let list = stateFilter.size ? activeRows.filter(r => r.lifecycle && stateFilter.has(r.lifecycle)) : activeRows
+    if (stateSort) {
+      const dir = stateSort === 'asc' ? 1 : -1
+      list = [...list].sort((a, b) => ((LIFECYCLE_RANK[a.lifecycle] ?? 99) - (LIFECYCLE_RANK[b.lifecycle] ?? 99)) * dir)
+    }
+    return list
+  }, [activeRows, stateFilter, stateSort])
+
   // Board row per load — lets a Times-needed row prefill the editor with the
   // load's existing checkpoint timestamps.
   const boardByLoad = useMemo(() => {
@@ -247,15 +270,19 @@ export default function ShiftBoardPage() {
               )
             })}
             {activeMeta && activeRows.length > 0 && (
-              <button onClick={() => copyGroup(activeMeta, activeRows)} title="Copy this tab as plain text"
-                className="ml-auto shrink-0 inline-flex items-center gap-1 px-2 text-[11px] font-medium text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200">
-                📋 Copy group
-              </button>
+              <div className="ml-auto flex items-center gap-2 pl-2">
+                <LoadStateFilter selected={stateFilter} counts={stateCounts} onToggle={toggleStateFilter} />
+                <button onClick={() => copyGroup(activeMeta, displayRows)} title="Copy this tab as plain text"
+                  className="shrink-0 inline-flex items-center gap-1 px-2 text-[11px] font-medium text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200">
+                  📋 Copy group
+                </button>
+              </div>
             )}
           </div>
 
           {activeMeta && (
-            <PriorityGroup group={activeMeta} rows={activeRows} settings={settings} shift={shift}
+            <PriorityGroup group={activeMeta} rows={displayRows} settings={settings} shift={shift}
+              stateSort={stateSort} onToggleStateSort={toggleStateSort}
               onOk={onOk} onAction={onAction} onFlag={setFlagFor} onCheckpoints={openFromRow} onOpenRequest={setOpenRequestId} />
           )}
         </>
@@ -369,6 +396,38 @@ function ShiftControl({ shift, starting, onStart, onEnd }) {
               <span className="text-[11px] text-gray-400 dark:text-slate-500">{s.window}</span>
             </button>
           ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Multi-select LOAD STATE filter — a quiet dropdown in the tab bar so no extra
+// row is spent. Empty selection means all states.
+function LoadStateFilter({ selected, counts, onToggle }) {
+  const [open, setOpen] = useState(false)
+  const n = selected.size
+  return (
+    <div className="relative shrink-0">
+      <button onClick={() => setOpen(o => !o)}
+        className={`inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded-lg border transition-colors ${n ? 'border-orange-300 dark:border-orange-500/40 text-orange-700 dark:text-orange-300 bg-orange-50/60 dark:bg-orange-500/10' : 'border-gray-200 dark:border-white/10 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5'}`}>
+        Load state{n ? ` · ${n}` : ''} ▾
+      </button>
+      {open && <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />}
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-30 w-52 rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-[#0B1120] shadow-xl py-1">
+          {LIFECYCLE.map(l => (
+            <label key={l.key} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 dark:hover:bg-white/5 cursor-pointer">
+              <input type="checkbox" checked={selected.has(l.key)} onChange={() => onToggle(l.key)} className="w-3.5 h-3.5 accent-orange-500" />
+              <span className="flex-1 text-sm text-gray-700 dark:text-slate-300">{l.label}</span>
+              <span className="text-[11px] tabular-nums text-gray-400 dark:text-slate-500">{counts[l.key] || 0}</span>
+            </label>
+          ))}
+          {n > 0 && (
+            <button onClick={() => onToggle(null)} className="w-full text-left px-3 py-1.5 mt-0.5 border-t border-gray-100 dark:border-white/5 text-[11px] text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5">
+              Clear filter
+            </button>
+          )}
         </div>
       )}
     </div>
