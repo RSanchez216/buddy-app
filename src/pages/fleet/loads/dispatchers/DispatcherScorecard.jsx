@@ -220,6 +220,14 @@ export default function DispatcherScorecard() {
   // interpretation payload's `partial` is authoritative once loaded.
   const inProgress = scInterp?.partial != null ? scInterp.partial : isCurrentPeriod(grain, anchor, cEnd)
 
+  // Thin-sample floor: at week/custom a desk needs `thin_floor` driver-months of
+  // exposure before its per-driver-month figure is trusted (it's a monthly pace
+  // off a few days). The RPC is authoritative; fall back to grain if it hasn't
+  // loaded. At month+ the floor is 0 — every desk clears it — so nothing dims.
+  const weekOrCustom = grain === 'week' || grain === 'custom'
+  const thinFloor = scInterp?.thin_floor != null ? Number(scInterp.thin_floor) : (weekOrCustom ? 0.5 : 0)
+  const rangeWord = grain === 'week' ? 'this week' : 'in this range'
+
   const desks = useMemo(() => (rows || []).filter(r => !r.is_amazon_team), [rows])
   const amazon = useMemo(() => (rows || []).find(r => r.is_amazon_team) || null, [rows])
   const floors = useMemo(() => computeFloors(desks), [desks])
@@ -537,7 +545,9 @@ export default function DispatcherScorecard() {
                     <tr>
                       <Th onClick={() => toggleSort('desk')} arrow={arrow('desk')}>Desk</Th>
                       <Th onClick={() => toggleSort('gross')} arrow={arrow('gross')} right>Gross</Th>
-                      <Th onClick={() => toggleSort('per_driver_month')} arrow={arrow('per_driver_month')} right>$/driver·mo</Th>
+                      <Th onClick={() => toggleSort('per_driver_month')} arrow={arrow('per_driver_month')} right>
+                        $/driver·mo{weekOrCustom && <span className="font-normal text-gray-400 dark:text-slate-500"> · monthly pace</span>}
+                      </Th>
                       <Th onClick={() => toggleSort('turnover')} arrow={arrow('turnover')} right>Departed</Th>
                       <Th onClick={() => toggleSort('rpm')} arrow={arrow('rpm')} right>RPM</Th>
                       <th className={S.th}>Read</th>
@@ -552,27 +562,39 @@ export default function DispatcherScorecard() {
                       const read = deskRead(d, floors, { inProgress })
                       const rev = reviews[deskKeyOf(d)]
                       const ru = isMonthly ? null : deskRollup(d)
-                      // Too little driver-time to read fairly — dim the row and flag
-                      // it so a thin sample isn't mistaken for a real signal.
-                      const thin = d.driver_months_exact != null && Number(d.driver_months_exact) < 0.5
+                      const dm = d.driver_months_exact != null ? Number(d.driver_months_exact) : null
+                      // Too little driver-time to read fairly — mute the row and flag
+                      // it so a thin sample isn't mistaken for a real signal. Floor
+                      // is off (0) at month+, so no row dims there.
+                      const thin = dm != null && thinFloor > 0 && dm < thinFloor
+                      // One text-color class per cell so muting a thin row doesn't
+                      // collide with the base color in the stylesheet.
+                      const num = thin ? 'text-[#9AA1AC] dark:text-slate-500' : 'text-gray-600 dark:text-slate-400'
+                      const numStrong = thin ? 'text-[#9AA1AC] dark:text-slate-500' : 'text-gray-900 dark:text-slate-200'
+                      const nameCol = thin ? 'text-[#7A828C] dark:text-slate-500' : 'text-gray-900 dark:text-slate-200'
                       return (
                         <tr key={d.desk_id} onClick={e => { e.currentTarget.focus(); setSelectedDesk(d) }}
                           tabIndex={0} role="button" aria-label={`Open ${d.desk_name} desk detail`}
                           onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedDesk(d) } }}
-                          className={`${S.tableRow} cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50 focus-visible:ring-inset ${thin ? 'opacity-50' : ''}`}>
-                          <td className={`${S.td} font-medium text-gray-900 dark:text-slate-200`}>
+                          className={`${S.tableRow} cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50 focus-visible:ring-inset ${thin ? 'bg-[#FCFCFD] dark:bg-white/[0.02]' : ''}`}>
+                          <td className={`${S.td} font-medium ${nameCol}`}>
                             {d.desk_name}
-                            {thin && <span title={`Only ${Number(d.driver_months_exact).toFixed(2)} driver-months in this window — too thin to read.`} className="ml-1.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-gray-100 dark:bg-white/10 text-gray-500 dark:text-slate-400 align-middle">thin</span>}
+                            {thin && <span title={`Only ${dm.toFixed(2)} driver-months behind this figure — too thin to name.`} className="ml-1.5 align-middle text-[9.3px] font-semibold px-1.5 py-0.5 rounded-full border bg-[#FEF6E7] border-[#F7E4C0] text-[#92610A] dark:bg-amber-500/10 dark:border-amber-500/25 dark:text-amber-300">THIN</span>}
                           </td>
-                          <td className={`${S.td} text-right tabular-nums text-gray-900 dark:text-slate-200`}>
+                          <td className={`${S.td} text-right tabular-nums ${numStrong}`}>
                             {money(d.gross)}
                             {!inProgress && d.gross_delta_pct != null && (
                               <span className={`ml-2 text-[11px] ${Number(d.gross_delta_pct) >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>{pct(d.gross_delta_pct)}</span>
                             )}
                           </td>
-                          <td className={`${S.td} text-right tabular-nums text-gray-600 dark:text-slate-400`}>{perDriver(d.per_driver_month)}</td>
-                          <td className={`${S.td} text-right tabular-nums text-gray-600 dark:text-slate-400`}>{int(d.turnover)}</td>
-                          <td className={`${S.td} text-right tabular-nums text-gray-600 dark:text-slate-400`}>{rpm(d.rpm)}</td>
+                          <td className={`${S.td} text-right tabular-nums ${num}`}>
+                            {perDriver(d.per_driver_month)}
+                            {weekOrCustom && dm != null && (
+                              <div className="text-[10px] font-normal text-gray-400 dark:text-slate-500">{dm.toFixed(2)} driver-mo</div>
+                            )}
+                          </td>
+                          <td className={`${S.td} text-right tabular-nums ${num}`}>{int(d.turnover)}</td>
+                          <td className={`${S.td} text-right tabular-nums ${num}`}>{rpm(d.rpm)}</td>
                           <td className={S.td}>
                             <span className={`inline-block text-[10px] uppercase tracking-wide font-bold px-2 py-0.5 rounded-full border ${PILL[read.tone]}`}>{read.label}</span>
                           </td>
@@ -599,6 +621,12 @@ export default function DispatcherScorecard() {
                 </table>
               </div>
             </div>
+            {weekOrCustom && (
+              <p className="mt-2 text-[11px] leading-relaxed text-gray-500 dark:text-slate-400 max-w-3xl">
+                <span className="align-middle text-[9.3px] font-semibold px-1.5 py-0.5 rounded-full border bg-[#FEF6E7] border-[#F7E4C0] text-[#92610A] dark:bg-amber-500/10 dark:border-amber-500/25 dark:text-amber-300">THIN</span>{' '}
+                = under half a driver-month behind the figure {rangeWord}. The number is real, it just came off a small sample — one strong load moves it a long way. Thin desks only lose eligibility for the callouts above.
+              </p>
+            )}
           </section>
 
           {/* Amazon Team card */}
@@ -623,6 +651,7 @@ export default function DispatcherScorecard() {
             <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-2">What&apos;s baked in</h3>
             <ul className="text-sm text-gray-600 dark:text-slate-400 space-y-1.5 list-disc pl-5 max-w-3xl">
               <li>Monthly base: rosters and gross are built per month, then rolled up to the selected window.</li>
+              {weekOrCustom && <li>$ / driver-mo is a monthly pace projected from the days elapsed, not money booked {rangeWord}.</li>}
               <li>One desk per driver — the home desk — so retention isn&apos;t double-counted across desks.</li>
               <li>The Amazon team is judged as a single desk because bookings rotate among its members.</li>
               <li>Excluded/placeholder desks and desks with no drivers are hidden.</li>

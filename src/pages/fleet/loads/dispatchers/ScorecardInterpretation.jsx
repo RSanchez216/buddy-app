@@ -50,14 +50,48 @@ function Verdict({ d }) {
   )
 }
 
-function Callout({ accent, label, title, lines, sub }) {
+// Green "eligible to be named" pill — shown on Top desk / Needs attention at
+// week & custom grain, where a desk had to clear the driver-months floor to be
+// callable. At month+ every desk clears it, so the pill is noise and the grey
+// caption stays instead.
+function EligPill({ drivers, driverMonths }) {
+  const n = int(drivers)
+  return (
+    <span className="mt-1 inline-flex items-center rounded-full border px-2 py-0.5 text-[10.3px] font-medium bg-[#EDF9F0] border-[#CDECD6] text-[#15803D] dark:bg-emerald-500/10 dark:border-emerald-500/25 dark:text-emerald-300">
+      ✓ {n} driver{Number(drivers) === 1 ? '' : 's'} · {Number(driverMonths).toFixed(2)} driver-months
+    </span>
+  )
+}
+
+function Callout({ accent, label, title, lines, sub, pill }) {
   const a = ACCENT[accent] || ACCENT.green
   return (
     <div className={`rounded-lg border border-l-2 border-gray-200 dark:border-white/10 ${a.border} bg-white dark:bg-white/[0.03] p-3`}>
       <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500">{label}</div>
       <div className={`mt-1 truncate text-sm font-semibold ${a.title}`} title={title}>{title}</div>
       {(lines || []).filter(Boolean).map((ln, i) => <div key={i} className="text-[11px] text-gray-500 dark:text-slate-400">{ln}</div>)}
-      {sub && <div className="mt-0.5 text-[11px] text-gray-400 dark:text-slate-500">{sub}</div>}
+      {pill
+        ? <div><EligPill drivers={pill.drivers} driverMonths={pill.driver_months} /></div>
+        : sub && <div className="mt-0.5 text-[11px] text-gray-400 dark:text-slate-500">{sub}</div>}
+    </div>
+  )
+}
+
+// Amber "these desks can't be named yet" line, shown under the callout cards
+// when some desks are held back but at least one cleared the floor. At small
+// counts we name the desks — silently dropping a genuinely strong week would be
+// its own kind of wrong; past three it's just a count.
+function ExcludedThinLine({ desks, rangeWord }) {
+  const n = desks.length
+  const head = `${n} desk${n === 1 ? " isn't" : "s aren't"} eligible to be named ${rangeWord}`
+  const names = desks.map(x => `${x.name} (${Number(x.driver_months).toFixed(2)})`)
+  const joined = names.length <= 1
+    ? names.join('')
+    : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+  return (
+    <div className="rounded-lg border px-3 py-2 text-[12px] leading-relaxed bg-[#FEF9EF] border-[#F7E4C0] text-[#92610A] dark:bg-amber-500/[0.08] dark:border-amber-500/25 dark:text-amber-300">
+      <strong className="font-semibold">{head}</strong> — under half a driver-month so far
+      {n <= 3 ? <>: {joined}. They&apos;re still on the board below.</> : <>. They&apos;re still on the board below.</>}
     </div>
   )
 }
@@ -91,18 +125,50 @@ export default function ScorecardInterpretation({ interp, error }) {
   }
 
   const d = interp
+  // Header, shared by every state so the card reads consistently.
+  const header = (
+    <div className="flex items-center gap-2 flex-wrap">
+      <span className="w-1.5 h-1.5 rounded-full bg-orange-500" />
+      <h2 className="text-xs font-bold uppercase tracking-widest text-orange-600 dark:text-orange-400">Interpretation</h2>
+      {d.period_label && <span className="text-xs text-gray-500 dark:text-slate-400">· {d.period_label}</span>}
+      {d.partial && d.kind && (
+        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-orange-100 dark:bg-orange-500/15 text-orange-700 dark:text-orange-300">{d.kind}</span>
+      )}
+    </div>
+  )
+
+  // State 1 — the window has no desk revenue at all (e.g. a future range).
+  if (d.has_data === false) {
+    return (
+      <FrameCard>
+        {header}
+        <p className="text-sm leading-relaxed text-gray-600 dark:text-slate-300">
+          <strong className="font-semibold text-gray-900 dark:text-white">Not enough data for this period.</strong> No loads delivered in this range yet.
+        </p>
+      </FrameCard>
+    )
+  }
+
+  // Floor is on only at week/custom (thin_floor > 0). Naming/wording follows grain.
+  const thinGrain = Number(d.thin_floor) > 0
+  const rangeWord = d.grain === 'week' ? 'this week' : 'in this range'
+  const hasEligible = d.has_eligible !== false
+  const excluded = Array.isArray(d.excluded_thin) ? d.excluded_thin : []
+
   // Build up to three callouts, adapting to available data.
   const callouts = []
   if (d.top_desk) {
     callouts.push({
       accent: 'green', label: 'Top desk', title: d.top_desk.name,
       lines: [`${money(d.top_desk.per_driver_month)} / driver-mo`, money(d.top_desk.gross)], sub: 'Most productive',
+      pill: thinGrain && d.top_desk.drivers != null ? { drivers: d.top_desk.drivers, driver_months: d.top_desk.driver_months } : null,
     })
   }
   if (d.decliner) {
     callouts.push({
       accent: 'red', label: 'Needs attention', title: d.decliner.name,
       lines: [`down ${pct1(d.decliner.delta_pct)}`, `${money(d.decliner.prev_gross)} → ${money(d.decliner.gross)}`], sub: 'Steepest drop, same-point',
+      pill: thinGrain && d.decliner.drivers != null ? { drivers: d.decliner.drivers, driver_months: d.decliner.driver_months } : null,
     })
   } else if (d.amazon && Number(d.amazon.drivers) >= 3) {
     callouts.push({
@@ -123,22 +189,25 @@ export default function ScorecardInterpretation({ interp, error }) {
 
   return (
     <FrameCard>
-      {/* Header */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="w-1.5 h-1.5 rounded-full bg-orange-500" />
-        <h2 className="text-xs font-bold uppercase tracking-widest text-orange-600 dark:text-orange-400">Interpretation</h2>
-        {d.period_label && <span className="text-xs text-gray-500 dark:text-slate-400">· {d.period_label}</span>}
-        {d.partial && d.kind && (
-          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-orange-100 dark:bg-orange-500/15 text-orange-700 dark:text-orange-300">{d.kind}</span>
-        )}
-      </div>
+      {header}
 
       <Verdict d={d} />
 
-      {callouts.length > 0 && (
+      {/* State 2 — real fleet revenue, but no desk cleared the floor: keep the
+          paragraph (totals are valid) and replace the callout cards with a note. */}
+      {!hasEligible ? (
+        <div className="rounded-lg border border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-white/[0.03] px-3 py-2.5 text-[12px] leading-relaxed text-gray-600 dark:text-slate-300">
+          <strong className="font-semibold text-gray-900 dark:text-white">Not enough per-desk data to call out a leader yet.</strong> No desk has half a driver-month behind its numbers in this range. Fleet totals above are accurate.
+        </div>
+      ) : callouts.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
           {callouts.map((c, i) => <Callout key={i} {...c} />)}
         </div>
+      )}
+
+      {/* Desks held back by the floor while others cleared it. */}
+      {hasEligible && excluded.length > 0 && (
+        <ExcludedThinLine desks={excluded} rangeWord={rangeWord} />
       )}
 
       <p className="text-[11px] leading-relaxed text-gray-400 dark:text-slate-500 border-t border-gray-100 dark:border-white/5 pt-2">
