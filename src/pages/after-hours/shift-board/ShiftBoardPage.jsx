@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../contexts/AuthContext'
 import { useToast } from '../../../contexts/ToastContext'
@@ -248,7 +248,7 @@ export default function ShiftBoardPage() {
     <div className="space-y-3">
       {error ? (
         <>
-          <BoardHeader shift={shift} week={week} starting={starting} onStart={doStart} onEnd={() => setShowEnd(true)} onCopyWeek={copyWeek} />
+          <BoardHeader shift={shift} starting={starting} onStart={doStart} onEnd={() => setShowEnd(true)} />
           <div className={S.errorBox}>Couldn&apos;t load the shift board. <button onClick={load} className="underline font-medium">Retry</button></div>
         </>
       ) : loading ? (
@@ -259,11 +259,11 @@ export default function ShiftBoardPage() {
         </div>
       ) : (
         <>
-          {/* Compact one-line header: title + shift control, then week stat strip */}
-          <BoardHeader shift={shift} week={week} starting={starting} onStart={doStart} onEnd={() => setShowEnd(true)} onCopyWeek={copyWeek} />
-
-          {/* Per-shift progress — only while on shift */}
-          {shift && summary && <ShiftStats summary={summary} />}
+          {/* Title + shift control, then the labelled week band; the shift band
+              only when a shift is open. */}
+          <BoardHeader shift={shift} starting={starting} onStart={doStart} onEnd={() => setShowEnd(true)} />
+          <WeekStrip week={week} onCopy={copyWeek} />
+          {shift && summary && <ShiftStrip summary={summary} shift={shift} />}
 
           {/* Detention queue — surfaced above the tabs only when there's actually
               something waiting at a dock. */}
@@ -341,7 +341,27 @@ function shortDay(v) {
   return new Date(+m[1], +m[2] - 1, +m[3]).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
-function BoardHeader({ shift, week, starting, onStart, onEnd, onCopyWeek }) {
+function BoardHeader({ shift, starting, onStart, onEnd }) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <div className="min-w-0">
+        <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest text-orange-600 dark:text-orange-400">
+          <span className="w-1.5 h-1.5 rounded-full bg-orange-500" /> After Hours
+        </div>
+        <h1 className="text-xl font-bold text-gray-900 dark:text-white leading-tight">Shift Board</h1>
+      </div>
+      {/* Keyed on shift-state so the pulse timer resets on every off→on→off
+          transition (and on remount / navigation back to the board). */}
+      <ShiftControl key={shift ? 'on' : 'off'} shift={shift} starting={starting} onStart={onStart} onEnd={onEnd} />
+    </div>
+  )
+}
+
+// Labelled weekly band (~60px). Clearly weekly, not tonight — a "THIS WEEK"
+// block with the range, then the stats spread edge-to-edge. Non-zero values pop
+// orange; zeros recede grey so the eye lands on what actually happened. The warm
+// tint is muted right down in dark mode so it doesn't glow.
+function WeekStrip({ week, onCopy }) {
   const stats = [
     ['SHIFTS', week?.shifts_logged ?? 0, 'Shifts logged this week'],
     ['BOOKED', week?.loads_booked ?? 0, 'Loads booked by After-Hours this week'],
@@ -353,35 +373,21 @@ function BoardHeader({ shift, week, starting, onStart, onEnd, onCopyWeek }) {
     ['REQUESTS', week?.requests_raised ?? 0, 'Help requests raised by dispatch this week'],
   ]
   return (
-    <div className={`${S.card} px-4 py-3`}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest text-orange-600 dark:text-orange-400">
-            <span className="w-1.5 h-1.5 rounded-full bg-orange-500" /> After Hours
-          </div>
-          <h1 className="text-xl font-bold text-gray-900 dark:text-white leading-tight">Shift Board</h1>
-        </div>
-        {/* Keyed on shift-state so the pulse timer resets on every off→on→off
-            transition (and on remount / navigation back to the board). */}
-        <ShiftControl key={shift ? 'on' : 'off'} shift={shift} starting={starting} onStart={onStart} onEnd={onEnd} />
+    <div className="flex items-stretch rounded-2xl border border-orange-100 dark:border-white/10 overflow-hidden bg-gradient-to-r from-[#FFF8F3] to-white dark:from-orange-500/[0.05] dark:to-transparent">
+      <div className="flex flex-col justify-center px-4 py-2 border-r-2 border-orange-400 dark:border-orange-500/40 shrink-0">
+        <span className="text-[10px] font-bold uppercase tracking-widest text-orange-600 dark:text-orange-400">This week</span>
+        <span className="text-sm font-bold text-gray-900 dark:text-white tabular-nums whitespace-nowrap">{shortDay(week?.range_start)} – {shortDay(week?.range_end)}</span>
       </div>
-
-      <div className="my-2.5 border-t border-gray-100 dark:border-white/5" />
-
-      <div className="flex flex-wrap items-center gap-y-1.5">
-        <div className="flex flex-wrap items-center">
-          {stats.map(([label, val, tip], i) => (
-            <div key={label} title={tip} className="flex items-center cursor-default">
-              {i > 0 && <span className="mx-2 text-gray-200 dark:text-white/10">·</span>}
-              <span className="text-sm font-bold text-gray-900 dark:text-white tabular-nums">{val}</span>
-              <span className="ml-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500">{label}</span>
-            </div>
-          ))}
-        </div>
-        <div className="ml-auto flex items-center gap-3 pl-3">
-          <span className="text-[11px] text-gray-400 dark:text-slate-500 whitespace-nowrap tabular-nums">{shortDay(week?.range_start)} – {shortDay(week?.range_end)}</span>
-          <button onClick={onCopyWeek} className="text-[11px] font-medium text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200 whitespace-nowrap">📋 Copy week</button>
-        </div>
+      <div className="flex-1 flex items-stretch">
+        {stats.map(([label, val, tip], i) => (
+          <div key={label} title={tip} className={`flex-1 flex flex-col items-center justify-center px-1 py-2 cursor-default ${i > 0 ? 'border-l border-orange-100/70 dark:border-white/5' : ''}`}>
+            <span className={`text-[19px] font-bold leading-none tabular-nums ${Number(val) > 0 ? 'text-orange-600 dark:text-orange-400' : 'text-gray-400 dark:text-slate-600'}`}>{val}</span>
+            <span className="mt-1 text-[9px] font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500">{label}</span>
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center px-3 shrink-0 border-l border-orange-100/70 dark:border-white/5">
+        <button onClick={onCopy} className="text-[11px] font-medium text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200 whitespace-nowrap">📋 Copy week</button>
       </div>
     </div>
   )
@@ -431,17 +437,28 @@ function ShiftControl({ shift, starting, onStart, onEnd }) {
 }
 
 // Multi-select LOAD STATE filter — a quiet dropdown in the tab bar so no extra
-// row is spent. Empty selection means all states.
+// row is spent. Empty selection means all states. No backdrop element: a `fixed`
+// backdrop lands in a different stacking context from this `absolute` menu (the
+// page scrolls inside main.overflow-auto) and paints over it, eating every
+// click. Instead we close on an outside pointerdown or Escape.
 function LoadStateFilter({ selected, counts, onToggle }) {
   const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('pointerdown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('pointerdown', onDown); document.removeEventListener('keydown', onKey) }
+  }, [open])
   const n = selected.size
   return (
-    <div className="relative shrink-0">
+    <div ref={ref} className="relative shrink-0">
       <button onClick={() => setOpen(o => !o)}
         className={`inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded-lg border transition-colors ${n ? 'border-orange-300 dark:border-orange-500/40 text-orange-700 dark:text-orange-300 bg-orange-50/60 dark:bg-orange-500/10' : 'border-gray-200 dark:border-white/10 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5'}`}>
         Load state{n ? ` · ${n}` : ''} ▾
       </button>
-      {open && <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />}
       {open && (
         <div className="absolute right-0 top-full mt-1 z-30 w-52 rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-[#0B1120] shadow-xl py-1">
           {LIFECYCLE.map(l => (
@@ -462,41 +479,52 @@ function LoadStateFilter({ selected, counts, onToggle }) {
   )
 }
 
-// ── Shift stats ─────────────────────────────────────────────────────────────
-function ShiftStats({ summary }) {
+// Labelled shift band (~60px, down from ~275px of cards). Mirrors the week strip
+// so the two read as a pair; a cooler tint keeps them distinguishable. Drivers
+// reviewed is the hero (own cell + progress bar); the other eight compress with
+// their LOG/AUTO badges kept.
+function ShiftStrip({ summary, shift }) {
   const reviewed = Number(summary.drivers_reviewed) || 0
   const total = Number(summary.active_drivers) || 0
   const pct = total > 0 ? Math.round((reviewed / total) * 100) : 0
-  const cards = [
-    ['Loads booked', summary.loads_booked, 'LOG'],
+  const stats = [
+    ['Booked', summary.loads_booked, 'LOG'],
     ['PODs', summary.pods_collected, 'LOG'],
     ['BOLs', summary.bols_collected, 'LOG'],
-    ['Checkpoints', summary.checkpoints, 'LOG'],
-    ['Escalations', summary.escalations, 'LOG'],
-    ['Accessorials', summary.accessorials, 'LOG'],
+    ['Chkpt', summary.checkpoints, 'LOG'],
+    ['Escal', summary.escalations, 'LOG'],
+    ['Access', summary.accessorials, 'LOG'],
     ['Lumpers', summary.lumpers, 'AUTO'],
     ['Flagged', summary.drivers_flagged, 'LOG'],
   ]
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+    <div className="flex items-stretch rounded-2xl border border-emerald-100 dark:border-white/10 overflow-hidden bg-gradient-to-r from-emerald-50/70 to-white dark:from-emerald-500/[0.04] dark:to-transparent">
+      <div className="flex flex-col justify-center px-4 py-2 border-r-2 border-emerald-400 dark:border-emerald-500/40 shrink-0">
+        <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-600 dark:text-emerald-400">This shift</span>
+        <span className="text-sm font-bold text-gray-900 dark:text-white whitespace-nowrap">{shiftName(shift.shift_type)} · {elapsedSince(shift.started_at)}</span>
+      </div>
       {/* Hero — drivers reviewed */}
-      <div className="sm:col-span-2 lg:col-span-2 rounded-2xl border-2 border-orange-300 dark:border-orange-500/40 bg-gradient-to-br from-orange-50 to-orange-100/60 dark:from-orange-500/[0.12] dark:to-orange-500/[0.04] p-5">
-        <p className="text-[11px] font-bold uppercase tracking-widest text-orange-700/80 dark:text-orange-400/80">Drivers reviewed</p>
-        <p className="text-4xl font-black text-orange-600 dark:text-orange-400 font-mono tabular-nums leading-tight mt-1">{reviewed} <span className="text-2xl text-orange-500/60 dark:text-orange-400/50">/ {total}</span></p>
-        <div className="mt-3 h-2 rounded-full bg-orange-200/60 dark:bg-orange-500/20 overflow-hidden">
+      <div className="flex flex-col justify-center px-4 py-2 border-r border-emerald-100 dark:border-white/5 shrink-0 min-w-[8.5rem]" title={`${pct}% of active drivers checked this shift`}>
+        <div className="flex items-baseline gap-1">
+          <span className="text-[22px] font-bold leading-none tabular-nums text-orange-600 dark:text-orange-400">{reviewed}</span>
+          <span className="text-sm text-gray-400 dark:text-slate-500 tabular-nums">/ {total}</span>
+        </div>
+        <span className="mt-0.5 text-[9px] font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500">Drivers reviewed</span>
+        <div className="mt-1 h-1 rounded-full bg-gray-200 dark:bg-white/10 overflow-hidden">
           <div className="h-full rounded-full bg-orange-500" style={{ width: `${pct}%` }} />
         </div>
-        <p className="text-[11px] text-orange-700/70 dark:text-orange-400/70 mt-1.5">{pct}% of active drivers checked this shift</p>
       </div>
-      {cards.map(([label, val, badge]) => (
-        <div key={label} className={`${S.card} px-4 py-3`}>
-          <div className="flex items-center justify-between">
-            <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">{label}</p>
-            <span className={`text-[8px] font-bold px-1 py-0.5 rounded ${badge === 'AUTO' ? 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400' : 'bg-gray-100 dark:bg-white/10 text-gray-500 dark:text-slate-400'}`}>{badge}</span>
+      <div className="flex-1 flex items-stretch">
+        {stats.map(([label, val, badge], i) => (
+          <div key={label} className={`flex-1 flex flex-col items-center justify-center px-1 py-2 ${i > 0 ? 'border-l border-emerald-100/70 dark:border-white/5' : ''}`}>
+            <span className="text-[16px] font-bold leading-none tabular-nums text-gray-900 dark:text-white">{Number(val) || 0}</span>
+            <span className="mt-1 flex items-center gap-1">
+              <span className="text-[9px] font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500">{label}</span>
+              <span className={`text-[6.5px] font-bold px-0.5 rounded ${badge === 'AUTO' ? 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400' : 'bg-gray-100 dark:bg-white/10 text-gray-500 dark:text-slate-400'}`}>{badge}</span>
+            </span>
           </div>
-          <p className="text-xl font-bold text-gray-900 dark:text-white font-mono tabular-nums leading-tight mt-1">{Number(val) || 0}</p>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   )
 }
