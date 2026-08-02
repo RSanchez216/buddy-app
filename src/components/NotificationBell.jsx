@@ -3,37 +3,37 @@ import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 
-// Bell icon + dropdown for in-app notifications.
-// Subscribes via Supabase Realtime to inserts/updates on the
-// notifications table for the current user. Fallback polling kicks in
-// every 60s in case realtime drops.
+// In-app notification bell. Reads through the RLS-guarded RPCs so it shows only
+// the caller's rows (escalations, mentions, …). Kept live by a Realtime push;
+// the fallback poll runs at most once a minute and only while the tab is
+// visible — the app makes no fast background requests.
 export default function NotificationBell() {
   const { user } = useAuth()
   const navigate = useNavigate()
   const [items, setItems] = useState([])
+  const [count, setCount] = useState(0)
   const [open, setOpen] = useState(false)
+  const [acking, setAcking] = useState(null)
   const wrapperRef = useRef(null)
-
   const userId = user?.id
 
   const load = useCallback(async () => {
-    if (!userId) return
-    const { data } = await supabase
-      .from('notifications')
-      .select('*')
-      .eq('recipient_user_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(10)
-    setItems(data || [])
+    if (!userId || document.hidden) return
+    const [{ data: list }, { data: cnt }] = await Promise.all([
+      supabase.rpc('my_notifications', { p_limit: 20, p_unread_only: false }),
+      supabase.rpc('my_unread_notification_count'),
+    ])
+    // Unread first, then newest (smallest age) first.
+    const sorted = [...(list || [])].sort((a, b) =>
+      (a.read_at ? 1 : 0) - (b.read_at ? 1 : 0) || (Number(a.age_minutes) || 0) - (Number(b.age_minutes) || 0))
+    setItems(sorted)
+    setCount(Number(cnt) || 0)
   }, [userId])
 
   useEffect(() => { load() }, [load])
 
-  // Realtime subscription. Channel name carries a per-mount nonce because
-  // supabase-js caches channels by name internally; reusing a name across
-  // remounts triggers "cannot add postgres_changes callbacks after
-  // subscribe()" when the second mount tries to chain .on() on the cached
-  // (already-subscribed) channel.
+  // Realtime push + a visible-only 60s fallback. Refresh immediately when the
+  // tab becomes visible again so a badge isn't stale on return.
   useEffect(() => {
     if (!userId) return
     const nonce = Math.random().toString(36).slice(2, 10)
@@ -43,47 +43,55 @@ export default function NotificationBell() {
         { event: '*', schema: 'public', table: 'notifications', filter: `recipient_user_id=eq.${userId}` },
         () => load())
       .subscribe()
-    const poll = setInterval(load, 60000)
+    const poll = setInterval(() => { if (!document.hidden) load() }, 60000)
+    const onVis = () => { if (!document.hidden) load() }
+    document.addEventListener('visibilitychange', onVis)
     return () => {
       supabase.removeChannel(ch)
       clearInterval(poll)
+      document.removeEventListener('visibilitychange', onVis)
     }
   }, [userId, load])
 
   // Click-away
   useEffect(() => {
     if (!open) return
-    function onClick(e) {
-      if (!wrapperRef.current?.contains(e.target)) setOpen(false)
-    }
+    function onClick(e) { if (!wrapperRef.current?.contains(e.target)) setOpen(false) }
     document.addEventListener('mousedown', onClick)
     return () => document.removeEventListener('mousedown', onClick)
   }, [open])
 
-  const unread = items.filter(n => !n.read_at)
-  const unreadCount = unread.length
-
   async function openItem(n) {
     setOpen(false)
     if (!n.read_at) {
-      await supabase.from('notifications').update({ read_at: new Date().toISOString() }).eq('id', n.id)
+      await supabase.rpc('mark_notification_read', { p_id: n.id })
+      load()
     }
     if (n.link_url) navigate(n.link_url)
   }
 
   async function markAllRead() {
-    if (!userId || !unreadCount) return
-    await supabase
-      .from('notifications')
-      .update({ read_at: new Date().toISOString() })
-      .eq('recipient_user_id', userId)
-      .is('read_at', null)
+    if (!userId || !count) return
+    await supabase.rpc('mark_all_notifications_read')
     load()
+  }
+
+  // Acknowledge an escalation straight from the panel (recipient-only, enforced
+  // server-side). The notification's source_id is the shift_activity id.
+  async function ack(n, e) {
+    e.stopPropagation()
+    setAcking(n.id)
+    try {
+      await supabase.rpc('acknowledge_escalation', { p_activity_id: n.source_id })
+      await supabase.rpc('mark_notification_read', { p_id: n.id })
+      await load()
+    } catch { /* server enforces who can ack; ignore refusal here */ }
+    finally { setAcking(null) }
   }
 
   if (!userId) return null
 
-  const badge = unreadCount === 0 ? null : unreadCount > 9 ? '9+' : String(unreadCount)
+  const badge = count === 0 ? null : count > 9 ? '9+' : String(count)
 
   return (
     <div className="relative" ref={wrapperRef}>
@@ -95,8 +103,7 @@ export default function NotificationBell() {
         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
         </svg>
-        {unreadCount > 0 && unreadCount <= 1 ? (
-          // Single-unread case: small red dot with white border (per spec).
+        {count > 0 && count <= 1 ? (
           <span className="absolute top-1 right-1 w-[7px] h-[7px] rounded-full bg-red-500 ring-[1.5px] ring-white dark:ring-[#0d0d1f]" />
         ) : badge ? (
           <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-[16px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center ring-[1.5px] ring-white dark:ring-[#0d0d1f]">
@@ -109,7 +116,7 @@ export default function NotificationBell() {
         <div className="absolute right-0 mt-2 w-80 max-w-[calc(100vw-1rem)] rounded-2xl bg-white dark:bg-[#0d0d1f] border border-gray-200 dark:border-white/10 shadow-2xl overflow-hidden z-40">
           <div className="flex items-center justify-between px-4 py-2 border-b border-gray-100 dark:border-white/5">
             <span className="text-xs font-bold uppercase tracking-widest text-gray-500 dark:text-slate-400">Notifications</span>
-            {unreadCount > 0 && (
+            {count > 0 && (
               <button onClick={markAllRead} className="text-[11px] text-cyan-600 dark:text-cyan-400 hover:underline">
                 Mark all read
               </button>
@@ -118,38 +125,43 @@ export default function NotificationBell() {
           <ul className="max-h-96 overflow-y-auto">
             {items.length === 0 ? (
               <li className="px-4 py-8 text-center text-xs text-gray-400 dark:text-slate-500">No notifications yet.</li>
-            ) : items.map(n => (
-              <li key={n.id}>
-                <button
-                  onClick={() => openItem(n)}
-                  className={`w-full text-left px-4 py-2.5 border-b border-gray-50 dark:border-white/[0.04] last:border-0 transition-colors ${
-                    n.read_at
-                      ? 'hover:bg-gray-50 dark:hover:bg-white/[0.02]'
-                      : 'bg-cyan-50/50 dark:bg-cyan-500/[0.06] hover:bg-cyan-50 dark:hover:bg-cyan-500/[0.1]'
-                  }`}
-                >
-                  <div className="flex items-start gap-2">
-                    <span className={`mt-1 shrink-0 inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold ${typeChipClass(n.notification_type)}`}>
-                      {typeIcon(n.notification_type)}
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-gray-900 dark:text-slate-200 truncate">{n.title}</p>
-                      {n.body && (
-                        <p className="text-xs text-gray-500 dark:text-slate-400 line-clamp-2 mt-0.5">{n.body}</p>
-                      )}
-                      <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-0.5">{relTime(n.created_at)}</p>
+            ) : items.map(n => {
+              const isEsc = n.notification_type === 'escalation' && n.source_id
+              return (
+                <li key={n.id}>
+                  <button
+                    onClick={() => openItem(n)}
+                    className={`w-full text-left px-4 py-2.5 border-b border-gray-50 dark:border-white/[0.04] last:border-0 transition-colors ${
+                      n.read_at
+                        ? 'hover:bg-gray-50 dark:hover:bg-white/[0.02]'
+                        : 'bg-cyan-50/50 dark:bg-cyan-500/[0.06] hover:bg-cyan-50 dark:hover:bg-cyan-500/[0.1]'
+                    }`}
+                  >
+                    <div className="flex items-start gap-2">
+                      <span className={`mt-1 shrink-0 inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold ${typeChipClass(n.notification_type)}`}>
+                        {typeIcon(n.notification_type)}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900 dark:text-slate-200 truncate">{n.title}</p>
+                        {n.body && (
+                          <p className="text-xs text-gray-500 dark:text-slate-400 line-clamp-2 mt-0.5">{n.body}</p>
+                        )}
+                        <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-0.5">{relTime(n.age_minutes)}</p>
+                        {isEsc && (
+                          <button type="button" onClick={e => ack(n, e)} disabled={acking === n.id}
+                            className="mt-1.5 px-2 py-0.5 rounded border border-emerald-300 dark:border-emerald-500/40 text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-500/10 disabled:opacity-50">
+                            {acking === n.id ? 'Acknowledging…' : '✓ Acknowledge'}
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                </button>
-              </li>
-            ))}
+                  </button>
+                </li>
+              )
+            })}
           </ul>
           <div className="px-4 py-2 border-t border-gray-100 dark:border-white/5">
-            <Link
-              to="/notifications"
-              onClick={() => setOpen(false)}
-              className="text-xs text-cyan-600 dark:text-cyan-400 hover:underline"
-            >
+            <Link to="/notifications" onClick={() => setOpen(false)} className="text-xs text-cyan-600 dark:text-cyan-400 hover:underline">
               See all notifications →
             </Link>
           </div>
@@ -161,21 +173,20 @@ export default function NotificationBell() {
 
 function typeChipClass(t) {
   if (t === 'mention') return 'bg-cyan-100 dark:bg-cyan-500/20 text-cyan-700 dark:text-cyan-300'
+  if (t === 'escalation') return 'bg-red-100 dark:bg-red-500/20 text-red-700 dark:text-red-300'
   return 'bg-gray-100 dark:bg-slate-700/40 text-gray-600 dark:text-slate-400'
 }
-
 function typeIcon(t) {
   if (t === 'mention') return '@'
+  if (t === 'escalation') return '🚨'
   return '●'
 }
-
-function relTime(iso) {
-  if (!iso) return ''
-  const d = new Date(iso)
-  const diff = (Date.now() - d.getTime()) / 1000
-  if (diff < 60) return 'just now'
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
-  if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`
-  return `${Math.floor(diff / 604800)}w ago`
+// Relative time from the RPC's age_minutes (already server-computed).
+function relTime(mins) {
+  const m = Math.max(0, Math.floor(Number(mins) || 0))
+  if (m < 1) return 'just now'
+  if (m < 60) return `${m}m ago`
+  if (m < 1440) return `${Math.floor(m / 60)}h ago`
+  if (m < 10080) return `${Math.floor(m / 1440)}d ago`
+  return `${Math.floor(m / 10080)}w ago`
 }

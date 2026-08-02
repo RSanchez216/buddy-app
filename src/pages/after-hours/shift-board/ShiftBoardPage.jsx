@@ -16,7 +16,7 @@ import {
   fetchCheckpointExceptions,
   upsertDriverCheck, logShiftActivity,
   fetchRowActions, updateShiftActivity, deleteShiftActivity, clearDriverCheck,
-  fetchEscalationRecipients, acknowledgeEscalation,
+  fetchEscalationRecipients, acknowledgeEscalation, fetchEscalationCopyText,
   thisWeekChicago, todayChicago, fmtDayLabel, elapsedSince,
   buildGroupCopy, buildWeekCopy, copyText,
 } from './shiftBoardData'
@@ -151,6 +151,19 @@ export default function ShiftBoardPage() {
     return () => window.removeEventListener(REQUESTS_CHANGED_EVENT, h)
   }, [refresh])
 
+  // Realtime push (not a poll — no idle requests): when a shift_activity for this
+  // shift changes elsewhere — e.g. the recipient acknowledges an escalation —
+  // light-refresh so the raiser sees it without reloading.
+  useEffect(() => {
+    if (!shift?.id) return
+    const nonce = Math.random().toString(36).slice(2, 10)
+    const ch = supabase
+      .channel(`shift-activities-${shift.id}-${nonce}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'shift_activities', filter: `shift_id=eq.${shift.id}` }, () => refreshActions())
+      .subscribe()
+    return () => { supabase.removeChannel(ch) }
+  }, [shift?.id, refreshActions])
+
   async function doStart(type) {
     setStarting(true)
     try {
@@ -237,6 +250,14 @@ export default function ShiftBoardPage() {
       toast.success('Acknowledged')
       await refreshActions()
     } catch (e) { toast.error("Couldn't acknowledge", e) }
+  }
+
+  async function copyEscalation(activityId) {
+    try {
+      const text = await fetchEscalationCopyText(activityId)
+      await copyText(text)
+      toast.success('Escalation copied for Telegram')
+    } catch (e) { toast.error("Couldn't copy", e) }
   }
 
   const shiftLabel = shift ? shiftName(shift.shift_type) : '—'
@@ -435,7 +456,7 @@ export default function ShiftBoardPage() {
             <PriorityGroup group={activeMeta} rows={displayRows} settings={settings} shift={shift}
               rowActionsByDriver={rowActionsByDriver} recipientsById={recipientsById} meId={me?.id} isManager={isManager}
               highlightDriver={highlightDriver} stateSort={stateSort} onToggleStateSort={toggleStateSort}
-              onOk={onOk} onAct={openAct} onAcknowledge={onAcknowledge} onCheckpoints={openFromRow} onOpenRequest={setOpenRequestId} />
+              onOk={onOk} onAct={openAct} onAcknowledge={onAcknowledge} onCopyEscalation={copyEscalation} onCheckpoints={openFromRow} onOpenRequest={setOpenRequestId} />
           )}
         </>
       )}
@@ -444,7 +465,7 @@ export default function ShiftBoardPage() {
         <CheckpointEditor target={editTarget} shiftId={shift?.id ?? null}
           onClose={() => setEditTarget(null)} onSaved={() => refresh()} toast={toast} />
       )}
-      {actionTarget && <ActionPopover target={actionTarget} recipients={recipients} onClose={() => setActionTarget(null)} onSubmit={submitAction} onRemove={removeAction} />}
+      {actionTarget && <ActionPopover target={actionTarget} recipients={recipients} onClose={() => setActionTarget(null)} onSubmit={submitAction} onRemove={removeAction} onCopy={copyEscalation} />}
       <EndShiftModal open={showEnd} shift={shift} users={users.filter(u => u.id !== me?.id)}
         onClose={() => setShowEnd(false)} onEnded={doEnded} />
       <RequestDetailPanel open={!!openRequestId} requestId={openRequestId}
@@ -699,7 +720,54 @@ const ACTION_PROMPTS = {
   escalated:     { title: 'Escalate',      prompt: 'What are you escalating, and to whom?', required: true },
   flag:          { title: 'Flag an issue', prompt: "What's the issue?", required: true },
 }
-function ActionPopover({ target, recipients = [], onClose, onSubmit, onRemove }) {
+// Searchable, keyboard-navigable person picker (grows as managers are added).
+// Type to filter on name; ↑/↓ move, Enter selects. Rendered inside the popover
+// modal, which isn't overflow-clipped, so a plain absolute dropdown is fine.
+function PersonPicker({ people, value, onChange }) {
+  const [q, setQ] = useState('')
+  const [open, setOpen] = useState(false)
+  const [hi, setHi] = useState(0)
+  const ref = useRef(null)
+  const selected = people.find(p => p.id === value)
+  const filtered = q.trim() ? people.filter(p => p.full_name.toLowerCase().includes(q.trim().toLowerCase())) : people
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('pointerdown', onDown)
+    return () => document.removeEventListener('pointerdown', onDown)
+  }, [open])
+  const pick = (p) => { onChange(p.id); setQ(''); setOpen(false) }
+  const inputCls = 'w-full text-sm rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800/80 px-2.5 py-1.5 text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-orange-500/40'
+  return (
+    <div ref={ref} className="relative mt-1">
+      <input
+        value={open ? q : (selected ? selected.full_name : '')}
+        onChange={e => { setQ(e.target.value); setOpen(true); setHi(0) }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={e => {
+          if (e.key === 'ArrowDown') { e.preventDefault(); setOpen(true); setHi(h => Math.min(h + 1, filtered.length - 1)) }
+          else if (e.key === 'ArrowUp') { e.preventDefault(); setHi(h => Math.max(h - 1, 0)) }
+          else if (e.key === 'Enter') { e.preventDefault(); if (filtered[hi]) pick(filtered[hi]) }
+          else if (e.key === 'Escape') { setOpen(false) }
+        }}
+        placeholder="Search a person…" className={inputCls} />
+      {open && (
+        <div className="absolute z-10 mt-1 w-full max-h-48 overflow-auto rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-[#0B1120] shadow-xl">
+          {filtered.length === 0 ? (
+            <div className="px-3 py-2 text-xs text-gray-400 dark:text-slate-500">No match</div>
+          ) : filtered.map((p, i) => (
+            <button key={p.id} type="button" onMouseEnter={() => setHi(i)} onClick={() => pick(p)}
+              className={`w-full text-left px-3 py-1.5 text-sm ${i === hi ? 'bg-orange-50 dark:bg-orange-500/10' : 'hover:bg-gray-50 dark:hover:bg-white/5'} ${p.id === value ? 'font-semibold text-gray-900 dark:text-white' : 'text-gray-700 dark:text-slate-300'}`}>
+              {p.full_name}{p.role ? <span className="text-[11px] text-gray-400 dark:text-slate-500"> · {p.role}</span> : null}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ActionPopover({ target, recipients = [], onClose, onSubmit, onRemove, onCopy }) {
   const meta = ACTION_PROMPTS[target.type] || {}
   const editing = !!target.existing
   const isEsc = target.type === 'escalated'
@@ -728,20 +796,22 @@ function ActionPopover({ target, recipients = [], onClose, onSubmit, onRemove })
           </label>
         )}
         {isEsc && (
-          <label className="block">
+          <div>
             <span className="text-[11px] font-medium text-gray-500 dark:text-slate-400">Who needs to see this? *</span>
-            <select value={escalatedTo} onChange={e => setEscalatedTo(e.target.value)}
-              className="mt-1 w-full text-sm rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800/80 px-2.5 py-1.5 text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-orange-500/40">
-              <option value="">Select a person…</option>
-              {recipients.map(p => <option key={p.id} value={p.id}>{p.full_name}{p.role ? ` · ${p.role}` : ''}</option>)}
-            </select>
-          </label>
+            <PersonPicker people={recipients} value={escalatedTo} onChange={setEscalatedTo} />
+          </div>
         )}
         <label className="block">
           <span className="text-[11px] font-medium text-gray-500 dark:text-slate-400">{meta.prompt}{meta.required ? ' *' : ''}</span>
           <textarea rows={3} autoFocus={!meta.hasLoad && !isEsc} value={note} onChange={e => setNote(e.target.value)}
             placeholder={meta.required ? 'Required' : 'Optional'} className={`mt-1 ${S.textarea}`} />
         </label>
+        {isEsc && editing && (
+          <button type="button" onClick={() => onCopy?.(target.existing.id)}
+            className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium rounded-xl border border-gray-200 dark:border-white/10 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5">
+            📋 Copy for Telegram
+          </button>
+        )}
         <div className="flex items-center justify-between gap-2">
           <div>
             {editing && (

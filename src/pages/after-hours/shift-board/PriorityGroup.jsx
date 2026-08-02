@@ -32,7 +32,7 @@ const ACTIVITY_ACTIONS = [
 // Rendered as the body of the active tab. The tab bar carries the heading/count;
 // this is the driver table. It owns the vertical scroll (flex-1) with a sticky
 // header so the bands and tabs above stay put while the list scrolls.
-export default function PriorityGroup({ group, rows, settings, shift, rowActionsByDriver, recipientsById, meId, isManager, highlightDriver, stateSort, onToggleStateSort, onOk, onAct, onAcknowledge, onCheckpoints, onOpenRequest }) {
+export default function PriorityGroup({ group, rows, settings, shift, rowActionsByDriver, recipientsById, meId, isManager, highlightDriver, stateSort, onToggleStateSort, onOk, onAct, onAcknowledge, onCopyEscalation, onCheckpoints, onOpenRequest }) {
   const curYear = Number(todayChicago().slice(0, 4))
   const cols = columnsFor(settings)
 
@@ -71,7 +71,7 @@ export default function PriorityGroup({ group, rows, settings, shift, rowActions
                 <BoardRow key={r.driver_id} r={r} curYear={curYear} settings={settings} shift={shift}
                   ra={rowActionsByDriver?.get(r.driver_id)} recipientsById={recipientsById} meId={meId} isManager={isManager}
                   highlighted={highlightDriver === r.driver_id}
-                  onOk={onOk} onAct={onAct} onAcknowledge={onAcknowledge} onCheckpoints={onCheckpoints} onOpenRequest={onOpenRequest} />
+                  onOk={onOk} onAct={onAct} onAcknowledge={onAcknowledge} onCopyEscalation={onCopyEscalation} onCheckpoints={onCheckpoints} onOpenRequest={onOpenRequest} />
               ))}
             </tbody>
           </table>
@@ -203,7 +203,7 @@ function LoadCell({ number }) {
   )
 }
 
-function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isManager, highlighted, onOk, onAct, onAcknowledge, onCheckpoints, onOpenRequest }) {
+function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isManager, highlighted, onOk, onAct, onAcknowledge, onCopyEscalation, onCheckpoints, onOpenRequest }) {
   const muted = r.in_scope === false
   const o = cityOf(r.origin), d = cityOf(r.destination)
   const pu = fmtLoadDate(r.pickup_date, curYear), dl = fmtLoadDate(r.delivery_date, curYear)
@@ -318,13 +318,14 @@ function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isMan
           <p className="truncate text-gray-500 dark:text-slate-400" title={issueNote}>{issueNote}</p>
         ) : !escAct ? <span className="text-gray-300 dark:text-slate-600">—</span> : null}
         {escAct && (
-          <div className="text-[10px] leading-tight">
-            <span className="text-amber-600 dark:text-amber-400 font-medium" title={escAct.note || ''}>⚠ Escalated to {shortName(escName) || '—'}</span>
+          <div className="text-[10px] leading-tight space-y-0.5">
+            <span className="block text-amber-600 dark:text-amber-400 font-medium" title={escAct.note || ''}>⚠ Escalated to {shortName(escName) || '—'}</span>
             {escAct.acknowledged_at ? (
-              <span className="block text-emerald-600 dark:text-emerald-400">✓ Acknowledged by {shortName(ackName) || ackName}</span>
+              <span className="block text-emerald-600 dark:text-emerald-400">✓ Acknowledged by {shortName(ackName) || ackName}{escAct.acknowledged_at ? ` · ${fmtClock(escAct.acknowledged_at)}` : ''}</span>
             ) : canAck ? (
-              <button type="button" onClick={() => onAcknowledge?.(escAct.id)} className="mt-0.5 px-1.5 py-0.5 rounded border border-emerald-300 dark:border-emerald-500/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-500/10 font-semibold">Acknowledge</button>
+              <button type="button" onClick={() => onAcknowledge?.(escAct.id)} className="px-1.5 py-0.5 rounded border border-emerald-300 dark:border-emerald-500/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-500/10 font-semibold">Acknowledge</button>
             ) : null}
+            <button type="button" onClick={() => onCopyEscalation?.(escAct.id)} className="text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-200">📋 Copy for Telegram</button>
           </div>
         )}
       </td>

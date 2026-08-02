@@ -161,6 +161,12 @@ export async function acknowledgeEscalation(activityId) {
   if (data && data.ok === false) throw new Error(data.reason || 'Could not acknowledge.')
   return data
 }
+// Ready-to-paste Telegram block for an escalation (reflects the live ack state).
+export async function fetchEscalationCopyText(activityId) {
+  const { data, error } = await supabase.rpc('escalation_copy_text', { p_activity_id: activityId })
+  if (error) throw error
+  return data || ''
+}
 // Per-driver action state for the shift: the activities logged (Book/POD/BOL/Esc)
 // plus the OK/flag check. Drives the button states and the reopen-to-edit flow.
 // Keyed by driver_id; `activities` is [{ id, type, note, load_number, at }].
