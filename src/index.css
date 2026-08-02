@@ -68,24 +68,21 @@ input:-webkit-autofill:focus {
 }
 
 /* ── "Not on shift" alarm ────────────────────────────────────────────────────
-   The loudest thing on the Shift Board until a shift is started. Text opacity
-   and the dot's halo pulse together on a ~2s loop; ONLY opacity and box-shadow
-   animate, so nothing reflows. The component stops the animation after ~10s and
-   holds the static red state; reduced-motion skips the animation entirely (the
-   base styles already are that static red state). */
-@keyframes not-on-shift-text {
-  0%, 100% { opacity: 1; }
-  50%      { opacity: 0.62; }
+   The loudest thing on the Shift Board until a shift is started, so it pulses
+   indefinitely — work logged off-shift isn't counted, and the element exists to
+   get the associate to start one. Motion lives in the DOT only (a heartbeat ring
+   that expands and fades, ~1s loop); the label holds steady at full opacity so
+   it stays legible. ONLY transform and box-shadow animate, so nothing reflows.
+   The moment a shift starts the dot is swapped for the static green state.
+   reduced-motion drops the animation entirely — a larger static red dot. */
+@keyframes not-on-shift-dot {
+  0%   { transform: scale(1);    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.45); }
+  70%  { transform: scale(1.12); box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
+  100% { transform: scale(1);    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
 }
-@keyframes not-on-shift-halo {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.22); }
-  50%      { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0.22); }
-}
-.not-on-shift-text-pulse { animation: not-on-shift-text 2s ease-in-out infinite; }
-.not-on-shift-halo-pulse { animation: not-on-shift-halo 2s ease-in-out infinite; }
+.not-on-shift-dot-pulse { animation: not-on-shift-dot 1s ease-out infinite; }
 @media (prefers-reduced-motion: reduce) {
-  .not-on-shift-text-pulse,
-  .not-on-shift-halo-pulse { animation: none; }
+  .not-on-shift-dot-pulse { animation: none; }
 }
 
 /* ── Lifeline (cash-runway) animations ──────────────────────────────────────

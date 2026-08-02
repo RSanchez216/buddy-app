@@ -372,9 +372,7 @@ function BoardHeader({ shift, starting, onStart, onEnd }) {
         </div>
         <h1 className="text-xl font-bold text-gray-900 dark:text-white leading-tight">Shift Board</h1>
       </div>
-      {/* Keyed on shift-state so the pulse timer resets on every off→on→off
-          transition (and on remount / navigation back to the board). */}
-      <ShiftControl key={shift ? 'on' : 'off'} shift={shift} starting={starting} onStart={onStart} onEnd={onEnd} />
+      <ShiftControl shift={shift} starting={starting} onStart={onStart} onEnd={onEnd} />
     </div>
   )
 }
@@ -419,17 +417,9 @@ function WeekStrip({ week, onCopy }) {
 // (hours on hover), or the live on-shift state + End shift. Off-shift status
 // carries the "still recorded" note as a tooltip, so the old banner isn't needed.
 function ShiftControl({ shift, starting, onStart, onEnd }) {
-  // Pulse for ~10s after the (off-shift) mount, then settle to the static red
-  // state. On-shift never pulses. The component is keyed on shift-state, so this
-  // timer is torn down and re-seeded on every transition.
-  const [pulsing, setPulsing] = useState(true)
-  useEffect(() => {
-    if (shift) return
-    const id = setTimeout(() => setPulsing(false), 10000)
-    return () => clearTimeout(id)
-  }, [shift])
-
   if (shift) {
+    // On shift: static green state — the absence of motion is what gives the
+    // off-shift pulse its meaning.
     return (
       <div className="flex items-center gap-2 shrink-0">
         <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
@@ -443,8 +433,10 @@ function ShiftControl({ shift, starting, onStart, onEnd }) {
     <div className="flex items-center gap-3 shrink-0 flex-wrap justify-end">
       <span aria-live="polite" title="Actions are still recorded, just not counted toward a shift."
         className="inline-flex items-center gap-2 cursor-default whitespace-nowrap">
-        <span className={`w-[9px] h-[9px] rounded-full bg-red-500 ${pulsing ? 'not-on-shift-halo-pulse' : ''}`} />
-        <span className={`text-[15px] font-extrabold uppercase tracking-wide text-red-600 dark:text-red-400 ${pulsing ? 'not-on-shift-text-pulse' : ''}`}>Not on shift</span>
+        {/* 14px dot pulses indefinitely (motion in the dot, not the text); the
+            label holds full opacity for legibility. */}
+        <span className="w-[14px] h-[14px] rounded-full bg-red-500 not-on-shift-dot-pulse" />
+        <span className="text-[15px] font-extrabold uppercase tracking-wide text-red-600 dark:text-red-400">Not on shift</span>
       </span>
       <div className="flex items-center gap-1.5">
         {SHIFT_TYPES.map(s => (

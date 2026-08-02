@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { cityOf, fmtClock, todayChicago, lifecycleLabel } from './shiftBoardData'
+import { statusBadge } from '../requests/requestsData'
 
 // Disp and Carrier stack under the driver name; Truck+Trailer collapse into
 // Equipment — eleven columns so the table fits 1440px with no sideways scroll.
@@ -177,6 +178,13 @@ function BoardRow({ r, curYear, settings, shift, onOk, onAction, onFlag, onCheck
       <td className="px-3 py-2 align-top">
         <div className="flex items-center gap-1.5 whitespace-nowrap font-medium text-gray-900 dark:text-slate-200">
           <span>{r.driver_name || '—'}</span>
+          {/* Non-active drivers can still appear (e.g. terminated with an open
+              request). Flag it so nobody books a load for someone who's gone.
+              Active drivers get no chip. */}
+          {r.driver_status && r.driver_status !== 'active' && (() => {
+            const b = statusBadge(r.driver_status)
+            return <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${b.cls}`}>{b.label}</span>
+          })()}
           {r.team_name && (
             <span title={`Team ${r.team_name}`} className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide border bg-gray-100 dark:bg-white/5 text-gray-500 dark:text-slate-400 border-gray-200 dark:border-white/10">
               Team · {r.team_name}
