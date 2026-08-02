@@ -2,51 +2,66 @@ import { useState } from 'react'
 import { cityOf, fmtClock, todayChicago, lifecycleLabel } from './shiftBoardData'
 import { statusBadge } from '../requests/requestsData'
 
-// Disp and Carrier stack under the driver name; Truck+Trailer collapse into
-// Equipment — eleven columns so the table fits 1440px with no sideways scroll.
-const COLS = ['Driver', 'Equipment', 'Load state', 'Status', 'Load', 'Origin → Destination', 'Checkpoints', 'Paperwork', 'Note', 'Actions', 'OK']
+// Column set. Disp/Carrier stack under the driver name; Truck+Trailer collapse
+// into Equipment. Checkpoints and Paperwork only appear while their phase flag
+// is on — otherwise they'd be a column of dashes.
+function columnsFor(settings) {
+  const cols = ['Driver', 'Equipment', 'Load state', 'Status', 'Load', 'Origin → Destination']
+  if (settings?.track_checkpoints) cols.push('Checkpoints')
+  if (settings?.track_pods || settings?.track_bols) cols.push('Paperwork')
+  cols.push('Note', 'Actions', 'OK')
+  return cols
+}
 
-// Rendered as the body of the active tab — the tab bar already carries the
-// heading, count and colour, so this is just the driver table. The LOAD STATE
-// header is the one sortable column (by lifecycle sequence, never alphabetical).
-export default function PriorityGroup({ group, rows, settings, shift, stateSort, onToggleStateSort, onOk, onAction, onFlag, onCheckpoints, onOpenRequest }) {
+// The four logged-activity actions (Flag is a check, handled separately). POD/BOL
+// only appear while their phase flag is on.
+const ACTIVITY_ACTIONS = [
+  { type: 'load_booked', label: 'Book' },
+  { type: 'pod_collected', label: 'POD', flag: 'track_pods' },
+  { type: 'bol_collected', label: 'BOL', flag: 'track_bols' },
+  { type: 'escalated', label: 'Esc' },
+]
+
+// Rendered as the body of the active tab. The tab bar carries the heading/count;
+// this is the driver table. It owns the vertical scroll (flex-1) with a sticky
+// header so the bands and tabs above stay put while the list scrolls.
+export default function PriorityGroup({ group, rows, settings, shift, rowActionsByDriver, stateSort, onToggleStateSort, onOk, onAct, onCheckpoints, onOpenRequest }) {
   const curYear = Number(todayChicago().slice(0, 4))
+  const cols = columnsFor(settings)
 
   return (
-    <div>
-      <div className="rounded-2xl border border-gray-200 dark:border-white/10 overflow-hidden">
-        {rows.length === 0 ? (
-          <div className="p-8 text-center text-sm text-gray-400 dark:text-slate-500">
-            {group.key === 'raised' ? 'Nothing raised by dispatch right now — all clear.' : 'No drivers in this group.'}
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs [&_td]:align-top">
-              <thead className="bg-gray-50 dark:bg-white/[0.02] text-gray-400 dark:text-slate-500">
-                <tr>
-                  {COLS.map(h => h === 'Load state' ? (
-                    <th key={h} className="text-left font-semibold px-3 py-2 whitespace-nowrap">
-                      <button type="button" onClick={onToggleStateSort} className="inline-flex items-center gap-1 hover:text-gray-700 dark:hover:text-slate-200">
-                        Load state{stateSort && <span aria-hidden>{stateSort === 'asc' ? '↑' : '↓'}</span>}
-                      </button>
-                    </th>
-                  ) : h === 'Equipment' ? (
-                    <th key={h} title="Truck / Trailer" className="text-left font-semibold px-3 py-2 whitespace-nowrap cursor-default">{h}</th>
-                  ) : (
-                    <th key={h} className="text-left font-semibold px-3 py-2 whitespace-nowrap">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map(r => (
-                  <BoardRow key={r.driver_id} r={r} curYear={curYear} settings={settings} shift={shift}
-                    onOk={onOk} onAction={onAction} onFlag={onFlag} onCheckpoints={onCheckpoints} onOpenRequest={onOpenRequest} />
+    <div className="flex-1 min-h-0 flex flex-col rounded-2xl border border-gray-200 dark:border-white/10 overflow-hidden">
+      {rows.length === 0 ? (
+        <div className="p-8 text-center text-sm text-gray-400 dark:text-slate-500">
+          {group.key === 'raised' ? 'Nothing raised by dispatch right now — all clear.' : 'No drivers in this group.'}
+        </div>
+      ) : (
+        <div className="flex-1 min-h-0 overflow-auto">
+          <table className="w-full text-xs [&_td]:align-top">
+            <thead className="sticky top-0 z-10 bg-gray-100 dark:bg-[#14142c] text-gray-500 dark:text-slate-400 shadow-[0_1px_0_rgba(0,0,0,0.06)]">
+              <tr>
+                {cols.map(h => h === 'Load state' ? (
+                  <th key={h} className="text-left font-semibold px-3 py-2 whitespace-nowrap">
+                    <button type="button" onClick={onToggleStateSort} className="inline-flex items-center gap-1 hover:text-gray-700 dark:hover:text-slate-200">
+                      Load state{stateSort && <span aria-hidden>{stateSort === 'asc' ? '↑' : '↓'}</span>}
+                    </button>
+                  </th>
+                ) : h === 'Equipment' ? (
+                  <th key={h} title="Truck / Trailer" className="text-left font-semibold px-3 py-2 whitespace-nowrap cursor-default">{h}</th>
+                ) : (
+                  <th key={h} className="text-left font-semibold px-3 py-2 whitespace-nowrap">{h}</th>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(r => (
+                <BoardRow key={r.driver_id} r={r} curYear={curYear} settings={settings} shift={shift}
+                  ra={rowActionsByDriver?.get(r.driver_id)} onOk={onOk} onAct={onAct} onCheckpoints={onCheckpoints} onOpenRequest={onOpenRequest} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }
@@ -72,7 +87,6 @@ function fmtLoadDate(v, curYear) {
 }
 
 // LOAD STATE pill styling per lifecycle (Option 2 — pill only, rows stay white).
-// Pale tints get a matching dot so they stay legible in dark mode.
 const PILL = {
   upcoming:       { dot: 'bg-blue-500',    cls: 'bg-blue-50 dark:bg-blue-500/15 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-500/30' },
   picks_up_today: { dot: 'bg-amber-500',   cls: 'bg-amber-50 dark:bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-500/30' },
@@ -82,11 +96,9 @@ const PILL = {
   billing:        { dot: 'bg-purple-500',  cls: 'bg-purple-50 dark:bg-purple-500/15 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-500/30' },
   closed:         { dot: 'bg-gray-400',    cls: 'bg-gray-100 dark:bg-white/5 text-gray-600 dark:text-slate-300 border-gray-200 dark:border-white/10' },
 }
-// Both clamp at/under 0 so a future delivery never reads as "-6 days ago".
 const inDaysPhrase = (n) => { const x = Number(n); if (Number.isNaN(x)) return ''; return x <= 0 ? 'today' : x === 1 ? 'in 1 day' : `in ${x} days` }
 const agoDaysPhrase = (n) => { const x = Number(n); if (Number.isNaN(x)) return ''; return x <= 0 ? 'today' : x === 1 ? '1 day ago' : `${x} days ago` }
 
-// Relative timing lives in the tooltip, keeping the pill itself short.
 function lifecycleTooltip(r, curYear) {
   const puDate = fmtLoadDate(r.pickup_date, curYear)
   const dlDate = fmtLoadDate(r.delivery_date, curYear)
@@ -105,8 +117,6 @@ function lifecycleTooltip(r, curYear) {
 function LoadStatePill({ r, trackPods, curYear }) {
   if (!r.lifecycle) return <span className="text-gray-300 dark:text-slate-600">—</span>
   const p = PILL[r.lifecycle] || PILL.closed
-  // "· POD due" is only truthful once the POD phase is on and this load's POD
-  // isn't in yet — never hardcode it.
   const label = (r.lifecycle === 'delivered' && trackPods && !r.pod_done)
     ? `${lifecycleLabel(r.lifecycle)} · POD due`
     : lifecycleLabel(r.lifecycle)
@@ -128,10 +138,23 @@ function Chip({ label, on, muted, title }) {
   )
 }
 
+// Neutral action button (nothing logged yet).
 function ActBtn({ children, onClick, disabled, title }) {
   return (
     <button type="button" onClick={onClick} disabled={disabled} title={title}
       className="px-1.5 py-0.5 rounded text-[10px] font-medium border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-40 disabled:cursor-not-allowed">
+      {children}
+    </button>
+  )
+}
+// Completed action — green (or amber for a flag). Clicking reopens it to edit.
+function DoneBtn({ children, onClick, tone = 'done', title }) {
+  const cls = tone === 'flag'
+    ? 'bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-500/40'
+    : 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-500/40'
+  return (
+    <button type="button" onClick={onClick} title={title}
+      className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border ${cls}`}>
       {children}
     </button>
   )
@@ -165,22 +188,26 @@ function LoadCell({ number }) {
   )
 }
 
-function BoardRow({ r, curYear, settings, shift, onOk, onAction, onFlag, onCheckpoints, onOpenRequest }) {
+function BoardRow({ r, curYear, settings, shift, ra, onOk, onAct, onCheckpoints, onOpenRequest }) {
   const muted = r.in_scope === false
-  const okChecked = r.checked_this_shift && r.check_is_ok === true
-  const flagged = r.checked_this_shift && r.check_is_ok === false
   const o = cityOf(r.origin), d = cityOf(r.destination)
   const pu = fmtLoadDate(r.pickup_date, curYear), dl = fmtLoadDate(r.delivery_date, curYear)
 
+  // Per-driver action state — prefer the shift_row_actions payload, fall back to
+  // the board row's own check fields before it loads.
+  const acts = ra?.activities || []
+  const doneAct = (type) => acts.find(a => a.type === type) || null
+  const isOk = ra && ra.check_id != null ? ra.is_ok : (r.checked_this_shift ? r.check_is_ok : null)
+  const okChecked = isOk === true
+  const flagged = isOk === false
+  const issueNote = ra?.issue_note ?? r.check_note
+
   return (
-    <tr className={`group/row border-b border-gray-100 dark:border-white/[0.03] ${muted ? 'opacity-50' : ''} ${flagged ? 'bg-red-50/40 dark:bg-red-500/[0.05]' : ''}`}>
-      {/* Driver — name (+ team chip) with dispatcher · carrier stacked under it */}
+    <tr className={`group/row border-b border-gray-100 dark:border-white/[0.03] ${muted ? 'opacity-50' : ''} ${flagged ? 'bg-amber-50/60 dark:bg-amber-500/[0.07]' : ''}`}>
+      {/* Driver — name (+ status/team chips) with dispatcher · carrier under it */}
       <td className="px-3 py-2 align-top">
         <div className="flex items-center gap-1.5 whitespace-nowrap font-medium text-gray-900 dark:text-slate-200">
           <span>{r.driver_name || '—'}</span>
-          {/* Non-active drivers can still appear (e.g. terminated with an open
-              request). Flag it so nobody books a load for someone who's gone.
-              Active drivers get no chip. */}
           {r.driver_status && r.driver_status !== 'active' && (() => {
             const b = statusBadge(r.driver_status)
             return <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${b.cls}`}>{b.label}</span>
@@ -198,9 +225,9 @@ function BoardRow({ r, curYear, settings, shift, onOk, onAction, onFlag, onCheck
         )}
       </td>
       {/* Equipment — truck / trailer, display only */}
-      <td className="px-3 py-2 align-top whitespace-nowrap text-gray-500 dark:text-slate-400 font-mono">{r.truck || '—'} / {r.trailer || '—'}</td>
+      <td className="px-3 py-2 whitespace-nowrap text-gray-500 dark:text-slate-400 font-mono">{r.truck || '—'} / {r.trailer || '—'}</td>
       {/* Load state — transit lifecycle from the RPC, pill only (row stays white) */}
-      <td className="px-3 py-2 align-top whitespace-nowrap">
+      <td className="px-3 py-2 whitespace-nowrap">
         <LoadStatePill r={r} trackPods={!!settings?.track_pods} curYear={curYear} />
       </td>
       <td className="px-3 py-2 whitespace-nowrap">
@@ -232,9 +259,9 @@ function BoardRow({ r, curYear, settings, shift, onOk, onAction, onFlag, onCheck
           </div>
         )}
       </td>
-      {/* Checkpoints — only when tracked; the chips open the times editor */}
-      <td className="px-3 py-2 whitespace-nowrap">
-        {settings?.track_checkpoints ? (
+      {/* Checkpoints — only rendered while the phase is on */}
+      {settings?.track_checkpoints && (
+        <td className="px-3 py-2 whitespace-nowrap">
           <button type="button" onClick={() => r.load_id && r.in_scope !== false && onCheckpoints?.(r)} disabled={!r.load_id || r.in_scope === false}
             title={r.in_scope === false ? 'Picked up before go-live — not in scope' : r.load_id ? 'Enter checkpoint times' : 'No load'}
             className="flex items-center gap-1 disabled:cursor-not-allowed disabled:opacity-60">
@@ -243,44 +270,50 @@ function BoardRow({ r, curYear, settings, shift, onOk, onAction, onFlag, onCheck
             <Chip label="DL↑" on={!!r.cp_delivery_in} title={fmtClock(r.cp_delivery_in)} />
             <Chip label="DL↓" on={!!r.cp_delivery_out} title={fmtClock(r.cp_delivery_out)} />
           </button>
-        ) : <span className="text-gray-300 dark:text-slate-600">—</span>}
-      </td>
-      {/* Paperwork — each chip only when its flag is on */}
-      <td className="px-3 py-2 whitespace-nowrap">
-        {(settings?.track_bols || settings?.track_pods) ? (
+        </td>
+      )}
+      {/* Paperwork — only rendered while a POD/BOL phase is on */}
+      {(settings?.track_bols || settings?.track_pods) && (
+        <td className="px-3 py-2 whitespace-nowrap">
           <div className="flex items-center gap-1">
             {settings?.track_bols && <Chip label="BOL" on={!!r.bol_done} />}
             {settings?.track_pods && <Chip label="POD" on={!!r.pod_done} />}
           </div>
-        ) : <span className="text-gray-300 dark:text-slate-600">—</span>}
-      </td>
-      {/* Note — a raised request opens its detail panel */}
+        </td>
+      )}
+      {/* Note — a raised request opens its detail panel; else the flag's note */}
       <td className="px-3 py-2 max-w-[220px]">
         {r.open_request_id ? (
           <button type="button" onClick={() => onOpenRequest?.(r.open_request_id)} className="text-left text-red-600 dark:text-red-400 hover:underline">
             <p className="truncate" title={r.open_request_note || ''}>{r.open_request_note || 'Raised'} <span aria-hidden>▸</span></p>
             {r.open_request_by && <p className="text-[10px] text-red-500/80 dark:text-red-400/70">raised by {r.open_request_by} {fmtClock(r.open_request_at)}</p>}
           </button>
-        ) : r.check_note ? (
-          <p className="truncate text-gray-500 dark:text-slate-400" title={r.check_note}>{r.check_note}</p>
+        ) : issueNote ? (
+          <p className="truncate text-gray-500 dark:text-slate-400" title={issueNote}>{issueNote}</p>
         ) : <span className="text-gray-300 dark:text-slate-600">—</span>}
       </td>
-      {/* Actions — Book/POD/BOL/Esc record with or without an open shift. Flag is
-          a driver review (shift-scoped). A raised request is booked from its panel. */}
+      {/* Actions — each opens a popover to capture what happened. A logged action
+          renders done (green); a flag renders amber. Clicking a done one reopens
+          it to edit / remove. A raised request is still booked from its panel. */}
       <td className="px-3 py-2 whitespace-nowrap">
         <div className="flex items-center gap-1">
-          {r.open_request_id
-            ? <ActBtn onClick={() => onOpenRequest?.(r.open_request_id)} title="Open the request to book it">Book</ActBtn>
-            : <ActBtn onClick={() => onAction(r, 'load_booked')} disabled={!r.load_id} title="Log a booked load">Book</ActBtn>}
-          {/* POD/BOL only exist once their phase is on — a dead-looking button
-              teaches people the page is broken, so hide them until then. */}
-          {settings?.track_pods && <ActBtn onClick={() => onAction(r, 'pod_collected')} disabled={!r.load_id} title="POD collected">POD</ActBtn>}
-          {settings?.track_bols && <ActBtn onClick={() => onAction(r, 'bol_collected')} disabled={!r.load_id} title="BOL collected">BOL</ActBtn>}
-          <ActBtn onClick={() => onAction(r, 'escalated')} title="Escalate">Esc</ActBtn>
-          <ActBtn onClick={() => onFlag(r)} disabled={!shift} title={shift ? 'Flag an issue' : 'Start a shift to flag'}>Flag</ActBtn>
+          {ACTIVITY_ACTIONS.filter(a => !a.flag || settings?.[a.flag]).map(a => {
+            const done = doneAct(a.type)
+            if (a.type === 'load_booked' && r.open_request_id) {
+              return <ActBtn key={a.type} onClick={() => onOpenRequest?.(r.open_request_id)} title="Open the request to book it">Book</ActBtn>
+            }
+            if (done) {
+              return <DoneBtn key={a.type} onClick={() => onAct(r, a.type, done)} title="Edit or remove">✓ {a.label}</DoneBtn>
+            }
+            const needsLoad = a.type === 'pod_collected' || a.type === 'bol_collected'
+            return <ActBtn key={a.type} onClick={() => onAct(r, a.type, null)} disabled={needsLoad && !r.load_id} title={a.label}>{a.label}</ActBtn>
+          })}
+          {flagged
+            ? <DoneBtn tone="flag" onClick={() => onAct(r, 'flag', { note: issueNote })} title="Edit or clear the flag">⚑ Flag</DoneBtn>
+            : <ActBtn onClick={() => onAct(r, 'flag', null)} disabled={!shift} title={shift ? 'Flag an issue' : 'Start a shift to flag'}>Flag</ActBtn>}
         </div>
       </td>
-      {/* OK */}
+      {/* OK — ticking checks the driver; unticking clears the check row entirely */}
       <td className="px-3 py-2 text-center">
         <input type="checkbox" checked={okChecked} disabled={!shift}
           onChange={e => onOk(r, e.target.checked)}

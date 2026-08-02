@@ -147,6 +147,35 @@ export async function logShiftActivity(type, loadId, driverId, note) {
   if (data && data.ok === false) throw new Error(data.reason || 'Could not record the activity.')
   return data
 }
+// Per-driver action state for the shift: the activities logged (Book/POD/BOL/Esc)
+// plus the OK/flag check. Drives the button states and the reopen-to-edit flow.
+// Keyed by driver_id; `activities` is [{ id, type, note, load_number, at }].
+export async function fetchRowActions(shiftId) {
+  if (!shiftId) return []
+  const { data, error } = await supabase.rpc('shift_row_actions', { p_shift_id: shiftId })
+  if (error) throw error
+  return data || []
+}
+// Edit / delete a single logged activity. Both are gated server-side to the
+// logger or a manager; the RPC's `reason` is surfaced verbatim on refusal.
+export async function updateShiftActivity(id, note, loadNumber) {
+  const { data, error } = await supabase.rpc('update_shift_activity', { p_id: id, p_note: note ?? null, p_load_number: loadNumber ?? null })
+  if (error) throw error
+  if (data && data.ok === false) throw new Error(data.reason || 'Could not update the activity.')
+  return data
+}
+export async function deleteShiftActivity(id) {
+  const { data, error } = await supabase.rpc('delete_shift_activity', { p_id: id })
+  if (error) throw error
+  if (data && data.ok === false) throw new Error(data.reason || 'Could not remove the activity.')
+  return data
+}
+// Remove a driver's OK/flag check row entirely (untick OK, or clear a flag).
+export async function clearDriverCheck(shiftId, driverId) {
+  const { error } = await supabase.rpc('clear_driver_check', { p_shift_id: shiftId, p_driver_id: driverId })
+  if (error) throw error
+}
+
 // Whether the caller has an open shift (for the "not on shift" banner).
 export async function fetchMyOpenShift() {
   const { data, error } = await supabase.rpc('my_open_shift')

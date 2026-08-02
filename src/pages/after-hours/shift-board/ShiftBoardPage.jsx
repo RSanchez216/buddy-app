@@ -13,7 +13,8 @@ import {
   SHIFT_TYPES, GROUP_META, groupKeyFor, shiftName, LIFECYCLE, LIFECYCLE_RANK,
   fetchSettings, fetchOpenShift, startShift, fetchShiftSummary, fetchWeekSummary, fetchBoard, fetchBoardTabs,
   fetchCheckpointExceptions,
-  upsertDriverCheck, removeDriverCheck, logShiftActivity,
+  upsertDriverCheck, logShiftActivity,
+  fetchRowActions, updateShiftActivity, deleteShiftActivity, clearDriverCheck,
   thisWeekChicago, todayChicago, fmtDayLabel, elapsedSince,
   buildGroupCopy, buildWeekCopy, copyText,
 } from './shiftBoardData'
@@ -29,13 +30,14 @@ export default function ShiftBoardPage() {
   const [week, setWeek] = useState(null)
   const [board, setBoard] = useState([])
   const [boardTabs, setBoardTabs] = useState(null) // per-tab progress + tone
+  const [rowActions, setRowActions] = useState([]) // per-driver activities + check state
   const [exceptions, setExceptions] = useState([]) // checkpoint exception queue (phase 3)
+  const [actionTarget, setActionTarget] = useState(null) // { row, type, existing } — popover
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const [starting, setStarting] = useState(false)
   const [showEnd, setShowEnd] = useState(false)
-  const [flagFor, setFlagFor] = useState(null)  // row being flagged
   const [cpOpen, setCpOpen] = useState(true)    // Times-needed group expanded
   const [editTarget, setEditTarget] = useState(null) // load being checkpointed
   const [openRequestId, setOpenRequestId] = useState(null) // raised request detail panel
@@ -63,14 +65,15 @@ export default function ShiftBoardPage() {
   // omit to use the current one.
   const refresh = useCallback(async (shArg, { week = false } = {}) => {
     const sh = shArg !== undefined ? shArg : shiftRef.current
-    const [bd, sm, ex, tb, wk] = await Promise.all([
+    const [bd, sm, ex, tb, ra, wk] = await Promise.all([
       fetchBoard(sh?.id ?? null),
       sh ? fetchShiftSummary(sh.id) : Promise.resolve(null),
       settingsRef.current?.track_checkpoints ? fetchCheckpointExceptions() : Promise.resolve([]),
       fetchBoardTabs(sh?.id ?? null).catch(() => null),
+      sh ? fetchRowActions(sh.id).catch(() => []) : Promise.resolve([]),
       week ? fetchWeekSummary(weekRange.start, weekRange.end) : Promise.resolve(undefined),
     ])
-    setBoard(bd); setSummary(sm); setExceptions(ex); setBoardTabs(tb)
+    setBoard(bd); setSummary(sm); setExceptions(ex); setBoardTabs(tb); setRowActions(ra)
     if (week && wk !== undefined) setWeek(wk)
   }, [weekRange.start, weekRange.end])
 
@@ -82,13 +85,14 @@ export default function ShiftBoardPage() {
       ])
       setSettings(st || {}); setWeek(wk); setShift(sh)
       settingsRef.current = st || {} // so a refresh in the same tick sees track_checkpoints
-      const [bd, sm, ex, tb] = await Promise.all([
+      const [bd, sm, ex, tb, ra] = await Promise.all([
         fetchBoard(sh?.id ?? null),
         sh ? fetchShiftSummary(sh.id) : Promise.resolve(null),
         st?.track_checkpoints ? fetchCheckpointExceptions() : Promise.resolve([]),
         fetchBoardTabs(sh?.id ?? null).catch(() => null),
+        sh ? fetchRowActions(sh.id).catch(() => []) : Promise.resolve([]),
       ])
-      setBoard(bd); setSummary(sm); setExceptions(ex); setBoardTabs(tb)
+      setBoard(bd); setSummary(sm); setExceptions(ex); setBoardTabs(tb); setRowActions(ra)
     } catch (e) {
       setError(true); toastRef.current.error("Couldn't load the shift board", e)
     } finally { setLoading(false) }
@@ -136,35 +140,53 @@ export default function ShiftBoardPage() {
     await refresh(null, { week: true })
   }
 
+  // Ticking checks the driver; unticking clears the whole check row (which also
+  // decrements the tab counter). A flag is the same row with is_ok=false.
   async function onOk(row, checked) {
     if (!shift) return
     try {
       if (checked) await upsertDriverCheck({ shiftId: shift.id, driverId: row.driver_id, loadId: row.load_id, checkedBy: me?.id, isOk: true })
-      else await removeDriverCheck(shift.id, row.driver_id)
+      else await clearDriverCheck(shift.id, row.driver_id)
       await refresh()
     } catch (e) { toast.error("Couldn't update the review", e) }
   }
 
-  // Row actions record via log_shift_activity — no open shift required; the shift
-  // is attached automatically when one is open. Requests are handled from the
-  // detail panel (handle_help_request), not here.
-  async function onAction(row, type) {
+  // Every action opens a popover first (openAct). Saving routes to the right RPC:
+  // a flag is a driver-check; Book/POD/BOL/Esc are logged activities. Editing an
+  // existing one updates it; Book also captures the actual booked load number.
+  const openAct = (row, type, existing) => setActionTarget({ row, type, existing: existing || null })
+
+  async function submitAction(note, loadNumber) {
+    const t = actionTarget
+    if (!t) return
+    const trimmed = (note || '').trim()
     try {
-      await logShiftActivity(type, row.load_id, row.driver_id)
-      const labels = { load_booked: 'Load booked', pod_collected: 'POD logged', bol_collected: 'BOL logged', escalated: 'Escalated' }
-      toast.success(labels[type] || 'Logged')
-      await refresh(undefined, { week: true }) // booked/POD/BOL move the week strip too
-    } catch (e) { toast.error("Couldn't log that action", e) }
+      if (t.type === 'flag') {
+        if (!shift) { toast.error('Start a shift to flag'); return }
+        await upsertDriverCheck({ shiftId: shift.id, driverId: t.row.driver_id, loadId: t.row.load_id, checkedBy: me?.id, isOk: false, issueNote: trimmed || null })
+      } else if (t.existing) {
+        await updateShiftActivity(t.existing.id, trimmed || null, t.type === 'load_booked' ? (loadNumber || null) : null)
+      } else {
+        const res = await logShiftActivity(t.type, t.row.load_id, t.row.driver_id, trimmed || null)
+        // Book captures the actual load number typed (may differ from the row's).
+        if (t.type === 'load_booked' && loadNumber && res?.id) await updateShiftActivity(res.id, trimmed || null, loadNumber)
+      }
+      const labels = { load_booked: 'Load booked', pod_collected: 'POD logged', bol_collected: 'BOL logged', escalated: 'Escalated', flag: 'Issue flagged' }
+      toast.success(labels[t.type] || 'Saved')
+      setActionTarget(null)
+      await refresh(undefined, { week: true })
+    } catch (e) { toast.error("Couldn't save that", e) }
   }
 
-  async function saveFlag(note) {
-    if (!shift || !flagFor) return
+  async function removeAction() {
+    const t = actionTarget
+    if (!t) return
     try {
-      await upsertDriverCheck({ shiftId: shift.id, driverId: flagFor.driver_id, loadId: flagFor.load_id, checkedBy: me?.id, isOk: false, issueNote: note.trim() || null })
-      setFlagFor(null)
-      toast.success('Issue flagged')
-      await refresh()
-    } catch (e) { toast.error("Couldn't flag the issue", e) }
+      if (t.type === 'flag') await clearDriverCheck(shift?.id, t.row.driver_id)
+      else if (t.existing) await deleteShiftActivity(t.existing.id)
+      setActionTarget(null)
+      await refresh(undefined, { week: true })
+    } catch (e) { toast.error("Couldn't remove that", e) }
   }
 
   const shiftLabel = shift ? shiftName(shift.shift_type) : '—'
@@ -217,6 +239,7 @@ export default function ShiftBoardPage() {
   }, [selectedTab, tabs])
   const activeRows = useMemo(() => grouped.find(x => x.g.key === activeTab)?.rows || [], [grouped, activeTab])
   const activeMeta = activeTab ? GROUP_META[activeTab] : null
+  const rowActionsByDriver = useMemo(() => new Map(rowActions.map(a => [a.driver_id, a])), [rowActions])
 
   // LOAD STATE filter (multi-select; empty = all) + sort (off → asc → desc, by
   // lifecycle sequence, never alphabetical). Default sort is unchanged (off).
@@ -267,7 +290,10 @@ export default function ShiftBoardPage() {
   }
 
   return (
-    <div className="space-y-3">
+    // Fixed to the viewport (minus the global header + main padding) so the
+    // bands and tabs stay put and only the driver list scrolls — the page itself
+    // doesn't scroll on this route.
+    <div className="h-[calc(100vh-6rem)] flex flex-col min-h-0 gap-3">
       {error ? (
         <>
           <BoardHeader shift={shift} starting={starting} onStart={doStart} onEnd={() => setShowEnd(true)} />
@@ -322,8 +348,8 @@ export default function ShiftBoardPage() {
 
           {activeMeta && (
             <PriorityGroup group={activeMeta} rows={displayRows} settings={settings} shift={shift}
-              stateSort={stateSort} onToggleStateSort={toggleStateSort}
-              onOk={onOk} onAction={onAction} onFlag={setFlagFor} onCheckpoints={openFromRow} onOpenRequest={setOpenRequestId} />
+              rowActionsByDriver={rowActionsByDriver} stateSort={stateSort} onToggleStateSort={toggleStateSort}
+              onOk={onOk} onAct={openAct} onCheckpoints={openFromRow} onOpenRequest={setOpenRequestId} />
           )}
         </>
       )}
@@ -332,7 +358,7 @@ export default function ShiftBoardPage() {
         <CheckpointEditor target={editTarget} shiftId={shift?.id ?? null}
           onClose={() => setEditTarget(null)} onSaved={() => refresh()} toast={toast} />
       )}
-      {flagFor && <FlagPopover row={flagFor} onClose={() => setFlagFor(null)} onSave={saveFlag} />}
+      {actionTarget && <ActionPopover target={actionTarget} onClose={() => setActionTarget(null)} onSubmit={submitAction} onRemove={removeAction} />}
       <EndShiftModal open={showEnd} shift={shift} users={users.filter(u => u.id !== me?.id)}
         onClose={() => setShowEnd(false)} onEnded={doEnded} />
       <RequestDetailPanel open={!!openRequestId} requestId={openRequestId}
@@ -566,23 +592,63 @@ function ShiftStrip({ summary, shift }) {
   )
 }
 
-// ── Flag issue popover ──────────────────────────────────────────────────────
-function FlagPopover({ row, onClose, onSave }) {
-  const [note, setNote] = useState('')
-  return (
+// ── Action popover ──────────────────────────────────────────────────────────
+// One dialog for all five actions. Every save captures a note (required for
+// Escalate and Flag); Book adds an editable load-number field prefilled from the
+// row. Reopening a done action prefills it and offers Remove. Portaled to the
+// body (a centered modal), so the table's scroll container can't clip it.
+const ACTION_PROMPTS = {
+  load_booked:   { title: 'Book a load',   prompt: 'What load did you book?', hasLoad: true },
+  pod_collected: { title: 'POD collected', prompt: 'Anything to note?' },
+  bol_collected: { title: 'BOL collected', prompt: 'Anything to note?' },
+  escalated:     { title: 'Escalate',      prompt: 'What are you escalating, and to whom?', required: true },
+  flag:          { title: 'Flag an issue', prompt: "What's the issue?", required: true },
+}
+function ActionPopover({ target, onClose, onSubmit, onRemove }) {
+  const meta = ACTION_PROMPTS[target.type] || {}
+  const editing = !!target.existing
+  const [note, setNote] = useState(target.existing?.note || '')
+  const [loadNumber, setLoadNumber] = useState(meta.hasLoad ? (target.existing?.load_number || target.row.load_number || '') : '')
+  const [busy, setBusy] = useState(false)
+  const canSave = !meta.required || note.trim().length > 0
+
+  const submit = async () => { setBusy(true); try { await onSubmit(note, loadNumber) } finally { setBusy(false) } }
+  const remove = async () => { setBusy(true); try { await onRemove() } finally { setBusy(false) } }
+
+  return createPortal(
     <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
       <div className="relative bg-white dark:bg-[#0B1120] border border-gray-200 dark:border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-5 space-y-3">
         <div>
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Flag an issue</h3>
-          <p className="text-xs text-gray-500 dark:text-slate-500 mt-0.5 truncate">{row.driver_name}{row.load_number ? ` · #${row.load_number}` : ''}</p>
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-white">{meta.title}</h3>
+          <p className="text-xs text-gray-500 dark:text-slate-500 mt-0.5 truncate">{target.row.driver_name}{target.row.load_number ? ` · #${target.row.load_number}` : ''}</p>
         </div>
-        <textarea rows={3} autoFocus className={S.textarea} value={note} onChange={e => setNote(e.target.value)} placeholder="What's wrong — missing paperwork, wrong location, no answer…" />
-        <div className="flex justify-end gap-2">
-          <button onClick={onClose} className={S.btnCancel}>Cancel</button>
-          <button onClick={() => onSave(note)} className="px-4 py-2 text-sm font-semibold bg-red-500 hover:bg-red-400 text-white rounded-xl transition-colors">Flag it</button>
+        {meta.hasLoad && (
+          <label className="block">
+            <span className="text-[11px] font-medium text-gray-500 dark:text-slate-400">Load number</span>
+            <input value={loadNumber} onChange={e => setLoadNumber(e.target.value)} placeholder="e.g. 2607-1564"
+              className="mt-1 w-full text-sm rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800/80 px-2.5 py-1.5 text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-orange-500/40" />
+          </label>
+        )}
+        <label className="block">
+          <span className="text-[11px] font-medium text-gray-500 dark:text-slate-400">{meta.prompt}{meta.required ? ' *' : ''}</span>
+          <textarea rows={3} autoFocus={!meta.hasLoad} value={note} onChange={e => setNote(e.target.value)}
+            placeholder={meta.required ? 'Required' : 'Optional'} className={`mt-1 ${S.textarea}`} />
+        </label>
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            {editing && (
+              <button onClick={remove} disabled={busy} className="px-3 py-2 text-sm font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-xl transition-colors disabled:opacity-50">Remove</button>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <button onClick={onClose} disabled={busy} className={S.btnCancel}>Cancel</button>
+            <button onClick={submit} disabled={busy || !canSave}
+              className="px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 text-white rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Save</button>
+          </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
