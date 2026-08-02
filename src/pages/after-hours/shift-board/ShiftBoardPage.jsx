@@ -201,24 +201,34 @@ export default function ShiftBoardPage() {
   // recipient (which also fires a notification).
   const openAct = (row, type, existing) => setActionTarget({ row, type, existing: existing || null })
 
-  async function submitAction(note, loadNumber, escalatedTo) {
+  async function submitAction(note, loadNumber, mentioned) {
     const t = actionTarget
     if (!t) return
     const trimmed = (note || '').trim()
     try {
+      // Escalate is mention-driven: the first @mention is the primary recipient,
+      // every mention gets a notification. Keep the popover open (return the id)
+      // so Copy for Telegram is right there.
+      if (t.type === 'escalated') {
+        const ids = mentioned || []
+        if (!ids.length) { toast.error('Mention someone with @ so they get notified.'); return }
+        let activityId
+        if (t.existing) {
+          const prev = parseMentions(t.existing.note || '', recipients, me?.id)
+          const same = prev.length === ids.length && prev.every((v, i) => v === ids[i])
+          if (same) { await updateShiftActivity(t.existing.id, trimmed || null, null); activityId = t.existing.id }
+          else { await deleteShiftActivity(t.existing.id); activityId = (await logShiftActivity('escalated', t.row.load_id, t.row.driver_id, trimmed || null, null, ids))?.id }
+        } else {
+          activityId = (await logShiftActivity('escalated', t.row.load_id, t.row.driver_id, trimmed || null, null, ids))?.id
+        }
+        toast.success('Escalated')
+        await refreshActions()
+        return activityId || (t.existing?.id ?? null)
+      }
+
       if (t.type === 'flag') {
         if (!shift) { toast.error('Start a shift to flag'); return }
         await upsertDriverCheck({ shiftId: shift.id, driverId: t.row.driver_id, loadId: t.row.load_id, checkedBy: me?.id, isOk: false, issueNote: trimmed || null })
-      } else if (t.type === 'escalated') {
-        if (!escalatedTo) { toast.error('Pick who needs to see this'); return }
-        // Changing the recipient replaces the activity so a fresh notification
-        // routes to the new person; a note-only edit just updates in place.
-        if (t.existing && escalatedTo === t.existing.escalated_to) {
-          await updateShiftActivity(t.existing.id, trimmed || null, null)
-        } else {
-          if (t.existing) await deleteShiftActivity(t.existing.id)
-          await logShiftActivity('escalated', t.row.load_id, t.row.driver_id, trimmed || null, escalatedTo)
-        }
       } else if (t.existing) {
         await updateShiftActivity(t.existing.id, trimmed || null, t.type === 'load_booked' ? (loadNumber || null) : null)
       } else {
@@ -226,7 +236,7 @@ export default function ShiftBoardPage() {
         // Book captures the actual load number typed (may differ from the row's).
         if (t.type === 'load_booked' && loadNumber && res?.id) await updateShiftActivity(res.id, trimmed || null, loadNumber)
       }
-      const labels = { load_booked: 'Load booked', pod_collected: 'POD logged', bol_collected: 'BOL logged', escalated: 'Escalated', flag: 'Issue flagged' }
+      const labels = { load_booked: 'Load booked', pod_collected: 'POD logged', bol_collected: 'BOL logged', flag: 'Issue flagged' }
       toast.success(labels[t.type] || 'Saved')
       setActionTarget(null)
       await refreshActions()
@@ -465,7 +475,7 @@ export default function ShiftBoardPage() {
         <CheckpointEditor target={editTarget} shiftId={shift?.id ?? null}
           onClose={() => setEditTarget(null)} onSaved={() => refresh()} toast={toast} />
       )}
-      {actionTarget && <ActionPopover target={actionTarget} recipients={recipients} onClose={() => setActionTarget(null)} onSubmit={submitAction} onRemove={removeAction} onCopy={copyEscalation} />}
+      {actionTarget && <ActionPopover target={actionTarget} recipients={recipients} meId={me?.id} onClose={() => setActionTarget(null)} onSubmit={submitAction} onRemove={removeAction} onCopy={copyEscalation} />}
       <EndShiftModal open={showEnd} shift={shift} users={users.filter(u => u.id !== me?.id)}
         onClose={() => setShowEnd(false)} onEnded={doEnded} />
       <RequestDetailPanel open={!!openRequestId} requestId={openRequestId}
@@ -717,7 +727,7 @@ const ACTION_PROMPTS = {
   load_booked:   { title: 'Book a load',   prompt: 'What load did you book?', hasLoad: true },
   pod_collected: { title: 'POD collected', prompt: 'Anything to note?' },
   bol_collected: { title: 'BOL collected', prompt: 'Anything to note?' },
-  escalated:     { title: 'Escalate',      prompt: 'What are you escalating, and to whom?', required: true },
+  escalated:     { title: 'Escalate',      prompt: "What's happening?", required: true },
   flag:          { title: 'Flag an issue', prompt: "What's the issue?", required: true },
 }
 // Searchable, keyboard-navigable person picker (grows as managers are added).
@@ -767,18 +777,128 @@ function PersonPicker({ people, value, onChange }) {
   )
 }
 
-function ActionPopover({ target, recipients = [], onClose, onSubmit, onRemove, onCopy }) {
+// Ordered, de-duped user ids for the @handles present in `text`. Self-mentions
+// and unknown handles are ignored.
+function parseMentions(text, recipients, meId) {
+  const byHandle = new Map(recipients.map(r => [(r.handle || '').toLowerCase(), r]))
+  const seen = new Set(); const out = []
+  for (const m of String(text || '').matchAll(/@(\w+)/g)) {
+    const r = byHandle.get(m[1].toLowerCase())
+    if (r && r.id !== meId && !seen.has(r.id)) { seen.add(r.id); out.push(r.id) }
+  }
+  return out
+}
+
+// Slack-style @mention textarea. The <textarea> holds plain, copy-pasteable text;
+// a mirror div behind it highlights valid @handles (subtle orange). Typing @
+// opens an inline picker filtered on handle and full name.
+function MentionField({ value, onChange, recipients, meId, autoFocus }) {
+  const taRef = useRef(null)
+  const mirrorRef = useRef(null)
+  const [menu, setMenu] = useState(null) // { start } while the caret is in an @token
+  const [q, setQ] = useState('')
+  const [hi, setHi] = useState(0)
+
+  const byHandle = useMemo(() => new Map(recipients.map(r => [(r.handle || '').toLowerCase(), r])), [recipients])
+  const options = useMemo(() => {
+    if (!menu) return []
+    const s = q.toLowerCase()
+    return recipients.filter(r => r.id !== meId &&
+      ((r.handle || '').toLowerCase().includes(s) || (r.full_name || '').toLowerCase().includes(s))).slice(0, 8)
+  }, [menu, q, recipients, meId])
+
+  const detect = (el) => {
+    const m = el.value.slice(0, el.selectionStart).match(/(?:^|\s)@(\w*)$/)
+    if (m) { setMenu({ start: el.selectionStart - m[1].length - 1 }); setQ(m[1]); setHi(0) }
+    else setMenu(null)
+  }
+  const pick = (r) => {
+    const el = taRef.current
+    const before = value.slice(0, menu.start)
+    const after = value.slice(el.selectionStart)
+    const insert = `@${r.handle} `
+    onChange(before + insert + after); setMenu(null)
+    requestAnimationFrame(() => { const c = (before + insert).length; el.focus(); el.setSelectionRange(c, c) })
+  }
+  const onKeyDown = (e) => {
+    if (!menu || !options.length) return
+    if (e.key === 'ArrowDown') { e.preventDefault(); setHi(h => Math.min(h + 1, options.length - 1)) }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setHi(h => Math.max(h - 1, 0)) }
+    else if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pick(options[Math.min(hi, options.length - 1)]) }
+    else if (e.key === 'Escape') { e.preventDefault(); setMenu(null) }
+  }
+
+  // Mirror highlight — same box metrics as the textarea, valid @handles wrapped.
+  const nodes = []
+  let last = 0; const re = /@(\w+)/g; let mm
+  while ((mm = re.exec(value))) {
+    const r = byHandle.get(mm[1].toLowerCase())
+    if (r && r.id !== meId) {
+      if (mm.index > last) nodes.push(value.slice(last, mm.index))
+      nodes.push(<span key={mm.index} className="rounded bg-orange-100 dark:bg-orange-500/25 text-orange-700 dark:text-orange-300">@{mm[1]}</span>)
+      last = mm.index + mm[0].length
+    }
+  }
+  nodes.push(value.slice(last) + '​')
+
+  const boxCls = 'w-full text-sm px-2.5 py-2 rounded-lg border leading-normal'
+  return (
+    <div className="relative mt-1">
+      {/* Mirror carries the background so the transparent textarea reveals the
+          highlighted @handles beneath it (in both themes). */}
+      <div ref={mirrorRef} aria-hidden className={`${boxCls} absolute inset-0 whitespace-pre-wrap break-words overflow-hidden pointer-events-none border-transparent bg-white dark:bg-slate-800/80 text-gray-900 dark:text-slate-100`}>
+        {value ? nodes : <span className="text-gray-400 dark:text-slate-500">Type @ to mention…</span>}
+      </div>
+      <textarea ref={taRef} rows={3} autoFocus={autoFocus} value={value}
+        onChange={e => { onChange(e.target.value); detect(e.target) }}
+        onKeyDown={onKeyDown}
+        onClick={e => detect(e.target)}
+        onScroll={() => { if (mirrorRef.current && taRef.current) mirrorRef.current.scrollTop = taRef.current.scrollTop }}
+        placeholder="Type @ to mention…"
+        className={`${boxCls} relative bg-transparent text-transparent caret-gray-900 dark:caret-white border-gray-300 dark:border-slate-700 resize-none focus:outline-none focus:ring-2 focus:ring-orange-500/40`} />
+      {menu && options.length > 0 && (
+        <div className="absolute z-20 left-0 top-full mt-1 w-full max-h-48 overflow-auto rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-[#0B1120] shadow-xl">
+          {options.map((r, i) => (
+            <button key={r.id} type="button" onMouseDown={e => { e.preventDefault(); pick(r) }} onMouseEnter={() => setHi(i)}
+              className={`w-full text-left px-3 py-1.5 text-sm flex items-center gap-2 ${i === hi ? 'bg-orange-50 dark:bg-orange-500/10' : 'hover:bg-gray-50 dark:hover:bg-white/5'}`}>
+              <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-orange-100 dark:bg-orange-500/20 text-orange-700 dark:text-orange-300 text-[10px] font-bold">{r.initials || (r.handle || '?').slice(0, 2).toUpperCase()}</span>
+              <span className="flex-1 text-gray-700 dark:text-slate-300">@{r.handle} <span className="text-gray-400 dark:text-slate-500">· {r.full_name}</span></span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ActionPopover({ target, recipients = [], meId, onClose, onSubmit, onRemove, onCopy }) {
   const meta = ACTION_PROMPTS[target.type] || {}
   const editing = !!target.existing
   const isEsc = target.type === 'escalated'
   const [note, setNote] = useState(target.existing?.note || '')
   const [loadNumber, setLoadNumber] = useState(meta.hasLoad ? (target.existing?.load_number || target.row.load_number || '') : '')
-  const [escalatedTo, setEscalatedTo] = useState(target.existing?.escalated_to || '')
+  const [showPicker, setShowPicker] = useState(false)
+  const [savedId, setSavedId] = useState(null) // set after an escalate save → reveal Copy + Done
   const [busy, setBusy] = useState(false)
-  const canSave = (!meta.required || note.trim().length > 0) && (!isEsc || !!escalatedTo)
 
-  const submit = async () => { setBusy(true); try { await onSubmit(note, loadNumber, escalatedTo) } finally { setBusy(false) } }
+  const mentionIds = useMemo(() => (isEsc ? parseMentions(note, recipients, meId) : []), [isEsc, note, recipients, meId])
+  const canSave = isEsc ? mentionIds.length > 0 : (!meta.required || note.trim().length > 0)
+  const copyId = savedId || (isEsc && editing ? target.existing?.id : null)
+
+  const submit = async () => {
+    setBusy(true)
+    try {
+      const res = await onSubmit(note, loadNumber, mentionIds)
+      if (isEsc && res) setSavedId(res) // keep open so Copy for Telegram is right there
+      else onClose()
+    } finally { setBusy(false) }
+  }
   const remove = async () => { setBusy(true); try { await onRemove() } finally { setBusy(false) } }
+  const addPerson = (id) => {
+    const r = recipients.find(x => x.id === id)
+    if (r) setNote(n => `${n}${n && !/\s$/.test(n) ? ' ' : ''}@${r.handle} `)
+    setShowPicker(false)
+  }
 
   return createPortal(
     <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
@@ -795,35 +915,50 @@ function ActionPopover({ target, recipients = [], onClose, onSubmit, onRemove, o
               className="mt-1 w-full text-sm rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800/80 px-2.5 py-1.5 text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-orange-500/40" />
           </label>
         )}
-        {isEsc && (
+
+        {isEsc ? (
           <div>
-            <span className="text-[11px] font-medium text-gray-500 dark:text-slate-400">Who needs to see this? *</span>
-            <PersonPicker people={recipients} value={escalatedTo} onChange={setEscalatedTo} />
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-medium text-gray-500 dark:text-slate-400">{meta.prompt} — mention with @ *</span>
+              <button type="button" onClick={() => setShowPicker(s => !s)} className="text-[11px] font-medium text-orange-600 dark:text-orange-400 hover:underline">+ Add person</button>
+            </div>
+            <MentionField value={note} onChange={setNote} recipients={recipients} meId={meId} autoFocus />
+            {showPicker && <PersonPicker people={recipients} value="" onChange={addPerson} />}
+            {mentionIds.length === 0 && <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">Mention someone with @ so they get notified.</p>}
           </div>
+        ) : (
+          <label className="block">
+            <span className="text-[11px] font-medium text-gray-500 dark:text-slate-400">{meta.prompt}{meta.required ? ' *' : ''}</span>
+            <textarea rows={3} autoFocus={!meta.hasLoad} value={note} onChange={e => setNote(e.target.value)}
+              placeholder={meta.required ? 'Required' : 'Optional'} className={`mt-1 ${S.textarea}`} />
+          </label>
         )}
-        <label className="block">
-          <span className="text-[11px] font-medium text-gray-500 dark:text-slate-400">{meta.prompt}{meta.required ? ' *' : ''}</span>
-          <textarea rows={3} autoFocus={!meta.hasLoad && !isEsc} value={note} onChange={e => setNote(e.target.value)}
-            placeholder={meta.required ? 'Required' : 'Optional'} className={`mt-1 ${S.textarea}`} />
-        </label>
-        {isEsc && editing && (
-          <button type="button" onClick={() => onCopy?.(target.existing.id)}
+
+        {isEsc && copyId && (
+          <button type="button" onClick={() => onCopy?.(copyId)}
             className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium rounded-xl border border-gray-200 dark:border-white/10 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5">
             📋 Copy for Telegram
           </button>
         )}
-        <div className="flex items-center justify-between gap-2">
-          <div>
-            {editing && (
-              <button onClick={remove} disabled={busy} className="px-3 py-2 text-sm font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-xl transition-colors disabled:opacity-50">Remove</button>
-            )}
+
+        {savedId ? (
+          <div className="flex justify-end">
+            <button onClick={onClose} className="px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 text-white rounded-xl transition-colors">Done</button>
           </div>
-          <div className="flex gap-2">
-            <button onClick={onClose} disabled={busy} className={S.btnCancel}>Cancel</button>
-            <button onClick={submit} disabled={busy || !canSave}
-              className="px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 text-white rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Save</button>
+        ) : (
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              {editing && (
+                <button onClick={remove} disabled={busy} className="px-3 py-2 text-sm font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-xl transition-colors disabled:opacity-50">Remove</button>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={onClose} disabled={busy} className={S.btnCancel}>Cancel</button>
+              <button onClick={submit} disabled={busy || !canSave}
+                className="px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 text-white rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Save</button>
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </div>,
     document.body,

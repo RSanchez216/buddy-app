@@ -14,6 +14,7 @@ export default function NotificationBell() {
   const [count, setCount] = useState(0)
   const [open, setOpen] = useState(false)
   const [acking, setAcking] = useState(null)
+  const [copiedId, setCopiedId] = useState(null)
   const wrapperRef = useRef(null)
   const userId = user?.id
 
@@ -89,6 +90,16 @@ export default function NotificationBell() {
     finally { setAcking(null) }
   }
 
+  // Copy the escalation as a Telegram-ready block (reflects live ack state).
+  async function copyEsc(n, e) {
+    e.stopPropagation()
+    try {
+      const { data } = await supabase.rpc('escalation_copy_text', { p_activity_id: n.source_id })
+      await navigator.clipboard.writeText(data || '')
+      setCopiedId(n.id); setTimeout(() => setCopiedId(c => (c === n.id ? null : c)), 1500)
+    } catch { /* clipboard blocked / no text — no-op */ }
+  }
+
   if (!userId) return null
 
   const badge = count === 0 ? null : count > 9 ? '9+' : String(count)
@@ -148,10 +159,16 @@ export default function NotificationBell() {
                         )}
                         <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-0.5">{relTime(n.age_minutes)}</p>
                         {isEsc && (
-                          <button type="button" onClick={e => ack(n, e)} disabled={acking === n.id}
-                            className="mt-1.5 px-2 py-0.5 rounded border border-emerald-300 dark:border-emerald-500/40 text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-500/10 disabled:opacity-50">
-                            {acking === n.id ? 'Acknowledging…' : '✓ Acknowledge'}
-                          </button>
+                          <div className="mt-1.5 flex items-center gap-1.5">
+                            <button type="button" onClick={e => ack(n, e)} disabled={acking === n.id}
+                              className="px-2 py-0.5 rounded border border-emerald-300 dark:border-emerald-500/40 text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-500/10 disabled:opacity-50">
+                              {acking === n.id ? 'Acknowledging…' : '✓ Acknowledge'}
+                            </button>
+                            <button type="button" onClick={e => copyEsc(n, e)}
+                              className="px-2 py-0.5 rounded border border-gray-200 dark:border-white/10 text-[11px] font-medium text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5">
+                              {copiedId === n.id ? 'Copied' : '📋 Copy'}
+                            </button>
+                          </div>
                         )}
                       </div>
                     </div>

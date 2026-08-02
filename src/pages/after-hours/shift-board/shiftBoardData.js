@@ -139,10 +139,11 @@ export async function removeDriverCheck(shiftId, driverId) {
 // (shift_id is nullable), so actions record who/when even off-shift.
 // → { ok, id, attached_to_shift }. Types: load_booked, bol_collected,
 // pod_collected, broker_contacted, driver_assisted, escalated, rescan_requested.
-export async function logShiftActivity(type, loadId, driverId, note, escalatedTo) {
+export async function logShiftActivity(type, loadId, driverId, note, escalatedTo, mentioned) {
   const { data, error } = await supabase.rpc('log_shift_activity', {
     p_activity_type: type, p_load_id: loadId ?? null, p_driver_id: driverId ?? null, p_note: note ?? null,
-    p_escalated_to: escalatedTo ?? null, // when set, the RPC writes a notification row
+    p_escalated_to: escalatedTo ?? null, // null when mentions drive routing (first mention = primary)
+    p_mentioned: mentioned && mentioned.length ? mentioned : null, // ordered user ids from @mentions
   })
   if (error) throw error
   if (data && data.ok === false) throw new Error(data.reason || 'Could not record the activity.')
