@@ -139,12 +139,26 @@ export async function removeDriverCheck(shiftId, driverId) {
 // (shift_id is nullable), so actions record who/when even off-shift.
 // → { ok, id, attached_to_shift }. Types: load_booked, bol_collected,
 // pod_collected, broker_contacted, driver_assisted, escalated, rescan_requested.
-export async function logShiftActivity(type, loadId, driverId, note) {
+export async function logShiftActivity(type, loadId, driverId, note, escalatedTo) {
   const { data, error } = await supabase.rpc('log_shift_activity', {
     p_activity_type: type, p_load_id: loadId ?? null, p_driver_id: driverId ?? null, p_note: note ?? null,
+    p_escalated_to: escalatedTo ?? null, // when set, the RPC writes a notification row
   })
   if (error) throw error
   if (data && data.ok === false) throw new Error(data.reason || 'Could not record the activity.')
+  return data
+}
+// Active admins/managers (minus the caller) an escalation can be routed to.
+export async function fetchEscalationRecipients() {
+  const { data, error } = await supabase.rpc('escalation_recipients')
+  if (error) throw error
+  return data || []
+}
+// Recipient (or a manager) marks an escalation acknowledged; reason surfaced on refusal.
+export async function acknowledgeEscalation(activityId) {
+  const { data, error } = await supabase.rpc('acknowledge_escalation', { p_activity_id: activityId })
+  if (error) throw error
+  if (data && data.ok === false) throw new Error(data.reason || 'Could not acknowledge.')
   return data
 }
 // Per-driver action state for the shift: the activities logged (Book/POD/BOL/Esc)

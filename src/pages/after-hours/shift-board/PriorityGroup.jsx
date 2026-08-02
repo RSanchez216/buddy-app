@@ -1,6 +1,13 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { cityOf, fmtClock, todayChicago, lifecycleLabel } from './shiftBoardData'
 import { statusBadge } from '../requests/requestsData'
+
+// 'Edil Eraliev' → 'Edil E.' for compact recipient labels.
+function shortName(full) {
+  const parts = String(full || '').trim().split(/\s+/)
+  if (!parts[0]) return ''
+  return parts.length > 1 ? `${parts[0]} ${parts[1][0]}.` : parts[0]
+}
 
 // Column set. Disp/Carrier stack under the driver name; Truck+Trailer collapse
 // into Equipment. Checkpoints and Paperwork only appear while their phase flag
@@ -25,7 +32,7 @@ const ACTIVITY_ACTIONS = [
 // Rendered as the body of the active tab. The tab bar carries the heading/count;
 // this is the driver table. It owns the vertical scroll (flex-1) with a sticky
 // header so the bands and tabs above stay put while the list scrolls.
-export default function PriorityGroup({ group, rows, settings, shift, rowActionsByDriver, stateSort, onToggleStateSort, onOk, onAct, onCheckpoints, onOpenRequest }) {
+export default function PriorityGroup({ group, rows, settings, shift, rowActionsByDriver, recipientsById, meId, isManager, highlightDriver, stateSort, onToggleStateSort, onOk, onAct, onAcknowledge, onCheckpoints, onOpenRequest }) {
   const curYear = Number(todayChicago().slice(0, 4))
   const cols = columnsFor(settings)
 
@@ -38,25 +45,33 @@ export default function PriorityGroup({ group, rows, settings, shift, rowActions
       ) : (
         <div className="flex-1 min-h-0 overflow-auto">
           <table className="w-full text-xs [&_td]:align-top">
-            <thead className="sticky top-0 z-10 bg-gray-100 dark:bg-[#14142c] text-gray-500 dark:text-slate-400 shadow-[0_1px_0_rgba(0,0,0,0.06)]">
+            {/* Sticky is applied per-th (position:sticky on thead/tr is flaky
+                across browsers). Opaque bg + bottom border so rows can't show
+                through when scrolled under it. */}
+            <thead className="text-gray-500 dark:text-slate-400">
               <tr>
-                {cols.map(h => h === 'Load state' ? (
-                  <th key={h} className="text-left font-semibold px-3 py-2 whitespace-nowrap">
-                    <button type="button" onClick={onToggleStateSort} className="inline-flex items-center gap-1 hover:text-gray-700 dark:hover:text-slate-200">
-                      Load state{stateSort && <span aria-hidden>{stateSort === 'asc' ? '↑' : '↓'}</span>}
-                    </button>
-                  </th>
-                ) : h === 'Equipment' ? (
-                  <th key={h} title="Truck / Trailer" className="text-left font-semibold px-3 py-2 whitespace-nowrap cursor-default">{h}</th>
-                ) : (
-                  <th key={h} className="text-left font-semibold px-3 py-2 whitespace-nowrap">{h}</th>
-                ))}
+                {cols.map(h => {
+                  const thCls = 'sticky top-0 z-10 bg-gray-100 dark:bg-[#14142c] border-b border-gray-200 dark:border-white/10 text-left font-semibold px-3 py-2 whitespace-nowrap'
+                  return h === 'Load state' ? (
+                    <th key={h} className={thCls}>
+                      <button type="button" onClick={onToggleStateSort} className="inline-flex items-center gap-1 hover:text-gray-700 dark:hover:text-slate-200">
+                        Load state{stateSort && <span aria-hidden>{stateSort === 'asc' ? '↑' : '↓'}</span>}
+                      </button>
+                    </th>
+                  ) : h === 'Equipment' ? (
+                    <th key={h} title="Truck / Trailer" className={`${thCls} cursor-default`}>{h}</th>
+                  ) : (
+                    <th key={h} className={thCls}>{h}</th>
+                  )
+                })}
               </tr>
             </thead>
             <tbody>
               {rows.map(r => (
                 <BoardRow key={r.driver_id} r={r} curYear={curYear} settings={settings} shift={shift}
-                  ra={rowActionsByDriver?.get(r.driver_id)} onOk={onOk} onAct={onAct} onCheckpoints={onCheckpoints} onOpenRequest={onOpenRequest} />
+                  ra={rowActionsByDriver?.get(r.driver_id)} recipientsById={recipientsById} meId={meId} isManager={isManager}
+                  highlighted={highlightDriver === r.driver_id}
+                  onOk={onOk} onAct={onAct} onAcknowledge={onAcknowledge} onCheckpoints={onCheckpoints} onOpenRequest={onOpenRequest} />
               ))}
             </tbody>
           </table>
@@ -188,7 +203,7 @@ function LoadCell({ number }) {
   )
 }
 
-function BoardRow({ r, curYear, settings, shift, ra, onOk, onAct, onCheckpoints, onOpenRequest }) {
+function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isManager, highlighted, onOk, onAct, onAcknowledge, onCheckpoints, onOpenRequest }) {
   const muted = r.in_scope === false
   const o = cityOf(r.origin), d = cityOf(r.destination)
   const pu = fmtLoadDate(r.pickup_date, curYear), dl = fmtLoadDate(r.delivery_date, curYear)
@@ -202,8 +217,19 @@ function BoardRow({ r, curYear, settings, shift, ra, onOk, onAct, onCheckpoints,
   const flagged = isOk === false
   const issueNote = ra?.issue_note ?? r.check_note
 
+  const escAct = doneAct('escalated')
+  const escName = escAct ? (recipientsById?.get(escAct.escalated_to) || escAct.escalated_to_name || '') : ''
+  const ackName = escAct?.acknowledged_at ? (recipientsById?.get(escAct.acknowledged_by) || escAct.acknowledged_by_name || 'someone') : ''
+  const canAck = !!escAct && !escAct.acknowledged_at && (meId === escAct.escalated_to || isManager)
+
+  // Deep-link target: scroll into view and hold a highlight ring briefly.
+  const rowRef = useRef(null)
+  useEffect(() => {
+    if (highlighted && rowRef.current) rowRef.current.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  }, [highlighted])
+
   return (
-    <tr className={`group/row border-b border-gray-100 dark:border-white/[0.03] ${muted ? 'opacity-50' : ''} ${flagged ? 'bg-amber-50/60 dark:bg-amber-500/[0.07]' : ''}`}>
+    <tr ref={rowRef} className={`group/row border-b border-gray-100 dark:border-white/[0.03] ${muted ? 'opacity-50' : ''} ${flagged ? 'bg-amber-50/60 dark:bg-amber-500/[0.07]' : ''} ${highlighted ? 'ring-2 ring-inset ring-orange-400 dark:ring-orange-500/60 bg-orange-50/60 dark:bg-orange-500/[0.08]' : ''}`}>
       {/* Driver — name (+ status/team chips) with dispatcher · carrier under it */}
       <td className="px-3 py-2 align-top">
         <div className="flex items-center gap-1.5 whitespace-nowrap font-medium text-gray-900 dark:text-slate-200">
@@ -281,16 +307,26 @@ function BoardRow({ r, curYear, settings, shift, ra, onOk, onAct, onCheckpoints,
           </div>
         </td>
       )}
-      {/* Note — a raised request opens its detail panel; else the flag's note */}
-      <td className="px-3 py-2 max-w-[220px]">
+      {/* Note — raised request, flag note, and/or escalation recipient + ack */}
+      <td className="px-3 py-2 max-w-[240px] space-y-1">
         {r.open_request_id ? (
-          <button type="button" onClick={() => onOpenRequest?.(r.open_request_id)} className="text-left text-red-600 dark:text-red-400 hover:underline">
+          <button type="button" onClick={() => onOpenRequest?.(r.open_request_id)} className="block text-left text-red-600 dark:text-red-400 hover:underline">
             <p className="truncate" title={r.open_request_note || ''}>{r.open_request_note || 'Raised'} <span aria-hidden>▸</span></p>
             {r.open_request_by && <p className="text-[10px] text-red-500/80 dark:text-red-400/70">raised by {r.open_request_by} {fmtClock(r.open_request_at)}</p>}
           </button>
         ) : issueNote ? (
           <p className="truncate text-gray-500 dark:text-slate-400" title={issueNote}>{issueNote}</p>
-        ) : <span className="text-gray-300 dark:text-slate-600">—</span>}
+        ) : !escAct ? <span className="text-gray-300 dark:text-slate-600">—</span> : null}
+        {escAct && (
+          <div className="text-[10px] leading-tight">
+            <span className="text-amber-600 dark:text-amber-400 font-medium" title={escAct.note || ''}>⚠ Escalated to {shortName(escName) || '—'}</span>
+            {escAct.acknowledged_at ? (
+              <span className="block text-emerald-600 dark:text-emerald-400">✓ Acknowledged by {shortName(ackName) || ackName}</span>
+            ) : canAck ? (
+              <button type="button" onClick={() => onAcknowledge?.(escAct.id)} className="mt-0.5 px-1.5 py-0.5 rounded border border-emerald-300 dark:border-emerald-500/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-500/10 font-semibold">Acknowledge</button>
+            ) : null}
+          </div>
+        )}
       </td>
       {/* Actions — each opens a popover to capture what happened. A logged action
           renders done (green); a flag renders amber. Clicking a done one reopens

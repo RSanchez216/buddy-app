@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useSearchParams } from 'react-router-dom'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../contexts/AuthContext'
 import { useToast } from '../../../contexts/ToastContext'
@@ -15,6 +16,7 @@ import {
   fetchCheckpointExceptions,
   upsertDriverCheck, logShiftActivity,
   fetchRowActions, updateShiftActivity, deleteShiftActivity, clearDriverCheck,
+  fetchEscalationRecipients, acknowledgeEscalation,
   thisWeekChicago, todayChicago, fmtDayLabel, elapsedSince,
   buildGroupCopy, buildWeekCopy, copyText,
 } from './shiftBoardData'
@@ -31,8 +33,13 @@ export default function ShiftBoardPage() {
   const [board, setBoard] = useState([])
   const [boardTabs, setBoardTabs] = useState(null) // per-tab progress + tone
   const [rowActions, setRowActions] = useState([]) // per-driver activities + check state
+  const [recipients, setRecipients] = useState([]) // escalation targets (admins/managers)
   const [exceptions, setExceptions] = useState([]) // checkpoint exception queue (phase 3)
   const [actionTarget, setActionTarget] = useState(null) // { row, type, existing } — popover
+  const [searchInput, setSearchInput] = useState('')    // raw search box value
+  const [search, setSearch] = useState('')              // debounced query
+  const [highlightDriver, setHighlightDriver] = useState(null) // deep-link target
+  const [params] = useSearchParams()
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
@@ -77,6 +84,20 @@ export default function ShiftBoardPage() {
     if (week && wk !== undefined) setWeek(wk)
   }, [weekRange.start, weekRange.end])
 
+  // Light refresh after a row action: just the affected state and counters — row
+  // actions, tab progress and the shift summary — never the 128-row board. One
+  // fast cycle, so a button reflects a confirmed write immediately.
+  const refreshActions = useCallback(async () => {
+    const sh = shiftRef.current
+    if (!sh) { await refresh(); return }
+    const [ra, tb, sm] = await Promise.all([
+      fetchRowActions(sh.id).catch(() => []),
+      fetchBoardTabs(sh.id).catch(() => null),
+      fetchShiftSummary(sh.id),
+    ])
+    setRowActions(ra); setBoardTabs(tb); setSummary(sm)
+  }, [refresh])
+
   const load = useCallback(async () => {
     setLoading(true); setError(false)
     try {
@@ -105,6 +126,16 @@ export default function ShiftBoardPage() {
     supabase.from('users').select('id, full_name').eq('status', 'active').order('full_name')
       .then(({ data }) => setUsers(data || [])).catch(() => {})
   }, [])
+
+  // Escalation recipients — small, static-ish list; fetched once.
+  useEffect(() => { fetchEscalationRecipients().then(setRecipients).catch(() => {}) }, [])
+
+  // Debounce the search box (~200ms). setState fires from the timer, not the
+  // effect body, so it doesn't churn.
+  useEffect(() => {
+    const id = setTimeout(() => setSearch(searchInput), 200)
+    return () => clearTimeout(id)
+  }, [searchInput])
 
   // Keep elapsed time roughly live.
   useEffect(() => {
@@ -147,16 +178,17 @@ export default function ShiftBoardPage() {
     try {
       if (checked) await upsertDriverCheck({ shiftId: shift.id, driverId: row.driver_id, loadId: row.load_id, checkedBy: me?.id, isOk: true })
       else await clearDriverCheck(shift.id, row.driver_id)
-      await refresh()
+      await refreshActions()
     } catch (e) { toast.error("Couldn't update the review", e) }
   }
 
   // Every action opens a popover first (openAct). Saving routes to the right RPC:
   // a flag is a driver-check; Book/POD/BOL/Esc are logged activities. Editing an
-  // existing one updates it; Book also captures the actual booked load number.
+  // existing one updates it; Book captures the booked load number, Esc the
+  // recipient (which also fires a notification).
   const openAct = (row, type, existing) => setActionTarget({ row, type, existing: existing || null })
 
-  async function submitAction(note, loadNumber) {
+  async function submitAction(note, loadNumber, escalatedTo) {
     const t = actionTarget
     if (!t) return
     const trimmed = (note || '').trim()
@@ -164,6 +196,16 @@ export default function ShiftBoardPage() {
       if (t.type === 'flag') {
         if (!shift) { toast.error('Start a shift to flag'); return }
         await upsertDriverCheck({ shiftId: shift.id, driverId: t.row.driver_id, loadId: t.row.load_id, checkedBy: me?.id, isOk: false, issueNote: trimmed || null })
+      } else if (t.type === 'escalated') {
+        if (!escalatedTo) { toast.error('Pick who needs to see this'); return }
+        // Changing the recipient replaces the activity so a fresh notification
+        // routes to the new person; a note-only edit just updates in place.
+        if (t.existing && escalatedTo === t.existing.escalated_to) {
+          await updateShiftActivity(t.existing.id, trimmed || null, null)
+        } else {
+          if (t.existing) await deleteShiftActivity(t.existing.id)
+          await logShiftActivity('escalated', t.row.load_id, t.row.driver_id, trimmed || null, escalatedTo)
+        }
       } else if (t.existing) {
         await updateShiftActivity(t.existing.id, trimmed || null, t.type === 'load_booked' ? (loadNumber || null) : null)
       } else {
@@ -174,7 +216,7 @@ export default function ShiftBoardPage() {
       const labels = { load_booked: 'Load booked', pod_collected: 'POD logged', bol_collected: 'BOL logged', escalated: 'Escalated', flag: 'Issue flagged' }
       toast.success(labels[t.type] || 'Saved')
       setActionTarget(null)
-      await refresh(undefined, { week: true })
+      await refreshActions()
     } catch (e) { toast.error("Couldn't save that", e) }
   }
 
@@ -185,8 +227,16 @@ export default function ShiftBoardPage() {
       if (t.type === 'flag') await clearDriverCheck(shift?.id, t.row.driver_id)
       else if (t.existing) await deleteShiftActivity(t.existing.id)
       setActionTarget(null)
-      await refresh(undefined, { week: true })
+      await refreshActions()
     } catch (e) { toast.error("Couldn't remove that", e) }
+  }
+
+  async function onAcknowledge(activityId) {
+    try {
+      await acknowledgeEscalation(activityId)
+      toast.success('Acknowledged')
+      await refreshActions()
+    } catch (e) { toast.error("Couldn't acknowledge", e) }
   }
 
   const shiftLabel = shift ? shiftName(shift.shift_type) : '—'
@@ -240,6 +290,24 @@ export default function ShiftBoardPage() {
   const activeRows = useMemo(() => grouped.find(x => x.g.key === activeTab)?.rows || [], [grouped, activeTab])
   const activeMeta = activeTab ? GROUP_META[activeTab] : null
   const rowActionsByDriver = useMemo(() => new Map(rowActions.map(a => [a.driver_id, a])), [rowActions])
+  const recipientsById = useMemo(() => new Map(recipients.map(r => [r.id, r.full_name])), [recipients])
+  const isManager = me?.role === 'admin' || me?.role === 'manager'
+
+  // Deep link: /after-hours/shift-board?driver=<uuid> switches to the tab holding
+  // that driver, scrolls to the row and highlights it briefly. Applied once, when
+  // the board contains the driver.
+  const deepLinkedRef = useRef(false)
+  useEffect(() => {
+    const driverId = params.get('driver')
+    if (!driverId || deepLinkedRef.current || !board.length) return
+    const row = board.find(r => r.driver_id === driverId)
+    if (!row) return
+    deepLinkedRef.current = true
+    setSelectedTab(groupKeyFor(row))
+    setHighlightDriver(driverId)
+    const id = setTimeout(() => setHighlightDriver(null), 4500)
+    return () => clearTimeout(id)
+  }, [params, board])
 
   // LOAD STATE filter (multi-select; empty = all) + sort (off → asc → desc, by
   // lifecycle sequence, never alphabetical). Default sort is unchanged (off).
@@ -257,12 +325,15 @@ export default function ShiftBoardPage() {
   }, [activeRows])
   const displayRows = useMemo(() => {
     let list = stateFilter.size ? activeRows.filter(r => r.lifecycle && stateFilter.has(r.lifecycle)) : activeRows
+    const q = search.trim().toLowerCase()
+    if (q) list = list.filter(r => rowMatches(r, q))
     if (stateSort) {
       const dir = stateSort === 'asc' ? 1 : -1
       list = [...list].sort((a, b) => ((LIFECYCLE_RANK[a.lifecycle] ?? 99) - (LIFECYCLE_RANK[b.lifecycle] ?? 99)) * dir)
     }
     return list
-  }, [activeRows, stateFilter, stateSort])
+  }, [activeRows, stateFilter, stateSort, search])
+  const searching = search.trim().length > 0
 
   // Board row per load — lets a Times-needed row prefill the editor with the
   // load's existing checkpoint timestamps.
@@ -337,6 +408,20 @@ export default function ShiftBoardPage() {
             })}
             {activeMeta && activeRows.length > 0 && (
               <div className="ml-auto flex items-center gap-2 pl-2">
+                {searching && <span className="text-[11px] tabular-nums text-gray-400 dark:text-slate-500 whitespace-nowrap">{displayRows.length} of {activeRows.length}</span>}
+                <div className="relative">
+                  <input
+                    value={searchInput}
+                    onChange={e => setSearchInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Escape') setSearchInput('') }}
+                    placeholder="Search drivers…"
+                    className="w-40 sm:w-48 pl-2.5 pr-6 py-1 text-[11px] rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-slate-800/60 text-gray-700 dark:text-slate-200 placeholder-gray-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-orange-500/40"
+                  />
+                  {searchInput && (
+                    <button onClick={() => setSearchInput('')} title="Clear search" aria-label="Clear search"
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 text-xs">✕</button>
+                  )}
+                </div>
                 <LoadStateFilter selected={stateFilter} counts={stateCounts} onToggle={toggleStateFilter} />
                 <button onClick={() => copyGroup(activeMeta, displayRows)} title="Copy this tab as plain text"
                   className="shrink-0 inline-flex items-center gap-1 px-2 text-[11px] font-medium text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200">
@@ -348,8 +433,9 @@ export default function ShiftBoardPage() {
 
           {activeMeta && (
             <PriorityGroup group={activeMeta} rows={displayRows} settings={settings} shift={shift}
-              rowActionsByDriver={rowActionsByDriver} stateSort={stateSort} onToggleStateSort={toggleStateSort}
-              onOk={onOk} onAct={openAct} onCheckpoints={openFromRow} onOpenRequest={setOpenRequestId} />
+              rowActionsByDriver={rowActionsByDriver} recipientsById={recipientsById} meId={me?.id} isManager={isManager}
+              highlightDriver={highlightDriver} stateSort={stateSort} onToggleStateSort={toggleStateSort}
+              onOk={onOk} onAct={openAct} onAcknowledge={onAcknowledge} onCheckpoints={openFromRow} onOpenRequest={setOpenRequestId} />
           )}
         </>
       )}
@@ -358,7 +444,7 @@ export default function ShiftBoardPage() {
         <CheckpointEditor target={editTarget} shiftId={shift?.id ?? null}
           onClose={() => setEditTarget(null)} onSaved={() => refresh()} toast={toast} />
       )}
-      {actionTarget && <ActionPopover target={actionTarget} onClose={() => setActionTarget(null)} onSubmit={submitAction} onRemove={removeAction} />}
+      {actionTarget && <ActionPopover target={actionTarget} recipients={recipients} onClose={() => setActionTarget(null)} onSubmit={submitAction} onRemove={removeAction} />}
       <EndShiftModal open={showEnd} shift={shift} users={users.filter(u => u.id !== me?.id)}
         onClose={() => setShowEnd(false)} onEnded={doEnded} />
       <RequestDetailPanel open={!!openRequestId} requestId={openRequestId}
@@ -378,6 +464,15 @@ const TAB_STYLE = {
   green:  { text: 'text-emerald-600 dark:text-emerald-400', underline: 'bg-emerald-500', chip: 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300' },
   grey:   { text: 'text-gray-600 dark:text-slate-300',     underline: 'bg-gray-400',    chip: 'bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-slate-300' },
 }
+// Client-side row search over the already-loaded fields (no refetch). Origin and
+// destination are raw TMS strings that still contain the city, so a substring
+// match finds them.
+function rowMatches(r, q) {
+  const hay = [r.driver_name, r.load_number, r.truck, r.trailer, r.dispatcher_name, r.carrier_name, r.origin, r.destination]
+    .filter(Boolean).join(' ').toLowerCase()
+  return hay.includes(q)
+}
+
 // group key → tab-progress RPC key, and a tone fallback when there's no progress.
 const RPC_KEY = { raised: 'raised', todo: 'active', never_dispatched: 'never' }
 const GROUP_TONE_FALLBACK = { raised: 'red', uncovered: 'orange', due: 'amber', idle: 'grey', todo: 'green', never_dispatched: 'grey' }
@@ -604,15 +699,17 @@ const ACTION_PROMPTS = {
   escalated:     { title: 'Escalate',      prompt: 'What are you escalating, and to whom?', required: true },
   flag:          { title: 'Flag an issue', prompt: "What's the issue?", required: true },
 }
-function ActionPopover({ target, onClose, onSubmit, onRemove }) {
+function ActionPopover({ target, recipients = [], onClose, onSubmit, onRemove }) {
   const meta = ACTION_PROMPTS[target.type] || {}
   const editing = !!target.existing
+  const isEsc = target.type === 'escalated'
   const [note, setNote] = useState(target.existing?.note || '')
   const [loadNumber, setLoadNumber] = useState(meta.hasLoad ? (target.existing?.load_number || target.row.load_number || '') : '')
+  const [escalatedTo, setEscalatedTo] = useState(target.existing?.escalated_to || '')
   const [busy, setBusy] = useState(false)
-  const canSave = !meta.required || note.trim().length > 0
+  const canSave = (!meta.required || note.trim().length > 0) && (!isEsc || !!escalatedTo)
 
-  const submit = async () => { setBusy(true); try { await onSubmit(note, loadNumber) } finally { setBusy(false) } }
+  const submit = async () => { setBusy(true); try { await onSubmit(note, loadNumber, escalatedTo) } finally { setBusy(false) } }
   const remove = async () => { setBusy(true); try { await onRemove() } finally { setBusy(false) } }
 
   return createPortal(
@@ -630,9 +727,19 @@ function ActionPopover({ target, onClose, onSubmit, onRemove }) {
               className="mt-1 w-full text-sm rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800/80 px-2.5 py-1.5 text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-orange-500/40" />
           </label>
         )}
+        {isEsc && (
+          <label className="block">
+            <span className="text-[11px] font-medium text-gray-500 dark:text-slate-400">Who needs to see this? *</span>
+            <select value={escalatedTo} onChange={e => setEscalatedTo(e.target.value)}
+              className="mt-1 w-full text-sm rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800/80 px-2.5 py-1.5 text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-orange-500/40">
+              <option value="">Select a person…</option>
+              {recipients.map(p => <option key={p.id} value={p.id}>{p.full_name}{p.role ? ` · ${p.role}` : ''}</option>)}
+            </select>
+          </label>
+        )}
         <label className="block">
           <span className="text-[11px] font-medium text-gray-500 dark:text-slate-400">{meta.prompt}{meta.required ? ' *' : ''}</span>
-          <textarea rows={3} autoFocus={!meta.hasLoad} value={note} onChange={e => setNote(e.target.value)}
+          <textarea rows={3} autoFocus={!meta.hasLoad && !isEsc} value={note} onChange={e => setNote(e.target.value)}
             placeholder={meta.required ? 'Required' : 'Optional'} className={`mt-1 ${S.textarea}`} />
         </label>
         <div className="flex items-center justify-between gap-2">
