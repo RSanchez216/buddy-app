@@ -189,7 +189,7 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
         const drivers = res.drivers || []
         if (drivers.length === 1) { setDriverId(drivers[0].id); setDriverName(drivers[0].name) }
         else { setDriverId(null); setDriverName('') }
-        setLookup({ status: 'found', drivers })
+        setLookup({ status: 'found', drivers, combined: !!res.is_combined_load, num: res.load_number || n })
       } else {
         setLookup({ status: 'notfound', drivers: [] })
       }
@@ -420,6 +420,11 @@ export default function LumperDrawer({ open, mode, row, categories, refLists, on
                   )}
                   {lookup.status === 'notfound' && (
                     <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">No load found with that number. You can still record the lumper and link it later.</p>
+                  )}
+                  {lookup.status === 'found' && lookup.combined && (
+                    <p className="text-[11px] leading-relaxed mt-2 rounded-lg px-2.5 py-2 border bg-[#FEF6E7] border-[#F7E4C0] text-[#92610A] dark:bg-amber-500/10 dark:border-amber-500/25 dark:text-amber-300">
+                      <strong className="font-semibold">{lookup.num} is the TMS&apos;s combined load</strong> for a multi-stop trip. The lumper probably belongs on one of its component loads — check the load number before saving.
+                    </p>
                   )}
 
                   {lookup.status === 'found' && lookup.drivers.length > 1 && (

@@ -6,7 +6,7 @@ import { S } from '../../../lib/styles'
 import CopyButton from '../../../components/CopyButton'
 import { fmtMoney, fmtNum, fmtRpm } from '../loads/spotlight/spotlightShared'
 
-const PRESET_LABEL = { week: 'This week', month: 'This month' }
+const PRESET_LABEL = { week: 'This week', month: 'This month', quarter: 'Last 90 days' }
 
 const DISMISS_REASONS = [
   'Separate trips',
@@ -144,7 +144,7 @@ function CombinedLoads() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(false)
 
-  const days = preset === 'week' ? 7 : 30
+  const days = preset === 'week' ? 7 : preset === 'quarter' ? 90 : 30
 
   useEffect(() => {
     loadData()
@@ -255,7 +255,7 @@ function CombinedLoads() {
 
       {/* Preset toggle */}
       <div className="flex items-center gap-2">
-        {['week', 'month'].map(p => (
+        {['week', 'month', 'quarter'].map(p => (
           <button
             key={p}
             onClick={() => setPreset(p)}

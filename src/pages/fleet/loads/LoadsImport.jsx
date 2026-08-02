@@ -7,6 +7,7 @@ import ComboBox from '../../../components/ComboBox'
 import CopyButton from '../../../components/CopyButton'
 import LoadsFreshness from '../../../components/LoadsFreshness'
 import TerminatedDriverWarning from '../../../components/TerminatedDriverWarning'
+import CombinedLoadBadge from '../../../components/CombinedLoadBadge'
 import { fetchTerminatedDrivers, classifyLoad as classifyLoadByDate } from '../../../lib/terminatedDrivers'
 import { parseLoadsWorkbook } from './loadsParse'
 import { buildPlan } from './loadsPlan'
@@ -492,6 +493,9 @@ export default function LoadsImport() {
   }, [plan])
 
   const unchangedCount = useMemo(() => plan.filter(p => p.classification === 'unchanged').length, [plan])
+  // "Dont Factor" = the TMS's own combined load, kept for reference but excluded
+  // from revenue/miles — surfaced so the row count reconciles with the reports.
+  const combinedCount = useMemo(() => plan.filter(p => p.header?.status === 'Dont Factor').length, [plan])
   // Canceled/TONU split: genuine flips (status changed on an existing load)
   // vs. brand-new loads that simply arrive Canceled/TONU. Banner copy keys
   // off this so a first import doesn't say loads "flipped" when nothing did.
@@ -1133,7 +1137,7 @@ export default function LoadsImport() {
                             )}
                           </td>
                           <td className={S.td}>{p.resolved.customer?.name || '—'}{p.resolved.customer?.match_status === 'to_create' && <span className="ml-1 text-[10px] text-cyan-600 dark:text-cyan-400">(new)</span>}</td>
-                          <td className={S.td}>{p.header.status || '—'}</td>
+                          <td className={S.td}>{p.header.status === 'Dont Factor' ? <CombinedLoadBadge /> : (p.header.status || '—')}</td>
                           <td className={`${S.td} text-right font-mono`}>{p.header.linehaul == null ? '—' : `$${Number(p.header.linehaul).toLocaleString('en-US', { minimumFractionDigits: 2 })}`}</td>
                           <td className={`${S.td} text-right`}>{p.legs.length}</td>
                         </tr>
@@ -1147,6 +1151,13 @@ export default function LoadsImport() {
 
           {unchangedCount > 0 && (
             <p className="text-xs text-gray-400 dark:text-slate-500">{unchangedCount} unchanged load{unchangedCount === 1 ? '' : 's'} — skipped on apply (no writes).</p>
+          )}
+
+          {combinedCount > 0 && (
+            <p className="text-xs text-[#52606D] dark:text-slate-400 inline-flex items-center gap-1.5 flex-wrap">
+              <CombinedLoadBadge />
+              <span><strong className="font-semibold">{combinedCount} combined load{combinedCount === 1 ? '' : 's'} imported</strong> — kept for reference, excluded from revenue and miles.</span>
+            </p>
           )}
 
           {/* Apply progress — determinate bar + counter + phase caption.
