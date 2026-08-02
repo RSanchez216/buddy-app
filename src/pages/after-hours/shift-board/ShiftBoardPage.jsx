@@ -46,6 +46,34 @@ export default function ShiftBoardPage() {
   const weekRange = useMemo(() => thisWeekChicago(), [])
   const dateLabel = useMemo(() => fmtDayLabel(todayChicago()), [])
 
+  // Read these through refs so the data callbacks don't list them as deps.
+  // `toast` is the critical one: ToastContext hands back a fresh `value` object
+  // every time a toast appears or auto-dismisses, so putting it in a dep array
+  // recreates the callback and refires the mount effect — that was the phantom
+  // refetch on toast-show and again ~3s later on toast-dismiss.
+  const toastRef = useRef(toast); toastRef.current = toast
+  const settingsRef = useRef(settings); settingsRef.current = settings
+  const shiftRef = useRef(shift); shiftRef.current = shift
+
+  // One coordinated refresh of everything that moves after a shift transition or
+  // a board action: board, its tabs, the shift summary, the checkpoint queue and
+  // (only when asked) the week strip. Deliberately does NOT refetch settings — a
+  // single config row loaded once on mount. Stable identity (weekRange is memo'd)
+  // so no effect churns on it. Pass the shift row to target (post start/end),
+  // omit to use the current one.
+  const refresh = useCallback(async (shArg, { week = false } = {}) => {
+    const sh = shArg !== undefined ? shArg : shiftRef.current
+    const [bd, sm, ex, tb, wk] = await Promise.all([
+      fetchBoard(sh?.id ?? null),
+      sh ? fetchShiftSummary(sh.id) : Promise.resolve(null),
+      settingsRef.current?.track_checkpoints ? fetchCheckpointExceptions() : Promise.resolve([]),
+      fetchBoardTabs(sh?.id ?? null).catch(() => null),
+      week ? fetchWeekSummary(weekRange.start, weekRange.end) : Promise.resolve(undefined),
+    ])
+    setBoard(bd); setSummary(sm); setExceptions(ex); setBoardTabs(tb)
+    if (week && wk !== undefined) setWeek(wk)
+  }, [weekRange.start, weekRange.end])
+
   const load = useCallback(async () => {
     setLoading(true); setError(false)
     try {
@@ -53,6 +81,7 @@ export default function ShiftBoardPage() {
         fetchSettings(), fetchWeekSummary(weekRange.start, weekRange.end), fetchOpenShift(me?.id),
       ])
       setSettings(st || {}); setWeek(wk); setShift(sh)
+      settingsRef.current = st || {} // so a refresh in the same tick sees track_checkpoints
       const [bd, sm, ex, tb] = await Promise.all([
         fetchBoard(sh?.id ?? null),
         sh ? fetchShiftSummary(sh.id) : Promise.resolve(null),
@@ -61,9 +90,9 @@ export default function ShiftBoardPage() {
       ])
       setBoard(bd); setSummary(sm); setExceptions(ex); setBoardTabs(tb)
     } catch (e) {
-      setError(true); toast.error("Couldn't load the shift board", e)
+      setError(true); toastRef.current.error("Couldn't load the shift board", e)
     } finally { setLoading(false) }
-  }, [me?.id, weekRange.start, weekRange.end, toast])
+  }, [me?.id, weekRange.start, weekRange.end])
 
   useEffect(() => { load() }, [load])
 
@@ -79,23 +108,13 @@ export default function ShiftBoardPage() {
     return () => clearInterval(id)
   }, [])
 
-  const reloadBoard = useCallback(async () => {
-    const [bd, sm, ex, tb] = await Promise.all([
-      fetchBoard(shift?.id ?? null),
-      shift ? fetchShiftSummary(shift.id) : Promise.resolve(null),
-      settings?.track_checkpoints ? fetchCheckpointExceptions() : Promise.resolve([]),
-      fetchBoardTabs(shift?.id ?? null).catch(() => null),
-    ])
-    setBoard(bd); setSummary(sm); setExceptions(ex); setBoardTabs(tb)
-  }, [shift, settings?.track_checkpoints])
-
   // A request raised/handled anywhere refreshes the board so "Raised by dispatch"
   // updates within one refresh while the board is open.
   useEffect(() => {
-    const h = () => reloadBoard()
+    const h = () => refresh()
     window.addEventListener(REQUESTS_CHANGED_EVENT, h)
     return () => window.removeEventListener(REQUESTS_CHANGED_EVENT, h)
-  }, [reloadBoard])
+  }, [refresh])
 
   async function doStart(type) {
     setStarting(true)
@@ -103,16 +122,18 @@ export default function ShiftBoardPage() {
       const res = await startShift(type)
       const sh = { id: res.shift_id, shift_type: res.shift_type, started_at: res.started_at, status: 'active' }
       setShift(sh)
-      const [bd, sm, ex, tb] = await Promise.all([
-        fetchBoard(sh.id), fetchShiftSummary(sh.id),
-        settings?.track_checkpoints ? fetchCheckpointExceptions() : Promise.resolve([]),
-        fetchBoardTabs(sh.id).catch(() => null),
-      ])
-      setBoard(bd); setSummary(sm); setExceptions(ex); setBoardTabs(tb)
-      toast.success(res.resumed ? 'Resumed your open shift' : 'Shift started')
+      await refresh(sh, { week: true }) // one coordinated cycle; settings untouched
+      toastRef.current.success(res.resumed ? 'Resumed your open shift' : 'Shift started')
     } catch (e) {
-      toast.error("Couldn't start the shift", e)
+      toastRef.current.error("Couldn't start the shift", e)
     } finally { setStarting(false) }
+  }
+
+  // End is committed by EndShiftModal; here we just reflect it and refresh once.
+  async function doEnded() {
+    setShowEnd(false)
+    setShift(null)
+    await refresh(null, { week: true })
   }
 
   async function onOk(row, checked) {
@@ -120,7 +141,7 @@ export default function ShiftBoardPage() {
     try {
       if (checked) await upsertDriverCheck({ shiftId: shift.id, driverId: row.driver_id, loadId: row.load_id, checkedBy: me?.id, isOk: true })
       else await removeDriverCheck(shift.id, row.driver_id)
-      await reloadBoard()
+      await refresh()
     } catch (e) { toast.error("Couldn't update the review", e) }
   }
 
@@ -132,7 +153,7 @@ export default function ShiftBoardPage() {
       await logShiftActivity(type, row.load_id, row.driver_id)
       const labels = { load_booked: 'Load booked', pod_collected: 'POD logged', bol_collected: 'BOL logged', escalated: 'Escalated' }
       toast.success(labels[type] || 'Logged')
-      await reloadBoard()
+      await refresh(undefined, { week: true }) // booked/POD/BOL move the week strip too
     } catch (e) { toast.error("Couldn't log that action", e) }
   }
 
@@ -142,7 +163,7 @@ export default function ShiftBoardPage() {
       await upsertDriverCheck({ shiftId: shift.id, driverId: flagFor.driver_id, loadId: flagFor.load_id, checkedBy: me?.id, isOk: false, issueNote: note.trim() || null })
       setFlagFor(null)
       toast.success('Issue flagged')
-      await reloadBoard()
+      await refresh()
     } catch (e) { toast.error("Couldn't flag the issue", e) }
   }
 
@@ -309,13 +330,13 @@ export default function ShiftBoardPage() {
 
       {editTarget && (
         <CheckpointEditor target={editTarget} shiftId={shift?.id ?? null}
-          onClose={() => setEditTarget(null)} onSaved={reloadBoard} toast={toast} />
+          onClose={() => setEditTarget(null)} onSaved={() => refresh()} toast={toast} />
       )}
       {flagFor && <FlagPopover row={flagFor} onClose={() => setFlagFor(null)} onSave={saveFlag} />}
       <EndShiftModal open={showEnd} shift={shift} users={users.filter(u => u.id !== me?.id)}
-        onClose={() => setShowEnd(false)} onEnded={() => { setShowEnd(false); load() }} />
+        onClose={() => setShowEnd(false)} onEnded={doEnded} />
       <RequestDetailPanel open={!!openRequestId} requestId={openRequestId}
-        onClose={() => setOpenRequestId(null)} onChanged={reloadBoard} toast={toast} />
+        onClose={() => setOpenRequestId(null)} onChanged={() => refresh()} toast={toast} />
     </div>
   )
 }
