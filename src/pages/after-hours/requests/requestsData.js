@@ -105,6 +105,14 @@ export async function fetchOpenShiftId() {
   return data?.id || null
 }
 
+// The caller's OWN still-open requests (not a global total) — feeds the header
+// button's count so a dispatcher can see whether their request is still sitting.
+export async function fetchMyOpenRequestCount() {
+  const { data, error } = await supabase.rpc('my_open_request_count')
+  if (error) throw error
+  return Number(data) || 0
+}
+
 const REQ_SELECT = 'id, driver_id, driver_name, load_id, kind, urgency, note, raised_by, raised_at, seen_at, seen_by, handled_at, handled_by, resolution, shift_id, driver_status_at_raise, status, dismissed_at, dismissed_by, dismissal_reason, last_edited_at, last_edited_by, created_at'
 
 const PEOPLE_KEYS = ['raised_by', 'seen_by', 'handled_by', 'dismissed_by', 'last_edited_by']

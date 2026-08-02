@@ -11,7 +11,7 @@ import PresenceFacepile from './presence/PresenceFacepile'
 import PresenceDrawer from './presence/PresenceDrawer'
 import ManageSimpleViewModal from './ManageSimpleViewModal'
 import AskAfterHoursModal from '../pages/after-hours/requests/AskAfterHoursModal'
-import { ASK_AFTER_HOURS_EVENT, openAskAfterHours } from '../pages/after-hours/requests/requestsData'
+import { ASK_AFTER_HOURS_EVENT, REQUESTS_CHANGED_EVENT, openAskAfterHours, fetchMyOpenRequestCount } from '../pages/after-hours/requests/requestsData'
 
 // ── Icons ──────────────────────────────────────────────────────────────────
 const Icons = {
@@ -189,6 +189,7 @@ export default function Layout() {
   // via a global event so no page has to prop-drill the opener.
   const [askOpen, setAskOpen] = useState(false)
   const [askPrefill, setAskPrefill] = useState(null)
+  const [myOpenRequests, setMyOpenRequests] = useState(0) // caller's own open requests → button count
 
   const close = () => setSidebarOpen(false)
 
@@ -197,6 +198,17 @@ export default function Layout() {
     const handler = (e) => { setAskPrefill(e.detail || null); setAskOpen(true) }
     window.addEventListener(ASK_AFTER_HOURS_EVENT, handler)
     return () => window.removeEventListener(ASK_AFTER_HOURS_EVENT, handler)
+  }, [])
+
+  // My open-request count for the header pill. Fetched once, then refreshed only
+  // when a request is raised / handled / dismissed — no polling, so an idle page
+  // stays silent.
+  useEffect(() => {
+    let stale = false
+    const refresh = () => fetchMyOpenRequestCount().then(c => { if (!stale) setMyOpenRequests(c) }).catch(() => {})
+    refresh()
+    window.addEventListener(REQUESTS_CHANGED_EVENT, refresh)
+    return () => { stale = true; window.removeEventListener(REQUESTS_CHANGED_EVENT, refresh) }
   }, [])
 
   // Keep the Command Center open-count bubble roughly live: on load, whenever the
@@ -402,13 +414,23 @@ export default function Layout() {
 
           {/* Right cluster: Ask After-Hours + presence facepile + bell + user menu */}
           <div className="flex items-center gap-2">
+            {/* Solid split pill (Option L): body opens the form; the count sits
+                on a darker-orange segment and vanishes entirely at zero. */}
             <button
               onClick={() => openAskAfterHours()}
-              title="Raise a driver for the After-Hours team"
-              className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm font-semibold bg-orange-500 hover:bg-orange-400 text-white rounded-lg transition-colors shadow-sm shadow-orange-500/20"
+              title={myOpenRequests > 0 ? `Raise a driver for the After-Hours team · ${myOpenRequests} of your requests still open` : 'Raise a driver for the After-Hours team'}
+              className="group inline-flex items-stretch overflow-hidden rounded-full text-xs sm:text-sm font-semibold text-white"
+              style={{ boxShadow: '0 1px 2px rgba(0,0,0,.08)' }}
             >
-              <span aria-hidden>✉</span>
-              <span className="hidden sm:inline">Ask After-Hours</span>
+              <span className="inline-flex items-center gap-1.5 px-2.5 sm:px-3.5 py-1.5 bg-orange-500 group-hover:bg-orange-400 transition-colors">
+                <svg aria-hidden viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5">
+                  <path d="M21 11.5a8.38 8.38 0 0 1-8.5 8.5 8.5 8.5 0 0 1-3.8-.9L3 21l1.9-5.7A8.38 8.38 0 0 1 4 11.5 8.5 8.5 0 0 1 12.5 3 8.38 8.38 0 0 1 21 11.5z" />
+                </svg>
+                <span className="hidden sm:inline">Ask After-Hours</span>
+              </span>
+              {myOpenRequests > 0 && (
+                <span className="inline-flex items-center px-2 sm:px-2.5 py-1.5 tabular-nums bg-[#C2410C]">{myOpenRequests}</span>
+              )}
             </button>
             <PresenceFacepile onOpen={() => setPresenceOpen(true)} />
             <NotificationBell />
