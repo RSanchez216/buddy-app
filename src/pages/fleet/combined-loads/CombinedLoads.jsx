@@ -23,6 +23,9 @@ const DISMISS_REASONS = [
 // "City, ST" prefix before ", US", the same way v_load_leg_profit and the
 // loads importer resolve origin/destination. (The old JSON.parse always threw,
 // which is why every member row read "Unknown lane".)
+// Miles with two decimals and thousands separators, e.g. 4,971.70.
+const fmtMiles = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
 function extractLanes(puInfo, delInfo) {
   const cityLabel = (info) => String(info || '').split(/,\s*US\b/i)[0].trim()
   const origin = cityLabel(puInfo)
@@ -469,40 +472,90 @@ function CreateGroupForm({ pair, group, onClose, onSave }) {
     isGroup ? (group.loads || []).map(l => l.load_number) : [pair.load_a, pair.load_b]
   )
   const [loadInput, setLoadInput] = useState('')
+  const [addError, setAddError] = useState('')
   const [trueMiles, setTrueMiles] = useState(
     isGroup && group.true_combined_miles != null ? String(group.true_combined_miles) : ''
   )
-  const [label, setLabel] = useState(
-    isGroup ? (group.label || '') : `${pair.driver_name} · ${pair.lane_a} + ${pair.lane_b}`
-  )
+  const [editedLabel, setEditedLabel] = useState(isGroup ? (group.label || '') : '')
+  const [labelTouched, setLabelTouched] = useState(isGroup) // keep an existing group's label
   const [notes, setNotes] = useState(isGroup ? (group.notes || '') : '')
+  const [memberData, setMemberData] = useState({}) // load_number → { linehaul, total_miles, pickup_date, origin, destination }
   const [saving, setSaving] = useState(false)
 
-  const combinedLinehaul = isGroup ? (group.totalRevenue || 0) : pair.combined_linehaul
-  const defaultMiles = isGroup ? (group.totalMiles || 0) : pair.summed_miles
-  const displayMiles = trueMiles ? Number(trueMiles) : defaultMiles
-  const correctedRpm = displayMiles > 0 ? combinedLinehaul / displayMiles : null
+  // Everything below the member list derives from the CURRENT members. Fetch each
+  // member's linehaul + leg miles whenever the list changes, so add/remove
+  // recomputes the RPM instead of freezing the candidate pair the modal opened on.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      if (!loads.length) { if (!cancelled) setMemberData({}); return }
+      const cityOf = (info) => String(info || '').split(/,\s*US\b/i)[0].trim()
+      const [{ data: ldRows }, { data: pfRows }] = await Promise.all([
+        supabase.from('loads').select('load_number, linehaul, pickup_date, pu_info, del_info').in('load_number', loads),
+        supabase.from('v_load_leg_profit').select('load_number, leg_total_miles').in('load_number', loads),
+      ])
+      if (cancelled) return
+      const milesByLn = new Map((pfRows || []).map(p => [p.load_number, Number(p.leg_total_miles || 0)]))
+      const map = {}
+      for (const l of (ldRows || [])) {
+        map[l.load_number] = {
+          linehaul: Number(l.linehaul || 0),
+          total_miles: milesByLn.get(l.load_number) || 0,
+          pickup_date: l.pickup_date,
+          origin: cityOf(l.pu_info),
+          destination: cityOf(l.del_info),
+        }
+      }
+      setMemberData(map)
+    })()
+    return () => { cancelled = true }
+  }, [loads])
+
+  const orderedMembers = useMemo(() =>
+    loads.map(ln => ({ load_number: ln, ...(memberData[ln] || {}) }))
+      .sort((a, b) => String(a.pickup_date || '').localeCompare(String(b.pickup_date || ''))),
+    [loads, memberData])
+
+  const memberRevenue = orderedMembers.reduce((s, m) => s + (m.linehaul || 0), 0)
+  const summedLegMiles = orderedMembers.reduce((s, m) => s + (m.total_miles || 0), 0)
+  const effectiveMiles = trueMiles.trim() ? Number(trueMiles) : summedLegMiles
+  const correctedRpm = effectiveMiles > 0 ? memberRevenue / effectiveMiles : null
+  const naiveRpm = summedLegMiles > 0 ? memberRevenue / summedLegMiles : null
+  const noCorrection = !trueMiles.trim()
+
+  // Label follows the members (driver · first origin → last destination, ordered
+  // by pickup) until the user edits it.
+  const autoLabel = useMemo(() => {
+    const driver = pair?.driver_name || ''
+    const first = orderedMembers[0]?.origin
+    const last = orderedMembers[orderedMembers.length - 1]?.destination
+    const lane = first && last ? `${first} → ${last}` : ''
+    return [driver, lane].filter(Boolean).join(' · ')
+  }, [orderedMembers, pair])
+  const label = labelTouched ? editedLabel : (autoLabel || editedLabel)
 
   const handleAddLoad = async () => {
-    if (!loadInput.trim()) return
+    const q = loadInput.trim()
+    if (!q) return
 
-    // Search for the load by load_number
+    // Search for the load by load_number; also read status to exclude the TMS's
+    // own combined load ("Dont Factor"), which would double-count the revenue.
     const { data, error } = await supabase
       .from('loads')
-      .select('load_number')
-      .ilike('load_number', `%${loadInput.trim()}%`)
+      .select('load_number, status')
+      .ilike('load_number', `%${q}%`)
       .limit(1)
 
-    if (error || !data?.length) {
-      alert('Load not found')
+    if (error || !data?.length) { setAddError('Load not found.'); return }
+
+    const row = data[0]
+    if (String(row.status || '') === 'Dont Factor') {
+      setAddError(`${row.load_number} is the TMS's own combined load for this trip. Adding it here would count the same revenue twice.`)
       return
     }
-
-    const loadNumber = data[0].load_number
-    if (!loads.includes(loadNumber)) {
-      setLoads([...loads, loadNumber])
-    }
+    if (!loads.includes(row.load_number)) setLoads([...loads, row.load_number])
     setLoadInput('')
+    setAddError('')
   }
 
   const handleRemoveLoad = (load) => {
@@ -581,13 +634,21 @@ function CreateGroupForm({ pair, group, onClose, onSave }) {
               <input
                 type="text"
                 value={loadInput}
-                onChange={e => setLoadInput(e.target.value)}
+                onChange={e => { setLoadInput(e.target.value); if (addError) setAddError('') }}
                 onKeyPress={e => e.key === 'Enter' && handleAddLoad()}
                 placeholder="Search load number…"
                 className={`${S.input} flex-1 text-sm`}
               />
               <button onClick={handleAddLoad} className="px-3 py-2 bg-orange-500 text-white text-sm rounded font-medium hover:bg-orange-600 whitespace-nowrap">Add</button>
             </div>
+            {addError && (
+              <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-1.5 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/25 rounded px-2 py-1.5">{addError}</p>
+            )}
+          </div>
+
+          {/* Running summary — so the arithmetic behind the RPM is visible */}
+          <div className="bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded px-3 py-2 text-sm font-mono text-gray-700 dark:text-slate-300 tabular-nums">
+            {orderedMembers.length} load{orderedMembers.length === 1 ? '' : 's'} · {fmtMoney(memberRevenue)} · {fmtMiles(summedLegMiles)} leg miles
           </div>
 
           {/* True combined miles */}
@@ -597,10 +658,16 @@ function CreateGroupForm({ pair, group, onClose, onSave }) {
               type="number"
               value={trueMiles}
               onChange={e => setTrueMiles(e.target.value)}
-              placeholder={`${defaultMiles} (default)`}
+              placeholder={`${fmtMiles(summedLegMiles)} (default)`}
               className={`${S.input} w-full text-sm`}
             />
-            <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1">From TMS. If blank, uses combined leg miles ({defaultMiles}).</p>
+            {noCorrection ? (
+              <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-1">
+                From TMS. If blank, uses combined leg miles ({fmtMiles(summedLegMiles)}). Leave this blank and nothing is corrected — the summed leg miles overstate a real multi-stop trip.
+              </p>
+            ) : (
+              <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1">From TMS. If blank, uses combined leg miles ({fmtMiles(summedLegMiles)}).</p>
+            )}
           </div>
 
           {/* Label */}
@@ -609,7 +676,7 @@ function CreateGroupForm({ pair, group, onClose, onSave }) {
             <input
               type="text"
               value={label}
-              onChange={e => setLabel(e.target.value)}
+              onChange={e => { setEditedLabel(e.target.value); setLabelTouched(true) }}
               className={`${S.input} w-full text-sm`}
             />
           </div>
@@ -624,12 +691,12 @@ function CreateGroupForm({ pair, group, onClose, onSave }) {
             />
           </div>
 
-          {/* Live preview */}
+          {/* Live preview — recomputed from the current members */}
           <div className="bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/20 rounded p-3 text-sm">
             <div className="text-blue-900 dark:text-blue-300">
               <div className="font-semibold">Corrected RPM</div>
               <div className="text-lg font-mono mt-1">
-                {correctedRpm ? `${fmtRpm(correctedRpm)}/mi` : '—'} {correctedRpm && !isGroup && <span className="text-[10px] ml-2">(was {fmtRpm(pair.naive_rpm)}/mi)</span>}
+                {correctedRpm ? `${fmtRpm(correctedRpm)}/mi` : '—'} {correctedRpm && naiveRpm && <span className="text-[10px] ml-2">(was {fmtRpm(naiveRpm)}/mi)</span>}
               </div>
             </div>
           </div>
