@@ -135,6 +135,38 @@ async function hydratePeople(rows) {
   }))
 }
 
+// Dense table source — scope ('mine' | 'to_work' | 'all'), a status-filter array
+// (null = all), an inclusive date window and a free-text query. Returns rows with
+// driver_status, age_hours and resolved actor names, so the page never touches
+// the table directly.
+export async function fetchHelpRequestsList(scope, statuses, from, to, query) {
+  const { data, error } = await supabase.rpc('help_requests_list', {
+    p_scope: scope || 'mine',
+    p_statuses: statuses && statuses.length ? statuses : null,
+    p_from: from ?? null,
+    p_to: to ?? null,
+    p_query: query?.trim() || null,
+  })
+  if (error) throw error
+  return data || []
+}
+// Per-status counts for the chips — scope + date window, independent of the
+// active status filter. Normalised to { new, seen, handled, dismissed, total }.
+export async function fetchHelpRequestsStatusCounts(scope, from, to) {
+  const { data, error } = await supabase.rpc('help_requests_status_counts', {
+    p_scope: scope || 'mine', p_from: from ?? null, p_to: to ?? null,
+  })
+  if (error) throw error
+  const base = { new: 0, seen: 0, handled: 0, dismissed: 0 }
+  if (Array.isArray(data)) {
+    for (const r of data) base[r.status] = Number(r.count) || 0
+  } else if (data && typeof data === 'object') {
+    for (const k of Object.keys(base)) base[k] = Number(data[k]) || 0
+  }
+  base.total = base.new + base.seen + base.handled + base.dismissed
+  return base
+}
+
 export async function fetchMyRequests(userId) {
   if (!userId) return []
   const { data, error } = await supabase.from('help_requests')
