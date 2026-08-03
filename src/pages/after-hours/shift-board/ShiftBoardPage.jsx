@@ -21,6 +21,7 @@ import {
   buildGroupCopy, buildWeekCopy, copyText,
 } from './shiftBoardData'
 import { REQUESTS_CHANGED_EVENT } from '../requests/requestsData'
+import { fetchBoardAccessorials } from './accessorialData'
 
 export default function ShiftBoardPage() {
   const { profile: me } = useAuth()
@@ -48,9 +49,13 @@ export default function ShiftBoardPage() {
   const [cpOpen, setCpOpen] = useState(true)    // Times-needed group expanded
   const [editTarget, setEditTarget] = useState(null) // load being checkpointed
   const [openRequestId, setOpenRequestId] = useState(null) // raised request detail panel
+  const [accByLoad, setAccByLoad] = useState(() => new Map()) // load_id → claim summary
+  const [openDriverId, setOpenDriverId] = useState(null)      // ONE expanded accessorial row
+  const [accTick, setAccTick] = useState(0)                   // re-reads the summary after a write
   const [, setNowTick] = useState(0)
 
   const trackCheckpoints = !!settings?.track_checkpoints
+  const accessorialsOn = !!settings?.accessorials_enabled
 
   const weekRange = useMemo(() => thisWeekChicago(), [])
   const dateLabel = useMemo(() => fmtDayLabel(todayChicago()), [])
@@ -75,7 +80,9 @@ export default function ShiftBoardPage() {
     const [bd, sm, ex, tb, ra, wk] = await Promise.all([
       fetchBoard(sh?.id ?? null),
       sh ? fetchShiftSummary(sh.id) : Promise.resolve(null),
-      settingsRef.current?.track_checkpoints ? fetchCheckpointExceptions() : Promise.resolve([]),
+      // The queue also feeds the ACCESSORIAL column's "Detention likely"
+      // (over_free_time), so accessorials need it even without the checkpoints phase.
+      (settingsRef.current?.track_checkpoints || settingsRef.current?.accessorials_enabled) ? fetchCheckpointExceptions() : Promise.resolve([]),
       fetchBoardTabs(sh?.id ?? null).catch(() => null),
       sh ? fetchRowActions(sh.id).catch(() => []) : Promise.resolve([]),
       week ? fetchWeekSummary(weekRange.start, weekRange.end) : Promise.resolve(undefined),
@@ -109,7 +116,7 @@ export default function ShiftBoardPage() {
       const [bd, sm, ex, tb, ra] = await Promise.all([
         fetchBoard(sh?.id ?? null),
         sh ? fetchShiftSummary(sh.id) : Promise.resolve(null),
-        st?.track_checkpoints ? fetchCheckpointExceptions() : Promise.resolve([]),
+        (st?.track_checkpoints || st?.accessorials_enabled) ? fetchCheckpointExceptions() : Promise.resolve([]),
         fetchBoardTabs(sh?.id ?? null).catch(() => null),
         sh ? fetchRowActions(sh.id).catch(() => []) : Promise.resolve([]),
       ])
@@ -129,6 +136,21 @@ export default function ShiftBoardPage() {
 
   // Escalation recipients — small, static-ish list; fetched once.
   useEffect(() => { fetchEscalationRecipients().then(setRecipients).catch(() => {}) }, [])
+
+  // Every load's claim summary in ONE query — the ACCESSORIAL column must not
+  // cost a round trip per row. accTick re-runs it after a claim is raised or a
+  // broker's answer is recorded.
+  useEffect(() => {
+    if (!accessorialsOn) { setAccByLoad(new Map()); return }
+    let stale = false
+    fetchBoardAccessorials(board.map(r => r.load_id))
+      .then(m => { if (!stale) setAccByLoad(m) })
+      .catch(() => { /* the column falls back to '—'; the panel still works */ })
+    return () => { stale = true }
+  }, [accessorialsOn, board, accTick])
+
+  // Collapse the open row if the phase is switched off mid-session.
+  useEffect(() => { if (!accessorialsOn) setOpenDriverId(null) }, [accessorialsOn])
 
   // Debounce the search box (~200ms). setState fires from the timer, not the
   // effect body, so it doesn't churn.
@@ -377,6 +399,17 @@ export default function ShiftBoardPage() {
     if (!r.load_id) return
     setEditTarget({ loadId: r.load_id, loadNumber: r.load_number, driverName: r.driver_name, pickupIn: r.cp_pickup_in, pickupOut: r.cp_pickup_out, deliveryIn: r.cp_delivery_in, deliveryOut: r.cp_delivery_out })
   }
+  // Exception per load — drives the ACCESSORIAL column's "Detention likely" and
+  // the panel's header chip. A load waiting at both stops keeps the longer wait.
+  const exByLoad = useMemo(() => {
+    const m = new Map()
+    for (const e of exceptions) {
+      const cur = m.get(e.load_id)
+      if (!cur || (e.minutes_waiting ?? 0) > (cur.minutes_waiting ?? 0)) m.set(e.load_id, e)
+    }
+    return m
+  }, [exceptions])
+
   const openFromException = (e) => {
     const r = boardByLoad.get(e.load_id)
     setEditTarget({ loadId: e.load_id, loadNumber: e.load_number, driverName: e.driver_name, pickupIn: r?.cp_pickup_in ?? null, pickupOut: r?.cp_pickup_out ?? null, deliveryIn: r?.cp_delivery_in ?? null, deliveryOut: r?.cp_delivery_out ?? null })
@@ -466,7 +499,10 @@ export default function ShiftBoardPage() {
             <PriorityGroup group={activeMeta} rows={displayRows} settings={settings} shift={shift}
               rowActionsByDriver={rowActionsByDriver} recipientsById={recipientsById} meId={me?.id} isManager={isManager}
               highlightDriver={highlightDriver} stateSort={stateSort} onToggleStateSort={toggleStateSort}
-              onOk={onOk} onAct={openAct} onAcknowledge={onAcknowledge} onCopyEscalation={copyEscalation} onCheckpoints={openFromRow} onOpenRequest={setOpenRequestId} />
+              onOk={onOk} onAct={openAct} onAcknowledge={onAcknowledge} onCopyEscalation={copyEscalation} onCheckpoints={openFromRow} onOpenRequest={setOpenRequestId}
+              openDriverId={openDriverId} onToggleDriver={(id) => setOpenDriverId(cur => (cur === id ? null : id))}
+              accByLoad={accByLoad} exByLoad={exByLoad} toast={toast}
+              onAccessorialChanged={async () => { setAccTick(t => t + 1); await refreshActions() }} />
           )}
         </>
       )}

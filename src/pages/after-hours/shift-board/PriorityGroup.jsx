@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { cityOf, fmtClock, todayChicago, lifecycleLabel } from './shiftBoardData'
+import { cityOf, fmtClock, fmtDuration, todayChicago, lifecycleLabel } from './shiftBoardData'
 import { statusBadge } from '../requests/requestsData'
+import AccessorialPanel from './AccessorialPanel'
+import { statusMeta } from './accessorialData'
 
 // 'Edil Eraliev' → 'Edil E.' for compact recipient labels.
 function shortName(full) {
@@ -16,6 +18,7 @@ function columnsFor(settings) {
   const cols = ['Driver', 'Equipment', 'Load state', 'Status', 'Load', 'Origin → Destination']
   if (settings?.track_checkpoints) cols.push('Checkpoints')
   if (settings?.track_pods || settings?.track_bols) cols.push('Paperwork')
+  if (settings?.accessorials_enabled) cols.push('Accessorial')
   cols.push('Note', 'Actions', 'OK')
   return cols
 }
@@ -32,9 +35,10 @@ const ACTIVITY_ACTIONS = [
 // Rendered as the body of the active tab. The tab bar carries the heading/count;
 // this is the driver table. It owns the vertical scroll (flex-1) with a sticky
 // header so the bands and tabs above stay put while the list scrolls.
-export default function PriorityGroup({ group, rows, settings, shift, rowActionsByDriver, recipientsById, meId, isManager, highlightDriver, stateSort, onToggleStateSort, onOk, onAct, onAcknowledge, onCopyEscalation, onCheckpoints, onOpenRequest }) {
+export default function PriorityGroup({ group, rows, settings, shift, rowActionsByDriver, recipientsById, meId, isManager, highlightDriver, stateSort, onToggleStateSort, onOk, onAct, onAcknowledge, onCopyEscalation, onCheckpoints, onOpenRequest, openDriverId, onToggleDriver, accByLoad, exByLoad, toast, onAccessorialChanged }) {
   const curYear = Number(todayChicago().slice(0, 4))
   const cols = columnsFor(settings)
+  const accessorialsOn = !!settings?.accessorials_enabled
 
   return (
     <div className="flex-1 min-h-0 flex flex-col rounded-2xl border border-gray-200 dark:border-white/10 overflow-hidden">
@@ -71,7 +75,10 @@ export default function PriorityGroup({ group, rows, settings, shift, rowActions
                 <BoardRow key={r.driver_id} r={r} curYear={curYear} settings={settings} shift={shift}
                   ra={rowActionsByDriver?.get(r.driver_id)} recipientsById={recipientsById} meId={meId} isManager={isManager}
                   highlighted={highlightDriver === r.driver_id}
-                  onOk={onOk} onAct={onAct} onAcknowledge={onAcknowledge} onCopyEscalation={onCopyEscalation} onCheckpoints={onCheckpoints} onOpenRequest={onOpenRequest} />
+                  onOk={onOk} onAct={onAct} onAcknowledge={onAcknowledge} onCopyEscalation={onCopyEscalation} onCheckpoints={onCheckpoints} onOpenRequest={onOpenRequest}
+                  colSpan={cols.length} accOpen={accessorialsOn && openDriverId === r.driver_id} onToggleDriver={onToggleDriver}
+                  acc={r.load_id ? accByLoad?.get(r.load_id) : null} exception={r.load_id ? exByLoad?.get(r.load_id) : null}
+                  toast={toast} onAccessorialChanged={onAccessorialChanged} />
               ))}
             </tbody>
           </table>
@@ -203,8 +210,39 @@ function LoadCell({ number }) {
   )
 }
 
-function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isManager, highlighted, onOk, onAct, onAcknowledge, onCopyEscalation, onCheckpoints, onOpenRequest }) {
+// The one-chip ACCESSORIAL state for a driver's current load: detention still
+// running outranks a claim already on record, which outranks nothing at all.
+function AccessorialCell({ acc, exception }) {
+  if (exception?.over_free_time) {
+    return (
+      <span title={`${fmtDuration(exception.minutes_waiting)} at the ${exception.stop}`}
+        className="inline-flex items-center px-1.5 py-0.5 rounded-full border text-[10px] font-medium whitespace-nowrap bg-amber-50 dark:bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-500/30">
+        Detention likely
+      </span>
+    )
+  }
+  if (acc?.count) {
+    const meta = statusMeta(acc.status)
+    return (
+      <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full border text-[10px] font-medium whitespace-nowrap ${meta.cls}`}>
+        {meta.label}{acc.count > 1 ? ` ×${acc.count}` : ''}
+      </span>
+    )
+  }
+  return <span className="text-gray-300 dark:text-slate-600">—</span>
+}
+
+function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isManager, highlighted, onOk, onAct, onAcknowledge, onCopyEscalation, onCheckpoints, onOpenRequest, colSpan, accOpen, onToggleDriver, acc, exception, toast, onAccessorialChanged }) {
   const muted = r.in_scope === false
+  const accessorialsOn = !!settings?.accessorials_enabled
+
+  // Clicking the row expands it too — but never when the click landed on one of
+  // the row's own controls (checkbox, action button, the load-number copy).
+  const onRowClick = (e) => {
+    if (!accessorialsOn) return
+    if (e.target.closest('button, input, a, select, textarea, label')) return
+    onToggleDriver?.(r.driver_id)
+  }
   const o = cityOf(r.origin), d = cityOf(r.destination)
   const pu = fmtLoadDate(r.pickup_date, curYear), dl = fmtLoadDate(r.delivery_date, curYear)
 
@@ -229,11 +267,21 @@ function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isMan
   }, [highlighted])
 
   return (
-    <tr ref={rowRef} className={`group/row border-b border-gray-100 dark:border-white/[0.03] ${muted ? 'opacity-50' : ''} ${flagged ? 'bg-amber-50/60 dark:bg-amber-500/[0.07]' : ''} ${highlighted ? 'ring-2 ring-inset ring-orange-400 dark:ring-orange-500/60 bg-orange-50/60 dark:bg-orange-500/[0.08]' : ''}`}>
-      {/* Driver — name (+ status/team chips) with dispatcher · carrier under it */}
+    <>
+    <tr ref={rowRef} onClick={onRowClick}
+      className={`group/row border-b border-gray-100 dark:border-white/[0.03] ${muted ? 'opacity-50' : ''} ${flagged ? 'bg-amber-50/60 dark:bg-amber-500/[0.07]' : ''} ${highlighted ? 'ring-2 ring-inset ring-orange-400 dark:ring-orange-500/60 bg-orange-50/60 dark:bg-orange-500/[0.08]' : ''} ${accessorialsOn ? 'cursor-pointer' : ''} ${accOpen ? 'bg-orange-50/60 dark:bg-orange-500/[0.07]' : ''}`}>
+      {/* Driver — name (+ status/team chips) with dispatcher · carrier under it.
+          While accessorials are on, a caret opens the claim panel beneath. */}
       <td className="px-3 py-2 align-top">
         <div className="flex items-center gap-1.5 whitespace-nowrap font-medium text-gray-900 dark:text-slate-200">
-          <span>{r.driver_name || '—'}</span>
+          {accessorialsOn ? (
+            <button type="button" onClick={() => onToggleDriver?.(r.driver_id)} aria-expanded={accOpen}
+              title={accOpen ? 'Collapse' : 'Open accessorials'}
+              className="inline-flex items-center gap-1.5 hover:text-orange-600 dark:hover:text-orange-400">
+              <svg className={`w-3 h-3 shrink-0 text-gray-400 transition-transform ${accOpen ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+              {r.driver_name || '—'}
+            </button>
+          ) : <span>{r.driver_name || '—'}</span>}
           {r.driver_status && r.driver_status !== 'active' && (() => {
             const b = statusBadge(r.driver_status)
             return <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${b.cls}`}>{b.label}</span>
@@ -307,6 +355,10 @@ function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isMan
           </div>
         </td>
       )}
+      {/* Accessorial — highest-priority state for this driver's current load */}
+      {settings?.accessorials_enabled && (
+        <td className="px-3 py-2 whitespace-nowrap"><AccessorialCell acc={acc} exception={exception} /></td>
+      )}
       {/* Note — raised request, flag note, and/or escalation recipient + ack */}
       <td className="px-3 py-2 max-w-[240px] space-y-1">
         {r.open_request_id ? (
@@ -358,5 +410,14 @@ function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isMan
           className="w-4 h-4 accent-emerald-600 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed" />
       </td>
     </tr>
+    {accOpen && (
+      <tr className="border-b border-gray-100 dark:border-white/[0.03]">
+        <td colSpan={colSpan} className="p-0">
+          <AccessorialPanel row={r} exception={exception} meId={meId} toast={toast}
+            onCheckpoints={onCheckpoints} onChanged={onAccessorialChanged} />
+        </td>
+      </tr>
+    )}
+    </>
   )
 }
