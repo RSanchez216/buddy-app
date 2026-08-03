@@ -5,6 +5,7 @@ import { useToast } from '../../../contexts/ToastContext'
 import UsageRangeControl from '../../settings/users/UsageRangeControl'
 import StatsBand from './StatsBand'
 import LumperDrawer from './LumperDrawer'
+import AccessorialsTab from './accessorials/AccessorialsTab'
 import {
   fetchLumperEvents, fetchSummary, fetchCategories, fetchRefLists, rangeForDays,
   money, fmtDate, fmtMonth, ageDays, statusMeta, recorderLabel, dispatcherDisplay,
@@ -22,7 +23,58 @@ const LUMPER_PRESETS = [
 const ORANGE_BTN = 'flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 text-white rounded-xl transition-all shadow-lg shadow-orange-500/20'
 const COLSPAN = 14
 
+// Two kinds of money the company is owed, on one page. Lumpers are advances paid
+// at the dock; accessorials are detention, layover and TONU raised overnight.
+// Different sources, same job — chase it and get it back — so they share a page
+// rather than a second route. The route, page_key and sidebar entry are unchanged.
 export default function LumpersPage() {
+  const [tab, setTab] = useState('lumpers')
+  const [lumperCount, setLumperCount] = useState(null)
+  const [accCount, setAccCount] = useState(null)
+
+  const TABS = [
+    { key: 'lumpers', label: 'Lumpers', count: lumperCount },
+    { key: 'accessorials', label: 'Accessorials', count: accCount },
+  ]
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-orange-600 dark:text-orange-400 mb-1">
+          <span className="w-1.5 h-1.5 rounded-full bg-orange-500" /> After Hours
+        </div>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Money to recover</h1>
+      </div>
+
+      <div className="flex items-center gap-1 border-b border-gray-200 dark:border-white/10">
+        {TABS.map(t => {
+          const on = t.key === tab
+          return (
+            <button key={t.key} onClick={() => setTab(t.key)}
+              className={`relative px-3 py-2 text-sm font-semibold whitespace-nowrap transition-opacity ${
+                on ? 'text-orange-600 dark:text-orange-400' : 'text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200'
+              }`}>
+              {t.label}
+              {t.count != null && (
+                <span className={`ml-1.5 text-[11px] font-bold px-1.5 py-0.5 rounded-full tabular-nums ${
+                  on ? 'bg-orange-100 dark:bg-orange-500/20 text-orange-700 dark:text-orange-400' : 'bg-gray-100 dark:bg-white/5 text-gray-500 dark:text-slate-400'
+                }`}>{t.count}</span>
+              )}
+              {on && <span className="absolute left-0 right-0 -bottom-px h-0.5 bg-orange-500" />}
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Both stay mounted so switching tabs doesn't refetch a range the user
+          already waited for. */}
+      <div className={tab === 'lumpers' ? '' : 'hidden'}><LumpersTab onCount={setLumperCount} /></div>
+      <div className={tab === 'accessorials' ? '' : 'hidden'}><AccessorialsTab onCount={setAccCount} /></div>
+    </div>
+  )
+}
+
+function LumpersTab({ onCount }) {
   const toast = useToast()
   const [range, setRange] = useState(null)
   const [events, setEvents] = useState([])
@@ -82,6 +134,9 @@ export default function LumpersPage() {
 
   useEffect(() => { reload() }, [reload])
 
+  // Feed the tab chip — the count in the range, before any client-side filter.
+  useEffect(() => { onCount?.(events.length) }, [events, onCount])
+
   // Dispatcher filter options — distinct present in the data (id, else nickname).
   const dispatcherOptions = useMemo(() => {
     const seen = new Map()
@@ -140,15 +195,9 @@ export default function LumpersPage() {
 
   return (
     <div className="space-y-5">
-      {/* Header */}
+      {/* Header — the page title lives on the tab shell above */}
       <div className="flex items-start justify-between flex-wrap gap-3">
-        <div>
-          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-orange-600 dark:text-orange-400 mb-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-orange-500" /> After Hours
-          </div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Lumpers</h1>
-          <p className="text-sm text-gray-500 dark:text-slate-500 mt-0.5">Advances paid at the dock — what's still owed, who owes it, and whether it came back.</p>
-        </div>
+        <p className="text-sm text-gray-500 dark:text-slate-500">Advances paid at the dock — what&apos;s still owed, who owes it, and whether it came back.</p>
         <button onClick={openCreate} className={ORANGE_BTN}>
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
           Add lumper
