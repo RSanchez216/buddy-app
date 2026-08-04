@@ -5,6 +5,8 @@ import { useToast } from '../../../contexts/ToastContext'
 import { S } from '../../../lib/styles'
 import Modal from '../../../components/Modal'
 import { todayISO, rate2, usd2 } from './officeData'
+import { flushStaged } from './officeDocsData'
+import { StagedFiles } from './OfficeDocuments'
 
 // Record a USD→local transfer that funds an office. The exchange rate is
 // DERIVED (amount_local / amount_usd) and stored server-side as a GENERATED
@@ -22,6 +24,9 @@ export default function OfficeTransferModal({ open, office, prefillLocal = '', o
   const [receivedDate, setReceivedDate] = useState('')
   const [method, setMethod] = useState('bank') // office_transfers.method CHECK: 'bank' | 'cash'
   const [notes, setNotes] = useState('')
+  // Held in state and uploaded after the transfer row exists — cancelling leaves
+  // nothing in storage. Optional: it never blocks Record transfer.
+  const [wireFiles, setWireFiles] = useState([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -35,7 +40,7 @@ export default function OfficeTransferModal({ open, office, prefillLocal = '', o
       // Prefill the local amount with the period's pending total, so the transfer
       // falls right out of the planned expenses (editable).
       setError(''); setFromId(''); setAmountUsd(''); setAmountLocal(prefillLocal ? String(prefillLocal) : '')
-      setMethod('bank'); setNotes(''); setSentDate(t); setReceivedDate(t)
+      setMethod('bank'); setNotes(''); setSentDate(t); setReceivedDate(t); setWireFiles([])
       const { data } = await supabase.from('funding_accounts')
         .select('id, name, bank_name, last_four, is_active').order('name')
       if (cancelled) return
@@ -63,7 +68,7 @@ export default function OfficeTransferModal({ open, office, prefillLocal = '', o
 
     setSaving(true); setError('')
     // NOTE: fx_rate is GENERATED — never included in the payload.
-    const { error: e } = await supabase.from('office_transfers').insert({
+    const { data: created, error: e } = await supabase.from('office_transfers').insert({
       office_id: office.id,
       from_funding_account_id: fromId,
       amount_usd: u,
@@ -73,9 +78,21 @@ export default function OfficeTransferModal({ open, office, prefillLocal = '', o
       method, // 'bank' | 'cash' — matches the DB CHECK constraint
       notes: notes.trim() || null,
       created_by: user?.id || null,
-    })
+    }).select('id').single()
     if (e) { setError(`Couldn't save: ${e.message || 'unknown error'}`); toast.error("Couldn't record transfer", e); setSaving(false); return }
     toast.success(`Transfer recorded — ${usd2(u)} → ${office.name}`)
+
+    // The wire confirmation evidences the derived FX rate, and that rate drives
+    // every USD figure on the page — so a failure is reported plainly, but never
+    // rolls back a transfer that saved.
+    if (wireFiles.length && created?.id) {
+      const res = await flushStaged(wireFiles, {
+        officeId: office.id, parentKind: 'transfer', parentId: created.id, documentType: 'wire_confirmation',
+      })
+      if (res.failed.length) toast.error(`Transfer saved, but the wire confirmation didn't attach — ${res.failed[0].reason}`)
+      else toast.success('Wire confirmation attached')
+    }
+
     setSaving(false)
     onSaved?.()
     onClose?.()
@@ -142,6 +159,12 @@ export default function OfficeTransferModal({ open, office, prefillLocal = '', o
             <label className={S.label}>Notes</label>
             <input className={S.input} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Optional" />
           </div>
+        </div>
+
+        <div className="pt-1">
+          <StagedFiles files={wireFiles} onChange={setWireFiles} multiple={false}
+            label="Wire confirmation" compact
+            docTypeNote="Optional. Attaches to this transfer as the evidence behind the derived rate." />
         </div>
 
         <div className={S.modalFooter}>

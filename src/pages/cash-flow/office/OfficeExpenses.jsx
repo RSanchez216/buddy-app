@@ -20,6 +20,8 @@ import {
 import AddOfficeExpensesModal from './AddOfficeExpensesModal'
 import OfficeTransferModal from './OfficeTransferModal'
 import MarkPaidPopover from './MarkPaidPopover'
+import { DocsChip, DocumentsPopover } from './OfficeDocuments'
+import { countsForExpenses } from './officeDocsData'
 
 const GRAINS = [
   { value: 'month', label: 'Month' },
@@ -45,6 +47,9 @@ export default function OfficeExpenses() {
   const [sel, setSel] = useState(null)          // selected-period stats row
   const [windowRows, setWindowRows] = useState([]) // per-period stats for charts
   const [expenses, setExpenses] = useState([])  // selected-period expenses
+  const [docCounts, setDocCounts] = useState(() => new Map()) // expense_id → file count
+  const [docsFor, setDocsFor] = useState(null)               // expense whose popover is open
+  const [attachWarning, setAttachWarning] = useState(null)   // files that failed to attach after a save
   const [windowExpenses, setWindowExpenses] = useState([]) // window expenses (charts + compare)
   const [transfersById, setTransfersById] = useState({})
   const [estByMonth, setEstByMonth] = useState(new Map()) // 'YYYY-MM' → estimate fx_rate
@@ -122,6 +127,15 @@ export default function OfficeExpenses() {
   }, [officeId, grain, winFrom, period.from, period.to])
 
   useEffect(() => { reload() }, [reload])
+
+  // One grouped query for every visible row — re-runs when the expense set
+  // changes and after any attach or removal, never once per row.
+  const refreshDocCounts = useCallback(async () => {
+    if (!expenses.length) { setDocCounts(new Map()); return }
+    try { setDocCounts(await countsForExpenses(expenses.map(e => e.id))) }
+    catch { /* chips fall back to 0; the popover still works */ }
+  }, [expenses])
+  useEffect(() => { refreshDocCounts() }, [refreshDocCounts])
 
   // Retry re-runs whichever load failed: offices (no office selected yet) or the
   // period data. Both return the page to loading first.
@@ -552,12 +566,13 @@ export default function OfficeExpenses() {
                   <th className={`${S.th} text-right`}>{ccy}</th>
                   <th className={`${S.th} text-right`}>USD</th>
                   <th className={S.th}>Payment</th>
+                  <th className={`${S.th} text-right`}>Docs</th>
                   <th className={S.th}></th>
                 </tr>
               </thead>
               <tbody>
                 {expenses.length === 0 ? (
-                  <tr><td colSpan={7} className="px-4 py-10 text-center text-gray-400 dark:text-slate-600">No expenses in {period.label}</td></tr>
+                  <tr><td colSpan={8} className="px-4 py-10 text-center text-gray-400 dark:text-slate-600">No expenses in {period.label}</td></tr>
                 ) : expenses.map(e => {
                   const editing = editingId === e.id
                   if (editing) {
@@ -572,6 +587,7 @@ export default function OfficeExpenses() {
                         <td className={S.td}><input className={S.input} value={editForm.description} onChange={ev => setEditForm(f => ({ ...f, description: ev.target.value }))} /></td>
                         <td className={S.td}><input type="number" step="0.01" min="0" className={`${S.input} text-right`} value={editForm.amount_local} onChange={ev => setEditForm(f => ({ ...f, amount_local: ev.target.value }))} /></td>
                         <td className={`${S.td} text-right text-gray-400 dark:text-slate-500 tabular-nums`}>auto</td>
+                        <td className={S.td}></td>
                         <td className={S.td}></td>
                         <td className={`${S.td} text-right whitespace-nowrap`}>
                           <button onClick={() => saveEdit(e)} className="text-emerald-600 dark:text-emerald-400 font-medium mr-3">Save</button>
@@ -601,6 +617,12 @@ export default function OfficeExpenses() {
                       </td>
                       <td className={S.td}>
                         <PaymentCell e={e} canEdit={canEdit} paidByName={paidByName(e)} onMarkPaid={() => setMarkPaidFor(e)} onMarkUnpaid={() => markUnpaid(e.id)} />
+                      </td>
+                      {/* DOCS — last column, right-aligned. Count comes from the
+                          single grouped query, never one per row. */}
+                      <td className={`${S.td} text-right whitespace-nowrap`}>
+                        <DocsCell e={e} count={docCounts.get(e.id) || 0} open={docsFor?.id === e.id}
+                          onOpen={() => setDocsFor(cur => (cur?.id === e.id ? null : e))} />
                       </td>
                       <td className={`${S.td} text-right whitespace-nowrap`}>
                         {canEdit && (
@@ -638,18 +660,53 @@ export default function OfficeExpenses() {
         </div>
       )}
 
+      {/* A failed attachment never rolls back a saved expense — the expenses are
+          kept and the files are named here so they can be retried from the row. */}
+      {attachWarning?.length > 0 && (
+        <div className="flex items-start gap-2 p-3 rounded-xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 text-xs text-amber-700 dark:text-amber-400">
+          <svg className="w-4 h-4 shrink-0 mt-px" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /></svg>
+          <div className="min-w-0">
+            <p className="font-semibold">The expenses saved, but {attachWarning.length} file{attachWarning.length === 1 ? '' : 's'} didn&apos;t attach.</p>
+            <ul className="mt-1 space-y-0.5">
+              {attachWarning.map(f => (
+                <li key={f.name} className="break-all"><span className="font-medium">{f.name}</span> — {f.reason}</li>
+              ))}
+            </ul>
+            <p className="mt-1 text-amber-600/80 dark:text-amber-400/70">Attach them from the row&apos;s Docs chip when you&apos;re ready.</p>
+          </div>
+          <button onClick={() => setAttachWarning(null)} aria-label="Dismiss" className="ml-auto shrink-0 font-medium hover:underline">Dismiss</button>
+        </div>
+      )}
+
+      {docsFor && (
+        <DocumentsPopover anchorRef={{ current: document.getElementById(`docs-${docsFor.id}`) }}
+          expense={docsFor} officeName={office?.name} canEdit={canEdit} toast={toast}
+          onClose={() => setDocsFor(null)}
+          onCountChange={(id, n) => setDocCounts(m => new Map(m).set(id, n))} />
+      )}
+
       <MarkPaidPopover open={!!markPaidFor} expense={markPaidFor}
         onClose={() => setMarkPaidFor(null)} onDone={() => { setMarkPaidFor(null); reload() }} />
 
       {office && (
         <>
           <AddOfficeExpensesModal open={showAdd} office={office} defaultDate={period.from} periodLabel={period.label}
-            onClose={() => setShowAdd(false)} onSaved={reload} />
+            onClose={() => setShowAdd(false)} onSaved={reload} onAttachFailed={setAttachWarning} />
           <OfficeTransferModal open={showTransfer} office={office} prefillLocal={transferPrefill}
             onClose={() => setShowTransfer(false)} onSaved={reload} />
         </>
       )}
     </div>
+  )
+}
+
+// The DOCS cell. The id is what the popover anchors to, so it lives on the
+// wrapper rather than inside the chip.
+function DocsCell({ e, count, open, onOpen }) {
+  return (
+    <span id={`docs-${e.id}`} className="inline-block">
+      <DocsChip count={count} open={open} onClick={onOpen} />
+    </span>
   )
 }
 

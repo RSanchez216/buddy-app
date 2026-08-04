@@ -9,6 +9,8 @@ import {
   rateFor, getRateEstimate, listExpenses, periodRange, stepPeriod, firstOfMonth,
   todayISO, rate2, usd2, local0,
 } from './officeData'
+import { flushStaged, validateFile, fileKind, fmtBytes, ACCEPTED_HINT } from './officeDocsData'
+import { StagedRowChip } from './OfficeDocuments'
 
 // Add one or more office expenses in EITHER currency. amount_local + fx_rate are
 // canonical (a DB trigger derives amount_usd), so we NEVER write amount_usd.
@@ -20,13 +22,17 @@ import {
 
 const emptyRow = (date, entry_currency = 'local') => ({ expense_date: date, category: '', description: '', entry_currency, entered_amount: '' })
 
-export default function AddOfficeExpensesModal({ open, office, defaultDate, periodLabel, onClose, onSaved }) {
+export default function AddOfficeExpensesModal({ open, office, defaultDate, periodLabel, onClose, onSaved, onAttachFailed }) {
   const { user } = useAuth()
   const toast = useToast()
   const { activeOffice: categories } = useExpenseCategories()
   const [rows, setRows] = useState([emptyRow(defaultDate || todayISO())])
   const [rateCache, setRateCache] = useState({}) // dateISO → { fx_rate, transfer_id, is_inherited } | null
   const [estCache, setEstCache] = useState({})   // 'YYYY-MM-01' → estimate fx_rate | null
+  // Files staged per ROW INDEX. Held in component state, never uploaded on
+  // selection — cancelling the modal must leave nothing in storage.
+  const [staged, setStaged] = useState({})
+  const [stagedRejects, setStagedRejects] = useState([])
   const [copying, setCopying] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -37,6 +43,7 @@ export default function AddOfficeExpensesModal({ open, office, defaultDate, peri
     if (!open) return
     setRows([emptyRow(defaultDate || todayISO())])
     setRateCache({}); setEstCache({}); setError('')
+    setStaged({}); setStagedRejects([])
   }, [open, defaultDate])
 
   // Resolve the real transfer rate per row date, and the estimate per row month.
@@ -70,7 +77,31 @@ export default function AddOfficeExpensesModal({ open, office, defaultDate, peri
 
   const setRow = (i, patch) => setRows(rs => rs.map((r, j) => j === i ? { ...r, ...patch } : r))
   const addRow = () => setRows(rs => [...rs, emptyRow(rs[rs.length - 1]?.expense_date || defaultDate || todayISO(), rs[rs.length - 1]?.entry_currency || 'local')])
-  const removeRow = (i) => setRows(rs => rs.length > 1 ? rs.filter((_, j) => j !== i) : rs)
+  const removeRow = (i) => {
+    setRows(rs => (rs.length > 1 ? rs.filter((_, j) => j !== i) : rs))
+    // Staged files are keyed by index, so dropping a row has to reindex the rest
+    // or the files would follow the wrong expense.
+    setStaged(st => {
+      const next = {}
+      for (const k of Object.keys(st)) {
+        const idx = Number(k)
+        if (idx === i) continue
+        next[idx > i ? idx - 1 : idx] = st[k]
+      }
+      return next
+    })
+  }
+  const setRowFiles = (i, fileList) => {
+    const incoming = [...(fileList || [])]
+    if (!incoming.length) return
+    const ok = [], bad = []
+    for (const f of incoming) { const v = validateFile(f); v.ok ? ok.push(f) : bad.push({ name: f.name, reason: v.reason }) }
+    setStagedRejects(bad)
+    if (ok.length) setStaged(st => ({ ...st, [i]: [...(st[i] || []), ...ok] }))
+  }
+  const dropRowFile = (i, j) => setStaged(st => ({ ...st, [i]: (st[i] || []).filter((_, k) => k !== j) }))
+
+  const stagedCount = Object.values(staged).reduce((n, fs2) => n + (fs2?.length || 0), 0)
 
   const headEff = defaultDate ? effFor({ expense_date: defaultDate }) : { rate: null, real: false }
 
@@ -142,10 +173,28 @@ export default function AddOfficeExpensesModal({ open, office, defaultDate, peri
       }
       return base
     })
-    const { error: e } = await supabase.from('office_expenses').insert(payload)
+    // select() so each staged file knows the id of the row it belongs to. The
+    // order returned matches the order sent.
+    const { data: inserted, error: e } = await supabase.from('office_expenses').insert(payload).select('id')
     if (e) { setError(`Couldn't save: ${e.message || 'unknown error'}`); toast.error("Couldn't save expenses", e); setSaving(false); return }
     const pend = payload.filter(p => p.fx_rate == null).length
     toast.success(`${payload.length} expense${payload.length === 1 ? '' : 's'} added${pend ? ` · ${pend} pending a real rate` : ''}`)
+
+    // Files upload only now that the rows exist. A failure here must NOT undo a
+    // saved expense — the expenses stand, the modal closes, and the page names
+    // whatever didn't attach so it can be retried from the row's popover.
+    const failures = []
+    for (let i = 0; i < rows.length; i++) {
+      const files = staged[i]
+      if (!files?.length || !inserted?.[i]?.id) continue
+      const res = await flushStaged(files, {
+        officeId: office.id, parentKind: 'expense', parentId: inserted[i].id, documentType: 'receipt',
+      })
+      failures.push(...res.failed)
+    }
+    if (failures.length) onAttachFailed?.(failures)
+    else if (stagedCount > 0) toast.success(`${stagedCount} file${stagedCount === 1 ? '' : 's'} attached`)
+
     setSaving(false)
     onSaved?.()
     onClose?.()
@@ -181,12 +230,13 @@ export default function AddOfficeExpensesModal({ open, office, defaultDate, peri
 
         {/* Rows */}
         <div className="space-y-2">
-          <div className="grid grid-cols-12 gap-2 px-1 text-[11px] font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wide">
+          <div className="grid grid-cols-[repeat(14,minmax(0,1fr))] gap-2 px-1 text-[11px] font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wide">
             <div className="col-span-2">Date</div>
             <div className="col-span-3">Category</div>
             <div className="col-span-2">Description</div>
             <div className="col-span-3">Amount</div>
             <div className="col-span-1 text-right">Converts to</div>
+            <div className="col-span-2">Files</div>
             <div className="col-span-1" />
           </div>
           {rows.map((r, i) => {
@@ -195,7 +245,7 @@ export default function AddOfficeExpensesModal({ open, office, defaultDate, peri
             const entered = Number(r.entered_amount)
             const isUsd = r.entry_currency === 'usd'
             return (
-              <div key={i} className="grid grid-cols-12 gap-2 items-center">
+              <div key={i} className="grid grid-cols-[repeat(14,minmax(0,1fr))] gap-2 items-center">
                 <input type="date" className={`${S.input} col-span-2`} value={r.expense_date}
                   onChange={e => setRow(i, { expense_date: e.target.value })} />
                 <select className={`${S.input} col-span-3`} value={r.category}
@@ -227,6 +277,10 @@ export default function AddOfficeExpensesModal({ open, office, defaultDate, peri
                     hasRate ? <span className="text-gray-600 dark:text-slate-400">{usd2(entered / eff.rate)}{!eff.real && <span className="text-amber-500"> ≈</span>}</span> : <span className="text-amber-600 dark:text-amber-400 text-[11px]">pending</span>
                   )}
                 </div>
+                {/* FILES — staged only. Nothing is uploaded until save. */}
+                <div className="col-span-2">
+                  <StagedRowChip count={staged[i]?.length || 0} onFiles={files => setRowFiles(i, files)} />
+                </div>
                 <div className="col-span-1 flex justify-end">
                   {rows.length > 1 && (
                     <button onClick={() => removeRow(i)} className="text-gray-400 hover:text-red-500 px-1 py-2" title="Remove row">
@@ -238,6 +292,35 @@ export default function AddOfficeExpensesModal({ open, office, defaultDate, peri
             )
           })}
         </div>
+
+        {/* Staged files. Listed per row so a misfiled attachment is visible
+            before it's committed, and removable while it's still only in memory. */}
+        {stagedCount > 0 && (
+          <div className="rounded-xl border border-cyan-200 dark:border-cyan-500/30 bg-cyan-50/60 dark:bg-cyan-500/[0.07] p-2.5 space-y-1.5">
+            <p className="text-[11px] text-cyan-800 dark:text-cyan-300">
+              <span className="font-bold">{stagedCount} file{stagedCount === 1 ? '' : 's'} ready.</span>{' '}
+              They upload once the expenses are saved — nothing is stored if you cancel.
+            </p>
+            {Object.entries(staged).map(([idx, files]) => (files || []).map((f, j) => (
+              <div key={`${idx}-${j}`} className="flex items-center gap-2 text-[11px]">
+                <span className="shrink-0 text-gray-400 dark:text-slate-500 tabular-nums">Row {Number(idx) + 1}</span>
+                <span className="shrink-0 px-1 py-0.5 rounded text-[9px] font-bold bg-white/70 dark:bg-white/10 text-cyan-800 dark:text-cyan-300">{fileKind(f)}</span>
+                <span className="text-gray-800 dark:text-slate-200 break-all min-w-0 leading-snug">{f.name}</span>
+                <span className="ml-auto shrink-0 text-[10px] text-gray-500 dark:text-slate-400 tabular-nums">{fmtBytes(f.size)}</span>
+                <button type="button" onClick={() => dropRowFile(Number(idx), j)} aria-label={`Remove ${f.name}`}
+                  className="shrink-0 text-gray-400 hover:text-red-500">✕</button>
+              </div>
+            )))}
+          </div>
+        )}
+        {stagedRejects.length > 0 && (
+          <div className="rounded-xl border border-amber-200 dark:border-amber-500/20 bg-amber-50 dark:bg-amber-500/10 p-2.5 text-[11px] text-amber-700 dark:text-amber-400">
+            {stagedRejects.map(r => (
+              <p key={r.name} className="break-all"><span className="font-medium">{r.name}</span> — {r.reason}</p>
+            ))}
+            <p className="text-amber-600/80 dark:text-amber-400/70 mt-0.5">{ACCEPTED_HINT}</p>
+          </div>
+        )}
 
         <div className="flex items-baseline justify-between pt-3 border-t border-gray-100 dark:border-white/5">
           <span className="text-sm text-gray-500 dark:text-slate-400">
