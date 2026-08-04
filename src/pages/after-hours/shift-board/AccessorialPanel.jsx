@@ -289,7 +289,7 @@ export default function AccessorialPanel({
             </Column>
 
             {/* ③ Evidence and notes */}
-            <Column n={trackCheckpoints ? 3 : 2} title="Evidence and notes">
+            <Column n={trackCheckpoints ? 3 : 2} title="Evidence and notes" fill>
               <div className="rounded-xl border border-emerald-200 dark:border-emerald-500/25 bg-emerald-50/60 dark:bg-emerald-500/[0.06] p-2.5">
                 <p className="text-xs font-medium text-emerald-800 dark:text-emerald-300">Checkpoint log — attached automatically</p>
                 <p className="text-[11px] text-emerald-700/80 dark:text-emerald-400/70 mt-0.5 tabular-nums">
@@ -323,9 +323,14 @@ export default function AccessorialPanel({
                 <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1.5">Attached when the request is raised. If a broker refuses to pay in six weeks, this is what you fight it with.</p>
               </div>
 
-              <div className="mt-3">
+              {/* min-h-0 is load-bearing: without it the flex child refuses to
+                  shrink below its content height and the CARD grows instead of
+                  the textarea filling. rows={3} stays as the small-screen floor —
+                  below lg the grid is one column, there is no sibling to stretch
+                  against, and flex-1 has nothing to expand into. */}
+              <div className="mt-3 flex-1 flex flex-col min-h-0">
                 <label className={S.label}>Note</label>
-                <textarea rows={3} className={`${S.textarea} min-h-[70px]`} value={note} onChange={e => setNote(e.target.value)}
+                <textarea rows={3} className={`${S.textarea} flex-1 min-h-[70px]`} value={note} onChange={e => setNote(e.target.value)}
                   placeholder="What happened — who was called, what the shipper said…" />
               </div>
             </Column>
@@ -482,9 +487,12 @@ function AddTypeModal({ onClose, onAdded }) {
   )
 }
 
-function Column({ n, title, children }) {
+// `fill` makes the card a flex column so a child marked flex-1 can absorb the
+// height the grid row forces on it — panel ③ is stretched to panel ①'s height,
+// which otherwise left ~85px of dead space under the note box.
+function Column({ n, title, children, fill }) {
   return (
-    <div className="rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-white/[0.02] p-3.5">
+    <div className={`rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-white/[0.02] p-3.5${fill ? ' flex flex-col' : ''}`}>
       <div className="flex items-center gap-2 mb-3">
         <span className="w-5 h-5 rounded-full bg-orange-100 dark:bg-orange-500/15 text-orange-600 dark:text-orange-400 inline-flex items-center justify-center text-[10px] font-bold">{n}</span>
         <h4 className="text-xs font-semibold text-gray-900 dark:text-white uppercase tracking-wide">{title}</h4>

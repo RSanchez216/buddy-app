@@ -58,7 +58,27 @@ export default function CheckpointFields({ row, shiftId, freeMinutes, onSaved, o
   const setValue = (key, value) => setFields(f => ({ ...f, [key]: { value, touched: true } }))
   const setNow = (key) => setValue(key, toChicagoLocalInput(new Date()))
 
-  const dirty = ALL.some(({ key }) => fields[key].touched)
+  // What is actually in the database for this field, in the same
+  // 'YYYY-MM-DDTHH:mm' shape the inputs hold, so the two compare directly.
+  const persistedOf = (key) => {
+    const col = ALL.find(x => x.key === key).col
+    return row[col] ? toChicagoLocalInput(row[col]) : ''
+  }
+
+  // ONE comparison drives the per-field badge, the save payload AND the footer
+  // button, so they cannot disagree. The badge used to key off "does the input
+  // have a value", which turned green the instant a time was typed — an associate
+  // reading SAVED at 2am would close the row and lose the time.
+  //
+  // A cleared field is deliberately not dirty: save_load_checkpoints reads a null
+  // as "leave the existing value alone", so clearing cannot unset a time.
+  const isDirty = (key) => {
+    const v = fields[key].value
+    return !!v && v !== persistedOf(key)
+  }
+  const fieldState = (key) => (isDirty(key) ? 'unsaved' : persistedOf(key) ? 'saved' : 'none')
+
+  const dirty = ALL.some(({ key }) => isDirty(key))
 
   // Durations recompute from what's on screen, so they move as a time is typed
   // rather than waiting for the save to come back.
@@ -73,10 +93,9 @@ export default function CheckpointFields({ row, shiftId, freeMinutes, onSaved, o
     setBusy(true); setErr('')
     try {
       const payload = { loadId, shiftId }
-      for (const { key } of ALL) {
-        const f = fields[key]
-        payload[key] = f.touched && f.value ? chicagoLocalToISO(f.value) : null // only changed fields
-      }
+      // Only fields that genuinely differ from what's stored — the same test the
+      // badge and the button use.
+      for (const { key } of ALL) payload[key] = isDirty(key) ? chicagoLocalToISO(fields[key].value) : null
       await saveLoadCheckpoints(payload)
 
       // Hand the saved instants back so the shared board row updates. Panel ②
@@ -102,6 +121,7 @@ export default function CheckpointFields({ row, shiftId, freeMinutes, onSaved, o
       <div className="space-y-3">
         {STOPS.map(stop => (
           <StopBlock key={stop.key} stop={stop} row={row} fields={fields} isoOf={isoOf}
+            fieldState={fieldState}
             freeMinutes={freeMinutes} loadId={loadId} setValue={setValue} setNow={setNow} />
         ))}
       </div>
@@ -117,7 +137,14 @@ export default function CheckpointFields({ row, shiftId, freeMinutes, onSaved, o
   )
 }
 
-function StopBlock({ stop, row, fields, isoOf, freeMinutes, loadId, setValue, setNow }) {
+// Same geometry for both badges so the row can't reflow when the state flips.
+const BADGE = 'text-[8px] font-bold px-1 py-px rounded'
+const BADGE_STATE = {
+  saved: { label: 'SAVED', cls: 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400' },
+  unsaved: { label: 'UNSAVED', cls: 'bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300' },
+}
+
+function StopBlock({ stop, row, fields, isoOf, fieldState, freeMinutes, loadId, setValue, setNow }) {
   // Parsed server-side rules, applied once at fetch — never re-parsed here.
   const city = row[stop.cityCol]
   const st = row[stop.stateCol]
@@ -140,18 +167,20 @@ function StopBlock({ stop, row, fields, isoOf, freeMinutes, loadId, setValue, se
 
       <div className="grid grid-cols-2 gap-2 p-2">
         {[['IN', stop.inKey], ['OUT', stop.outKey]].map(([label, key]) => {
-          const has = !!fields[key].value
+          const state = fieldState(key)
+          const badge = BADGE_STATE[state]
           return (
             <div key={key}>
               <div className="flex items-center gap-1 mb-0.5">
                 <span className="text-[9px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500">{label}</span>
-                {has ? (
-                  <span className="text-[8px] font-bold px-1 py-px rounded bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400">SAVED</span>
+                {badge ? (
+                  <span className={`${BADGE} ${badge.cls}`}>{badge.label}</span>
                 ) : (
                   <span className="text-[9px] text-gray-400 dark:text-slate-500 italic">Not recorded</span>
                 )}
               </div>
-              <DateTimePicker value={fields[key].value} disabled={!loadId} tone={has ? 'saved' : 'plain'}
+              {/* The green tint follows the persisted state too, not the input. */}
+              <DateTimePicker value={fields[key].value} disabled={!loadId} tone={state === 'saved' ? 'saved' : 'plain'}
                 onChange={v => setValue(key, v)} />
               <button type="button" onClick={() => setNow(key)} disabled={!loadId}
                 className="mt-1 w-full px-2 py-0.5 rounded-lg text-[10px] font-medium border border-gray-300 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-40">
