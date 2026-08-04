@@ -100,6 +100,8 @@ const LumpersPage = lazyWithReload(() => import('./pages/after-hours/lumpers/Lum
 const ShiftBoardPage = lazyWithReload(() => import('./pages/after-hours/shift-board/ShiftBoardPage'))
 // Lazy — Requests (After Hours) dispatcher↔night-team help requests; its own chunk.
 const RequestsPage = lazyWithReload(() => import('./pages/after-hours/requests/RequestsPage'))
+// Lazy — Shift Reports (After Hours) coverage + per-shift history; its own chunk.
+const ShiftReportsPage = lazyWithReload(() => import('./pages/after-hours/reports/ReportsPage'))
 
 export default function App() {
   return (
@@ -179,6 +181,15 @@ export default function App() {
                   <ErrorBoundary label="the Requests page">
                     <Suspense fallback={<div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500" /></div>}>
                       <RequestsPage />
+                    </Suspense>
+                  </ErrorBoundary>
+                </RequirePageAccess>
+              } />
+              <Route path="after-hours/reports" element={
+                <RequirePageAccess pageKey="shift_reports">
+                  <ErrorBoundary label="the Shift Reports page">
+                    <Suspense fallback={<div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500" /></div>}>
+                      <ShiftReportsPage />
                     </Suspense>
                   </ErrorBoundary>
                 </RequirePageAccess>
