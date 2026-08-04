@@ -8,7 +8,6 @@ import { S } from '../../../lib/styles'
 import PriorityGroup from './PriorityGroup'
 import EndShiftModal from './EndShiftModal'
 import TimesNeededGroup from './TimesNeededGroup'
-import CheckpointEditor from './CheckpointEditor'
 import RequestDetailPanel from './RequestDetailPanel'
 import {
   SHIFT_TYPES, GROUP_META, groupKeyFor, shiftName, LIFECYCLE, LIFECYCLE_RANK,
@@ -47,9 +46,8 @@ export default function ShiftBoardPage() {
   const [starting, setStarting] = useState(false)
   const [showEnd, setShowEnd] = useState(false)
   const [cpOpen, setCpOpen] = useState(true)    // Times-needed group expanded
-  const [editTarget, setEditTarget] = useState(null) // load being checkpointed
   const [openRequestId, setOpenRequestId] = useState(null) // raised request detail panel
-  const [accByLoad, setAccByLoad] = useState(() => new Map()) // load_id → claim summary
+  const [accByLoad, setAccByLoad] = useState(() => new Map()) // load_id → accessorial summary
   const [openDriverId, setOpenDriverId] = useState(null)      // ONE expanded accessorial row
   const [accTick, setAccTick] = useState(0)                   // re-reads the summary after a write
   const [, setNowTick] = useState(0)
@@ -137,8 +135,8 @@ export default function ShiftBoardPage() {
   // Escalation recipients — small, static-ish list; fetched once.
   useEffect(() => { fetchEscalationRecipients().then(setRecipients).catch(() => {}) }, [])
 
-  // Every load's claim summary in ONE query — the ACCESSORIAL column must not
-  // cost a round trip per row. accTick re-runs it after a claim is raised or a
+  // Every load's accessorial summary in ONE query — the ACCESSORIAL column must not
+  // cost a round trip per row. accTick re-runs it after a request is raised or a
   // broker's answer is recorded.
   useEffect(() => {
     if (!accessorialsOn) { setAccByLoad(new Map()); return }
@@ -320,7 +318,10 @@ export default function ShiftBoardPage() {
     return base
       .map(t => {
         const prog = boardTabs?.[RPC_KEY[t.key]] || null
-        const tone = prog?.tone || GROUP_TONE_FALLBACK[t.key] || 'grey'
+        // Each tab owns a colour so the bar is readable at a glance. Raised is
+        // the one exception: it keeps the RPC's dynamic tone, greying out when
+        // nothing is waiting, because "nothing raised" is the signal there.
+        const tone = t.key === 'raised' ? (prog?.tone || 'red') : (GROUP_TONE[t.key] || 'grey')
         // Chip is progress ("done of total") where the RPC provides it, else the
         // plain count. Raised counts handled/total; the rest reviewed/total.
         const chip = !prog ? String(t.count)
@@ -395,10 +396,13 @@ export default function ShiftBoardPage() {
     for (const r of board) if (r.load_id) m.set(r.load_id, r)
     return m
   }, [board])
-  const openFromRow = (r) => {
-    if (!r.load_id) return
-    setEditTarget({ loadId: r.load_id, loadNumber: r.load_number, driverName: r.driver_name, pickupIn: r.cp_pickup_in, pickupOut: r.cp_pickup_out, deliveryIn: r.cp_delivery_in, deliveryOut: r.cp_delivery_out })
-  }
+  // Board row per driver — a Times-needed row identifies a load, but the panel
+  // that now holds the time fields is keyed by driver.
+  const boardByDriver = useMemo(() => {
+    const m = new Map()
+    for (const r of board) m.set(r.driver_id, r)
+    return m
+  }, [board])
   // Exception per load — drives the ACCESSORIAL column's "Detention likely" and
   // the panel's header chip. A load waiting at both stops keeps the longer wait.
   const exByLoad = useMemo(() => {
@@ -410,9 +414,15 @@ export default function ShiftBoardPage() {
     return m
   }, [exceptions])
 
+  // A Times-needed row jumps to that driver: switch to the tab holding them,
+  // expand their panel (where the time fields live) and highlight the row.
   const openFromException = (e) => {
-    const r = boardByLoad.get(e.load_id)
-    setEditTarget({ loadId: e.load_id, loadNumber: e.load_number, driverName: e.driver_name, pickupIn: r?.cp_pickup_in ?? null, pickupOut: r?.cp_pickup_out ?? null, deliveryIn: r?.cp_delivery_in ?? null, deliveryOut: r?.cp_delivery_out ?? null })
+    const r = boardByLoad.get(e.load_id) || boardByDriver.get(e.driver_id)
+    if (!r) { toast.error('That driver is not on the board right now.'); return }
+    setSelectedTab(groupKeyFor(r))
+    setOpenDriverId(r.driver_id)
+    setHighlightDriver(r.driver_id)
+    setTimeout(() => setHighlightDriver(null), 4500)
   }
 
   async function copyGroup(g, rows) {
@@ -499,7 +509,8 @@ export default function ShiftBoardPage() {
             <PriorityGroup group={activeMeta} rows={displayRows} settings={settings} shift={shift}
               rowActionsByDriver={rowActionsByDriver} recipientsById={recipientsById} meId={me?.id} isManager={isManager}
               highlightDriver={highlightDriver} stateSort={stateSort} onToggleStateSort={toggleStateSort}
-              onOk={onOk} onAct={openAct} onAcknowledge={onAcknowledge} onCopyEscalation={copyEscalation} onCheckpoints={openFromRow} onOpenRequest={setOpenRequestId}
+              onOk={onOk} onAct={openAct} onAcknowledge={onAcknowledge} onCopyEscalation={copyEscalation} onOpenRequest={setOpenRequestId}
+              shiftId={shift?.id ?? null} canAddTypes={isManager}
               openDriverId={openDriverId} onToggleDriver={(id) => setOpenDriverId(cur => (cur === id ? null : id))}
               accByLoad={accByLoad} exByLoad={exByLoad} toast={toast}
               onAccessorialChanged={async () => { setAccTick(t => t + 1); await refreshActions() }} />
@@ -507,10 +518,6 @@ export default function ShiftBoardPage() {
         </>
       )}
 
-      {editTarget && (
-        <CheckpointEditor target={editTarget} shiftId={shift?.id ?? null}
-          onClose={() => setEditTarget(null)} onSaved={() => refresh()} toast={toast} />
-      )}
       {actionTarget && <ActionPopover target={actionTarget} recipients={recipients} meId={me?.id} onClose={() => setActionTarget(null)} onSubmit={submitAction} onRemove={removeAction} onCopy={copyEscalation} />}
       <EndShiftModal open={showEnd} shift={shift} users={users.filter(u => u.id !== me?.id)}
         onClose={() => setShowEnd(false)} onEnded={doEnded} />
@@ -529,6 +536,7 @@ const TAB_STYLE = {
   orange: { text: 'text-orange-600 dark:text-orange-400',  underline: 'bg-orange-500',  chip: 'bg-orange-100 dark:bg-orange-500/20 text-orange-700 dark:text-orange-300' },
   amber:  { text: 'text-amber-600 dark:text-amber-400',    underline: 'bg-amber-500',   chip: 'bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300' },
   green:  { text: 'text-emerald-600 dark:text-emerald-400', underline: 'bg-emerald-500', chip: 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300' },
+  slate:  { text: 'text-slate-500 dark:text-slate-400',    underline: 'bg-slate-400',   chip: 'bg-slate-100 dark:bg-slate-500/20 text-slate-600 dark:text-slate-300' },
   grey:   { text: 'text-gray-600 dark:text-slate-300',     underline: 'bg-gray-400',    chip: 'bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-slate-300' },
 }
 // Client-side row search over the already-loaded fields (no refetch). Origin and
@@ -542,7 +550,10 @@ function rowMatches(r, q) {
 
 // group key → tab-progress RPC key, and a tone fallback when there's no progress.
 const RPC_KEY = { raised: 'raised', todo: 'active', never_dispatched: 'never' }
-const GROUP_TONE_FALLBACK = { raised: 'red', uncovered: 'orange', due: 'amber', idle: 'grey', todo: 'green', never_dispatched: 'grey' }
+// One colour per tab so the bar reads at a glance instead of a wall of orange.
+// Idle sits outside the orange family on purpose: those drivers need attention
+// this week, not tonight.
+const GROUP_TONE = { raised: 'red', uncovered: 'orange', due: 'amber', idle: 'slate', todo: 'green', never_dispatched: 'grey' }
 
 // 'YYYY-MM-DD' → 'Jul 27' (Chicago-agnostic — the range is already date-only).
 function shortDay(v) {
@@ -576,7 +587,7 @@ function WeekStrip({ week, onCopy }) {
     ['POD', week?.pods ?? 0, 'Proofs of delivery collected this week'],
     ['BOL', week?.bols ?? 0, 'Bills of lading collected this week'],
     ['CHKPT', week?.checkpoints ?? 0, 'Driver checkpoint times collected this week'],
-    ['ACC', week?.accessorials_count ?? 0, 'Detention, layover and TONU claims raised this week'],
+    ['ACC', week?.accessorials_count ?? 0, 'Detention, layover and TONU requests raised this week'],
     ['LUMPERS', week?.lumpers_count ?? 0, 'Lumper payments recorded this week'],
     ['REQUESTS', week?.requests_raised ?? 0, 'Help requests raised by dispatch this week'],
   ]

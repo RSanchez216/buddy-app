@@ -9,8 +9,11 @@
 
 import { supabase } from '../../../../lib/supabase'
 
-export { statusMeta, typeLabel, docTypeLabel, TYPES, DOC_TYPES, RESPONSES,
-  fetchAccessorialDocs, signedDocUrl, recordBrokerResponse } from '../../shift-board/accessorialData'
+// Types come from the accessorial_types lookup, so the filter chips here show
+// whatever a manager added on the board — never a hardcoded three.
+export { statusMeta, typeLabel, docTypeLabel, DOC_TYPES, RESPONSES,
+  fetchAccessorialTypes, fetchAccessorialDocs, signedDocUrl,
+  recordBrokerResponse } from '../../shift-board/accessorialData'
 
 export const STATUSES = [
   ['awaiting', 'Awaiting'],
@@ -69,15 +72,15 @@ export async function confirmCollected(id, amount, collectedOn) {
 
 // "Not related" — records the rejection so the pair stops being suggested.
 // accessorial_soft_matches returns the rate change's figures but NOT its id, so
-// resolve it from the claim's load plus the exact detected_at it reported.
+// resolve it from the request's load plus the exact detected_at it reported.
 export async function dismissSoftMatch({ accessorialId, detectedAt, matchKind, delta, userId }) {
-  const { data: claim, error: e1 } = await supabase.from('accessorials')
+  const { data: req, error: e1 } = await supabase.from('accessorials')
     .select('load_id').eq('id', accessorialId).single()
   if (e1) throw e1
-  if (!claim?.load_id) throw new Error('That claim has no load to match against.')
+  if (!req?.load_id) throw new Error('That request has no load to match against.')
 
   const { data: rc, error: e2 } = await supabase.from('load_rate_changes')
-    .select('id').eq('load_id', claim.load_id).eq('detected_at', detectedAt).limit(1).maybeSingle()
+    .select('id').eq('load_id', req.load_id).eq('detected_at', detectedAt).limit(1).maybeSingle()
   if (e2) throw e2
   if (!rc?.id) throw new Error('Could not find that rate change any more — reload the page.')
 
@@ -103,10 +106,13 @@ export function fmtMinutes(mins) {
   return `${m}m`
 }
 
-// '3h 40m @ shipper · 2h free · $75/h'. Flat types have no clock to show, so the
-// note carries the reason instead.
+// '3h 40m @ shipper · 2h free · $75/h'. Driven by whether the row actually has a
+// billed clock, NOT by the type code — types are a lookup now, so a manager can
+// add an hourly type that isn't called "detention" and it must read the same.
+// Flat types have no clock, so the note carries the reason instead.
 export function basisText(r) {
-  if (r.accessorial_type !== 'detention') return r.notes?.trim() || null
+  const hourly = r.detained_minutes != null || r.rate_per_hour != null
+  if (!hourly) return r.notes?.trim() || null
   const parts = []
   const det = fmtMinutes(r.detained_minutes)
   if (det) parts.push(r.location ? `${det} @ ${r.location}` : det)
@@ -116,8 +122,8 @@ export function basisText(r) {
   return parts.length ? parts.join(' · ') : (r.notes?.trim() || null)
 }
 
-// How promptly a claim was filed, measured against the load's delivery date.
-// A NEGATIVE lag is legitimate — detention at the shipper is claimed days before
+// How promptly a request was filed, measured against the load's delivery date.
+// A NEGATIVE lag is legitimate — detention at the shipper is requested days before
 // the load delivers — so it reads "filed before delivery", never "-1d late".
 export function filingMeta(lag) {
   if (lag == null) return null
@@ -129,11 +135,11 @@ export function filingMeta(lag) {
   return { label: `+${n}d`, cls: 'text-red-600 dark:text-red-400 font-semibold' }
 }
 
-// How long a claim has been outstanding, measured from event_date — the load's
+// How long a request has been outstanding, measured from event_date — the load's
 // delivery date, never filed_at. Red past 21 to match the aging buckets above
 // the table.
 //
-// days_awaiting goes NEGATIVE for a claim raised before the load delivers
+// days_awaiting goes NEGATIVE for a request raised before the load delivers
 // (detention at the shipper does exactly that), so it reads "delivers in 3 days"
 // rather than "-3d awaiting". Nothing is outstanding until the load has run.
 export function awaitingMeta(days) {

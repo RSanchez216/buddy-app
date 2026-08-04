@@ -9,12 +9,12 @@ import {
 } from './accountingData'
 import { ConfirmCollectedModal } from './SoftMatchStrip'
 
-// One claim, with the two things Accounting does to it: record what the broker
+// One accessorial request, with the two things Accounting does to it: record what the broker
 // said (the same RPC the night team uses, for replies that land during the day)
 // and confirm the money arrived. Collection is the only gated action, and the
 // gate lives on the server — we show the refusal rather than hiding the button.
 
-export default function ClaimDetail({ row, focusDocs, onClose, onChanged, toast }) {
+export default function RequestDetail({ row, focusDocs, onClose, onChanged, toast }) {
   const [docs, setDocs] = useState(null)
   const [showDocs, setShowDocs] = useState(!!focusDocs)
   const [replying, setReplying] = useState(false)
@@ -118,7 +118,7 @@ export default function ClaimDetail({ row, focusDocs, onClose, onChanged, toast 
           )}
           {collected && (
             <p className="text-[11px] text-emerald-600 dark:text-emerald-400">
-              Collected{row.collected_by ? ` · confirmed by ${row.collected_by}` : ''}. This claim is closed.
+              Collected{row.collected_by ? ` · confirmed by ${row.collected_by}` : ''}. This request is closed.
             </p>
           )}
 
@@ -133,7 +133,7 @@ export default function ClaimDetail({ row, focusDocs, onClose, onChanged, toast 
                 {docs == null ? (
                   <div className="h-6 rounded bg-gray-100 dark:bg-white/5 animate-pulse" />
                 ) : docs.length === 0 ? (
-                  <p className="text-[11px] text-gray-400 dark:text-slate-500 italic">Nothing attached to this claim.</p>
+                  <p className="text-[11px] text-gray-400 dark:text-slate-500 italic">Nothing attached to this request.</p>
                 ) : docs.map(d => (
                   <div key={d.id} className="flex items-center gap-2 text-[11px]">
                     <span className="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/5 text-gray-600 dark:text-slate-300 shrink-0">{docTypeLabel(d.doc_type)}</span>

@@ -7,9 +7,9 @@ import { money, fmtDate, rangeForDays } from '../lumperData'
 import { copyText } from '../../shift-board/shiftBoardData'
 import SummaryBand from './SummaryBand'
 import SoftMatchStrip, { ConfirmCollectedModal } from './SoftMatchStrip'
-import ClaimDetail from './ClaimDetail'
+import RequestDetail from './RequestDetail'
 import {
-  STATUSES, TYPES, statusMeta, typeLabel,
+  STATUSES, statusMeta, typeLabel, fetchAccessorialTypes,
   fetchAccessorialsSummary, fetchAccessorialsList, fetchSoftMatches,
   fetchPayrollText, confirmCollected, dismissSoftMatch,
   basisText, filingMeta, awaitingMeta,
@@ -23,9 +23,9 @@ const RANGE_PRESETS = [
   ['custom', 'Custom'],
 ]
 
-const COLS = ['Date', 'Driver', 'Load', 'Broker', 'Type', 'Basis', 'Claimed', 'Approved', 'Collected', 'Status', 'Docs', 'Raised by', 'Filed']
+const COLS = ['Date', 'Driver', 'Load', 'Broker', 'Type', 'Basis', 'Requested', 'Approved', 'Collected', 'Status', 'Docs', 'Raised by', 'Filed']
 const COLSPAN = COLS.length
-const RIGHT = new Set(['Claimed', 'Approved', 'Collected'])
+const RIGHT = new Set(['Requested', 'Approved', 'Collected'])
 
 export default function AccessorialsTab({ onCount }) {
   const { profile: me } = useAuth()
@@ -35,6 +35,7 @@ export default function AccessorialsTab({ onCount }) {
   const [summary, setSummary] = useState(null)
   const [rows, setRows] = useState([])
   const [matches, setMatches] = useState([])
+  const [typeOptions, setTypeOptions] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
 
@@ -69,15 +70,17 @@ export default function AccessorialsTab({ onCount }) {
     if (!range?.start || !range?.end) return
     setLoading(true); setError(false)
     try {
-      const [sum, list, sm] = await Promise.all([
+      const [sum, list, sm, ty] = await Promise.all([
         fetchAccessorialsSummary(range.start, range.end),
         fetchAccessorialsList({
           from: range.start, to: range.end,
           statuses: [...statuses], types: [...types], query: search,
         }),
         fetchSoftMatches().catch(() => []), // the strip is a bonus, never fatal
+        // In the same round trip as the rows, so the label cache is warm before they render.
+        fetchAccessorialTypes().catch(() => []),
       ])
-      setSummary(sum); setRows(list); setMatches(sm)
+      setSummary(sum); setRows(list); setMatches(sm); setTypeOptions(ty)
     } catch (e) {
       setError(true)
       toast.error("Couldn't load accessorials", e)
@@ -120,11 +123,11 @@ export default function AccessorialsTab({ onCount }) {
   }
 
   const totals = useMemo(() => rows.reduce((acc, r) => {
-    acc.claimed += Number(r.claimed_amount) || 0
+    acc.requested += Number(r.claimed_amount) || 0
     acc.approved += Number(r.approved_amount) || 0
     acc.collected += Number(r.collected_amount) || 0
     return acc
-  }, { claimed: 0, approved: 0, collected: 0 }), [rows])
+  }, { requested: 0, approved: 0, collected: 0 }), [rows])
 
   return (
     <div className="space-y-5">
@@ -146,7 +149,7 @@ export default function AccessorialsTab({ onCount }) {
       <div className="flex flex-wrap items-center gap-2">
         <FilterChips options={STATUSES} selected={statuses} onToggle={k => toggle(statuses, setStatuses, k)} />
         <span className="w-px h-5 bg-gray-200 dark:bg-white/10" />
-        <FilterChips options={TYPES.map(t => [t.value, t.label])} selected={types} onToggle={k => toggle(types, setTypes, k)} />
+        <FilterChips options={typeOptions.map(t => [t.code, t.label])} selected={types} onToggle={k => toggle(types, setTypes, k)} />
         <div className="relative flex-1 min-w-[180px] max-w-xs">
           <input
             value={searchInput} onChange={e => setSearchInput(e.target.value)}
@@ -182,20 +185,20 @@ export default function AccessorialsTab({ onCount }) {
                 <tr><td colSpan={COLSPAN} className="px-4 py-12 text-center text-sm text-red-600 dark:text-red-400">Couldn&apos;t load accessorials for this range.</td></tr>
               ) : rows.length === 0 ? (
                 <tr><td colSpan={COLSPAN} className="px-4 py-12 text-center text-sm text-gray-400 dark:text-slate-500">
-                  {filtersActive ? 'No claims match the current filters.' : 'No claims raised in this range yet.'}
+                  {filtersActive ? 'No accessorial requests match the current filters.' : 'No accessorial requests in this range yet.'}
                 </td></tr>
               ) : (
                 <>
                   {rows.map(r => (
-                    <ClaimRow key={r.id} r={r}
+                    <RequestRow key={r.id} r={r}
                       onOpen={() => setDetail({ row: r, focusDocs: false })}
                       onDocs={() => setDetail({ row: r, focusDocs: true })} />
                   ))}
                   <tr className="bg-gray-50 dark:bg-white/[0.03] border-t border-gray-200 dark:border-white/10 font-semibold">
                     <td colSpan={6} className="px-4 py-2.5 text-[11px] uppercase tracking-wide text-gray-500 dark:text-slate-400">
-                      {rows.length} claim{rows.length === 1 ? '' : 's'}
+                      {rows.length} request{rows.length === 1 ? '' : 's'}
                     </td>
-                    <td className="px-3 py-2.5 text-right font-mono tabular-nums text-gray-900 dark:text-white">{money(totals.claimed)}</td>
+                    <td className="px-3 py-2.5 text-right font-mono tabular-nums text-gray-900 dark:text-white">{money(totals.requested)}</td>
                     <td className="px-3 py-2.5 text-right font-mono tabular-nums text-blue-700 dark:text-blue-300">{money(totals.approved)}</td>
                     <td className="px-3 py-2.5 text-right font-mono tabular-nums text-emerald-600 dark:text-emerald-400">{money(totals.collected)}</td>
                     <td colSpan={4} />
@@ -208,7 +211,7 @@ export default function AccessorialsTab({ onCount }) {
       </div>
 
       {detail && (
-        <ClaimDetail row={detail.row} focusDocs={detail.focusDocs} toast={toast}
+        <RequestDetail row={detail.row} focusDocs={detail.focusDocs} toast={toast}
           onClose={() => setDetail(null)} onChanged={reload} />
       )}
 
@@ -247,7 +250,7 @@ function FilterChips({ options, selected, onToggle }) {
   )
 }
 
-function ClaimRow({ r, onOpen, onDocs }) {
+function RequestRow({ r, onOpen, onDocs }) {
   const meta = statusMeta(r.status)
   const basis = basisText(r)
   const filing = filingMeta(r.filing_lag_days)

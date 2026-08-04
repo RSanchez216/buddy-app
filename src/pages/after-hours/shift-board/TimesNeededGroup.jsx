@@ -24,7 +24,7 @@ export default function TimesNeededGroup({ exceptions, expanded, onToggle, onOpe
           <svg className={`w-3.5 h-3.5 shrink-0 text-amber-500 transition-transform ${expanded ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
           <span className="text-sm font-bold uppercase tracking-wide text-amber-700 dark:text-amber-400">Times needed</span>
           <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300">{n}</span>
-          {!expanded && <span className="text-xs text-gray-400 dark:text-slate-500 truncate">· checkpoint times a detention claim may need</span>}
+          {!expanded && <span className="text-xs text-gray-400 dark:text-slate-500 truncate">· checkpoint times a detention request may need</span>}
         </button>
       </div>
 

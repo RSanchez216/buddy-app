@@ -4,7 +4,7 @@ import { S } from '../../../../lib/styles'
 import { money, todayChicago } from '../lumperData'
 import { typeLabel, matchKindMeta } from './accountingData'
 
-// A rate confirmation changed on a load that still has an unpaid claim. That is
+// A rate confirmation changed on a load that still has an unpaid request. That is
 // a SUGGESTION, not a fact — the broker may have raised the linehaul for an
 // unrelated reason. Nothing is written until someone confirms or dismisses.
 
@@ -18,7 +18,7 @@ export default function SoftMatchStrip({ matches, onConfirm, onDismiss, busyId }
         <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0" />
         <span className="text-sm font-bold text-blue-800 dark:text-blue-300">{matches.length} possible match{matches.length === 1 ? '' : 'es'}</span>
         <span className="text-xs text-blue-700/80 dark:text-blue-400/80 truncate">
-          — a rate confirmation changed on a load with an unpaid claim. Nothing is updated until someone confirms.
+          — a rate confirmation changed on a load with an unpaid accessorial request. Nothing is updated until someone confirms.
         </span>
         <svg className={`ml-auto w-3.5 h-3.5 shrink-0 text-blue-500 transition-transform ${open ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
       </button>
@@ -38,7 +38,7 @@ export default function SoftMatchStrip({ matches, onConfirm, onDismiss, busyId }
 
 function MatchRow({ m, onConfirm, onDismiss, busy }) {
   const kind = matchKindMeta(m.match_kind)
-  const claim = m.approved_amount ?? m.claimed_amount
+  const requested = m.approved_amount ?? m.claimed_amount
 
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5">
@@ -48,7 +48,7 @@ function MatchRow({ m, onConfirm, onDismiss, busy }) {
           <span className="font-normal text-gray-500 dark:text-slate-400"> · {m.driver_name || '—'}</span>
         </p>
         <p className="text-[11px] text-gray-500 dark:text-slate-400">
-          {typeLabel(m.accessorial_type)} claim {money(claim)}
+          {typeLabel(m.accessorial_type)} request {money(requested)}
         </p>
       </div>
 
@@ -59,7 +59,7 @@ function MatchRow({ m, onConfirm, onDismiss, busy }) {
 
       <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border whitespace-nowrap ${kind.cls}`}>{kind.label}</span>
       {m.match_kind === 'partial' && (
-        <span className="text-[11px] text-amber-600 dark:text-amber-400">short of the claim — a different decision</span>
+        <span className="text-[11px] text-amber-600 dark:text-amber-400">short of the request — a different decision</span>
       )}
 
       <div className="ml-auto flex items-center gap-2 shrink-0">
@@ -106,7 +106,7 @@ export function ConfirmCollectedModal({ target, onClose, onSubmit }) {
         <div>
           <h3 className="text-base font-bold text-gray-900 dark:text-white">Confirm collected</h3>
           <p className="text-xs text-gray-500 dark:text-slate-500 mt-0.5 truncate">
-            {target?.label || 'Claim'}
+            {target?.label || 'Request'}
           </p>
         </div>
         <div className="grid grid-cols-2 gap-3">
@@ -122,7 +122,7 @@ export function ConfirmCollectedModal({ target, onClose, onSubmit }) {
             <input type="date" className={S.input} value={on} max={todayChicago()} onChange={e => setOn(e.target.value || on)} />
           </div>
         </div>
-        <p className="text-[11px] text-gray-400 dark:text-slate-500">This closes the claim. Only accounting or a manager can record it.</p>
+        <p className="text-[11px] text-gray-400 dark:text-slate-500">This closes the request. Only accounting or a manager can record it.</p>
         {err && <div className={S.errorBox}>{err}</div>}
         <div className="flex justify-end gap-2 pt-1">
           <button onClick={onClose} disabled={busy} className={S.btnCancel}>Cancel</button>
