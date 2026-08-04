@@ -89,18 +89,29 @@ const STATUS_RANK = { awaiting: 4, denied: 3, approved: 2, collected: 1 }
 
 // ── The request maths ─────────────────────────────────────────────────────────
 // (detained − free) billed by the hour, rounded UP to the next hour — the way
-// brokers pay it. Returns zeroes rather than NaN for a half-typed rate.
+// brokers pay it, and the way raise_accessorial computes it server-side.
+//
+// The subtraction happens in MINUTES and only then converts to hours. Doing it
+// in whole hours loses the remainder: 221 − 120 is 101 minutes, which is 2
+// billable hours, but 3h − 2h truncates to 1 and then to 0.
+//
+// The hours are also independent of the rate. They used to share an early return
+// with it, so a type whose default_rate is null (Detention has none) rendered
+// "0 billable hours" until a rate was typed — and the amount never auto-filled,
+// which meant every request was keyed by hand.
 export function computeAmount(detainedMinutes, freeMinutes, ratePerHour) {
   const det = Number(detainedMinutes)
   const free = Number(freeMinutes)
   const rate = Number(ratePerHour)
   const safeFree = Number.isFinite(free) ? Math.max(0, free) : 0
-  if (!Number.isFinite(det) || det <= 0 || !Number.isFinite(rate) || rate <= 0) {
-    return { billableMinutes: 0, hours: 0, amount: 0 }
-  }
-  const billableMinutes = Math.max(0, det - safeFree)
+  if (!Number.isFinite(det) || det <= 0) return { billableMinutes: 0, hours: 0, amount: 0 }
+
+  const billableMinutes = Math.max(det - safeFree, 0)
   const hours = Math.ceil(billableMinutes / 60)
-  return { billableMinutes, hours, amount: Math.round(hours * rate * 100) / 100 }
+  const amount = Number.isFinite(rate) && rate > 0
+    ? Math.round(hours * rate * 100) / 100
+    : 0
+  return { billableMinutes, hours, amount }
 }
 
 // Whole minutes between two instants; `b` null means "still sitting there", so

@@ -101,10 +101,20 @@ export async function fetchWeekSummary(start, end) {
   if (error) throw error
   return data || null
 }
+// Stops are parsed ONCE here, not on every render, and every component reads the
+// parsed fields rather than the raw string. When after_hours_board is eventually
+// changed to return these columns itself — which is what finally takes the raw
+// strings off the wire — this mapping is the only thing that goes.
 export async function fetchBoard(shiftId) {
   const { data, error } = await supabase.rpc('after_hours_board', { p_shift_id: shiftId ?? null })
   if (error) throw error
-  return data || []
+  return (data || []).map(r => ({
+    ...r,
+    origin_city: stopCity(r.origin),
+    origin_state: stopState(r.origin),
+    destination_city: stopCity(r.destination),
+    destination_state: stopState(r.destination),
+  }))
 }
 // Tab headers with progress + tone, measured against the open shift (or since
 // midnight Chicago when off-shift). Returns { raised, active, never } where each
@@ -274,12 +284,39 @@ export function elapsedSince(ts) {
   const h = Math.floor(mins / 60), m = mins % 60
   return h > 0 ? `${h}h ${m}m` : `${m}m`
 }
-// 'Pleasanton, TX, US (CST) …' → 'Pleasanton, TX'.
+// ── Stop strings ────────────────────────────────────────────────────────────
+// 'Pleasanton, TX, US (CST) …' → city 'Pleasanton', state 'TX'.
+//
+// These mirror the server helpers parse_stop_city / parse_stop_state rule for
+// rule, and are verified equal against them across every board row. The old
+// version just took the first two comma fields, which happily rendered a date
+// fragment as a city on the malformed TMS records — hence the explicit rejects.
+//
+// NOTE: this is still parsed in the browser. Actually getting the raw strings
+// off the wire (29% of the board payload) needs after_hours_board to return the
+// parsed columns, which is a migration and out of scope here.
+const stopField = (raw, n) => String(raw).split(',')[n - 1] ?? ''
+
+// A real stop has a 2-letter state in the second comma field.
+export function stopState(raw) {
+  if (raw == null) return null
+  const m = stopField(raw, 2).trim().match(/^[A-Za-z]{2}/)
+  return m ? m[0] : null
+}
+export function stopCity(raw) {
+  if (raw == null) return null
+  if (!stopState(raw)) return null
+  const first = stopField(raw, 1).trim()
+  if (/\d{2}-\d{2}-\d{4}/.test(first)) return null   // a date, not a city
+  if (['US', 'USA', 'CA', 'MX'].includes(first.toUpperCase())) return null
+  return first || null
+}
+// 'Pleasanton, TX' for the row table; '' when the record won't parse.
 export function cityOf(s) {
-  if (!s) return ''
-  const parts = String(s).split(',')
-  if (parts.length < 2) return String(s).trim()
-  return `${parts[0].trim()}, ${parts[1].trim()}`
+  const city = stopCity(s)
+  if (!city) return ''
+  const st = stopState(s)
+  return st ? `${city}, ${st}` : city
 }
 export function money(n, dp = 0) {
   if (n == null) return '$0'

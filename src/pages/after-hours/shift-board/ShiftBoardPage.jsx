@@ -103,6 +103,16 @@ export default function ShiftBoardPage() {
     setRowActions(ra); setBoardTabs(tb); setSummary(sm)
   }, [refresh])
 
+  // Checkpoint times just saved — patch the board row in place rather than
+  // refetching 131 rows for four timestamps. Panel ② reads its detained minutes
+  // from this row, so without it the times saved in panel ① were invisible there
+  // until a reload. A load can carry more than one board row (team loads), so
+  // every matching row is patched.
+  const applyCheckpointTimes = useCallback((loadId, patch) => {
+    if (!loadId || !patch) return
+    setBoard(prev => prev.map(r => (r.load_id === loadId ? { ...r, ...patch } : r)))
+  }, [])
+
   const load = useCallback(async () => {
     setLoading(true); setError(false)
     try {
@@ -510,7 +520,7 @@ export default function ShiftBoardPage() {
               rowActionsByDriver={rowActionsByDriver} recipientsById={recipientsById} meId={me?.id} isManager={isManager}
               highlightDriver={highlightDriver} stateSort={stateSort} onToggleStateSort={toggleStateSort}
               onOk={onOk} onAct={openAct} onAcknowledge={onAcknowledge} onCopyEscalation={copyEscalation} onOpenRequest={setOpenRequestId}
-              shiftId={shift?.id ?? null} canAddTypes={isManager}
+              shiftId={shift?.id ?? null} canAddTypes={isManager} onTimesSaved={applyCheckpointTimes}
               openDriverId={openDriverId} onToggleDriver={(id) => setOpenDriverId(cur => (cur === id ? null : id))}
               accByLoad={accByLoad} exByLoad={exByLoad} toast={toast}
               onAccessorialChanged={async () => { setAccTick(t => t + 1); await refreshActions() }} />
@@ -536,7 +546,9 @@ const TAB_STYLE = {
   orange: { text: 'text-orange-600 dark:text-orange-400',  underline: 'bg-orange-500',  chip: 'bg-orange-100 dark:bg-orange-500/20 text-orange-700 dark:text-orange-300' },
   amber:  { text: 'text-amber-600 dark:text-amber-400',    underline: 'bg-amber-500',   chip: 'bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300' },
   green:  { text: 'text-emerald-600 dark:text-emerald-400', underline: 'bg-emerald-500', chip: 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300' },
-  slate:  { text: 'text-slate-500 dark:text-slate-400',    underline: 'bg-slate-400',   chip: 'bg-slate-100 dark:bg-slate-500/20 text-slate-600 dark:text-slate-300' },
+  // Idle sits outside the orange family on purpose — those drivers need
+  // attention this week, not tonight. #A21CAF is Tailwind fuchsia-700.
+  purple: { text: 'text-[#A21CAF] dark:text-fuchsia-400',   underline: 'bg-[#A21CAF]',  chip: 'bg-fuchsia-100 dark:bg-fuchsia-500/20 text-[#A21CAF] dark:text-fuchsia-300' },
   grey:   { text: 'text-gray-600 dark:text-slate-300',     underline: 'bg-gray-400',    chip: 'bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-slate-300' },
 }
 // Client-side row search over the already-loaded fields (no refetch). Origin and
@@ -553,7 +565,7 @@ const RPC_KEY = { raised: 'raised', todo: 'active', never_dispatched: 'never' }
 // One colour per tab so the bar reads at a glance instead of a wall of orange.
 // Idle sits outside the orange family on purpose: those drivers need attention
 // this week, not tonight.
-const GROUP_TONE = { raised: 'red', uncovered: 'orange', due: 'amber', idle: 'slate', todo: 'green', never_dispatched: 'grey' }
+const GROUP_TONE = { raised: 'red', uncovered: 'orange', due: 'amber', idle: 'purple', todo: 'green', never_dispatched: 'grey' }
 
 // 'YYYY-MM-DD' → 'Jul 27' (Chicago-agnostic — the range is already date-only).
 function shortDay(v) {

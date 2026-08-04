@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { cityOf, fmtClock, fmtDuration, todayChicago, lifecycleLabel } from './shiftBoardData'
+import { fmtClock, fmtDuration, todayChicago, lifecycleLabel } from './shiftBoardData'
 import { statusBadge } from '../requests/requestsData'
 import AccessorialPanel from './AccessorialPanel'
 import { statusMeta } from './accessorialData'
+
+// 'Greenville' + 'NC' → 'Greenville, NC'; '' when the record wouldn't parse, so a
+// malformed TMS row shows a dash rather than a date fragment.
+const cityLabel = (city, st) => (city ? (st ? `${city}, ${st}` : city) : '')
 
 // 'Edil Eraliev' → 'Edil E.' for compact recipient labels.
 function shortName(full) {
@@ -35,12 +39,49 @@ const ACTIVITY_ACTIONS = [
 // Rendered as the body of the active tab. The tab bar carries the heading/count;
 // this is the driver table. It owns the vertical scroll (flex-1) with a sticky
 // header so the bands and tabs above stay put while the list scrolls.
-export default function PriorityGroup({ group, rows, settings, shift, rowActionsByDriver, recipientsById, meId, isManager, highlightDriver, stateSort, onToggleStateSort, onOk, onAct, onAcknowledge, onCopyEscalation, onOpenRequest, openDriverId, onToggleDriver, accByLoad, exByLoad, toast, onAccessorialChanged, shiftId, canAddTypes }) {
+export default function PriorityGroup({ group, rows, settings, shift, rowActionsByDriver, recipientsById, meId, isManager, highlightDriver, stateSort, onToggleStateSort, onOk, onAct, onAcknowledge, onCopyEscalation, onOpenRequest, openDriverId, onToggleDriver, accByLoad, exByLoad, toast, onAccessorialChanged, onTimesSaved, shiftId, canAddTypes }) {
   const curYear = Number(todayChicago().slice(0, 4))
   const cols = columnsFor(settings)
   // The row panel carries whichever phases are on — checkpoints, accessorials or
   // both. Checkpoint times are entered in it, so it must open for either.
   const panelOn = !!settings?.accessorials_enabled || !!settings?.track_checkpoints
+
+  // Windowed rendering. 128 rows × ~12 columns is a lot of DOM to build before
+  // the board is interactive on a slow link, and almost none of it is on screen.
+  // Render a page at a time and extend when the sentinel scrolls into view —
+  // scrolling stays native and row heights stay honest, unlike fixed-height
+  // virtualisation, which the two-line driver cell and the expandable panel would
+  // both break.
+  const PAGE = 30
+  const sentinelRef = useRef(null)
+  // The window is keyed by tab + row count, so changing either restarts it
+  // without an effect that would setState during render and cascade.
+  const winKey = `${group.key}:${rows.length}`
+  const [win, setWin] = useState({ key: winKey, limit: PAGE })
+  const limit = win.key === winKey ? win.limit : PAGE
+
+  useEffect(() => {
+    const el = sentinelRef.current
+    if (!el || limit >= rows.length) return
+    const io = new IntersectionObserver(
+      entries => {
+        // Extend before they reach the bottom, so scrolling never stalls.
+        if (entries.some(e => e.isIntersecting)) {
+          setWin({ key: winKey, limit: Math.min(limit + PAGE, rows.length) })
+        }
+      },
+      { rootMargin: '400px' },
+    )
+    io.observe(el)
+    return () => io.disconnect()
+  }, [limit, rows.length, winKey])
+
+  // An expanded row must render even when it sits past the window — the
+  // Times-needed jump and the ?driver= deep link both land on arbitrary rows.
+  const openIdx = openDriverId ? rows.findIndex(r => r.driver_id === openDriverId) : -1
+  const highlightIdx = highlightDriver ? rows.findIndex(r => r.driver_id === highlightDriver) : -1
+  const effectiveLimit = Math.max(limit, openIdx + 1, highlightIdx + 1)
+  const visible = rows.slice(0, effectiveLimit)
 
   return (
     <div className="flex-1 min-h-0 flex flex-col rounded-2xl border border-gray-200 dark:border-white/10 overflow-hidden">
@@ -73,15 +114,22 @@ export default function PriorityGroup({ group, rows, settings, shift, rowActions
               </tr>
             </thead>
             <tbody>
-              {rows.map(r => (
+              {visible.map(r => (
                 <BoardRow key={r.driver_id} r={r} curYear={curYear} settings={settings} shift={shift}
                   ra={rowActionsByDriver?.get(r.driver_id)} recipientsById={recipientsById} meId={meId} isManager={isManager}
                   highlighted={highlightDriver === r.driver_id}
                   onOk={onOk} onAct={onAct} onAcknowledge={onAcknowledge} onCopyEscalation={onCopyEscalation} onOpenRequest={onOpenRequest}
                   colSpan={cols.length} panelOpen={panelOn && openDriverId === r.driver_id} onToggleDriver={onToggleDriver}
                   acc={r.load_id ? accByLoad?.get(r.load_id) : null} exception={r.load_id ? exByLoad?.get(r.load_id) : null}
-                  toast={toast} onAccessorialChanged={onAccessorialChanged} shiftId={shiftId} canAddTypes={canAddTypes} />
+                  toast={toast} onAccessorialChanged={onAccessorialChanged} onTimesSaved={onTimesSaved} shiftId={shiftId} canAddTypes={canAddTypes} />
               ))}
+              {effectiveLimit < rows.length && (
+                <tr ref={sentinelRef}>
+                  <td colSpan={cols.length} className="px-3 py-3 text-center text-[11px] text-gray-400 dark:text-slate-500">
+                    Showing {effectiveLimit} of {rows.length} — scroll for more
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -234,7 +282,7 @@ function AccessorialCell({ acc, exception }) {
   return <span className="text-gray-300 dark:text-slate-600">—</span>
 }
 
-function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isManager, highlighted, onOk, onAct, onAcknowledge, onCopyEscalation, onOpenRequest, colSpan, panelOpen, onToggleDriver, acc, exception, toast, onAccessorialChanged, shiftId, canAddTypes }) {
+function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isManager, highlighted, onOk, onAct, onAcknowledge, onCopyEscalation, onOpenRequest, colSpan, panelOpen, onToggleDriver, acc, exception, toast, onAccessorialChanged, onTimesSaved, shiftId, canAddTypes }) {
   const muted = r.in_scope === false
   const panelOn = !!settings?.accessorials_enabled || !!settings?.track_checkpoints
 
@@ -245,7 +293,8 @@ function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isMan
     if (e.target.closest('button, input, a, select, textarea, label')) return
     onToggleDriver?.(r.driver_id)
   }
-  const o = cityOf(r.origin), d = cityOf(r.destination)
+  // Parsed once in fetchBoard — never re-parsed per render.
+  const o = cityLabel(r.origin_city, r.origin_state), d = cityLabel(r.destination_city, r.destination_state)
   const pu = fmtLoadDate(r.pickup_date, curYear), dl = fmtLoadDate(r.delivery_date, curYear)
 
   // Per-driver action state — prefer the shift_row_actions payload, fall back to
@@ -418,7 +467,7 @@ function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isMan
       <tr className="border-b border-gray-100 dark:border-white/[0.03]">
         <td colSpan={colSpan} className="p-0">
           <AccessorialPanel row={r} exception={exception} meId={meId} toast={toast}
-            onChanged={onAccessorialChanged} shiftId={shiftId}
+            onChanged={onAccessorialChanged} onTimesSaved={onTimesSaved} shiftId={shiftId}
             accessorialsOn={!!settings?.accessorials_enabled} trackCheckpoints={!!settings?.track_checkpoints}
             canAddTypes={canAddTypes} />
         </td>

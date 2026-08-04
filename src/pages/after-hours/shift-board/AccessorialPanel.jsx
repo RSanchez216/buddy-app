@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { S } from '../../../lib/styles'
-import { cityOf, copyText, fmtClock, fmtDuration, money } from './shiftBoardData'
+import { copyText, fmtClock, fmtDuration, money } from './shiftBoardData'
 import CheckpointFields from './CheckpointFields'
 import {
   DOC_TYPES, RESPONSES, typeLabel, docTypeLabel, statusMeta,
@@ -30,7 +31,7 @@ const normalizeInt = (s) => String(s).replace(/[^0-9]/g, '')
 const EYEBROW = 'text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500'
 
 export default function AccessorialPanel({
-  row, exception, meId, toast, onChanged, shiftId,
+  row, exception, meId, toast, onChanged, onTimesSaved, shiftId,
   accessorialsOn = true, trackCheckpoints = true, canAddTypes,
 }) {
   const loadId = row.load_id || null
@@ -95,7 +96,7 @@ export default function AccessorialPanel({
   const receiverMinutes = minutesBetween(row.cp_delivery_in, row.cp_delivery_out)
   const detainedMinutes = stop === 'shipper' ? shipperMinutes : receiverMinutes
   // `location` is constrained to 'shipper' | 'receiver' — the stop, not the city.
-  const stopCity = stop === 'shipper' ? cityOf(row.origin) : cityOf(row.destination)
+  const stopCityLabel = stop === 'shipper' ? row.origin_city : row.destination_city
 
   const calc = useMemo(
     () => computeAmount(detainedMinutes, freeMin, rate),
@@ -188,7 +189,9 @@ export default function AccessorialPanel({
         {/* ① Checkpoint times — inline, no modal */}
         {trackCheckpoints && (
           <Column n={1} title="Checkpoint times">
-            <CheckpointFields row={row} shiftId={shiftId} toast={toast} onSaved={onChanged} />
+            <CheckpointFields row={row} shiftId={shiftId} toast={toast}
+              freeMinutes={flat ? null : num(freeMin)}
+              onSaved={onChanged} onTimesSaved={onTimesSaved} />
           </Column>
         )}
 
@@ -234,7 +237,7 @@ export default function AccessorialPanel({
                         {l}
                       </button>
                     ))}
-                    {stopCity && <span className="text-[11px] text-gray-400 dark:text-slate-500 truncate">{stopCity}</span>}
+                    {stopCityLabel && <span className="text-[11px] text-gray-400 dark:text-slate-500 truncate">{stopCityLabel}</span>}
                   </div>
 
                   <div className="grid grid-cols-2 gap-2 mt-3">
@@ -349,7 +352,7 @@ export default function AccessorialPanel({
       )}
 
       {addingType && (
-        <AddTypeForm
+        <AddTypeModal
           onClose={() => setAddingType(false)}
           onAdded={async (code) => {
             await loadTypes()
@@ -357,7 +360,6 @@ export default function AccessorialPanel({
             setAddingType(false)
             toast?.success('Accessorial type added')
           }}
-          toast={toast}
         />
       )}
     </div>
@@ -366,13 +368,22 @@ export default function AccessorialPanel({
 
 // Adding a type is a manager action; the RPC re-checks, so a refusal shows here
 // verbatim rather than the form pretending it worked.
-function AddTypeForm({ onClose, onAdded, toast }) {
+//
+// A centred modal rather than an inline block: expanded inside the row it pushed
+// the whole panel down and landed below the fold.
+function AddTypeModal({ onClose, onAdded }) {
   const [label, setLabel] = useState('')
   const [basis, setBasis] = useState('flat')
   const [freeMin, setFreeMin] = useState('')
   const [rate, setRate] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose?.() } }
+    document.addEventListener('keydown', onKey, true)
+    return () => document.removeEventListener('keydown', onKey, true)
+  }, [onClose])
 
   async function submit() {
     setErr('')
@@ -387,53 +398,87 @@ function AddTypeForm({ onClose, onAdded, toast }) {
       })
       await onAdded?.(res.code)
     } catch (e) {
-      setErr(e?.message || 'Could not add the type.')
-      toast?.error(e?.message || 'Could not add the type.')
+      setErr(e?.message || 'Could not add the type.') // RPC reason, verbatim
     } finally { setBusy(false) }
   }
 
-  return (
-    <div className="rounded-xl border border-orange-200 dark:border-orange-500/30 bg-orange-50/60 dark:bg-orange-500/[0.06] p-3">
-      <p className="text-xs font-semibold text-gray-900 dark:text-white mb-2">Add an accessorial type</p>
-      <div className="flex flex-wrap items-end gap-2">
-        <div className="min-w-[160px]">
-          <label className={S.label}>Label</label>
-          <input autoFocus className={`${S.input} !py-1 text-xs`} value={label} onChange={e => setLabel(e.target.value)} placeholder="Driver Assist" />
+  return createPortal(
+    <div className="fixed inset-0 z-[130] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/50 dark:bg-black/70 backdrop-blur-sm" onClick={onClose} />
+      <div role="dialog" aria-modal="true" aria-labelledby="add-type-title"
+        className="relative w-full max-w-sm rounded-2xl border border-gray-200 dark:border-white/10 bg-white dark:bg-[#0B1120] shadow-2xl">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-white/5">
+          <h3 id="add-type-title" className="text-base font-bold text-gray-900 dark:text-white">Add accessorial type</h3>
+          <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-700 dark:hover:text-slate-200">
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
         </div>
-        <div>
-          <label className={S.label}>Basis</label>
-          <div className="flex items-center gap-1">
-            {[['flat', 'Flat'], ['hourly', 'Hourly']].map(([v, l]) => (
-              <button key={v} type="button" onClick={() => setBasis(v)}
-                className={`px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-colors ${
-                  basis === v ? 'bg-orange-500 text-white border-orange-500'
-                    : 'border-gray-300 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-white dark:hover:bg-white/5'
-                }`}>{l}</button>
-            ))}
+
+        <div className="p-5 space-y-4">
+          <div>
+            <label className={S.label}>Label</label>
+            <input autoFocus className={S.input} value={label}
+              onChange={e => setLabel(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') submit() }}
+              placeholder="Driver Assist" />
           </div>
+
+          <div>
+            <label className={S.label}>How is it charged?</label>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                ['flat', 'Flat amount', 'One agreed figure'],
+                ['hourly', 'Hourly', 'Billed by the hour'],
+              ].map(([v, l, hint]) => (
+                <button key={v} type="button" onClick={() => setBasis(v)}
+                  className={`rounded-xl border px-3 py-2 text-left transition-colors ${
+                    basis === v
+                      ? 'bg-orange-500 text-white border-orange-500'
+                      : 'border-gray-300 dark:border-slate-600 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5'
+                  }`}>
+                  <span className="block text-sm font-semibold">{l}</span>
+                  <span className={`block text-[10px] ${basis === v ? 'text-white/80' : 'text-gray-400 dark:text-slate-500'}`}>{hint}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Only meaningful for an hourly type — there is no clock on a flat one. */}
+          <div className={basis === 'hourly' ? '' : 'opacity-40 pointer-events-none'}>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={S.label}>Default free minutes</label>
+                <input type="text" inputMode="numeric" className={S.input} value={freeMin}
+                  disabled={basis !== 'hourly'}
+                  onChange={e => setFreeMin(normalizeInt(e.target.value))} placeholder="120" />
+              </div>
+              <div>
+                <label className={S.label}>Default rate /h</label>
+                <input type="text" inputMode="decimal" className={S.input} value={rate}
+                  disabled={basis !== 'hourly'}
+                  onChange={e => setRate(normalizeMoney(e.target.value))} placeholder="75.00" />
+              </div>
+            </div>
+            <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1.5">Optional — prefilled on the request, and still editable per load.</p>
+          </div>
+
+          <p className="text-[11px] text-gray-500 dark:text-slate-400 rounded-lg bg-gray-50 dark:bg-white/[0.03] border border-gray-200 dark:border-white/10 p-2.5">
+            This is a shared list — a type added here appears for everyone raising an accessorial request.
+          </p>
+
+          {err && <div className={S.errorBox}>{err}</div>}
         </div>
-        {basis === 'hourly' && (
-          <>
-            <div className="w-28">
-              <label className={S.label}>Free (min)</label>
-              <input type="text" inputMode="numeric" className={`${S.input} !py-1 text-xs`} value={freeMin}
-                onChange={e => setFreeMin(normalizeInt(e.target.value))} placeholder="120" />
-            </div>
-            <div className="w-28">
-              <label className={S.label}>Rate /h</label>
-              <input type="text" inputMode="decimal" className={`${S.input} !py-1 text-xs`} value={rate}
-                onChange={e => setRate(normalizeMoney(e.target.value))} placeholder="75.00" />
-            </div>
-          </>
-        )}
-        <button type="button" onClick={submit} disabled={busy}
-          className="px-3 py-1.5 text-xs font-semibold bg-orange-500 hover:bg-orange-400 disabled:opacity-50 text-white rounded-lg transition-colors">
-          {busy ? 'Adding…' : 'Add type'}
-        </button>
-        <button type="button" onClick={onClose} className="text-[11px] text-gray-500 dark:text-slate-400 hover:underline">Cancel</button>
+
+        <div className="border-t border-gray-100 dark:border-white/5 p-4 flex items-center justify-end gap-2">
+          <button onClick={onClose} disabled={busy} className={S.btnCancel}>Cancel</button>
+          <button onClick={submit} disabled={busy}
+            className="px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 disabled:opacity-50 text-white rounded-xl transition-colors">
+            {busy ? 'Adding…' : 'Add type'}
+          </button>
+        </div>
       </div>
-      {err && <div className={`${S.errorBox} mt-2`}>{err}</div>}
-    </div>
+    </div>,
+    document.body
   )
 }
 

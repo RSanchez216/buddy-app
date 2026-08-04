@@ -3,33 +3,45 @@ import { S } from '../../../lib/styles'
 import {
   saveLoadCheckpoints, toChicagoLocalInput, chicagoLocalToISO, fmtDuration,
 } from './shiftBoardData'
-import { minutesBetween } from './accessorialData'
+import { computeAmount, minutesBetween } from './accessorialData'
+import DateTimePicker from './DateTimePicker'
 
-// The four checkpoint times, inline in the row panel. This replaces the modal
-// that used to sit on top of the board: an associate shouldn't open a window to
-// type a time they already have in front of them.
+// The checkpoint times, inline in the row panel — there is no modal.
+//
+// Laid out as two STOP blocks (pickup, delivery), each with IN and OUT side by
+// side and its own duration underneath. The duration belongs to the stop it was
+// measured at; floating it at the foot of the panel made you work out which one
+// it referred to. The panel's own width is unchanged — only its internals.
 //
 // Only fields the associate actually touches are sent, so opening this on a load
-// still sitting at the shipper never stamps a delivery time. save_load_checkpoints
-// upserts one row per load and owns the GENERATED duration columns.
+// still sitting at the shipper never stamps a delivery time.
 
-const FIELDS = [
-  { key: 'pickupIn', label: 'Pickup in', col: 'cp_pickup_in' },
-  { key: 'pickupOut', label: 'Pickup out', col: 'cp_pickup_out' },
-  { key: 'deliveryIn', label: 'Delivery in', col: 'cp_delivery_in' },
-  { key: 'deliveryOut', label: 'Delivery out', col: 'cp_delivery_out' },
+const STOPS = [
+  {
+    key: 'pickup', label: 'Pickup', at: 'shipper',
+    inKey: 'pickupIn', outKey: 'pickupOut',
+    inCol: 'cp_pickup_in', outCol: 'cp_pickup_out',
+    cityCol: 'origin_city', stateCol: 'origin_state',
+  },
+  {
+    key: 'delivery', label: 'Delivery', at: 'receiver',
+    inKey: 'deliveryIn', outKey: 'deliveryOut',
+    inCol: 'cp_delivery_in', outCol: 'cp_delivery_out',
+    cityCol: 'destination_city', stateCol: 'destination_state',
+  },
 ]
+const ALL = STOPS.flatMap(s => [
+  { key: s.inKey, col: s.inCol }, { key: s.outKey, col: s.outCol },
+])
 
-export default function CheckpointFields({ row, shiftId, onSaved, toast }) {
+export default function CheckpointFields({ row, shiftId, freeMinutes, onSaved, onTimesSaved, toast }) {
   const loadId = row.load_id || null
-  const nowLocal = toChicagoLocalInput(new Date())
 
   const build = () => {
     const f = {}
-    for (const { key, col } of FIELDS) {
-      const iso = row[col]
-      f[key] = { value: iso ? toChicagoLocalInput(iso) : nowLocal, touched: false, saved: !!iso }
-    }
+    // Empty stays EMPTY — it reads "Not recorded" rather than pre-filling now,
+    // which used to make it easy to stamp a time nobody reported.
+    for (const { key, col } of ALL) f[key] = { value: row[col] ? toChicagoLocalInput(row[col]) : '', touched: false }
     return f
   }
   const [fields, setFields] = useState(build)
@@ -43,33 +55,37 @@ export default function CheckpointFields({ row, shiftId, onSaved, toast }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [row.load_id, row.cp_pickup_in, row.cp_pickup_out, row.cp_delivery_in, row.cp_delivery_out])
 
-  const setValue = (key, value) => setFields(f => ({ ...f, [key]: { ...f[key], value, touched: true } }))
+  const setValue = (key, value) => setFields(f => ({ ...f, [key]: { value, touched: true } }))
   const setNow = (key) => setValue(key, toChicagoLocalInput(new Date()))
 
-  const dirty = FIELDS.some(({ key }) => fields[key].touched)
+  const dirty = ALL.some(({ key }) => fields[key].touched)
 
-  // Durations recompute from what's on screen, so they move as soon as a time is
-  // typed rather than waiting for the save to come back.
+  // Durations recompute from what's on screen, so they move as a time is typed
+  // rather than waiting for the save to come back.
   const isoOf = (key) => {
     const f = fields[key]
     if (f.touched) return f.value ? chicagoLocalToISO(f.value) : null
-    return row[FIELDS.find(x => x.key === key).col] || null
+    return row[ALL.find(x => x.key === key).col] || null
   }
-  const shipper = minutesBetween(isoOf('pickupIn'), isoOf('pickupOut'))
-  const receiver = minutesBetween(isoOf('deliveryIn'), isoOf('deliveryOut'))
-  const stillAtShipper = !!isoOf('pickupIn') && !isoOf('pickupOut')
-  const stillAtReceiver = !!isoOf('deliveryIn') && !isoOf('deliveryOut')
 
   async function save() {
     if (!loadId) return
     setBusy(true); setErr('')
     try {
       const payload = { loadId, shiftId }
-      for (const { key } of FIELDS) {
+      for (const { key } of ALL) {
         const f = fields[key]
         payload[key] = f.touched && f.value ? chicagoLocalToISO(f.value) : null // only changed fields
       }
       await saveLoadCheckpoints(payload)
+
+      // Hand the saved instants back so the shared board row updates. Panel ②
+      // reads its detained minutes from that row — without this it kept saying
+      // "No time recorded at this stop yet" until a page reload.
+      const patch = {}
+      for (const { key, col } of ALL) if (payload[key]) patch[col] = payload[key]
+      if (Object.keys(patch).length) onTimesSaved?.(loadId, patch)
+
       toast?.success('Checkpoint times saved')
       await onSaved?.()
     } catch (e) {
@@ -79,54 +95,85 @@ export default function CheckpointFields({ row, shiftId, onSaved, toast }) {
 
   return (
     <div>
-      <p className="text-[11px] text-gray-400 dark:text-slate-500 mb-2">
-        Times are Central (Chicago). Empty fields default to now — adjust if the driver reported late.
+      <p className="text-[11px] text-gray-400 dark:text-slate-500 mb-2.5">
+        Times are Central (Chicago). Use <span className="font-medium">Now</span> to stamp the current time, or type it.
       </p>
 
-      <div className="space-y-2">
-        {FIELDS.map(({ key, label }) => (
-          <div key={key}>
-            <label className="block text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500 mb-0.5">
-              {label}
-              {fields[key].saved && <span className="ml-1.5 text-emerald-600 dark:text-emerald-400 normal-case tracking-normal font-medium">saved</span>}
-            </label>
-            <div className="flex items-center gap-1.5">
-              <input type="datetime-local" disabled={!loadId}
-                className={`${S.input} !py-1 flex-1 text-xs ${fields[key].saved && !fields[key].touched ? 'border-emerald-300 dark:border-emerald-500/30' : ''}`}
-                value={fields[key].value} onChange={e => setValue(key, e.target.value)} />
-              <button type="button" onClick={() => setNow(key)} disabled={!loadId}
-                className="px-2 py-1 rounded-lg text-[11px] font-medium border border-gray-300 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-40">
-                Now
-              </button>
-            </div>
-          </div>
+      <div className="space-y-3">
+        {STOPS.map(stop => (
+          <StopBlock key={stop.key} stop={stop} row={row} fields={fields} isoOf={isoOf}
+            freeMinutes={freeMinutes} loadId={loadId} setValue={setValue} setNow={setNow} />
         ))}
       </div>
-
-      {(shipper != null || receiver != null) && (
-        <div className="mt-2.5 space-y-0.5">
-          {shipper != null && (
-            <p className="text-sm text-gray-800 dark:text-slate-200">
-              Detained at shipper <span className="font-bold tabular-nums">{fmtDuration(shipper)}</span>
-              {stillAtShipper && <span className="text-[11px] text-amber-600 dark:text-amber-400"> · still there</span>}
-            </p>
-          )}
-          {receiver != null && (
-            <p className="text-sm text-gray-800 dark:text-slate-200">
-              Detained at receiver <span className="font-bold tabular-nums">{fmtDuration(receiver)}</span>
-              {stillAtReceiver && <span className="text-[11px] text-amber-600 dark:text-amber-400"> · still there</span>}
-            </p>
-          )}
-        </div>
-      )}
 
       {err && <div className={`${S.errorBox} mt-2`}>{err}</div>}
 
       <button type="button" onClick={save} disabled={busy || !dirty || !loadId}
-        className="mt-2.5 w-full px-3 py-1.5 text-xs font-semibold bg-orange-500 hover:bg-orange-400 disabled:bg-gray-200 dark:disabled:bg-slate-700 disabled:text-gray-400 dark:disabled:text-slate-500 text-white rounded-lg transition-colors">
+        className="mt-3 w-full px-3 py-1.5 text-xs font-semibold bg-orange-500 hover:bg-orange-400 disabled:bg-gray-200 dark:disabled:bg-slate-700 disabled:text-gray-400 dark:disabled:text-slate-500 text-white rounded-lg transition-colors">
         {busy ? 'Saving…' : dirty ? 'Save times' : 'No changes'}
       </button>
       {!loadId && <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1.5">No load on the board — nothing to time.</p>}
+    </div>
+  )
+}
+
+function StopBlock({ stop, row, fields, isoOf, freeMinutes, loadId, setValue, setNow }) {
+  // Parsed server-side rules, applied once at fetch — never re-parsed here.
+  const city = row[stop.cityCol]
+  const st = row[stop.stateCol]
+  const inIso = isoOf(stop.inKey)
+  const outIso = isoOf(stop.outKey)
+  const mins = minutesBetween(inIso, outIso)
+  const stillThere = !!inIso && !outIso
+  const { hours } = computeAmount(mins, freeMinutes, null)
+
+  return (
+    <div className="rounded-lg border border-gray-200 dark:border-white/10 overflow-hidden">
+      <div className="flex items-center gap-1.5 px-2 py-1 bg-gray-50 dark:bg-white/[0.04] border-b border-gray-200 dark:border-white/10">
+        <span className="text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-slate-400">{stop.label}</span>
+        {/* A malformed TMS record parses to null — show a dash, never the date
+            fragment that used to leak through as a "city". */}
+        <span className="text-[11px] text-gray-600 dark:text-slate-300 truncate">
+          {city ? `${city}${st ? `, ${st}` : ''}` : '—'}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 p-2">
+        {[['IN', stop.inKey], ['OUT', stop.outKey]].map(([label, key]) => {
+          const has = !!fields[key].value
+          return (
+            <div key={key}>
+              <div className="flex items-center gap-1 mb-0.5">
+                <span className="text-[9px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500">{label}</span>
+                {has ? (
+                  <span className="text-[8px] font-bold px-1 py-px rounded bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400">SAVED</span>
+                ) : (
+                  <span className="text-[9px] text-gray-400 dark:text-slate-500 italic">Not recorded</span>
+                )}
+              </div>
+              <DateTimePicker value={fields[key].value} disabled={!loadId} tone={has ? 'saved' : 'plain'}
+                onChange={v => setValue(key, v)} />
+              <button type="button" onClick={() => setNow(key)} disabled={!loadId}
+                className="mt-1 w-full px-2 py-0.5 rounded-lg text-[10px] font-medium border border-gray-300 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-40">
+                Now
+              </button>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* The duration for THIS stop, under it. */}
+      <div className="flex items-center gap-2 px-2 py-1 border-t border-gray-100 dark:border-white/5 bg-gray-50/60 dark:bg-white/[0.02]">
+        <span className="text-[11px] text-gray-700 dark:text-slate-300">
+          {mins != null
+            ? <>Detained <span className="font-bold tabular-nums">{fmtDuration(mins)}</span>{stillThere && <span className="text-amber-600 dark:text-amber-400"> · still there</span>}</>
+            : <span className="text-gray-400 dark:text-slate-500">Not at {stop.at} yet</span>}
+        </span>
+        <span className="flex-1 border-b border-dotted border-gray-300 dark:border-white/10" />
+        <span className="text-[11px] font-semibold tabular-nums text-gray-700 dark:text-slate-300 shrink-0">
+          {mins != null && hours > 0 ? `${hours} billable hr${hours === 1 ? '' : 's'}` : '—'}
+        </span>
+      </div>
     </div>
   )
 }
