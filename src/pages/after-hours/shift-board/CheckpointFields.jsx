@@ -137,7 +137,27 @@ export default function CheckpointFields({ row, shiftId, freeMinutes, onSaved, o
   )
 }
 
+// Origin blue, destination green — the freight convention, so the shipper and
+// the receiver are told apart at a glance instead of reading as two grey boxes.
+// Only the border, the header strip and the label take the tint; the body stays
+// white so the inputs are unaffected and the block heights don't move.
+const STOP_TONE = {
+  pickup: {
+    block: 'border-sky-200 dark:border-sky-400/25',
+    head: 'bg-sky-50 dark:bg-sky-400/10 border-b border-sky-200 dark:border-sky-400/25',
+    label: 'text-sky-700 dark:text-sky-300',
+  },
+  delivery: {
+    block: 'border-emerald-200 dark:border-emerald-400/25',
+    head: 'bg-emerald-50 dark:bg-emerald-400/10 border-b border-emerald-200 dark:border-emerald-400/25',
+    label: 'text-emerald-700 dark:text-emerald-300',
+  },
+}
+
 // Same geometry for both badges so the row can't reflow when the state flips.
+// The emerald SAVED chip now shares a block with the emerald delivery tint, but
+// they never share a surface — the chip is a solid bg-emerald-100 fill in the
+// white body, the header is a much paler bg-emerald-50 strip above it.
 const BADGE = 'text-[8px] font-bold px-1 py-px rounded'
 const BADGE_STATE = {
   saved: { label: 'SAVED', cls: 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400' },
@@ -153,11 +173,12 @@ function StopBlock({ stop, row, fields, isoOf, fieldState, freeMinutes, loadId, 
   const mins = minutesBetween(inIso, outIso)
   const stillThere = !!inIso && !outIso
   const { hours } = computeAmount(mins, freeMinutes, null)
+  const tone = STOP_TONE[stop.key] || STOP_TONE.pickup
 
   return (
-    <div className="rounded-lg border border-gray-200 dark:border-white/10 overflow-hidden">
-      <div className="flex items-center gap-1.5 px-2 py-1 bg-gray-50 dark:bg-white/[0.04] border-b border-gray-200 dark:border-white/10">
-        <span className="text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-slate-400">{stop.label}</span>
+    <div className={`rounded-lg border overflow-hidden ${tone.block}`}>
+      <div className={`flex items-center gap-1.5 px-2 py-1 ${tone.head}`}>
+        <span className={`text-[10px] font-bold uppercase tracking-widest ${tone.label}`}>{stop.label}</span>
         {/* A malformed TMS record parses to null — show a dash, never the date
             fragment that used to leak through as a "city". */}
         <span className="text-[11px] text-gray-600 dark:text-slate-300 truncate">
