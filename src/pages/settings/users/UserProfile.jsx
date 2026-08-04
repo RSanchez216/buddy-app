@@ -11,6 +11,8 @@ import { ROLES, ROLE_LABEL, rolePill, statusPill, fmtDateTime, fmtDate, WARN_CHI
 import EffectivePageList from './EffectivePageList'
 import PageAccessPanel from './PageAccessPanel'
 import UsageActivityPanel from './UsageActivityPanel'
+import DispatcherPicker, { DISPATCHER_HELPER } from './DispatcherPicker'
+import { fetchLinkStatus, linkUserDispatcher, stripNickname } from './dispatcherLink'
 
 const ACTION_BTN = 'px-3 py-1.5 text-xs font-medium border border-gray-300 dark:border-slate-700 text-gray-600 dark:text-slate-300 rounded-lg hover:bg-gray-50 dark:hover:bg-white/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed'
 
@@ -21,9 +23,15 @@ export default function UserProfile() {
   const { userId } = useParams()
   const navigate = useNavigate()
   const toast = useToast()
-  const { profile: me, isAdmin } = useAuth()
+  const { profile: me, isAdmin, canEdit } = useAuth()
 
   const [user, setUser] = useState(null)
+  // Link status for this user — my_driver_count, state and any suggestion. Kept
+  // separate from `user` because the RPC only reports active users, and the
+  // profile must still render the link for a deactivated one.
+  const [linkRow, setLinkRow] = useState(null)
+  const [linkBusy, setLinkBusy] = useState(false)
+  const [linkError, setLinkError] = useState('')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [showAccessPanel, setShowAccessPanel] = useState(false)
@@ -39,14 +47,14 @@ export default function UserProfile() {
   const load = useCallback(async () => {
     setLoading(true)
     const { data, error } = await supabase.from('users')
-      .select('id, full_name, email, role, role_id, department_id, status, invited_at, last_sign_in_at, deactivated_at, created_at, invited_by')
+      .select('id, full_name, email, role, role_id, department_id, dispatcher_id, status, invited_at, last_sign_in_at, deactivated_at, created_at, invited_by')
       .eq('id', userId).maybeSingle()
     if (error || !data) { setUser(null); setLoading(false); return }
 
     // Resolve the inviter's name, the assigned role + department names, the
     // effective page-access count (+ individual-grant count), and — for the
     // self-demotion guard — how many active admins exist. All display-only.
-    const [inv, roleRow, deptRow, eff, pagesCount, adminCnt] = await Promise.all([
+    const [inv, roleRow, deptRow, dispRow, statusRows, eff, pagesCount, adminCnt] = await Promise.all([
       data.invited_by
         ? supabase.from('users').select('full_name, email').eq('id', data.invited_by).maybeSingle()
         : Promise.resolve({ data: null }),
@@ -56,6 +64,10 @@ export default function UserProfile() {
       data.department_id
         ? supabase.from('departments').select('name').eq('id', data.department_id).maybeSingle()
         : Promise.resolve({ data: null }),
+      data.dispatcher_id
+        ? supabase.from('dispatchers').select('name').eq('id', data.dispatcher_id).maybeSingle()
+        : Promise.resolve({ data: null }),
+      fetchLinkStatus().catch(() => []), // non-fatal: the picker still works without counts
       supabase.from('v_user_effective_page_access').select('page_key, source').eq('user_id', userId),
       data.role === 'admin'
         ? supabase.from('pages').select('page_key', { count: 'exact', head: true })
@@ -67,11 +79,13 @@ export default function UserProfile() {
 
     const effRows = eff.data || []
     setActiveAdminCount(adminCnt.count ?? 0)
+    setLinkRow((statusRows || []).find(r => r.user_id === userId) || null)
     setUser({
       ...data,
       invited_by_name: inv.data?.full_name || inv.data?.email || null,
       role_name: roleRow.data?.name || null,
       department_name: deptRow.data?.name || null,
+      dispatcher_name: dispRow.data?.name || null,
       page_count: data.role === 'admin' ? (pagesCount.count || 0) : effRows.length,
       extra_count: data.role === 'admin' ? 0 : effRows.filter(r => r.source === 'individual').length,
     })
@@ -123,6 +137,21 @@ export default function UserProfile() {
       return
     }
     load() // refresh derived values (page counts, admin count)
+  }
+
+  // Link or unlink the dispatcher record. Always via the RPC — it owns the
+  // one-record-one-login rule, and its refusal (which names the user already
+  // holding the record) is shown verbatim rather than reworded.
+  async function setDispatcher(dispatcherId) {
+    if (linkBusy) return
+    setLinkBusy(true); setLinkError('')
+    try {
+      await linkUserDispatcher(user.id, dispatcherId)
+      toast.success(dispatcherId ? 'Dispatcher record linked' : 'Dispatcher record unlinked')
+      await load()
+    } catch (e) {
+      setLinkError(e?.message || 'Could not link the dispatcher record.')
+    } finally { setLinkBusy(false) }
   }
 
   // ── User actions (same behavior as the drawer's handlers) ──────────────
@@ -265,6 +294,38 @@ export default function UserProfile() {
                 <Fact label="Invited by" value={user.invited_by_name ? `${user.invited_by_name}${user.invited_at ? ` · ${fmtDate(user.invited_at)}` : ''}` : '—'} />
               </div>
 
+              {/* Dispatcher record — full width beneath the facts row so the
+                  picker has room. Admin/manager only, and never required. */}
+              <div className="mt-4 max-w-xl">
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500 mb-1">Dispatcher record</p>
+                {canEdit ? (
+                  <>
+                    <DispatcherPicker
+                      selected={user.dispatcher_id ? { id: user.dispatcher_id, name: user.dispatcher_name || '—', nickname: nicknameOf(user.dispatcher_name) } : null}
+                      driverCount={linkRow?.my_driver_count}
+                      disabled={linkBusy}
+                      error={linkError}
+                      onSelect={d => setDispatcher(d.id)}
+                      onClear={() => setDispatcher(null)}
+                    />
+                    {!user.dispatcher_id && linkRow?.state === 'suggestion_available' && (
+                      <button type="button" disabled={linkBusy} onClick={() => setDispatcher(linkRow.suggestion_id)}
+                        className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-orange-300 dark:border-orange-500/40 bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-400 hover:bg-orange-100 dark:hover:bg-orange-500/20 disabled:opacity-50">
+                        Link {stripNickname(linkRow.suggestion_name)}?
+                      </button>
+                    )}
+                    {user.dispatcher_id && linkRow?.state === 'linked_no_drivers' && (
+                      <p className="mt-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+                        Linked, but no drivers on their loads in 90 days — this may be the wrong record.
+                      </p>
+                    )}
+                    <p className="text-xs text-gray-500 dark:text-slate-500 mt-1.5">{DISPATCHER_HELPER}</p>
+                  </>
+                ) : (
+                  <FactText muted={!user.dispatcher_name}>{user.dispatcher_name ? stripNickname(user.dispatcher_name) : 'Not set'}</FactText>
+                )}
+              </div>
+
               {fieldError && (
                 <div className="mt-3 flex items-start gap-2 p-2.5 rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 text-xs text-red-700 dark:text-red-400">
                   <svg className="w-4 h-4 shrink-0 mt-px" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /></svg>
@@ -381,6 +442,11 @@ function EditFact({ label, children }) {
       {children}
     </div>
   )
+}
+
+// 'Kadyraly (Kent) Berdaliev' → 'Kent'. The picker renders it as its own chip.
+function nicknameOf(name) {
+  return String(name || '').match(/\(([^)]+)\)/)?.[1]?.trim() || null
 }
 
 function FactText({ children, muted }) {

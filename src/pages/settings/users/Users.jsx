@@ -11,6 +11,7 @@ import Roles from './Roles'
 import UsageRangeControl from './UsageRangeControl'
 import { downloadTeamUsagePdf } from './usageReportPdf'
 import { useToast } from '../../../contexts/ToastContext'
+import { fetchLinkStatus, linkUserDispatcher, LINK_STATE, stripNickname } from './dispatcherLink'
 
 const ORANGE_BTN = 'flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 text-white rounded-xl transition-all shadow-lg shadow-orange-500/20'
 
@@ -22,6 +23,7 @@ export default function Users() {
   const [users, setUsers] = useState([])
   const [roles, setRoles] = useState([])
   const [effAccess, setEffAccess] = useState(new Map()) // user_id -> { count, extras: [page_key] }
+  const [linkByUser, setLinkByUser] = useState(new Map()) // user_id -> dispatcher_link_status row
   const [pageLabels, setPageLabels] = useState(new Map()) // page_key -> label
   const [totalPages, setTotalPages] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -61,6 +63,7 @@ export default function Users() {
       { data: rolesData },
       { data: effData },
       { data: pagesData },
+      linkRows,
     ] = await Promise.all([
       supabase.from('users')
         .select('id, full_name, email, role, role_id, status, invited_at, last_sign_in_at, deactivated_at, created_at, invited_by')
@@ -68,6 +71,9 @@ export default function Users() {
       supabase.from('roles').select('id, name, is_active, sort_order').order('sort_order'),
       supabase.from('v_user_effective_page_access').select('user_id, page_key, source'),
       supabase.from('pages').select('page_key, label'),
+      // Dispatcher link state per user. Non-fatal — the column degrades to '—'
+      // rather than taking the whole list down with it.
+      fetchLinkStatus().catch(() => []),
     ])
 
     if (error) {
@@ -96,12 +102,26 @@ export default function Users() {
       if (r.source === 'individual') e.extras.push(r.page_key)
     }
 
+    setLinkByUser(new Map((linkRows || []).map(r => [r.user_id, r])))
     setUsers(flat)
     setRoles(rolesData || [])
     setEffAccess(eff)
     setPageLabels(new Map((pagesData || []).map(p => [p.page_key, p.label])))
     setTotalPages((pagesData || []).length)
     setLoading(false)
+  }
+
+  // One-click accept of a suggested record — the safeguard for someone invited
+  // before their dispatcher record existed. Goes through the RPC like every
+  // other link, so the one-record-one-login guard still applies.
+  async function linkSuggestion(row) {
+    try {
+      await linkUserDispatcher(row.user_id, row.suggestion_id)
+      toast.success(`Linked ${row.full_name} to ${stripNickname(row.suggestion_name)}`)
+      load()
+    } catch (e) {
+      toast.error("Couldn't link the dispatcher record", e) // RPC reason, verbatim
+    }
   }
 
   async function changeRole(u, roleId) {
@@ -257,16 +277,16 @@ export default function Users() {
           <table className="w-full text-sm">
             <thead className={S.tableHead}>
               <tr>
-                {['Name', 'Email', 'Permission level', 'Role', 'Pages', 'Status', 'Last sign-in', 'Invited by', ''].map(h => (
+                {['Name', 'Email', 'Permission level', 'Role', 'Dispatcher record', 'My drivers', 'Pages', 'Status', 'Last sign-in', 'Invited by', ''].map(h => (
                   <th key={h} className={S.th}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={9} className="px-4 py-12 text-center"><div className="animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500 mx-auto" /></td></tr>
+                <tr><td colSpan={11} className="px-4 py-12 text-center"><div className="animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500 mx-auto" /></td></tr>
               ) : users.length === 0 ? (
-                <tr><td colSpan={9} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">No users yet</td></tr>
+                <tr><td colSpan={11} className="px-4 py-12 text-center text-gray-400 dark:text-slate-600 text-sm">No users yet</td></tr>
               ) : users.map(u => {
                 const isSelf = u.id === profile?.id
                 return (
@@ -301,6 +321,19 @@ export default function Users() {
                           ))}
                         </select>
                       )}
+                    </td>
+                    {/* Dispatcher record — the four states from dispatcher_link_status.
+                        A suggestion links in one click; nothing here is required. */}
+                    <td className={S.td} onClick={e => e.stopPropagation()}>
+                      <DispatcherCell row={linkByUser.get(u.id)} onLink={linkSuggestion} />
+                    </td>
+                    {/* My drivers — what the link actually buys them. */}
+                    <td className={S.td}>
+                      {(() => {
+                        const n = linkByUser.get(u.id)?.my_driver_count
+                        if (n == null) return <span className="text-gray-400 dark:text-slate-500">—</span>
+                        return <span className={`text-xs tabular-nums ${n > 0 ? 'text-gray-700 dark:text-slate-300' : 'text-gray-400 dark:text-slate-500'}`}>{n}</span>
+                      })()}
                     </td>
                     {/* Pages — effective count from the view; +badge = individual grants. */}
                     <td className={S.td}>
@@ -381,6 +414,32 @@ export default function Users() {
         onSuccess={(msg) => toast.success(msg)}
       />
     </div>
+  )
+}
+
+// The four link states. `not_linked` is deliberately loud — it's the reminder,
+// the same way a role granting 0 pages is flagged rather than blocked.
+function DispatcherCell({ row, onLink }) {
+  if (!row) return <span className="text-gray-400 dark:text-slate-500">—</span>
+
+  if (row.state === 'suggestion_available') {
+    return (
+      <button onClick={() => onLink(row)}
+        title="A matching dispatcher record has appeared since they were invited"
+        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold border border-orange-300 dark:border-orange-500/40 bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-400 hover:bg-orange-100 dark:hover:bg-orange-500/20">
+        Link {stripNickname(row.suggestion_name)}?
+      </button>
+    )
+  }
+  if (row.state === 'not_linked') {
+    return <span className={`text-xs ${LINK_STATE.not_linked.tone}`}>{LINK_STATE.not_linked.label}</span>
+  }
+  return (
+    <span className={`text-xs ${LINK_STATE[row.state]?.tone || LINK_STATE.ok.tone}`}
+      title={row.state === 'linked_no_drivers' ? 'Linked, but no drivers on their loads in 90 days — possibly the wrong record' : undefined}>
+      {stripNickname(row.dispatcher_name) || '—'}
+      {row.state === 'linked_no_drivers' && <span className="ml-1">· no drivers</span>}
+    </span>
   )
 }
 

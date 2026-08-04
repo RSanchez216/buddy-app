@@ -6,6 +6,9 @@ import Select from '../../../components/Select'
 import { buildDeptOptions } from '../../../lib/deptUtils'
 import { ROLES, ROLE_LABEL, ROLE_DESCRIPTION } from './userUtils'
 import { useToast } from '../../../contexts/ToastContext'
+import { useAuth } from '../../../contexts/AuthContext'
+import DispatcherPicker, { DISPATCHER_HELPER } from './DispatcherPicker'
+import { linkUserDispatcher } from './dispatcherLink'
 
 const ORANGE_BTN = 'px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 disabled:bg-gray-200 dark:disabled:bg-slate-700 disabled:text-gray-400 dark:disabled:text-slate-500 text-white rounded-xl transition-all'
 
@@ -13,6 +16,7 @@ function isEmail(s) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s) }
 
 export default function InviteUserModal({ open, onClose, onInvited }) {
   const toast = useToast()
+  const { canEdit } = useAuth() // admin or manager — same gate link_user_dispatcher enforces
   const [email, setEmail] = useState('')
   const [fullName, setFullName] = useState('')
   // Permission level (users.role) — governs real data access via RLS. Default
@@ -23,6 +27,9 @@ export default function InviteUserModal({ open, onClose, onInvited }) {
   const [roleId, setRoleId] = useState('')
   // Department (users.department_id) — drives Lumper "Paid from" attribution.
   const [departmentId, setDepartmentId] = useState('')
+  // Dispatcher record (users.dispatcher_id) — linked straight after the invite,
+  // so they sign in to a working "My drivers" rather than an empty one.
+  const [dispatcher, setDispatcher] = useState(null)
   const [roles, setRoles] = useState([])
   const [departments, setDepartments] = useState([])
   const [rolePageCounts, setRolePageCounts] = useState({}) // role_id -> granted page count
@@ -31,7 +38,7 @@ export default function InviteUserModal({ open, onClose, onInvited }) {
 
   useEffect(() => {
     if (!open) return
-    setEmail(''); setFullName(''); setRole('viewer'); setRoleId(''); setDepartmentId(''); setError('')
+    setEmail(''); setFullName(''); setRole('viewer'); setRoleId(''); setDepartmentId(''); setDispatcher(null); setError('')
   }, [open])
 
   useEffect(() => {
@@ -87,6 +94,14 @@ export default function InviteUserModal({ open, onClose, onInvited }) {
       if (newId && Object.keys(patch).length) {
         const { error: updErr } = await supabase.from('users').update(patch).eq('id', newId)
         if (updErr) toast.error("Invite sent, but couldn't set role/department — set them on the profile.", updErr)
+      }
+
+      // The dispatcher link goes through the RPC, never a direct column write —
+      // it owns the one-record-one-login rule. Non-fatal for the same reason as
+      // the patch above: the invite already succeeded and it's settable later.
+      if (newId && dispatcher?.id) {
+        try { await linkUserDispatcher(newId, dispatcher.id) }
+        catch (e) { toast.error(`Invite sent, but the dispatcher record wasn't linked — ${e.message}`) }
       }
 
       onInvited?.({ email: email.trim().toLowerCase(), user_id: newId })
@@ -182,6 +197,21 @@ export default function InviteUserModal({ open, onClose, onInvited }) {
               </Select>
               <p className="text-xs text-gray-500 dark:text-slate-500 mt-1.5">Can be set later from the user's profile.</p>
             </div>
+
+            {/* Dispatcher record (users.dispatcher_id) — admin/manager only.
+                Deliberately NOT required: a new hire has no record until their
+                first load imports, and Accounting and Fleet staff never need one. */}
+            {canEdit && (
+              <div>
+                <label className={S.label}>Dispatcher record</label>
+                <DispatcherPicker
+                  selected={dispatcher}
+                  onSelect={setDispatcher}
+                  onClear={() => setDispatcher(null)}
+                />
+                <p className="text-xs text-gray-500 dark:text-slate-500 mt-1.5">{DISPATCHER_HELPER}</p>
+              </div>
+            )}
 
             <div className={S.modalFooter}>
               <button onClick={onClose} className={S.btnCancel}>Cancel</button>
