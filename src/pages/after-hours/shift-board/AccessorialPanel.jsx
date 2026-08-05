@@ -43,7 +43,7 @@ const byNewest = (arr) => [...(arr || [])].sort((a, b) =>
 export default function AccessorialPanel({
   row, exception, meId, toast, onChanged, onTimesSaved, shiftId,
   accessorialsOn = true, trackCheckpoints = true, canAddTypes,
-  activities, onRemoveActivity,
+  activities, onRemoveActivity, risk,
 }) {
   const loadId = row.load_id || null
 
@@ -429,16 +429,42 @@ export default function AccessorialPanel({
         </div>
       </div>
 
-      {/* ⑤ Accessorial requests and Logged activity share one row now: panel ⑤'s
-          card is 560px inside an otherwise-empty full-width strip, and Logged
-          activity was a mostly-empty strip below it. Side by side, ⑤ keeps its
-          560px and activity takes the rest. items-start so a short panel and an
-          empty log don't stretch to match each other. When ⑤ has nothing to show
-          (the common case) it drops out and activity goes full width. Below lg
-          they stack, ⑤ first. */}
+      {/* Second row: up to three blocks — ⑤ Accessorial requests (560px) · Broker
+          risk (320px, advisory, unnumbered) · ⑥ Logged activity (1fr, absorbs the
+          rest). Any absent block drops out and the template collapses: a clean
+          broker leaves no gap, a flagged-but-no-accessorial load puts risk on the
+          left. items-start so nothing stretches to match; below lg they stack in
+          the ⑤ → risk → ⑥ order they're rendered. */}
       {(() => {
         const showPanel5 = accessorialsOn && !requestsError && !requestsLoading && requests.length > 0
+        const showRisk = !!(risk && (risk.id_theft || risk.nonpayment || risk.double_brokering))
         const activityBlock = <ActivityLog activities={activities} onRemove={onRemoveActivity} />
+        const panel5Block = (
+          <Column n={5} title="Accessorial requests" meta={`${onThisLoad.length} on this load`}>
+            {/* One vertical stack, newest first, 10px apart — never a two-column
+                grid (a 560px card beside another reads as two unrelated forms). */}
+            <div className="space-y-2.5">
+              {byNewest(onThisLoad).map(c => (
+                <RequestCard key={c.id} c={c} meId={meId} toast={toast} onChanged={async () => { await reloadRequests(); await onChanged?.() }} />
+              ))}
+            </div>
+            {otherLoads.length > 0 && (
+              <div className="mt-4">
+                <p className={`${EYEBROW} mb-1.5`}>Other loads for this driver ({otherLoads.length})</p>
+                <div className="space-y-2.5">
+                  {byNewest(otherLoads).map(c => (
+                    <RequestCard key={c.id} c={c} meId={meId} toast={toast} showLoad onChanged={async () => { await reloadRequests(); await onChanged?.() }} />
+                  ))}
+                </div>
+              </div>
+            )}
+          </Column>
+        )
+        // Literal class strings so Tailwind emits them (no runtime-built arbitrary values).
+        const gridCols = showPanel5 && showRisk ? 'lg:grid-cols-[560px_320px_1fr]'
+          : showPanel5 ? 'lg:grid-cols-[560px_1fr]'
+            : showRisk ? 'lg:grid-cols-[320px_1fr]'
+              : ''
         return (
           <>
             {accessorialsOn && requestsError && <div className={S.errorBox}>{requestsError}</div>}
@@ -446,27 +472,10 @@ export default function AccessorialPanel({
             {accessorialsOn && !requestsError && !requestsLoading && requests.length === 0 && (
               <p className="text-xs text-gray-400 dark:text-slate-500 italic">Nothing requested on this load or this driver yet.</p>
             )}
-            {showPanel5 ? (
-              <div className="grid grid-cols-1 lg:grid-cols-[560px_1fr] gap-3 items-start">
-                <Column n={5} title="Accessorial requests" meta={`${onThisLoad.length} on this load`}>
-                  {/* One vertical stack, newest first, 10px apart — never a two-column
-                      grid (a 560px card beside another reads as two unrelated forms). */}
-                  <div className="space-y-2.5">
-                    {byNewest(onThisLoad).map(c => (
-                      <RequestCard key={c.id} c={c} meId={meId} toast={toast} onChanged={async () => { await reloadRequests(); await onChanged?.() }} />
-                    ))}
-                  </div>
-                  {otherLoads.length > 0 && (
-                    <div className="mt-4">
-                      <p className={`${EYEBROW} mb-1.5`}>Other loads for this driver ({otherLoads.length})</p>
-                      <div className="space-y-2.5">
-                        {byNewest(otherLoads).map(c => (
-                          <RequestCard key={c.id} c={c} meId={meId} toast={toast} showLoad onChanged={async () => { await reloadRequests(); await onChanged?.() }} />
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </Column>
+            {(showPanel5 || showRisk) ? (
+              <div className={`grid grid-cols-1 ${gridCols} gap-3 items-start`}>
+                {showPanel5 && panel5Block}
+                {showRisk && <BrokerRisk risk={risk} />}
                 {activityBlock}
               </div>
             ) : activityBlock}
@@ -929,6 +938,50 @@ function BrokerRulesPanel({ rules, loading }) {
 // Delayed undo — this driver's logged shift activities, each removable with a
 // confirm (the immediate 10s Undo lives on the collapsed row).
 const ACTIVITY_LABELS = { load_booked: 'Booked', pod_collected: 'POD collected', bol_collected: 'BOL collected', note: 'Note', escalated: 'Escalated' }
+// Broker risk — an ADVISORY block (unnumbered; it carries a shield, not a step
+// number). Violet chrome because it's a caution, not an error. The message is
+// VERIFY, never avoid: an ID-theft flag means the broker is being IMPERSONATED —
+// the company (TQL, FitzMark, Trinity…) is legitimate and MANAS works with them
+// daily. Nothing here may read as "bad broker" / "blacklisted" / "do not use".
+function BrokerRisk({ risk }) {
+  if (!risk) return null
+  const footer = [risk.broker, risk.mc_number ? `MC ${risk.mc_number}` : null, risk.source].filter(Boolean).join(' · ')
+  return (
+    <div className="rounded-xl border border-violet-300 dark:border-violet-500/40 bg-white dark:bg-white/[0.02] p-3.5 self-start">
+      <div className="flex items-center gap-2 mb-3">
+        <svg aria-hidden viewBox="0 0 20 20" className="w-4 h-4 shrink-0 text-violet-600 dark:text-violet-400 fill-current"><path d="M10 1l7 3v5c0 4.4-3 8.3-7 9.4C6 17.3 3 13.4 3 9V4l7-3z" /></svg>
+        <h4 className="text-xs font-semibold text-violet-700 dark:text-violet-300 uppercase tracking-wide">Broker risk</h4>
+      </div>
+      <div className="space-y-2">
+        {risk.id_theft && (
+          <div className="rounded-lg border border-violet-200 dark:border-violet-500/25 bg-violet-50 dark:bg-violet-500/10 p-2.5 text-[11px] leading-snug">
+            <p className="font-semibold text-violet-800 dark:text-violet-300">Identity theft reported</p>
+            <p className="mt-0.5 text-gray-600 dark:text-slate-300">Someone has impersonated this broker. The company itself is legitimate — verify you are dealing with the real one.</p>
+            <ul className="mt-1 space-y-0.5 text-gray-600 dark:text-slate-300">
+              <li>· Confirm the rep works there</li>
+              <li>· Confirm the load # is in their system</li>
+              <li>· Do not accept a changed remit-to</li>
+            </ul>
+          </div>
+        )}
+        {risk.nonpayment && (
+          <div className="rounded-lg border border-amber-200 dark:border-amber-500/25 bg-amber-50 dark:bg-amber-500/10 p-2.5 text-[11px] leading-snug">
+            <p className="font-semibold text-amber-800 dark:text-amber-300">Nonpayment history</p>
+            <p className="mt-0.5 text-gray-600 dark:text-slate-300">Reported for slow or non-payment. Get the POD in on time — late paperwork is the first thing disputed.</p>
+          </div>
+        )}
+        {risk.double_brokering && (
+          <div className="rounded-lg border border-rose-200 dark:border-rose-500/25 bg-rose-50 dark:bg-rose-500/10 p-2.5 text-[11px] leading-snug">
+            <p className="font-semibold text-rose-800 dark:text-rose-300">Double brokering reported</p>
+            <p className="mt-0.5 text-gray-600 dark:text-slate-300">Confirm this broker actually holds the load before dispatching.</p>
+          </div>
+        )}
+      </div>
+      {footer && <p className="mt-3 pt-2 border-t border-gray-100 dark:border-white/5 text-[10px] text-gray-400 dark:text-slate-500 break-words">{footer}</p>}
+    </div>
+  )
+}
+
 const ACTIVITY_CAP = 8 // beyond this the list collapses behind a disclosure
 function ActivityLog({ activities, onRemove }) {
   // Not filtered by shift — shift_id is nullable by design and off-shift work is
@@ -946,7 +999,12 @@ function ActivityLog({ activities, onRemove }) {
   const extra = acts.length - shown.length
   return (
     <div className="border-t border-gray-200 dark:border-white/10 pt-3">
-      <p className={`${EYEBROW} mb-1.5`}>Logged activity{acts.length ? ` (${acts.length})` : ''}</p>
+      {/* Now numbered ⑥ — it IS a step (record the work), the last in the
+          sequence. The circle matches panels ①–⑤. */}
+      <div className="flex items-center gap-2 mb-1.5">
+        <span className="w-5 h-5 rounded-full bg-orange-100 dark:bg-orange-500/15 text-orange-600 dark:text-orange-400 inline-flex items-center justify-center text-[10px] font-bold">6</span>
+        <span className={EYEBROW}>Logged activity{acts.length ? ` (${acts.length})` : ''}</span>
+      </div>
       {acts.length === 0 ? (
         <p className="text-xs text-gray-400 dark:text-slate-500 italic">No activity logged for this driver yet.</p>
       ) : (

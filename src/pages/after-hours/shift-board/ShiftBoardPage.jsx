@@ -11,7 +11,7 @@ import TimesNeededGroup from './TimesNeededGroup'
 import RequestDetailPanel from './RequestDetailPanel'
 import {
   SHIFT_TYPES, GROUP_META, groupKeyFor, shiftName, LIFECYCLE, LIFECYCLE_RANK,
-  fetchSettings, fetchOpenShift, startShift, fetchShiftSummary, fetchWeekSummary, fetchBoard, fetchBoardTabs, fetchBoardBrokerMetaForShift, fetchBoardIdleMeta,
+  fetchSettings, fetchOpenShift, startShift, fetchShiftSummary, fetchWeekSummary, fetchBoard, fetchBoardTabs, fetchBoardBrokerMetaForShift, fetchBoardRiskMetaForShift, fetchBoardIdleMeta,
   fetchCheckpointExceptions,
   upsertDriverCheck, logShiftActivity,
   fetchRowActions, updateShiftActivity, deleteShiftActivity, clearDriverCheck,
@@ -52,6 +52,7 @@ export default function ShiftBoardPage() {
   const [openRequestId, setOpenRequestId] = useState(null) // raised request detail panel
   const [accByLoad, setAccByLoad] = useState(() => new Map()) // load_id → accessorial summary
   const [brokerByLoad, setBrokerByLoad] = useState(() => new Map()) // load_id → broker + rate-con meta
+  const [riskByLoad, setRiskByLoad] = useState(() => new Map())     // load_id → broker-risk flags (flagged loads only)
   const [idleByDriver, setIdleByDriver] = useState(() => new Map()) // driver_id → idle reason/note
   const [openDriverId, setOpenDriverId] = useState(null)      // ONE expanded accessorial row
   const [accTick, setAccTick] = useState(0)                   // re-reads the summary after a write
@@ -94,7 +95,7 @@ export default function ShiftBoardPage() {
     // Respect the browsed week so a shift transition doesn't yank the view back
     // to live. Live week → no dates (identical to before).
     const vw = viewWeekRef.current, live = vw.start === weekRange.start
-    const [bd, sm, ex, tb, ra, bm, wk] = await Promise.all([
+    const [bd, sm, ex, tb, ra, bm, rk, wk] = await Promise.all([
       fetchBoard(sh?.id ?? null, live ? null : vw.start, live ? null : vw.end),
       sh ? fetchShiftSummary(sh.id) : Promise.resolve(null),
       // The queue also feeds the ACCESSORIAL column's "Detention likely"
@@ -102,12 +103,13 @@ export default function ShiftBoardPage() {
       (settingsRef.current?.track_checkpoints || settingsRef.current?.accessorials_enabled) ? fetchCheckpointExceptions() : Promise.resolve([]),
       fetchBoardTabs(sh?.id ?? null).catch(() => null),
       sh ? fetchRowActions(sh.id).catch(() => []) : Promise.resolve([]),
-      // Broker meta rides the same batch, keyed by shift_id — no longer waiting to
-      // read load ids out of the board's rows. On failure the markers just don't render.
+      // Broker meta and broker-RISK meta ride the same batch, keyed by shift_id —
+      // both parallel with the board. On failure the blocks just don't render.
       fetchBoardBrokerMetaForShift(sh?.id ?? null).catch((e) => { console.error('broker meta failed', e); return new Map() }),
+      fetchBoardRiskMetaForShift(sh?.id ?? null).catch((e) => { console.error('risk meta failed', e); return new Map() }),
       week ? fetchWeekSummary(weekRange.start, weekRange.end) : Promise.resolve(undefined),
     ])
-    setBoard(bd); setSummary(sm); setExceptions(ex); setBoardTabs(tb); setRowActions(ra); setBrokerByLoad(bm)
+    setBoard(bd); setSummary(sm); setExceptions(ex); setBoardTabs(tb); setRowActions(ra); setBrokerByLoad(bm); setRiskByLoad(rk)
     if (week && wk !== undefined) setWeek(wk)
   }, [weekRange.start, weekRange.end])
 
@@ -143,7 +145,7 @@ export default function ShiftBoardPage() {
       ])
       setSettings(st || {}); setWeek(wk); setShift(sh)
       settingsRef.current = st || {} // so a refresh in the same tick sees track_checkpoints
-      const [bd, sm, ex, tb, ra, bm] = await Promise.all([
+      const [bd, sm, ex, tb, ra, bm, rk] = await Promise.all([
         fetchBoard(sh?.id ?? null),
         sh ? fetchShiftSummary(sh.id) : Promise.resolve(null),
         (st?.track_checkpoints || st?.accessorials_enabled) ? fetchCheckpointExceptions() : Promise.resolve([]),
@@ -152,8 +154,9 @@ export default function ShiftBoardPage() {
         // Fires with the board (not after it), keyed by shift_id — the fix that
         // removes the serial broker-meta tail and the marker pop-in.
         fetchBoardBrokerMetaForShift(sh?.id ?? null).catch((e) => { console.error('broker meta failed', e); return new Map() }),
+        fetchBoardRiskMetaForShift(sh?.id ?? null).catch((e) => { console.error('risk meta failed', e); return new Map() }),
       ])
-      setBoard(bd); setSummary(sm); setExceptions(ex); setBoardTabs(tb); setRowActions(ra); setBrokerByLoad(bm)
+      setBoard(bd); setSummary(sm); setExceptions(ex); setBoardTabs(tb); setRowActions(ra); setBrokerByLoad(bm); setRiskByLoad(rk)
     } catch (e) {
       setError(true); toastRef.current.error("Couldn't load the shift board", e)
     } finally { setLoading(false) }
@@ -677,7 +680,7 @@ export default function ShiftBoardPage() {
               onOk={onOk} onAct={openAct} onAcknowledge={onAcknowledge} onCopyEscalation={copyEscalation} onOpenRequest={setOpenRequestId}
               shiftId={shift?.id ?? null} canAddTypes={isManager} onTimesSaved={applyCheckpointTimes}
               openDriverId={openDriverId} onToggleDriver={(id) => setOpenDriverId(cur => (cur === id ? null : id))}
-              accByLoad={accByLoad} exByLoad={exByLoad} brokerByLoad={brokerByLoad} idleByDriver={idleByDriver} toast={toast}
+              accByLoad={accByLoad} exByLoad={exByLoad} brokerByLoad={brokerByLoad} riskByLoad={riskByLoad} idleByDriver={idleByDriver} toast={toast}
               undoInfo={undoInfo} onUndo={undoLast} onRemoveActivity={removeActivityById}
               browsing={!isLiveWeek}
               onAccessorialChanged={async () => { setAccTick(t => t + 1); await refreshActions() }} />

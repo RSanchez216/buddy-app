@@ -66,7 +66,7 @@ function moneyTitle(b) {
 // Rendered as the body of the active tab. The tab bar carries the heading/count;
 // this is the driver table. It owns the vertical scroll (flex-1) with a sticky
 // header so the bands and tabs above stay put while the list scrolls.
-export default function PriorityGroup({ group, rows, settings, shift, rowActionsByDriver, recipientsById, meId, isManager, highlightDriver, stateSort, onToggleStateSort, onOk, onAct, onAcknowledge, onCopyEscalation, onOpenRequest, openDriverId, onToggleDriver, accByLoad, exByLoad, brokerByLoad, idleByDriver, undoInfo, onUndo, onRemoveActivity, toast, onAccessorialChanged, onTimesSaved, shiftId, canAddTypes, browsing }) {
+export default function PriorityGroup({ group, rows, settings, shift, rowActionsByDriver, recipientsById, meId, isManager, highlightDriver, stateSort, onToggleStateSort, onOk, onAct, onAcknowledge, onCopyEscalation, onOpenRequest, openDriverId, onToggleDriver, accByLoad, exByLoad, brokerByLoad, riskByLoad, idleByDriver, undoInfo, onUndo, onRemoveActivity, toast, onAccessorialChanged, onTimesSaved, shiftId, canAddTypes, browsing }) {
   const curYear = Number(todayChicago().slice(0, 4))
   const cols = columnsFor(settings, browsing)
   // The row panel carries whichever phases are on — checkpoints, accessorials or
@@ -151,6 +151,7 @@ export default function PriorityGroup({ group, rows, settings, shift, rowActions
                   colSpan={cols.length} panelOpen={panelOn && openDriverId === r.driver_id} onToggleDriver={onToggleDriver}
                   acc={r.load_id ? accByLoad?.get(r.load_id) : null} exception={r.load_id ? exByLoad?.get(r.load_id) : null}
                   broker={r.load_id ? brokerByLoad?.get(r.load_id) : null} idle={idleByDriver?.get(r.driver_id) || null}
+                  risk={r.load_id ? riskByLoad?.get(r.load_id) || null : null}
                   undo={undoInfo?.driverId === r.driver_id ? undoInfo : null} onUndo={onUndo} onRemoveActivity={onRemoveActivity}
                   toast={toast} onAccessorialChanged={onAccessorialChanged} onTimesSaved={onTimesSaved} shiftId={shiftId} canAddTypes={canAddTypes} browsing={browsing} />
               ))}
@@ -552,7 +553,7 @@ function IdlePopover({ idle, rect, onClose }) {
   )
 }
 
-function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isManager, highlighted, onOk, onAct, onAcknowledge, onCopyEscalation, onOpenRequest, colSpan, panelOpen, onToggleDriver, acc, exception, broker, idle, undo, onUndo, onRemoveActivity, toast, onAccessorialChanged, onTimesSaved, shiftId, canAddTypes, browsing }) {
+function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isManager, highlighted, onOk, onAct, onAcknowledge, onCopyEscalation, onOpenRequest, colSpan, panelOpen, onToggleDriver, acc, exception, broker, idle, risk, undo, onUndo, onRemoveActivity, toast, onAccessorialChanged, onTimesSaved, shiftId, canAddTypes, browsing }) {
   const muted = r.in_scope === false
   const panelOn = !!settings?.accessorials_enabled || !!settings?.track_checkpoints
 
@@ -789,7 +790,7 @@ function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isMan
           <AccessorialPanel row={r} exception={exception} meId={meId} toast={toast}
             onChanged={onAccessorialChanged} onTimesSaved={onTimesSaved} shiftId={shiftId}
             accessorialsOn={!!settings?.accessorials_enabled} trackCheckpoints={!!settings?.track_checkpoints}
-            canAddTypes={canAddTypes} activities={ra?.activities} onRemoveActivity={onRemoveActivity} />
+            canAddTypes={canAddTypes} activities={ra?.activities} onRemoveActivity={onRemoveActivity} risk={risk} />
         </td>
       </tr>
     )}

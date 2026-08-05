@@ -147,6 +147,14 @@ export async function fetchBoardIdleMeta(driverIds) {
   if (error) throw error
   return new Map(Object.entries(data || {}))
 }
+// Broker-risk meta per load, derived from shift_id server-side so it can fire in
+// parallel with the board (same pattern as the broker meta). Returns ONLY flagged
+// loads — an absent load_id means the broker is clean. Matched on MC number.
+export async function fetchBoardRiskMetaForShift(shiftId) {
+  const { data, error } = await supabase.rpc('after_hours_board_risk_meta_for_shift', { p_shift_id: shiftId ?? null })
+  if (error) throw error
+  return new Map(Object.entries(data || {}))
+}
 export async function fetchBoardBrokerMetaForShift(shiftId) {
   const { data, error } = await supabase.rpc('after_hours_board_broker_meta_for_shift', { p_shift_id: shiftId ?? null })
   if (error) throw error
