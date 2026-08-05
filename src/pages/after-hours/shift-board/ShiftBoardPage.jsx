@@ -16,7 +16,7 @@ import {
   upsertDriverCheck, logShiftActivity,
   fetchRowActions, updateShiftActivity, deleteShiftActivity, clearDriverCheck,
   fetchEscalationRecipients, acknowledgeEscalation, fetchEscalationCopyText,
-  thisWeekChicago, todayChicago, fmtDayLabel, elapsedSince,
+  thisWeekChicago, weekOfYmd, stepWeek, fmtWeekRange, todayChicago, fmtDayLabel, elapsedSince,
   buildGroupCopy, buildWeekCopy, copyText,
 } from './shiftBoardData'
 import { REQUESTS_CHANGED_EVENT } from '../requests/requestsData'
@@ -62,6 +62,17 @@ export default function ShiftBoardPage() {
   const weekRange = useMemo(() => thisWeekChicago(), [])
   const dateLabel = useMemo(() => fmtDayLabel(todayChicago()), [])
 
+  // Which week the ROWS show. The current week is the live board (call with no
+  // dates); any earlier week is a read-only browse view. Reviewing belongs to
+  // tonight's shift, so its UI hides while browsing; row actions stay live.
+  const [viewWeek, setViewWeek] = useState(() => thisWeekChicago())
+  const viewWeekRef = useRef(viewWeek); viewWeekRef.current = viewWeek
+  const isLiveWeek = viewWeek.start === weekRange.start
+  // Never step before the go-live week — nothing was tracked, so it'd be
+  // misleading empties. Never step past the current week.
+  const goLiveWeekStart = settings?.go_live_date ? weekOfYmd(settings.go_live_date).start : null
+  const canStepBack = !goLiveWeekStart || viewWeek.start > goLiveWeekStart
+
   // Read these through refs so the data callbacks don't list them as deps.
   // `toast` is the critical one: ToastContext hands back a fresh `value` object
   // every time a toast appears or auto-dismisses, so putting it in a dep array
@@ -79,8 +90,11 @@ export default function ShiftBoardPage() {
   // omit to use the current one.
   const refresh = useCallback(async (shArg, { week = false } = {}) => {
     const sh = shArg !== undefined ? shArg : shiftRef.current
+    // Respect the browsed week so a shift transition doesn't yank the view back
+    // to live. Live week → no dates (identical to before).
+    const vw = viewWeekRef.current, live = vw.start === weekRange.start
     const [bd, sm, ex, tb, ra, bm, wk] = await Promise.all([
-      fetchBoard(sh?.id ?? null),
+      fetchBoard(sh?.id ?? null, live ? null : vw.start, live ? null : vw.end),
       sh ? fetchShiftSummary(sh.id) : Promise.resolve(null),
       // The queue also feeds the ACCESSORIAL column's "Detention likely"
       // (over_free_time), so accessorials need it even without the checkpoints phase.
@@ -145,6 +159,21 @@ export default function ShiftBoardPage() {
   }, [me?.id, weekRange.start, weekRange.end])
 
   useEffect(() => { load() }, [load])
+
+  // Week navigation — refetches ONLY the board (one after_hours_board call per
+  // change; tabs/broker/rowActions are the live shift's and stay put). Tabs are
+  // derived client-side, so switching tabs never refetches.
+  const [weekBusy, setWeekBusy] = useState(false)
+  const changeWeek = useCallback(async (vw) => {
+    if (weekBusy) return
+    setViewWeek(vw); setOpenDriverId(null); setWeekBusy(true)
+    const sh = shiftRef.current, live = vw.start === weekRange.start
+    try {
+      const bd = await fetchBoard(sh?.id ?? null, live ? null : vw.start, live ? null : vw.end)
+      setBoard(bd)
+    } catch (e) { toastRef.current.error("Couldn't load that week", e) }
+    finally { setWeekBusy(false) }
+  }, [weekBusy, weekRange.start])
 
   // Active users for the handoff "hand off to" picker.
   useEffect(() => {
@@ -403,7 +432,9 @@ export default function ShiftBoardPage() {
     if (!base.some(t => t.key === 'raised')) base.push({ key: 'raised', g: GROUP_META.raised, count: 0, order: 1 })
     const ordered = base
       .map(t => {
-        const prog = boardTabs?.[RPC_KEY[t.key]] || null
+        // Progress ("done of total") is a live-shift measure keyed by shift_id;
+        // browsing a past week shows plain counts recomputed from its own rows.
+        const prog = isLiveWeek ? (boardTabs?.[RPC_KEY[t.key]] || null) : null
         // Each tab owns a colour so the bar is readable at a glance. Raised is
         // the one exception: it keeps the RPC's dynamic tone, greying out when
         // nothing is waiting, because "nothing raised" is the signal there.
@@ -421,7 +452,7 @@ export default function ShiftBoardPage() {
     // missing tab reads as broken.
     ordered.push({ key: 'alerts', g: ALERTS_META, count: alertRows.length, order: Infinity, tone: 'rose', chip: String(alertRows.length), disabled: alertRows.length === 0 })
     return ordered
-  }, [grouped, boardTabs, alertRows.length])
+  }, [grouped, boardTabs, alertRows.length, isLiveWeek])
 
   // The effective tab is the user's explicit pick when it's still a live tab,
   // otherwise the default: Raised when it has something, else All active drivers.
@@ -549,7 +580,20 @@ export default function ShiftBoardPage() {
               only when a shift is open. */}
           <BoardHeader shift={shift} starting={starting} onStart={doStart} onEnd={() => setShowEnd(true)} />
           <WeekStrip week={week} onCopy={copyWeek} />
-          {shift && summary && <ShiftStrip summary={summary} shift={shift} />}
+          {/* Shift progress is tonight's — hidden while browsing a past week so
+              its reviewed count can't be read against the wrong rows. */}
+          {isLiveWeek && shift && summary && <ShiftStrip summary={summary} shift={shift} />}
+
+          {/* Browse banner — only when the rows aren't the live board. */}
+          {!isLiveWeek && (
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-amber-200 dark:border-amber-500/25 bg-amber-50/70 dark:bg-amber-500/[0.08] px-4 py-2.5 text-sm text-amber-800 dark:text-amber-300">
+              <span>Viewing <span className="font-semibold">{fmtWeekRange(viewWeek)}</span> · not the live board</span>
+              <button onClick={() => changeWeek(weekRange)} disabled={weekBusy}
+                className="shrink-0 px-2.5 py-1 rounded-lg text-[11px] font-semibold border border-amber-300 dark:border-amber-500/40 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-500/15 disabled:opacity-50">
+                Back to this week
+              </button>
+            </div>
+          )}
 
           {/* Detention queue — surfaced above the tabs only when there's actually
               something waiting at a dock. */}
@@ -574,8 +618,9 @@ export default function ShiftBoardPage() {
                 </button>
               )
             })}
-            {activeMeta && activeRows.length > 0 && (
-              <div className="ml-auto flex items-center gap-2 pl-2">
+            <div className="ml-auto flex items-center gap-2 pl-2">
+              {activeMeta && activeRows.length > 0 && (
+                <>
                 {searching && <span className="text-[11px] tabular-nums text-gray-400 dark:text-slate-500 whitespace-nowrap">{displayRows.length} of {activeRows.length}</span>}
                 <div className="relative">
                   <input
@@ -595,8 +640,14 @@ export default function ShiftBoardPage() {
                   className="shrink-0 inline-flex items-center gap-1 px-2 text-[11px] font-medium text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200">
                   📋 Copy group
                 </button>
-              </div>
-            )}
+                </>
+              )}
+              {/* Week switcher — always present, right of the tabs. Matches the
+                  Shift Reports control. */}
+              <WeekNav label={fmtWeekRange(viewWeek)} busy={weekBusy} isLive={isLiveWeek}
+                canBack={canStepBack} canForward={!isLiveWeek}
+                onStep={n => changeWeek(stepWeek(viewWeek, n))} onThisWeek={() => changeWeek(weekRange)} />
+            </div>
           </div>
 
           {activeMeta && (
@@ -608,6 +659,7 @@ export default function ShiftBoardPage() {
               openDriverId={openDriverId} onToggleDriver={(id) => setOpenDriverId(cur => (cur === id ? null : id))}
               accByLoad={accByLoad} exByLoad={exByLoad} brokerByLoad={brokerByLoad} toast={toast}
               undoInfo={undoInfo} onUndo={undoLast} onRemoveActivity={removeActivityById}
+              browsing={!isLiveWeek}
               onAccessorialChanged={async () => { setAccTick(t => t + 1); await refreshActions() }} />
           )}
         </>
@@ -638,6 +690,36 @@ const TAB_STYLE = {
   // Rose is the Alerts tab, matching the deadline/detention markers.
   rose:   { text: 'text-rose-600 dark:text-rose-400',      underline: 'bg-rose-500',    chip: 'bg-rose-100 dark:bg-rose-500/20 text-rose-700 dark:text-rose-300' },
 }
+// Week switcher on the tab row — matches the Shift Reports control. ‹ steps back,
+// › forward (never past the current week), then an always-present "This week"
+// reset that renders inert (not hidden) while already live.
+function WeekStepBtn({ onClick, disabled, label, children }) {
+  return (
+    <button onClick={onClick} disabled={disabled} aria-label={label} title={label}
+      className="w-6 h-6 inline-flex items-center justify-center rounded-lg text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-transparent disabled:cursor-not-allowed">
+      {children}
+    </button>
+  )
+}
+function WeekNav({ label, busy, isLive, canBack, canForward, onStep, onThisWeek }) {
+  return (
+    <div className="flex items-center gap-1 shrink-0 pl-1">
+      <div className="flex items-center gap-0.5 rounded-lg border border-gray-200 dark:border-white/10 px-1 py-0.5">
+        <WeekStepBtn onClick={() => onStep(-1)} disabled={busy || !canBack} label="Previous week">‹</WeekStepBtn>
+        <span className="px-1.5 text-[11px] font-semibold text-gray-700 dark:text-slate-200 tabular-nums whitespace-nowrap">{label}</span>
+        <WeekStepBtn onClick={() => onStep(1)} disabled={busy || !canForward} label="Next week">›</WeekStepBtn>
+      </div>
+      <button onClick={onThisWeek} disabled={busy || isLive} aria-disabled={isLive} title="Back to the live board"
+        className={`px-2 py-1 rounded-lg text-[11px] font-semibold border transition-colors ${
+          isLive
+            ? 'border-gray-200 dark:border-white/10 text-gray-300 dark:text-slate-600 cursor-default'
+            : 'border-orange-300 dark:border-orange-500/40 text-orange-700 dark:text-orange-400 bg-orange-50 dark:bg-orange-500/10 hover:bg-orange-100 dark:hover:bg-orange-500/20'}`}>
+        This week
+      </button>
+    </div>
+  )
+}
+
 // Client-side row search over the already-loaded fields (no refetch). Origin and
 // destination are raw TMS strings that still contain the city, so a substring
 // match finds them.

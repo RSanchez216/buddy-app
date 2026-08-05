@@ -105,8 +105,14 @@ export async function fetchWeekSummary(start, end) {
 // parsed fields rather than the raw string. When after_hours_board is eventually
 // changed to return these columns itself — which is what finally takes the raw
 // strings off the wire — this mapping is the only thing that goes.
-export async function fetchBoard(shiftId) {
-  const { data, error } = await supabase.rpc('after_hours_board', { p_shift_id: shiftId ?? null })
+// Live board: call with only the shift id — byte-identical to before. A browse
+// view passes the Mon–Sun window, which filters to loads overlapping it and
+// re-bases the reference date (lifecycle/idle/days-since) to the week's end.
+export async function fetchBoard(shiftId, weekStart = null, weekEnd = null) {
+  const { data, error } = await supabase.rpc('after_hours_board', {
+    p_shift_id: shiftId ?? null,
+    ...(weekStart && weekEnd ? { p_week_start: weekStart, p_week_end: weekEnd } : {}),
+  })
   if (error) throw error
   return (data || []).map(r => ({
     ...r,
@@ -275,11 +281,24 @@ export function addDaysYmd(ymd, n) {
 }
 // Monday-based week [start,end] containing today (Chicago).
 export function thisWeekChicago() {
-  const t = todayChicago()
-  const [y, m, d] = t.split('-').map(Number)
+  return weekOfYmd(todayChicago())
+}
+// Mon–Sun week {start,end} containing an arbitrary 'YYYY-MM-DD'.
+export function weekOfYmd(ymd) {
+  const [y, m, d] = String(ymd).slice(0, 10).split('-').map(Number)
   const dow = new Date(y, m - 1, d).getDay() // 0=Sun
   const back = dow === 0 ? 6 : dow - 1
-  return { start: addDaysYmd(t, -back), end: addDaysYmd(t, 6 - back) }
+  const start = addDaysYmd(ymd, -back)
+  return { start, end: addDaysYmd(start, 6) }
+}
+export const stepWeek = (week, n) => weekOfYmd(addDaysYmd(week.start, n * 7))
+// 'Aug 3 – Aug 9' from a {start,end}.
+export function fmtWeekRange(week) {
+  const f = (v) => {
+    const m = String(v).match(/^(\d{4})-(\d{2})-(\d{2})/)
+    return m ? new Date(+m[1], +m[2] - 1, +m[3]).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'
+  }
+  return `${f(week.start)} – ${f(week.end)}`
 }
 // 'Wed 29 Jul' from a 'YYYY-MM-DD' or Date.
 export function fmtDayLabel(v) {

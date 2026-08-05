@@ -19,12 +19,15 @@ function shortName(full) {
 // Column set. Disp/Carrier stack under the driver name; Truck+Trailer collapse
 // into Equipment. Checkpoints and Paperwork only appear while their phase flag
 // is on — otherwise they'd be a column of dashes.
-function columnsFor(settings) {
+function columnsFor(settings, browsing) {
   const cols = ['Driver', 'Equipment', 'Load state', 'Status', 'Load', 'Origin → Destination']
   if (settings?.track_checkpoints) cols.push('Checkpoints')
   if (settings?.track_pods || settings?.track_bols) cols.push('Paperwork')
   if (settings?.accessorials_enabled) cols.push('Accessorial')
-  cols.push('Note', 'Actions', 'OK')
+  cols.push('Note', 'Actions')
+  // OK is a review of tonight's shift — omit it entirely while browsing a past
+  // week so no one ticks a box that means nothing.
+  if (!browsing) cols.push('OK')
   return cols
 }
 
@@ -63,9 +66,9 @@ function moneyTitle(b) {
 // Rendered as the body of the active tab. The tab bar carries the heading/count;
 // this is the driver table. It owns the vertical scroll (flex-1) with a sticky
 // header so the bands and tabs above stay put while the list scrolls.
-export default function PriorityGroup({ group, rows, settings, shift, rowActionsByDriver, recipientsById, meId, isManager, highlightDriver, stateSort, onToggleStateSort, onOk, onAct, onAcknowledge, onCopyEscalation, onOpenRequest, openDriverId, onToggleDriver, accByLoad, exByLoad, brokerByLoad, undoInfo, onUndo, onRemoveActivity, toast, onAccessorialChanged, onTimesSaved, shiftId, canAddTypes }) {
+export default function PriorityGroup({ group, rows, settings, shift, rowActionsByDriver, recipientsById, meId, isManager, highlightDriver, stateSort, onToggleStateSort, onOk, onAct, onAcknowledge, onCopyEscalation, onOpenRequest, openDriverId, onToggleDriver, accByLoad, exByLoad, brokerByLoad, undoInfo, onUndo, onRemoveActivity, toast, onAccessorialChanged, onTimesSaved, shiftId, canAddTypes, browsing }) {
   const curYear = Number(todayChicago().slice(0, 4))
-  const cols = columnsFor(settings)
+  const cols = columnsFor(settings, browsing)
   // The row panel carries whichever phases are on — checkpoints, accessorials or
   // both. Checkpoint times are entered in it, so it must open for either.
   const panelOn = !!settings?.accessorials_enabled || !!settings?.track_checkpoints
@@ -147,7 +150,7 @@ export default function PriorityGroup({ group, rows, settings, shift, rowActions
                   acc={r.load_id ? accByLoad?.get(r.load_id) : null} exception={r.load_id ? exByLoad?.get(r.load_id) : null}
                   broker={r.load_id ? brokerByLoad?.get(r.load_id) : null}
                   undo={undoInfo?.driverId === r.driver_id ? undoInfo : null} onUndo={onUndo} onRemoveActivity={onRemoveActivity}
-                  toast={toast} onAccessorialChanged={onAccessorialChanged} onTimesSaved={onTimesSaved} shiftId={shiftId} canAddTypes={canAddTypes} />
+                  toast={toast} onAccessorialChanged={onAccessorialChanged} onTimesSaved={onTimesSaved} shiftId={shiftId} canAddTypes={canAddTypes} browsing={browsing} />
               ))}
               {effectiveLimit < rows.length && (
                 <tr ref={sentinelRef}>
@@ -444,7 +447,7 @@ function NotePopover({ notes, rect, onClose, onOpenRequest }) {
   )
 }
 
-function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isManager, highlighted, onOk, onAct, onAcknowledge, onCopyEscalation, onOpenRequest, colSpan, panelOpen, onToggleDriver, acc, exception, broker, undo, onUndo, onRemoveActivity, toast, onAccessorialChanged, onTimesSaved, shiftId, canAddTypes }) {
+function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isManager, highlighted, onOk, onAct, onAcknowledge, onCopyEscalation, onOpenRequest, colSpan, panelOpen, onToggleDriver, acc, exception, broker, undo, onUndo, onRemoveActivity, toast, onAccessorialChanged, onTimesSaved, shiftId, canAddTypes, browsing }) {
   const muted = r.in_scope === false
   const panelOn = !!settings?.accessorials_enabled || !!settings?.track_checkpoints
 
@@ -659,13 +662,16 @@ function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isMan
           )}
         </div>
       </td>
-      {/* OK — ticking checks the driver; unticking clears the check row entirely */}
-      <td className="px-3 py-2 text-center">
-        <input type="checkbox" checked={okChecked} disabled={!shift}
-          onChange={e => onOk(r, e.target.checked)}
-          title={shift ? 'Mark reviewed' : 'Start a shift to review'}
-          className="w-4 h-4 accent-emerald-600 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed" />
-      </td>
+      {/* OK — ticking checks the driver; unticking clears the check row entirely.
+          The column is omitted entirely while browsing (review is tonight's). */}
+      {!browsing && (
+        <td className="px-3 py-2 text-center">
+          <input type="checkbox" checked={okChecked} disabled={!shift}
+            onChange={e => onOk(r, e.target.checked)}
+            title={shift ? 'Mark reviewed' : 'Start a shift to review'}
+            className="w-4 h-4 accent-emerald-600 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed" />
+        </td>
+      )}
     </tr>
     {panelOpen && (
       <tr className="border-b border-gray-100 dark:border-white/[0.03]">
