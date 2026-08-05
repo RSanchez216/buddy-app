@@ -380,6 +380,21 @@ export default function ShiftBoardPage() {
       .sort((a, b) => a.order - b.order)
   }, [board])
 
+  // Alerts tab rows — every board row whose load carries a broker-rules alert,
+  // sorted most-urgent-first (this sort applies ONLY here; the other tabs keep
+  // their RPC order so rows never jump mid-work). Ties break by delivery date
+  // ascending, so the soonest-due load leads.
+  const alertRows = useMemo(() => {
+    const list = board.filter(r => r.load_id && hasAlert(brokerByLoad.get(r.load_id)))
+    return [...list].sort((a, b) => {
+      const ra = alertRank(brokerByLoad.get(a.load_id)), rb = alertRank(brokerByLoad.get(b.load_id))
+      if (ra !== rb) return ra - rb
+      const da = a.delivery_date || '', db = b.delivery_date || ''
+      if (da && db) return da < db ? -1 : da > db ? 1 : 0
+      return da ? -1 : db ? 1 : 0
+    })
+  }, [board, brokerByLoad])
+
   // Tabs replace the stacked groups. Order is group_order (already sorted in
   // `grouped`). Empty tabs hide, except Raised by dispatch which stays visible at
   // 0 so the associate can see nothing's waiting.
@@ -387,7 +402,7 @@ export default function ShiftBoardPage() {
     const base = grouped.map(x => ({ key: x.g.key, g: x.g, count: x.rows.length, order: x.order }))
     // Raised stays visible even at 0 so the associate can see nothing's waiting.
     if (!base.some(t => t.key === 'raised')) base.push({ key: 'raised', g: GROUP_META.raised, count: 0, order: 1 })
-    return base
+    const ordered = base
       .map(t => {
         const prog = boardTabs?.[RPC_KEY[t.key]] || null
         // Each tab owns a colour so the bar is readable at a glance. Raised is
@@ -402,7 +417,12 @@ export default function ShiftBoardPage() {
         return { ...t, tone, chip }
       })
       .sort((a, b) => a.order - b.order)
-  }, [grouped, boardTabs])
+    // Alerts is a cross-cutting filter, always last and always shown — disabled
+    // and muted at zero, because "no alerts" is good news worth seeing, and a
+    // missing tab reads as broken.
+    ordered.push({ key: 'alerts', g: ALERTS_META, count: alertRows.length, order: Infinity, tone: 'rose', chip: String(alertRows.length), disabled: alertRows.length === 0 })
+    return ordered
+  }, [grouped, boardTabs, alertRows.length])
 
   // The effective tab is the user's explicit pick when it's still a live tab,
   // otherwise the default: Raised when it has something, else All active drivers.
@@ -413,8 +433,10 @@ export default function ShiftBoardPage() {
     const raised = tabs.find(t => t.key === 'raised')
     return raised && raised.count > 0 ? 'raised' : (tabs.find(t => t.key === 'todo')?.key || tabs[0]?.key || null)
   }, [selectedTab, tabs])
-  const activeRows = useMemo(() => grouped.find(x => x.g.key === activeTab)?.rows || [], [grouped, activeTab])
-  const activeMeta = activeTab ? GROUP_META[activeTab] : null
+  const activeRows = useMemo(() => (
+    activeTab === 'alerts' ? alertRows : (grouped.find(x => x.g.key === activeTab)?.rows || [])
+  ), [grouped, activeTab, alertRows])
+  const activeMeta = activeTab === 'alerts' ? ALERTS_META : (activeTab ? GROUP_META[activeTab] : null)
   const rowActionsByDriver = useMemo(() => new Map(rowActions.map(a => [a.driver_id, a])), [rowActions])
   const recipientsById = useMemo(() => new Map(recipients.map(r => [r.id, r.full_name])), [recipients])
   const isManager = me?.role === 'admin' || me?.role === 'manager'
@@ -542,10 +564,11 @@ export default function ShiftBoardPage() {
               const on = t.key === activeTab
               const tone = TAB_STYLE[t.tone] || TAB_STYLE.grey
               // Tone shows on every tab (a red Raised must draw the eye even when
-              // it isn't the open tab); the underline marks the active one.
+              // it isn't the open tab); the underline marks the active one. A
+              // disabled tab (zero-count Alerts) is muted and unclickable.
               return (
-                <button key={t.key} onClick={() => setSelectedTab(t.key)}
-                  className={`relative shrink-0 px-3 py-2 text-sm font-semibold whitespace-nowrap transition-opacity ${tone.text} ${on ? '' : 'opacity-60 hover:opacity-100'}`}>
+                <button key={t.key} onClick={() => setSelectedTab(t.key)} disabled={t.disabled}
+                  className={`relative shrink-0 px-3 py-2 text-sm font-semibold whitespace-nowrap transition-opacity ${tone.text} ${t.disabled ? 'opacity-40 cursor-not-allowed' : on ? '' : 'opacity-60 hover:opacity-100'}`}>
                   {t.g.heading}
                   <span className={`ml-1.5 text-[11px] font-bold px-1.5 py-0.5 rounded-full tabular-nums ${tone.chip}`}>{t.chip}</span>
                   {on && <span className={`absolute left-0 right-0 -bottom-px h-0.5 ${tone.underline}`} />}
@@ -613,6 +636,8 @@ const TAB_STYLE = {
   // attention this week, not tonight. #A21CAF is Tailwind fuchsia-700.
   purple: { text: 'text-[#A21CAF] dark:text-fuchsia-400',   underline: 'bg-[#A21CAF]',  chip: 'bg-fuchsia-100 dark:bg-fuchsia-500/20 text-[#A21CAF] dark:text-fuchsia-300' },
   grey:   { text: 'text-gray-600 dark:text-slate-300',     underline: 'bg-gray-400',    chip: 'bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-slate-300' },
+  // Rose is the Alerts tab, matching the deadline/detention markers.
+  rose:   { text: 'text-rose-600 dark:text-rose-400',      underline: 'bg-rose-500',    chip: 'bg-rose-100 dark:bg-rose-500/20 text-rose-700 dark:text-rose-300' },
 }
 // Client-side row search over the already-loaded fields (no refetch). Origin and
 // destination are raw TMS strings that still contain the city, so a substring
@@ -625,6 +650,21 @@ function rowMatches(r, q) {
 
 // group key → tab-progress RPC key, and a tone fallback when there's no progress.
 const RPC_KEY = { raised: 'raised', todo: 'active', never_dispatched: 'never' }
+
+// Alerts is a virtual, cross-cutting tab — not a groupKeyFor group. Its meta is
+// defined here (not in GROUPS, which drives grouping) and looked up when active.
+const ALERTS_META = { key: 'alerts', heading: 'Alerts', tone: 'rose', reason: 'this load has a broker-rules alert' }
+// A load has an alert when its POD deadline is close or the broker won't pay
+// detention. Ranked most-urgent-first for the tab's own sort (nothing else).
+const hasAlert = (b) => b?.deadline_severity === 'urgent' || b?.deadline_severity === 'soon' || b?.detention_policy === 'not_paid'
+function alertRank(b) {
+  const urgent = b?.deadline_severity === 'urgent', notPaid = b?.detention_policy === 'not_paid'
+  if (notPaid && urgent) return 0
+  if (urgent) return 1
+  if (notPaid) return 2
+  if (b?.deadline_severity === 'soon') return 3
+  return 99
+}
 // One colour per tab so the bar reads at a glance instead of a wall of orange.
 // Idle sits outside the orange family on purpose: those drivers need attention
 // this week, not tonight.
@@ -1026,6 +1066,20 @@ function ActionPopover({ target, recipients = [], meId, onClose, onSubmit, onRem
           <h3 className="text-sm font-semibold text-gray-900 dark:text-white">{meta.title}</h3>
           <p className="text-xs text-gray-500 dark:text-slate-500 mt-0.5 truncate">{target.row.driver_name}{target.row.load_number ? ` · #${target.row.load_number}` : ''}</p>
         </div>
+        {confirmingRemove ? (
+          // Confirm is a modal STATE, not an extra footer row: the body becomes
+          // the question and the footer becomes exactly two buttons. Cancel
+          // returns to the edit state with the note text still in place.
+          <>
+            <p className="text-sm text-gray-600 dark:text-slate-300">Remove this entry? It won&apos;t be recoverable.</p>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setConfirmingRemove(false)} disabled={busy} className={S.btnCancel}>Cancel</button>
+              <button onClick={remove} disabled={busy}
+                className="px-4 py-2 text-sm font-semibold bg-rose-600 hover:bg-rose-700 text-white rounded-xl transition-colors disabled:opacity-50">{busy ? 'Removing…' : 'Remove'}</button>
+            </div>
+          </>
+        ) : (
+          <>
         {meta.hasLoad && (
           <label className="block">
             <span className="text-[11px] font-medium text-gray-500 dark:text-slate-400">Load number</span>
@@ -1066,15 +1120,11 @@ function ActionPopover({ target, recipients = [], meId, onClose, onSubmit, onRem
         ) : (
           <div className="flex items-center justify-between gap-2">
             <div>
-              {editing && (confirmingRemove ? (
-                <span className="inline-flex items-center gap-2 text-sm">
-                  <span className="text-gray-600 dark:text-slate-300">Remove for good?</span>
-                  <button onClick={remove} disabled={busy} className="px-2.5 py-1.5 text-sm font-semibold text-white bg-red-500 hover:bg-red-400 rounded-lg disabled:opacity-50">{busy ? 'Removing…' : 'Remove'}</button>
-                  <button onClick={() => setConfirmingRemove(false)} disabled={busy} className="text-sm text-gray-500 dark:text-slate-400 hover:underline">Keep</button>
-                </span>
-              ) : (
-                <button onClick={() => setConfirmingRemove(true)} disabled={busy} className="px-3 py-2 text-sm font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-xl transition-colors disabled:opacity-50">Remove</button>
-              ))}
+              {/* Quiet, text-only — Remove is the rare path and must not compete
+                  with Save. Pressing it swaps the whole body to the confirm. */}
+              {editing && (
+                <button onClick={() => setConfirmingRemove(true)} disabled={busy} className="px-2 py-2 text-sm font-medium text-gray-500 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 transition-colors disabled:opacity-50">Remove</button>
+              )}
             </div>
             <div className="flex gap-2">
               <button onClick={onClose} disabled={busy} className={S.btnCancel}>Cancel</button>
@@ -1082,6 +1132,8 @@ function ActionPopover({ target, recipients = [], meId, onClose, onSubmit, onRem
                 className="px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 text-white rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Save</button>
             </div>
           </div>
+        )}
+          </>
         )}
       </div>
     </div>,

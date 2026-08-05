@@ -525,15 +525,17 @@ function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isMan
           <div className="flex items-center gap-1">
             <LoadCell number={r.load_number} />
             {/* Deadline marker first, then the detention dot — two glyphs is the
-                ceiling. Glyphs only, no row tint (it would fight the group colours). */}
+                ceiling. 14px so the shapes read; triangle for urgent, dot for
+                soon, so they're told apart in greyscale, not by colour alone.
+                Glyphs only, no row tint (it would fight the group colours). */}
             {broker?.deadline_severity === 'urgent' && (
-              <svg aria-hidden viewBox="0 0 12 12" className="shrink-0 w-2.5 h-2.5 text-rose-500 fill-current"><title>POD due within 24h of delivery</title><path d="M6 1l5 9H1z" /></svg>
+              <svg aria-hidden viewBox="0 0 12 12" className="shrink-0 w-3.5 h-3.5 text-rose-500 fill-current"><title>POD due within 24h of delivery</title><path d="M6 1l5 9H1z" /></svg>
             )}
             {broker?.deadline_severity === 'soon' && (
-              <span title="POD due within 48h of delivery" className="shrink-0 w-1.5 h-1.5 rounded-full bg-amber-500" />
+              <span title="POD due within 48h of delivery" className="shrink-0 w-3.5 h-3.5 rounded-full bg-amber-500" />
             )}
             {broker?.detention_policy === 'not_paid' && (
-              <span title="This broker does not pay detention." className="shrink-0 w-1.5 h-1.5 rounded-full bg-rose-500" />
+              <span title="This broker does not pay detention." className="shrink-0 w-3.5 h-3.5 rounded-full bg-rose-500" />
             )}
           </div>
         )}
