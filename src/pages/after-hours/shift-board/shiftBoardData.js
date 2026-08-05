@@ -126,6 +126,16 @@ export async function fetchBoardBrokerMeta(loadIds) {
   if (error) throw error
   return new Map(Object.entries(data || {}))
 }
+// Same payload keyed by load_id, but derived from the shift_id server-side — so
+// the board's initial load can fire it in parallel with after_hours_board rather
+// than waiting to read load ids out of the board's rows. Byte-identical to
+// fetchBoardBrokerMeta for the same shift. Keep the per-load-id function above
+// for callers that already hold ids.
+export async function fetchBoardBrokerMetaForShift(shiftId) {
+  const { data, error } = await supabase.rpc('after_hours_board_broker_meta_for_shift', { p_shift_id: shiftId ?? null })
+  if (error) throw error
+  return new Map(Object.entries(data || {}))
+}
 // Tab headers with progress + tone, measured against the open shift (or since
 // midnight Chicago when off-shift). Returns { raised, active, never } where each
 // carries counts and a `tone` — use the tone as-is, don't recompute the colour.

@@ -11,7 +11,7 @@ import TimesNeededGroup from './TimesNeededGroup'
 import RequestDetailPanel from './RequestDetailPanel'
 import {
   SHIFT_TYPES, GROUP_META, groupKeyFor, shiftName, LIFECYCLE, LIFECYCLE_RANK,
-  fetchSettings, fetchOpenShift, startShift, fetchShiftSummary, fetchWeekSummary, fetchBoard, fetchBoardTabs, fetchBoardBrokerMeta,
+  fetchSettings, fetchOpenShift, startShift, fetchShiftSummary, fetchWeekSummary, fetchBoard, fetchBoardTabs, fetchBoardBrokerMetaForShift,
   fetchCheckpointExceptions,
   upsertDriverCheck, logShiftActivity,
   fetchRowActions, updateShiftActivity, deleteShiftActivity, clearDriverCheck,
@@ -79,7 +79,7 @@ export default function ShiftBoardPage() {
   // omit to use the current one.
   const refresh = useCallback(async (shArg, { week = false } = {}) => {
     const sh = shArg !== undefined ? shArg : shiftRef.current
-    const [bd, sm, ex, tb, ra, wk] = await Promise.all([
+    const [bd, sm, ex, tb, ra, bm, wk] = await Promise.all([
       fetchBoard(sh?.id ?? null),
       sh ? fetchShiftSummary(sh.id) : Promise.resolve(null),
       // The queue also feeds the ACCESSORIAL column's "Detention likely"
@@ -87,9 +87,12 @@ export default function ShiftBoardPage() {
       (settingsRef.current?.track_checkpoints || settingsRef.current?.accessorials_enabled) ? fetchCheckpointExceptions() : Promise.resolve([]),
       fetchBoardTabs(sh?.id ?? null).catch(() => null),
       sh ? fetchRowActions(sh.id).catch(() => []) : Promise.resolve([]),
+      // Broker meta rides the same batch, keyed by shift_id — no longer waiting to
+      // read load ids out of the board's rows. On failure the markers just don't render.
+      fetchBoardBrokerMetaForShift(sh?.id ?? null).catch((e) => { console.error('broker meta failed', e); return new Map() }),
       week ? fetchWeekSummary(weekRange.start, weekRange.end) : Promise.resolve(undefined),
     ])
-    setBoard(bd); setSummary(sm); setExceptions(ex); setBoardTabs(tb); setRowActions(ra)
+    setBoard(bd); setSummary(sm); setExceptions(ex); setBoardTabs(tb); setRowActions(ra); setBrokerByLoad(bm)
     if (week && wk !== undefined) setWeek(wk)
   }, [weekRange.start, weekRange.end])
 
@@ -125,14 +128,17 @@ export default function ShiftBoardPage() {
       ])
       setSettings(st || {}); setWeek(wk); setShift(sh)
       settingsRef.current = st || {} // so a refresh in the same tick sees track_checkpoints
-      const [bd, sm, ex, tb, ra] = await Promise.all([
+      const [bd, sm, ex, tb, ra, bm] = await Promise.all([
         fetchBoard(sh?.id ?? null),
         sh ? fetchShiftSummary(sh.id) : Promise.resolve(null),
         (st?.track_checkpoints || st?.accessorials_enabled) ? fetchCheckpointExceptions() : Promise.resolve([]),
         fetchBoardTabs(sh?.id ?? null).catch(() => null),
         sh ? fetchRowActions(sh.id).catch(() => []) : Promise.resolve([]),
+        // Fires with the board (not after it), keyed by shift_id — the fix that
+        // removes the serial broker-meta tail and the marker pop-in.
+        fetchBoardBrokerMetaForShift(sh?.id ?? null).catch((e) => { console.error('broker meta failed', e); return new Map() }),
       ])
-      setBoard(bd); setSummary(sm); setExceptions(ex); setBoardTabs(tb); setRowActions(ra)
+      setBoard(bd); setSummary(sm); setExceptions(ex); setBoardTabs(tb); setRowActions(ra); setBrokerByLoad(bm)
     } catch (e) {
       setError(true); toastRef.current.error("Couldn't load the shift board", e)
     } finally { setLoading(false) }
@@ -161,17 +167,10 @@ export default function ShiftBoardPage() {
     return () => { stale = true }
   }, [accessorialsOn, board, accTick])
 
-  // Broker + rate-con meta for every load, in ONE request (never per row). Keyed
-  // on the set of load ids, so it fires when the board's loads change — not on an
-  // in-place checkpoint patch, where the brokers are unchanged.
-  const loadIdsKey = useMemo(() => [...new Set(board.map(r => r.load_id).filter(Boolean))].sort().join(','), [board])
-  useEffect(() => {
-    let stale = false
-    fetchBoardBrokerMeta(loadIdsKey ? loadIdsKey.split(',') : [])
-      .then(m => { if (!stale) setBrokerByLoad(m) })
-      .catch(() => { /* the broker line just doesn't render */ })
-    return () => { stale = true }
-  }, [loadIdsKey])
+  // Broker + rate-con meta for every load now rides the board's own load/refresh
+  // batch (keyed by shift_id), so it starts with the board instead of waiting to
+  // read load ids out of its rows. An in-place checkpoint patch leaves it alone —
+  // that path never re-runs the batch — and switching tabs reuses this same Map.
 
   // Collapse the open row if the phase is switched off mid-session.
   useEffect(() => { if (!accessorialsOn) setOpenDriverId(null) }, [accessorialsOn])
