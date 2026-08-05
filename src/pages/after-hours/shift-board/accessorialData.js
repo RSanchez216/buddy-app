@@ -158,6 +158,40 @@ export async function fetchBoardAccessorials(loadIds) {
   return map
 }
 
+// Broker rules extracted from the load's rate confirmation. Session-cached per
+// load_id: expanding a row fires exactly one call, re-expanding fires none. The
+// in-flight promise is shared so a double-open can't double-fetch.
+const BROKER_RULES_CACHE = new Map()   // load_id → jsonb (or null)
+const BROKER_RULES_INFLIGHT = new Map()
+export async function fetchBrokerRules(loadId) {
+  if (!loadId) return null
+  if (BROKER_RULES_CACHE.has(loadId)) return BROKER_RULES_CACHE.get(loadId)
+  let p = BROKER_RULES_INFLIGHT.get(loadId)
+  if (!p) {
+    p = supabase.rpc('load_broker_rules', { p_load_id: loadId })
+      .then(({ data, error }) => {
+        if (error) throw error
+        BROKER_RULES_CACHE.set(loadId, data || null)
+        BROKER_RULES_INFLIGHT.delete(loadId)
+        return data || null
+      })
+      .catch(e => { BROKER_RULES_INFLIGHT.delete(loadId); throw e })
+    BROKER_RULES_INFLIGHT.set(loadId, p)
+  }
+  return p
+}
+// Map a (possibly custom) accessorial type code → the matching rate-con policy.
+// Detention/Layover/TONU each have a policy + sentence; anything else has none,
+// which the callout renders as "not stated".
+export function policyForType(rules, code) {
+  if (!rules) return null
+  const c = String(code || '').toLowerCase()
+  if (c.includes('detention')) return { policy: rules.detention_policy, sentence: rules.detention_sentence }
+  if (c.includes('layover')) return { policy: rules.layover_policy, sentence: rules.layover_sentence }
+  if (c.includes('tonu')) return { policy: rules.tonu_policy, sentence: rules.tonu_sentence }
+  return null
+}
+
 export async function fetchAccessorialDocs(accessorialId) {
   const { data, error } = await supabase.from('accessorial_documents')
     .select('id, doc_type, file_path, file_name, note, uploaded_at')

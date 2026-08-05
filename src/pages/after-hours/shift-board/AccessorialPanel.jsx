@@ -8,6 +8,7 @@ import {
   computeAmount, minutesBetween, fetchLoadAccessorials, fetchAccessorialDocs,
   fetchAccessorialTypes, addAccessorialType,
   raiseAccessorial, recordBrokerResponse, uploadAccessorialDoc, signedDocUrl, buildRequestCopy,
+  fetchBrokerRules, policyForType,
 } from './accessorialData'
 
 // The panel that opens under a driver row on the Shift Board. Three columns:
@@ -35,6 +36,20 @@ export default function AccessorialPanel({
   accessorialsOn = true, trackCheckpoints = true, canAddTypes,
 }) {
   const loadId = row.load_id || null
+
+  // ── Broker rules from the rate confirmation (session-cached per load) ──────
+  const [brokerRules, setBrokerRules] = useState(null)
+  const [brokerLoading, setBrokerLoading] = useState(true)
+  useEffect(() => {
+    let cancelled = false
+    if (!loadId) { setBrokerRules(null); setBrokerLoading(false); return }
+    setBrokerLoading(true)
+    fetchBrokerRules(loadId)
+      .then(r => { if (!cancelled) setBrokerRules(r) })
+      .catch(() => { if (!cancelled) setBrokerRules(null) })
+      .finally(() => { if (!cancelled) setBrokerLoading(false) })
+    return () => { cancelled = true }
+  }, [loadId])
 
   // ── Types — from the lookup, never hardcoded ──────────────────────────────
   const [types, setTypes] = useState([])
@@ -279,11 +294,16 @@ export default function AccessorialPanel({
                 )}
               </div>
 
+              {/* Policy from the rate con, following the selected type. Warns —
+                  never blocks: the parse can be wrong and the associate may know
+                  more than it does. */}
+              <AccessorialPolicyCallout rules={brokerRules} typeCode={type} typeLabel={typeDef?.label} />
+
               {err && <div className={`${S.errorBox} mt-3`}>{err}</div>}
 
               <button type="button" onClick={submit} disabled={saving || !loadId || !type}
                 className="mt-3 w-full px-4 py-2 text-sm font-semibold bg-orange-500 hover:bg-orange-400 disabled:bg-gray-200 dark:disabled:bg-slate-700 disabled:text-gray-400 dark:disabled:text-slate-500 text-white rounded-xl transition-all">
-                {saving ? 'Raising…' : `Raise ${(typeDef?.label || 'accessorial').toLowerCase()} request`}
+                {saving ? 'Raising…' : `Raise ${(typeDef?.label || 'accessorial').toLowerCase()} request${policyForType(brokerRules, type)?.policy === 'not_paid' ? ' anyway' : ''}`}
               </button>
               {!loadId && <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1.5">An accessorial request belongs to a load. Book or link one first.</p>}
             </Column>
@@ -298,6 +318,9 @@ export default function AccessorialPanel({
                     : 'No times recorded yet'}
                 </p>
               </div>
+
+              {/* Where the POD is sent, straight off the rate con. */}
+              <PaperworkRouting rules={brokerRules} />
 
               <div className="mt-3">
                 <label className={S.label}>Documents <span className="font-normal normal-case text-gray-400 dark:text-slate-500">· any number, any type</span></label>
@@ -338,7 +361,11 @@ export default function AccessorialPanel({
         )}
       </div>
 
-      {/* ④ Already requested — this load and other loads, never merged */}
+      {/* Broker rules — full width beneath the grid (the 3+1 fallback, so the
+          fourth panel never squeezes panel ①'s two stop blocks). */}
+      <BrokerRulesPanel rules={brokerRules} loading={brokerLoading} />
+
+      {/* Already requested — this load and other loads, never merged */}
       {accessorialsOn && (
         <div className="border-t border-gray-200 dark:border-white/10 pt-3">
           {requestsError ? (
@@ -490,14 +517,207 @@ function AddTypeModal({ onClose, onAdded }) {
 // `fill` makes the card a flex column so a child marked flex-1 can absorb the
 // height the grid row forces on it — panel ③ is stretched to panel ①'s height,
 // which otherwise left ~85px of dead space under the note box.
-function Column({ n, title, children, fill }) {
+function Column({ n, title, children, fill, tag }) {
   return (
     <div className={`rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-white/[0.02] p-3.5${fill ? ' flex flex-col' : ''}`}>
       <div className="flex items-center gap-2 mb-3">
         <span className="w-5 h-5 rounded-full bg-orange-100 dark:bg-orange-500/15 text-orange-600 dark:text-orange-400 inline-flex items-center justify-center text-[10px] font-bold">{n}</span>
         <h4 className="text-xs font-semibold text-gray-900 dark:text-white uppercase tracking-wide">{title}</h4>
+        {tag && <span className="ml-auto text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded border border-gray-200 dark:border-white/10 text-gray-400 dark:text-slate-500">{tag}</span>}
       </div>
       {children}
+    </div>
+  )
+}
+
+// Inline copy — puts the BARE text on the clipboard with a brief "Copied", no
+// toast (a blocking dialog would freeze the page and the browser automation).
+function CopyPill({ text, label = 'Copy', className = '' }) {
+  const [done, setDone] = useState(false)
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(String(text)); setDone(true); setTimeout(() => setDone(false), 1400) }
+    catch { /* clipboard blocked — no-op, never alert */ }
+  }
+  return (
+    <button type="button" onClick={copy} title="Copy"
+      className={`inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded border border-gray-200 dark:border-white/10 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 ${className}`}>
+      {done ? '✓ Copied' : `📋 ${label}`}
+    </button>
+  )
+}
+
+// ── Panel ② callout — accessorial policy for the selected type ────────────────
+const POLICY_CALLOUT = {
+  not_paid:    { cls: 'bg-rose-50 dark:bg-rose-500/10 border-rose-200 dark:border-rose-500/25 text-rose-800 dark:text-rose-300', lead: (t) => `⚠ ${t} is not paid by this broker.` },
+  conditional: { cls: 'bg-amber-50 dark:bg-amber-500/10 border-amber-200 dark:border-amber-500/25 text-amber-800 dark:text-amber-300', lead: (t) => `${t} is payable with conditions.` },
+  stated:      { cls: 'bg-gray-50 dark:bg-white/[0.03] border-gray-200 dark:border-white/10 text-gray-700 dark:text-slate-300', lead: () => 'Terms are stated on the rate con.' },
+}
+function AccessorialPolicyCallout({ rules, typeCode, typeLabel: label }) {
+  if (!rules || !rules.has_instructions) return null
+  const t = label || 'This accessorial'
+  const match = policyForType(rules, typeCode)
+  // Custom types (no matching policy field) and an explicit not_stated both read
+  // the same way — check the document before filing.
+  const policy = match?.policy || 'not_stated'
+  if (policy === 'not_stated') {
+    return <div className="mt-3 rounded-lg border px-2.5 py-2 text-[11px] leading-relaxed bg-gray-50 dark:bg-white/[0.03] border-gray-200 dark:border-white/10 text-gray-500 dark:text-slate-400">{t} terms are not stated on this rate con. Check the document before filing.</div>
+  }
+  const meta = POLICY_CALLOUT[policy]
+  if (!meta) return null
+  return (
+    <div className={`mt-3 rounded-lg border px-2.5 py-2 text-[11px] leading-relaxed ${meta.cls}`}>
+      <span className="font-semibold">{meta.lead(t)}</span>
+      {match.sentence && <span className="block mt-0.5 opacity-90">{match.sentence}</span>}
+    </div>
+  )
+}
+
+// ── Panel ③ — where the POD goes ──────────────────────────────────────────────
+function PaperworkRouting({ rules }) {
+  const [showExtras, setShowExtras] = useState(false)
+  if (!rules || !rules.has_instructions) return null
+  const pod = rules.rules?.pod_email || null
+  const all = Array.isArray(rules.rules?.all_emails) ? rules.rules.all_emails : []
+  const extras = all.filter(e => e && e !== pod)
+  if (!pod && all.length === 0) return null
+
+  return (
+    <div className="mt-3 rounded-lg border border-gray-200 dark:border-white/10 bg-gray-50/70 dark:bg-white/[0.02] p-2.5">
+      {pod ? (
+        <>
+          <p className="text-[11px] font-semibold text-gray-700 dark:text-slate-200">Where this paperwork goes</p>
+          <div className="mt-1 flex items-center gap-2">
+            <span className="font-mono text-xs text-gray-900 dark:text-slate-100 truncate">{pod}</span>
+            <CopyPill text={pod} className="shrink-0" />
+          </div>
+          {rules.rules?.pod_sentence && <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-1 leading-snug">{rules.rules.pod_sentence}</p>}
+          {extras.length > 0 && (
+            <div className="mt-1.5">
+              <button type="button" onClick={() => setShowExtras(s => !s)} className="text-[10px] font-medium text-gray-500 dark:text-slate-400 hover:underline">
+                {showExtras ? 'Hide' : `+${extras.length} more`} ▾
+              </button>
+              {showExtras && (
+                <div className="mt-1 space-y-1">
+                  {extras.map(e => (
+                    <div key={e} className="flex items-center gap-2">
+                      <span className="font-mono text-[11px] text-gray-700 dark:text-slate-300 truncate">{e}</span>
+                      <CopyPill text={e} className="shrink-0" />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          <p className="text-[11px] font-semibold text-gray-600 dark:text-slate-300">Emails on this rate con</p>
+          <div className="mt-1 space-y-1">
+            {all.map(e => (
+              <div key={e} className="flex items-center gap-2">
+                <span className="font-mono text-[11px] text-gray-700 dark:text-slate-300 truncate">{e}</span>
+                <CopyPill text={e} className="shrink-0" />
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+// ── Panel ④ — broker rules ────────────────────────────────────────────────────
+// Window from deadline_minutes: under an hour shows minutes, otherwise hours.
+// Never hardcode 24/48.
+function deadlineWindow(mins) {
+  const m = Number(mins)
+  if (!Number.isFinite(m) || m <= 0) return ''
+  if (m < 60) return `within ${Math.round(m)} min`
+  return `within ${Math.round(m / 60)}h`
+}
+const BANNER = {
+  urgent:  'bg-rose-50 dark:bg-rose-500/10 border-rose-200 dark:border-rose-500/30 text-rose-800 dark:text-rose-300 font-semibold',
+  soon:    'bg-amber-50 dark:bg-amber-500/10 border-amber-200 dark:border-amber-500/25 text-amber-800 dark:text-amber-300 font-medium',
+  relaxed: 'bg-gray-50 dark:bg-white/[0.03] border-gray-200 dark:border-white/10 text-gray-700 dark:text-slate-300',
+  unknown: 'bg-gray-50 dark:bg-white/[0.03] border-gray-200 dark:border-white/10 text-gray-500 dark:text-slate-400',
+}
+function DeadlineBanner({ rules }) {
+  const sev = rules.deadline_severity || 'unknown'
+  const r = rules.rules || {}
+  const win = deadlineWindow(r.deadline_minutes)
+  // "unknown" must read as NOT STATED — never as "no deadline / no rush".
+  const text = sev === 'unknown' || !win ? 'No submission deadline stated' : `POD due ${win} of delivery`
+  return (
+    <div title={r.deadline_sentence || ''} className={`rounded-lg border px-2.5 py-2 text-xs leading-relaxed ${BANNER[sev] || BANNER.unknown}`}>
+      <span className="inline-flex items-center gap-1.5">{sev === 'urgent' && <span aria-hidden>⚠</span>}{text}</span>
+      {sev === 'urgent' && (r.penalty_sentence || r.penalty) && (
+        <span className="block mt-0.5 font-normal opacity-90">{r.penalty_sentence || r.penalty}</span>
+      )}
+    </div>
+  )
+}
+function RuleRow({ label, children, title }) {
+  return (
+    <div className="flex items-start gap-2 text-[11px]" title={title || undefined}>
+      <span className="w-16 shrink-0 font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500">{label}</span>
+      <span className="flex-1 min-w-0 text-gray-700 dark:text-slate-300">{children}</span>
+    </div>
+  )
+}
+function BrokerRulesPanel({ rules, loading }) {
+  const [showRaw, setShowRaw] = useState(false)
+  return (
+    <div className="mt-1">
+      <Column n={4} title="Broker rules" tag="RATE CON">
+        {loading ? (
+          <div className="h-16 rounded-lg bg-gray-100 dark:bg-white/5 animate-pulse" />
+        ) : !rules || !rules.has_instructions ? (
+          <p className="text-xs text-gray-400 dark:text-slate-500 italic">No rate confirmation notes on this load.</p>
+        ) : (() => {
+          const r = rules.rules || {}
+          const showPenaltyRow = (r.penalty_sentence || r.penalty) && rules.deadline_severity !== 'urgent'
+          return (
+            <div className="space-y-2.5">
+              <DeadlineBanner rules={rules} />
+              {(r.after_hours_phone || r.tracking_sentence || showPenaltyRow) && (
+                <div className="space-y-1.5">
+                  {r.after_hours_phone && (
+                    <RuleRow label="After hrs" title={r.after_hours_sentence || ''}>
+                      <span className="inline-flex items-center gap-2">
+                        <span className="font-mono">{r.after_hours_phone}</span>
+                        <CopyPill text={r.after_hours_phone} />
+                      </span>
+                    </RuleRow>
+                  )}
+                  {r.tracking_sentence && (
+                    <RuleRow label="Tracking" title={r.tracking_sentence}>
+                      <span className="block truncate">{r.tracking_sentence}</span>
+                    </RuleRow>
+                  )}
+                  {showPenaltyRow && (
+                    <RuleRow label="Penalty" title={r.penalty_sentence || ''}>
+                      <span className="block truncate">{r.penalty_sentence || r.penalty}</span>
+                    </RuleRow>
+                  )}
+                </div>
+              )}
+              {rules.raw_instructions && (
+                <div>
+                  <button type="button" onClick={() => setShowRaw(s => !s)} className="text-[11px] font-medium text-gray-500 dark:text-slate-400 hover:underline">
+                    {showRaw ? 'Hide instructions' : 'Full instructions'} ▾
+                  </button>
+                  {showRaw && (
+                    <p className="mt-1.5 text-[11px] whitespace-pre-wrap text-gray-600 dark:text-slate-400 rounded-lg bg-gray-50 dark:bg-white/[0.03] border border-gray-200 dark:border-white/10 p-2 max-h-48 overflow-auto">{rules.raw_instructions}</p>
+                  )}
+                </div>
+              )}
+              <p className="text-[10px] text-gray-400 dark:text-slate-500 leading-snug border-t border-gray-100 dark:border-white/5 pt-2">
+                Machine-summarised from the broker&apos;s re-confirmation. Reference only — confirm against the rate con before relying on it.
+              </p>
+            </div>
+          )
+        })()}
+      </Column>
     </div>
   )
 }
