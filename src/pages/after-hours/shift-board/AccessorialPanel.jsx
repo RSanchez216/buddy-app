@@ -8,7 +8,7 @@ import {
   computeAmount, minutesBetween, fetchLoadAccessorials, fetchAccessorialDocs,
   fetchAccessorialTypes, addAccessorialType,
   raiseAccessorial, recordBrokerResponse, uploadAccessorialDoc, signedDocUrl, buildRequestCopy,
-  fetchBrokerRules, policyForType,
+  fetchBrokerRules, policyForType, termsForType,
 } from './accessorialData'
 
 // The panel that opens under a driver row on the Shift Board. Three columns:
@@ -109,13 +109,26 @@ export default function AccessorialPanel({
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
 
-  // Free time and rate come from the type's defaults when it has them.
+  // This load's stated terms for the selected type — never a global default. The
+  // 120-min / $75 fallback is gone: a confident wrong number reads exactly like a
+  // real one, so absence must stay blank.
+  const terms = useMemo(() => termsForType(brokerRules, typeDef?.code), [brokerRules, typeDef?.code])
+
+  // Prefill Free time and Rate from the load's rate confirmation where it states
+  // them, leaving them blank (not 120/75) where it doesn't. Flat types (Layover,
+  // TONU) prefill the flat amount instead. Re-runs when the load's terms arrive.
   useEffect(() => {
     if (!typeDef) return
-    setFreeMin(typeDef.default_free_minutes != null ? String(typeDef.default_free_minutes) : '')
-    setRate(typeDef.default_rate != null ? String(typeDef.default_rate) : '')
-    setAmount(''); setAmountTouched(false); setErr('')
-  }, [typeDef])
+    if (flat) {
+      setFreeMin(''); setRate('')
+      setAmount(terms?.flat_usd != null ? Number(terms.flat_usd).toFixed(2) : '')
+    } else {
+      setFreeMin(terms?.freeMinutes != null ? String(terms.freeMinutes) : '')
+      setRate(terms?.rate_per_hour != null ? String(terms.rate_per_hour) : '')
+      setAmount('')
+    }
+    setAmountTouched(false); setErr('')
+  }, [typeDef, terms, flat])
 
   const shipperMinutes = minutesBetween(row.cp_pickup_in, row.cp_pickup_out)
   const receiverMinutes = minutesBetween(row.cp_delivery_in, row.cp_delivery_out)
@@ -279,20 +292,33 @@ export default function AccessorialPanel({
                     <div>
                       <label className={S.label}>Free time (min)</label>
                       <input type="text" inputMode="numeric" className={S.input} value={freeMin}
-                        onChange={e => { setFreeMin(normalizeInt(e.target.value)); setAmountTouched(false) }} placeholder="120" />
+                        onChange={e => { setFreeMin(normalizeInt(e.target.value)); setAmountTouched(false) }} placeholder="—" />
                     </div>
                     <div>
                       <label className={S.label}>Rate per hour</label>
                       <input type="text" inputMode="decimal" className={S.input} value={rate}
-                        onChange={e => { setRate(normalizeMoney(e.target.value)); setAmountTouched(false) }} placeholder="75.00" />
+                        onChange={e => { setRate(normalizeMoney(e.target.value)); setAmountTouched(false) }} placeholder="Enter rate" />
                     </div>
                   </div>
-                  <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1.5">From the rate confirmation for this load — brokers differ, so these are not settings.</p>
+                  {/* The values are this LOAD's rate-con terms or nothing — the
+                      global 120/$75 default is gone, and "not stated" is the honest
+                      common case, styled as normal (grey), never as an error. */}
+                  {terms && (terms.clause || terms.freeMinutes != null || terms.rate_per_hour != null || terms.cap_usd != null) ? (
+                    <p className="text-[11px] text-emerald-700 dark:text-emerald-400 mt-1.5">
+                      From this load&apos;s rate confirmation{terms.clause ? <>: <span className="italic">{terms.clause}</span></> : '.'}
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1.5">
+                      No {(typeDef?.label || 'detention').toLowerCase()} terms stated on this rate confirmation. Enter the free time and rate from the document before filing.
+                    </p>
+                  )}
 
                   <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-2 tabular-nums">
                     {detainedMinutes == null
                       ? 'No time recorded at this stop yet — enter it on the left, or type an amount.'
-                      : `${fmtDuration(detainedMinutes)} detained − ${fmtDuration(num(freeMin) || 0)} free = ${calc.hours} billable hour${calc.hours === 1 ? '' : 's'} (rounded up)`}
+                      : num(freeMin) == null
+                        ? `${fmtDuration(detainedMinutes)} detained · free window not stated`
+                        : `${fmtDuration(detainedMinutes)} detained − ${fmtDuration(num(freeMin))} free = ${calc.hours} billable hour${calc.hours === 1 ? '' : 's'} (rounded up)`}
                   </p>
                 </>
               )}
@@ -311,6 +337,21 @@ export default function AccessorialPanel({
                     className="mt-1 text-[11px] text-gray-500 dark:text-slate-400 hover:underline">
                     Calculated was {money(calc.amount, 2)} — use it
                   </button>
+                )}
+                {/* Cap is surfaced, never enforced — show both figures and let the
+                    associate decide, since the parse can be wrong. */}
+                {terms?.cap_usd != null && calc.amount > Number(terms.cap_usd) && (
+                  <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400" title={terms.clause || ''}>
+                    Capped at {money(terms.cap_usd, 2)} by this rate con — computed {money(calc.amount, 2)}.
+                  </p>
+                )}
+                {/* Flat types (Layover/TONU) prefill the amount from the rate con —
+                    the free-time/rate caption above doesn't apply, so surface the
+                    clause here so its source is still shown. */}
+                {flat && terms?.flat_usd != null && terms.clause && (
+                  <p className="mt-1 text-[11px] text-emerald-700 dark:text-emerald-400">
+                    From this load&apos;s rate confirmation: <span className="italic">{terms.clause}</span>
+                  </p>
                 )}
               </div>
 
@@ -755,6 +796,42 @@ const REQ_LABELS = {
   seal: 'Seal', reefer: 'Temperature', appointment: 'Appointment', check_in: 'Check-in',
   photos: 'Photos', unloading: 'Unloading', weight: 'Weight',
 }
+// This LOAD's stated accessorial terms, read-only, in panel ④. Only the lines
+// that have data render; each carries its source clause on hover. Never shown
+// when has_stated_terms is false — an empty "terms unknown" block on 12,292 loads
+// would just be noise.
+function AccessorialTerms({ terms }) {
+  if (!terms) return null
+  const rows = []
+  const det = terms.detention
+  if (det) {
+    const parts = []
+    const freeMin = det.free_minutes != null ? det.free_minutes : (det.free_hours != null ? Math.round(det.free_hours * 60) : null)
+    if (freeMin != null) parts.push(`${freeMin % 60 === 0 ? `${freeMin / 60}h` : fmtDuration(freeMin)} free`)
+    if (det.rate_per_hour != null) parts.push(`${money(det.rate_per_hour)}/hr`)
+    if (det.cap_usd != null) parts.push(`cap ${money(det.cap_usd)}`)
+    if (parts.length) rows.push({ label: 'Detention', text: parts.join(' · '), clause: det.clause })
+  }
+  if (terms.layover?.flat_usd != null) rows.push({ label: 'Layover', text: money(terms.layover.flat_usd), clause: terms.layover.clause })
+  if (terms.tonu?.flat_usd != null) rows.push({ label: 'TONU', text: money(terms.tonu.flat_usd), clause: terms.tonu.clause })
+  if (!rows.length) return null
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <p className={EYEBROW}>Accessorial terms</p>
+        <span className="text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded border border-gray-200 dark:border-white/10 text-gray-400 dark:text-slate-500">from rate con</span>
+      </div>
+      <div className="space-y-0.5">
+        {rows.map(r => (
+          <div key={r.label} title={r.clause || undefined} className="flex items-baseline gap-2 text-[11px]">
+            <span className="w-16 shrink-0 font-semibold text-gray-500 dark:text-slate-400">{r.label}</span>
+            <span className="flex-1 min-w-0 text-gray-700 dark:text-slate-300">{r.text}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
 function AlsoRequired({ requirements }) {
   const [expanded, setExpanded] = useState(false)
   const list = requirements || []
@@ -803,6 +880,7 @@ function BrokerRulesPanel({ rules, loading }) {
             <div className="space-y-2.5">
               <DeadlineBanner rules={rules} />
               {rules.money_at_risk && <MoneyAtRisk penalties={r.penalties} />}
+              {rules.has_stated_terms && <AccessorialTerms terms={rules.accessorial_terms} />}
               {rules.requirement_count > 0 && <AlsoRequired requirements={r.requirements} />}
               {(r.after_hours_phone || r.tracking_sentence || showPenaltyRow) && (
                 <div className="space-y-1.5">

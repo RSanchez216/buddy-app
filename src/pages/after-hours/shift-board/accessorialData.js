@@ -192,6 +192,20 @@ export function policyForType(rules, code) {
   return null
 }
 
+// This LOAD's stated accessorial terms for a type — never a broker-wide default.
+// Any sub-object or field may be absent; the caller must treat each independently.
+// free_minutes is preferred; free_hours is only used when it isn't stated.
+export function termsForType(rules, code) {
+  const t = rules?.accessorial_terms
+  if (!t) return null
+  const c = String(code || '').toLowerCase()
+  const raw = c.includes('detention') ? t.detention : c.includes('layover') ? t.layover : c.includes('tonu') ? t.tonu : null
+  if (!raw) return null
+  const freeMinutes = raw.free_minutes != null ? raw.free_minutes
+    : raw.free_hours != null ? Math.round(raw.free_hours * 60) : null
+  return { ...raw, freeMinutes }
+}
+
 export async function fetchAccessorialDocs(accessorialId) {
   const { data, error } = await supabase.from('accessorial_documents')
     .select('id, doc_type, file_path, file_name, note, uploaded_at')
