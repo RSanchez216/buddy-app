@@ -183,6 +183,16 @@ export default function AccessorialPanel({
   const onThisLoad = requests.filter(r => r.same_load)
   const otherLoads = requests.filter(r => !r.same_load)
   const cols = accessorialsOn && trackCheckpoints ? 3 : accessorialsOn ? 2 : 1
+  // Unequal columns so panel ①'s two datetime inputs keep ~285px (equal columns
+  // leave it ~299px, which clips the moment the sidebar expands); ④ is the narrow
+  // key/value column. Below xl, ④ spans the full row as a band — exactly today's
+  // layout — and only becomes its own column at xl.
+  const GRID_CLASS = {
+    3: 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-[1.15fr_1fr_1fr_0.85fr]',
+    2: 'grid-cols-1 md:grid-cols-2 xl:grid-cols-[1fr_1fr_0.85fr]',
+    1: 'grid-cols-1 xl:grid-cols-[1.2fr_0.85fr]',
+  }
+  const BROKER_SPAN = { 3: 'lg:col-span-3 xl:col-span-1', 2: 'md:col-span-2 xl:col-span-1', 1: 'xl:col-span-1' }
 
   return (
     <div className="border-t border-gray-200 dark:border-white/10 bg-gray-50/70 dark:bg-white/[0.02] px-4 py-4 space-y-4">
@@ -200,7 +210,7 @@ export default function AccessorialPanel({
         )}
       </div>
 
-      <div className={`grid gap-4 ${cols === 3 ? 'lg:grid-cols-3' : cols === 2 ? 'lg:grid-cols-2' : ''}`}>
+      <div className={`grid gap-4 ${GRID_CLASS[cols] || GRID_CLASS[3]}`}>
         {/* ① Checkpoint times — inline, no modal */}
         {trackCheckpoints && (
           <Column n={1} title="Checkpoint times">
@@ -359,11 +369,14 @@ export default function AccessorialPanel({
             </Column>
           </>
         )}
-      </div>
 
-      {/* Broker rules — full width beneath the grid (the 3+1 fallback, so the
-          fourth panel never squeezes panel ①'s two stop blocks). */}
-      <BrokerRulesPanel rules={brokerRules} loading={brokerLoading} />
+        {/* ④ Broker rules — the narrow column. A full-width band below xl, its
+            own column at xl. self-start so it sizes to its (often sparse) content
+            instead of stretching to panel ①; do NOT give it panel ③'s fill. */}
+        <div className={`${BROKER_SPAN[cols] || BROKER_SPAN[3]} self-start`}>
+          <BrokerRulesPanel rules={brokerRules} loading={brokerLoading} />
+        </div>
+      </div>
 
       {/* Already requested — this load and other loads, never merged */}
       {accessorialsOn && (
@@ -649,7 +662,9 @@ function DeadlineBanner({ rules }) {
   const text = sev === 'unknown' || !win ? 'No submission deadline stated' : `POD due ${win} of delivery`
   return (
     <div title={r.deadline_sentence || ''} className={`rounded-lg border px-2.5 py-2 text-xs leading-relaxed ${BANNER[sev] || BANNER.unknown}`}>
-      <span className="inline-flex items-center gap-1.5">{sev === 'urgent' && <span aria-hidden>⚠</span>}{text}</span>
+      {/* The window wraps naturally at 254px rather than shrinking; the penalty
+          sits on its own line below. */}
+      <span className="block">{sev === 'urgent' && <span aria-hidden>⚠ </span>}{text}</span>
       {sev === 'urgent' && (r.penalty_sentence || r.penalty) && (
         <span className="block mt-0.5 font-normal opacity-90">{r.penalty_sentence || r.penalty}</span>
       )}
@@ -667,7 +682,6 @@ function RuleRow({ label, children, title }) {
 function BrokerRulesPanel({ rules, loading }) {
   const [showRaw, setShowRaw] = useState(false)
   return (
-    <div className="mt-1">
       <Column n={4} title="Broker rules" tag="RATE CON">
         {loading ? (
           <div className="h-16 rounded-lg bg-gray-100 dark:bg-white/5 animate-pulse" />
@@ -683,15 +697,17 @@ function BrokerRulesPanel({ rules, loading }) {
                 <div className="space-y-1.5">
                   {r.after_hours_phone && (
                     <RuleRow label="After hrs" title={r.after_hours_sentence || ''}>
-                      <span className="inline-flex items-center gap-2">
-                        <span className="font-mono">{r.after_hours_phone}</span>
+                      {/* Number never wraps mid-digit; the copy button drops to
+                          the next line if the pair won't fit. */}
+                      <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="font-mono whitespace-nowrap">{r.after_hours_phone}</span>
                         <CopyPill text={r.after_hours_phone} />
                       </span>
                     </RuleRow>
                   )}
                   {r.tracking_sentence && (
                     <RuleRow label="Tracking" title={r.tracking_sentence}>
-                      <span className="block truncate">{r.tracking_sentence}</span>
+                      <span className="block line-clamp-2">{r.tracking_sentence}</span>
                     </RuleRow>
                   )}
                   {showPenaltyRow && (
@@ -718,7 +734,6 @@ function BrokerRulesPanel({ rules, loading }) {
           )
         })()}
       </Column>
-    </div>
   )
 }
 
