@@ -11,7 +11,7 @@ import TimesNeededGroup from './TimesNeededGroup'
 import RequestDetailPanel from './RequestDetailPanel'
 import {
   SHIFT_TYPES, GROUP_META, groupKeyFor, shiftName, LIFECYCLE, LIFECYCLE_RANK,
-  fetchSettings, fetchOpenShift, startShift, fetchShiftSummary, fetchWeekSummary, fetchBoard, fetchBoardTabs, fetchBoardBrokerMetaForShift,
+  fetchSettings, fetchOpenShift, startShift, fetchShiftSummary, fetchWeekSummary, fetchBoard, fetchBoardTabs, fetchBoardBrokerMetaForShift, fetchBoardIdleMeta,
   fetchCheckpointExceptions,
   upsertDriverCheck, logShiftActivity,
   fetchRowActions, updateShiftActivity, deleteShiftActivity, clearDriverCheck,
@@ -52,6 +52,7 @@ export default function ShiftBoardPage() {
   const [openRequestId, setOpenRequestId] = useState(null) // raised request detail panel
   const [accByLoad, setAccByLoad] = useState(() => new Map()) // load_id → accessorial summary
   const [brokerByLoad, setBrokerByLoad] = useState(() => new Map()) // load_id → broker + rate-con meta
+  const [idleByDriver, setIdleByDriver] = useState(() => new Map()) // driver_id → idle reason/note
   const [openDriverId, setOpenDriverId] = useState(null)      // ONE expanded accessorial row
   const [accTick, setAccTick] = useState(0)                   // re-reads the summary after a write
   const [, setNowTick] = useState(0)
@@ -200,6 +201,19 @@ export default function ShiftBoardPage() {
   // batch (keyed by shift_id), so it starts with the board instead of waiting to
   // read load ids out of its rows. An in-place checkpoint patch leaves it alone —
   // that path never re-runs the batch — and switching tabs reuses this same Map.
+
+  // Idle reason/note for every driver, in ONE call. Keyed on the driver-id SET so
+  // it fires once per board load (a checkpoint patch keeps the same drivers → no
+  // refetch), and switching tabs reuses the Map. The day count itself comes off
+  // the board, so only the reason glyph fills in when this lands — no row moves.
+  const driverIdsKey = useMemo(() => [...new Set(board.map(r => r.driver_id).filter(Boolean))].sort().join(','), [board])
+  useEffect(() => {
+    let stale = false
+    fetchBoardIdleMeta(driverIdsKey ? driverIdsKey.split(',') : [])
+      .then(m => { if (!stale) setIdleByDriver(m) })
+      .catch(() => { /* the reason glyph just doesn't render */ })
+    return () => { stale = true }
+  }, [driverIdsKey])
 
   // Collapse the open row if the phase is switched off mid-session.
   useEffect(() => { if (!accessorialsOn) setOpenDriverId(null) }, [accessorialsOn])
@@ -413,7 +427,13 @@ export default function ShiftBoardPage() {
   // their RPC order so rows never jump mid-work). Ties break by delivery date
   // ascending, so the soonest-due load leads.
   const alertRows = useMemo(() => {
-    const list = board.filter(r => r.load_id && hasAlert(brokerByLoad.get(r.load_id)))
+    // Act-on-it-now list: drop rows already delivered before the (viewed) week
+    // start — their POD deadline expired and no claim can still be filed, so the
+    // alert is true but useless. Undelivered / future-delivery rows stay. This
+    // filter is Alerts-only; the other tabs keep every row.
+    const wkStart = viewWeek.start
+    const list = board.filter(r => r.load_id && hasAlert(brokerByLoad.get(r.load_id)) &&
+      (!r.delivery_date || String(r.delivery_date).slice(0, 10) >= wkStart))
     return [...list].sort((a, b) => {
       const ra = alertRank(brokerByLoad.get(a.load_id)), rb = alertRank(brokerByLoad.get(b.load_id))
       if (ra !== rb) return ra - rb
@@ -421,7 +441,7 @@ export default function ShiftBoardPage() {
       if (da && db) return da < db ? -1 : da > db ? 1 : 0
       return da ? -1 : db ? 1 : 0
     })
-  }, [board, brokerByLoad])
+  }, [board, brokerByLoad, viewWeek.start])
 
   // Tabs replace the stacked groups. Order is group_order (already sorted in
   // `grouped`). Empty tabs hide, except Raised by dispatch which stays visible at
@@ -657,7 +677,7 @@ export default function ShiftBoardPage() {
               onOk={onOk} onAct={openAct} onAcknowledge={onAcknowledge} onCopyEscalation={copyEscalation} onOpenRequest={setOpenRequestId}
               shiftId={shift?.id ?? null} canAddTypes={isManager} onTimesSaved={applyCheckpointTimes}
               openDriverId={openDriverId} onToggleDriver={(id) => setOpenDriverId(cur => (cur === id ? null : id))}
-              accByLoad={accByLoad} exByLoad={exByLoad} brokerByLoad={brokerByLoad} toast={toast}
+              accByLoad={accByLoad} exByLoad={exByLoad} brokerByLoad={brokerByLoad} idleByDriver={idleByDriver} toast={toast}
               undoInfo={undoInfo} onUndo={undoLast} onRemoveActivity={removeActivityById}
               browsing={!isLiveWeek}
               onAccessorialChanged={async () => { setAccTick(t => t + 1); await refreshActions() }} />

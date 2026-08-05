@@ -20,7 +20,7 @@ function shortName(full) {
 // into Equipment. Checkpoints and Paperwork only appear while their phase flag
 // is on — otherwise they'd be a column of dashes.
 function columnsFor(settings, browsing) {
-  const cols = ['Driver', 'Equipment', 'Load state', 'Status', 'Load', 'Origin → Destination']
+  const cols = ['Driver', 'Idle', 'Equipment', 'Load state', 'Status', 'Load', 'Origin → Destination']
   if (settings?.track_checkpoints) cols.push('Checkpoints')
   if (settings?.track_pods || settings?.track_bols) cols.push('Paperwork')
   if (settings?.accessorials_enabled) cols.push('Accessorial')
@@ -66,7 +66,7 @@ function moneyTitle(b) {
 // Rendered as the body of the active tab. The tab bar carries the heading/count;
 // this is the driver table. It owns the vertical scroll (flex-1) with a sticky
 // header so the bands and tabs above stay put while the list scrolls.
-export default function PriorityGroup({ group, rows, settings, shift, rowActionsByDriver, recipientsById, meId, isManager, highlightDriver, stateSort, onToggleStateSort, onOk, onAct, onAcknowledge, onCopyEscalation, onOpenRequest, openDriverId, onToggleDriver, accByLoad, exByLoad, brokerByLoad, undoInfo, onUndo, onRemoveActivity, toast, onAccessorialChanged, onTimesSaved, shiftId, canAddTypes, browsing }) {
+export default function PriorityGroup({ group, rows, settings, shift, rowActionsByDriver, recipientsById, meId, isManager, highlightDriver, stateSort, onToggleStateSort, onOk, onAct, onAcknowledge, onCopyEscalation, onOpenRequest, openDriverId, onToggleDriver, accByLoad, exByLoad, brokerByLoad, idleByDriver, undoInfo, onUndo, onRemoveActivity, toast, onAccessorialChanged, onTimesSaved, shiftId, canAddTypes, browsing }) {
   const curYear = Number(todayChicago().slice(0, 4))
   const cols = columnsFor(settings, browsing)
   // The row panel carries whichever phases are on — checkpoints, accessorials or
@@ -134,6 +134,8 @@ export default function PriorityGroup({ group, rows, settings, shift, rowActions
                     </th>
                   ) : h === 'Equipment' ? (
                     <th key={h} title="Truck / Trailer" className={`${thCls} cursor-default`}>{h}</th>
+                  ) : h === 'Idle' ? (
+                    <th key={h} title="Days since last delivery" className={`${thCls} !text-right cursor-default`}>{h}</th>
                   ) : (
                     <th key={h} className={thCls}>{h}</th>
                   )
@@ -148,7 +150,7 @@ export default function PriorityGroup({ group, rows, settings, shift, rowActions
                   onOk={onOk} onAct={onAct} onAcknowledge={onAcknowledge} onCopyEscalation={onCopyEscalation} onOpenRequest={onOpenRequest}
                   colSpan={cols.length} panelOpen={panelOn && openDriverId === r.driver_id} onToggleDriver={onToggleDriver}
                   acc={r.load_id ? accByLoad?.get(r.load_id) : null} exception={r.load_id ? exByLoad?.get(r.load_id) : null}
-                  broker={r.load_id ? brokerByLoad?.get(r.load_id) : null}
+                  broker={r.load_id ? brokerByLoad?.get(r.load_id) : null} idle={idleByDriver?.get(r.driver_id) || null}
                   undo={undoInfo?.driverId === r.driver_id ? undoInfo : null} onUndo={onUndo} onRemoveActivity={onRemoveActivity}
                   toast={toast} onAccessorialChanged={onAccessorialChanged} onTimesSaved={onTimesSaved} shiftId={shiftId} canAddTypes={canAddTypes} browsing={browsing} />
               ))}
@@ -447,7 +449,106 @@ function NotePopover({ notes, rect, onClose, onOpenRequest }) {
   )
 }
 
-function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isManager, highlighted, onOk, onAct, onAcknowledge, onCopyEscalation, onOpenRequest, colSpan, panelOpen, onToggleDriver, acc, exception, broker, undo, onUndo, onRemoveActivity, toast, onAccessorialChanged, onTimesSaved, shiftId, canAddTypes, browsing }) {
+// 'Jul 26' from a date or timestamp string (leading YYYY-MM-DD), built from parts
+// so a date-only value doesn't shift a day across the UTC boundary.
+function fmtShortDate(v) {
+  const m = String(v || '').match(/^(\d{4})-(\d{2})-(\d{2})/)
+  return m ? new Date(+m[1], +m[2] - 1, +m[3]).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''
+}
+// Days-since-delivery colour bands. Null/negative render '—', not a number.
+function idleTone(days) {
+  if (days == null || days < 0) return 'text-gray-300 dark:text-slate-600'
+  if (days <= 3) return 'text-gray-500 dark:text-slate-400'
+  if (days <= 14) return 'text-amber-600 dark:text-amber-400'
+  return 'text-rose-600 dark:text-rose-400'
+}
+
+// Idle cell — the day count (days_since_delivery, from the board), plus a neutral
+// note glyph when the driver has an idle reason on record. The day count owns the
+// urgency colour; the glyph stays grey so it doesn't compete in the narrow cell.
+// days_since_delivery (this column) and days_on_reason (the popover) are different
+// numbers and are never shown in place of each other.
+function IdleCell({ days, idle }) {
+  const [open, setOpen] = useState(false)
+  const [rect, setRect] = useState(null)
+  const btnRef = useRef(null)
+  const n = Number(days)
+  const label = days == null || !Number.isFinite(n) || n < 0 ? '—' : `${n}d`
+  const has = !!(idle && idle.reason)
+  const title = has ? (idle.note ? truncate(`${idle.reason} — ${idle.note}`, 80) : idle.reason) : undefined
+
+  const toggle = () => {
+    if (open) { setOpen(false); return }
+    if (btnRef.current) setRect(btnRef.current.getBoundingClientRect())
+    setOpen(true)
+  }
+  return (
+    <span className="inline-flex items-center justify-end gap-1">
+      <span className={`tabular-nums ${idleTone(days == null || !Number.isFinite(n) ? null : n)}`}>{label}</span>
+      {has && (
+        <button ref={btnRef} type="button" onClick={toggle} aria-expanded={open} title={title}
+          className="shrink-0 leading-none text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-200">
+          <span aria-hidden className="text-sm">🗒</span>
+        </button>
+      )}
+      {open && rect && <IdlePopover idle={idle} rect={rect} onClose={() => setOpen(false)} />}
+    </span>
+  )
+}
+// Portaled to <body> — this board's overflow-auto ancestors clip any in-flow
+// dropdown, so it's positioned off the anchor's viewport rect and closes on
+// scroll/resize (when that rect goes stale). Read-only; editing lives elsewhere.
+function IdlePopover({ idle, rect, onClose }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', onKey)
+    window.addEventListener('scroll', onClose, true)
+    window.addEventListener('resize', onClose)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      window.removeEventListener('scroll', onClose, true)
+      window.removeEventListener('resize', onClose)
+    }
+  }, [onClose])
+
+  const WIDTH = 300
+  const left = Math.max(8, Math.min(rect.left, window.innerWidth - WIDTH - 8))
+  const spaceBelow = window.innerHeight - rect.bottom
+  const openUp = spaceBelow < 200 && rect.top > spaceBelow
+  const pos = openUp ? { bottom: window.innerHeight - rect.top + 6 } : { top: rect.bottom + 6 }
+  const dor = Number(idle.days_on_reason)
+  const CHIP = 'inline-flex items-center text-[10px] font-medium px-1.5 py-0.5 rounded border border-gray-200 dark:border-white/10 text-gray-500 dark:text-slate-400'
+
+  return createPortal(
+    <>
+      <div className="fixed inset-0 z-[125]" onClick={onClose} />
+      <div style={{ position: 'fixed', left, width: WIDTH, ...pos }}
+        className="z-[130] rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-[#0B1120] shadow-2xl p-3 max-h-[70vh] overflow-y-auto text-left">
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="text-sm font-semibold text-gray-900 dark:text-white">{idle.reason}</span>
+          <span className="text-[10px] text-gray-400 dark:text-slate-500 whitespace-nowrap tabular-nums">
+            {idle.started_on ? `set ${fmtShortDate(idle.started_on)}` : ''}{Number.isFinite(dor) ? `${idle.started_on ? ' · ' : ''}${dor} day${dor === 1 ? '' : 's'}` : ''}
+          </span>
+        </div>
+        {idle.note && <p className="mt-1 text-[11px] leading-snug text-gray-600 dark:text-slate-300 whitespace-pre-wrap break-words">{idle.note}</p>}
+        {(idle.at_yard || idle.under_review) && (
+          <div className="mt-2 flex flex-wrap gap-1">
+            {idle.at_yard && <span className={CHIP}>At yard</span>}
+            {idle.under_review && <span className={CHIP}>Under review</span>}
+          </div>
+        )}
+        {idle.reviewed_by && (
+          <p className="mt-2 pt-1.5 border-t border-gray-100 dark:border-white/5 text-[10px] text-gray-400 dark:text-slate-500">
+            Reviewed by {idle.reviewed_by}{idle.reviewed_at ? ` · ${fmtShortDate(idle.reviewed_at)}` : ''}
+          </p>
+        )}
+      </div>
+    </>,
+    document.body,
+  )
+}
+
+function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isManager, highlighted, onOk, onAct, onAcknowledge, onCopyEscalation, onOpenRequest, colSpan, panelOpen, onToggleDriver, acc, exception, broker, idle, undo, onUndo, onRemoveActivity, toast, onAccessorialChanged, onTimesSaved, shiftId, canAddTypes, browsing }) {
   const muted = r.in_scope === false
   const panelOn = !!settings?.accessorials_enabled || !!settings?.track_checkpoints
 
@@ -513,6 +614,11 @@ function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isMan
             {[r.dispatcher_name, r.carrier_name].filter(Boolean).join(' · ')}
           </div>
         )}
+      </td>
+      {/* Idle — days since last delivery (from the board), plus a neutral note
+          glyph when the driver has an idle reason on record (from idle meta). */}
+      <td className="px-3 py-2 align-top text-right whitespace-nowrap">
+        <IdleCell days={r.days_since_delivery} idle={idle} />
       </td>
       {/* Equipment — truck / trailer, display only */}
       <td className="px-3 py-2 whitespace-nowrap text-gray-500 dark:text-slate-400 font-mono">{r.truck || '—'} / {r.trailer || '—'}</td>

@@ -137,6 +137,16 @@ export async function fetchBoardBrokerMeta(loadIds) {
 // than waiting to read load ids out of the board's rows. Byte-identical to
 // fetchBoardBrokerMeta for the same shift. Keep the per-load-id function above
 // for callers that already hold ids.
+// Idle reason/note per driver, in ONE request for the whole board (never per
+// row). Keyed by driver_id → { reason, note, started_on, days_on_reason, … }.
+// Read-only; editing idle reasons lives on /fleet/profitability/idle.
+export async function fetchBoardIdleMeta(driverIds) {
+  const ids = [...new Set((driverIds || []).filter(Boolean))]
+  if (ids.length === 0) return new Map()
+  const { data, error } = await supabase.rpc('after_hours_board_idle_meta', { p_driver_ids: ids })
+  if (error) throw error
+  return new Map(Object.entries(data || {}))
+}
 export async function fetchBoardBrokerMetaForShift(shiftId) {
   const { data, error } = await supabase.rpc('after_hours_board_broker_meta_for_shift', { p_shift_id: shiftId ?? null })
   if (error) throw error
