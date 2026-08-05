@@ -105,12 +105,29 @@ function chunkArray(arr, size) {
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size))
   return out
 }
+// Reference lists (customers, dispatchers, drivers, …) must be read IN FULL. A
+// plain .select() is capped at PostgREST's 1000-row default: once customers
+// crossed 1,000 rows, ~131 fell off the end, so their loads matched nothing and
+// imported with a null customer_id. Page by id until a short page arrives.
+async function fetchAllRows(table, columns) {
+  const out = []
+  for (let from = 0; ; from += LOOKUP_PAGE) {
+    const { data, error } = await supabase
+      .from(table).select(columns).order('id', { ascending: true })
+      .range(from, from + LOOKUP_PAGE - 1)
+    if (error) throw new Error(`${table} lookup failed: ${error.message}`)
+    const page = data || []
+    out.push(...page)
+    if (page.length < LOOKUP_PAGE) break
+  }
+  return out
+}
 async function fetchExistingLoads(loadNumbers) {
   const byNumber = new Map()   // load_number -> row (also dedups)
   for (const part of chunkArray(loadNumbers, LOOKUP_CHUNK)) {
     const { data, error } = await supabase
       .from('loads')
-      .select('id, load_number, status, linehaul, pickup_date, delivery_date')
+      .select('id, load_number, status, linehaul, pickup_date, delivery_date, customer_id')
       .in('load_number', part)
     if (error) throw new Error(`Existing-load lookup failed: ${error.message}`)
     for (const row of data || []) byNumber.set(row.load_number, row)
@@ -344,15 +361,17 @@ export default function LoadsImport() {
       const presentOptional = OPTIONAL_COLS.filter(c => cols?.[c.key]).map(c => c.label)
       setOptionalWarningDismissed(false)
 
-      // Reference data (small tables — one fetch each).
+      // Reference data — read IN FULL (paged), never the first 1000 only. The
+      // customer link bug was exactly this: customers grew past 1,000 and the
+      // tail became invisible to matching.
       const loadNumbers = [...new Set(rows.map(r => r.load_number).filter(Boolean))]
-      const [drv, trk, trl, car, cus, dis] = await Promise.all([
-        supabase.from('drivers').select('id, full_name, internal_id'),
-        supabase.from('trucks').select('id, unit_number'),
-        supabase.from('trailers').select('id, unit_number'),
-        supabase.from('carriers').select('id, name'),
-        supabase.from('customers').select('id, name, trailer_required'),
-        supabase.from('dispatchers').select('id, name'),
+      const [drvRows, trkRows, trlRows, carRows, cusRows, disRows] = await Promise.all([
+        fetchAllRows('drivers', 'id, full_name, internal_id'),
+        fetchAllRows('trucks', 'id, unit_number'),
+        fetchAllRows('trailers', 'id, unit_number'),
+        fetchAllRows('carriers', 'id, name'),
+        fetchAllRows('customers', 'id, name, trailer_required'),
+        fetchAllRows('dispatchers', 'id, name'),
       ])
       // Existing loads/legs for the New/Updated/Unchanged diff — chunked +
       // paginated (see fetchExistingLoads). Any query error throws into the
@@ -369,8 +388,8 @@ export default function LoadsImport() {
       const { plan: built, counts: builtCounts } = buildPlan({
         rows,
         refs: {
-          drivers: drv.data || [], trucks: trk.data || [], trailers: trl.data || [],
-          carriers: car.data || [], customers: cus.data || [], dispatchers: dis.data || [],
+          drivers: drvRows, trucks: trkRows, trailers: trlRows,
+          carriers: carRows, customers: cusRows, dispatchers: disRows,
         },
         existing: { loads: existingLoads, legs: existingLegs },
       })
@@ -631,7 +650,7 @@ export default function LoadsImport() {
       // write-once, legs matched against current DB), so Retry just re-runs
       // from the start — already-written rows no-op.
       const fname = batch.filename
-      const { appliedLoads, appliedLegs, appliedCustomers, appliedDispatchers, error, done, total } = await applyBatch({
+      const { appliedLoads, appliedLegs, appliedCustomers, appliedDispatchers, appliedCustomerNames, unlinkedLoads, error, done, total } = await applyBatch({
         batchId: batch.id, decisions, linkOverrides: links, onProgress: setProgress,
       })
       if (error) {
@@ -702,7 +721,8 @@ export default function LoadsImport() {
         .update({ counts: { ...(freshBatch?.counts || {}), status_flags: cancelTonu } }).eq('id', batch.id)
 
       // Durable summary so a user who navigated away still sees the outcome.
-      setApplySummary({ filename: fname, loads: appliedLoads, legs: appliedLegs, customers: appliedCustomers, dispatchers: appliedDispatchers, cancelTonu })
+      setApplySummary({ filename: fname, loads: appliedLoads, legs: appliedLegs, customers: appliedCustomers, dispatchers: appliedDispatchers, cancelTonu, customerNames: appliedCustomerNames || [], unlinkedLoads: unlinkedLoads || [] })
+      if ((unlinkedLoads || []).length > 0) toast.error(`${unlinkedLoads.length} load(s) imported without a customer: ${unlinkedLoads.join(', ')}`)
       setProgress(null)
       await init()
       loadMissingTrailers() // resolved drivers drop off, new ones appear
@@ -814,6 +834,22 @@ export default function LoadsImport() {
             <Stat label="New dispatchers" value={counts.new_dispatchers ?? 0} tone="cyan" />
             <Stat label="Unmatched" value={counts.unmatched ?? 0} tone={(counts.unmatched ?? 0) > 0 ? 'red' : 'slate'} />
           </div>
+
+          {/* New customers are created verbatim — name them so the reviewer can
+              catch a typo'd broker before it becomes a customer row. */}
+          {Array.isArray(counts.new_customer_names) && counts.new_customer_names.length > 0 && (
+            <div className="rounded-xl border border-cyan-200 dark:border-cyan-500/20 bg-cyan-50/60 dark:bg-cyan-500/[0.06] px-4 py-2.5 text-sm text-cyan-800 dark:text-cyan-300">
+              <span className="font-medium">{counts.new_customer_names.length} new customer{counts.new_customer_names.length === 1 ? '' : 's'} will be created:</span>{' '}
+              {counts.new_customer_names.join(' · ')}
+            </div>
+          )}
+          {(counts.customers_matched != null || counts.rows_no_customer > 0) && (
+            <p className="text-xs text-gray-500 dark:text-slate-400">
+              {counts.customers_matched ?? 0} customer{(counts.customers_matched ?? 0) === 1 ? '' : 's'} matched to existing
+              {counts.customers_matched_after_norm > 0 ? ` (${counts.customers_matched_after_norm} only after normalising whitespace/casing)` : ''}
+              {counts.rows_no_customer > 0 ? ` · ${counts.rows_no_customer} row${counts.rows_no_customer === 1 ? '' : 's'} with a blank Customer cell` : ' · every load with a Customer will be linked'}.
+            </p>
+          )}
 
           <TerminatedDriverWarning entries={terminatedEntries} noun="loads" />
 
@@ -1218,14 +1254,23 @@ export default function LoadsImport() {
       {/* Post-apply success summary — durable so a user who navigated away
           mid-apply still sees the outcome on return. Dismissible. */}
       {applySummary && (
-        <div className="rounded-xl border border-emerald-200 dark:border-emerald-500/20 bg-emerald-50/60 dark:bg-emerald-500/[0.06] px-4 py-3 text-sm text-emerald-800 dark:text-emerald-300 flex items-start justify-between gap-3">
+        <div className={`rounded-xl border px-4 py-3 text-sm flex items-start justify-between gap-3 ${
+          applySummary.unlinkedLoads?.length
+            ? 'border-red-200 dark:border-red-500/20 bg-red-50/60 dark:bg-red-500/[0.06] text-red-700 dark:text-red-300'
+            : 'border-emerald-200 dark:border-emerald-500/20 bg-emerald-50/60 dark:bg-emerald-500/[0.06] text-emerald-800 dark:text-emerald-300'}`}>
           <span>
             ✓ Import applied{applySummary.filename ? ` — ${applySummary.filename}` : ''}:{' '}
             <span className="font-semibold">{applySummary.loads.toLocaleString()} load{applySummary.loads === 1 ? '' : 's'}, {applySummary.legs.toLocaleString()} leg{applySummary.legs === 1 ? '' : 's'}</span>
             {(applySummary.customers > 0 || applySummary.dispatchers > 0) && `, ${applySummary.customers} customer${applySummary.customers === 1 ? '' : 's'}, ${applySummary.dispatchers} dispatcher${applySummary.dispatchers === 1 ? '' : 's'}`}.
             {applySummary.cancelTonu > 0 && ` ${applySummary.cancelTonu} Canceled/TONU.`}
+            {applySummary.customerNames?.length > 0 && (
+              <span className="block mt-1"><span className="font-medium">Customers created:</span> {applySummary.customerNames.join(' · ')}</span>
+            )}
+            {applySummary.unlinkedLoads?.length > 0 && (
+              <span className="block mt-1 font-semibold">⚠️ {applySummary.unlinkedLoads.length} load{applySummary.unlinkedLoads.length === 1 ? '' : 's'} left with no customer: {applySummary.unlinkedLoads.join(', ')}</span>
+            )}
           </span>
-          <button onClick={() => setApplySummary(null)} className="text-emerald-600 dark:text-emerald-400 hover:opacity-70 shrink-0" aria-label="Dismiss">✕</button>
+          <button onClick={() => setApplySummary(null)} className="hover:opacity-70 shrink-0" aria-label="Dismiss">✕</button>
         </div>
       )}
 

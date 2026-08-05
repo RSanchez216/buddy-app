@@ -120,6 +120,22 @@ async function fetchAllBatchRows(batchId) {
   return { data: all, error: null }
 }
 
+// Read a whole reference table, paged past the 1000-row cap. The customer re-read
+// after Phase 1 MUST be complete: a load whose customer sits past row 1000 would
+// otherwise resolve to a null id here — the same bug the import set out to fix.
+async function fetchAllTable(table, columns) {
+  const all = []
+  for (let from = 0; ; from += READ_PAGE) {
+    const { data, error } = await supabase.from(table).select(columns)
+      .order('id', { ascending: true }).range(from, from + READ_PAGE - 1)
+    if (error) throw error
+    const page = data || []
+    all.push(...page)
+    if (page.length < READ_PAGE) break
+  }
+  return all
+}
+
 // ── load the open (pending_review) batch + its plan, if any ──────────────
 export async function loadPendingBatch() {
   const { data: batch } = await supabase.from('load_import_batches')
@@ -206,21 +222,26 @@ export async function applyBatch({ batchId, decisions, linkOverrides, onProgress
     done += c.length; report('Creating dispatchers')
   }
 
-  // Re-read entity maps (includes the just-created rows).
-  const [{ data: custs }, { data: disps }] = await Promise.all([
-    supabase.from('customers').select('id, name'),
-    supabase.from('dispatchers').select('id, name'),
+  // Re-read entity maps IN FULL (includes the just-created rows) — paged past the
+  // 1000-row cap so no existing customer is invisible when resolving the link.
+  const [custs, disps] = await Promise.all([
+    fetchAllTable('customers', 'id, name'),
+    fetchAllTable('dispatchers', 'id, name'),
   ])
-  const custByName = new Map((custs || []).map(c => [normName(c.name), c.id]))
-  const dispByName = new Map((disps || []).map(d => [normName(d.name), d.id]))
+  const custByName = new Map(custs.map(c => [normName(c.name), c.id]))
+  const dispByName = new Map(disps.map(d => [normName(d.name), d.id]))
 
   // ── Phase 3: loads ── partition into existing (update, no notes) vs new
   // (insert with notes); both via upsert on load_number for idempotency.
   const loadIdByNumber = new Map()
   const existingPayloads = [], newPayloads = []
+  const unlinkedLoads = [] // source named a customer but no id resolved — must be []
   for (const p of appliedPlan) {
     const h = p.header
     const customer_id = p.resolved.customer?.id || (p.resolved.customer?.name ? custByName.get(normName(p.resolved.customer.name)) : null) || null
+    // Every load whose source names a customer must end up linked. If one doesn't,
+    // name it — a silent null is exactly what this change exists to prevent.
+    if (p.resolved.customer?.name && !customer_id) unlinkedLoads.push(p.load_number)
     const dispatcher_id = p.resolved.dispatcher?.id || (p.resolved.dispatcher?.name ? dispByName.get(normName(p.resolved.dispatcher.name)) : null) || null
     const carrier_id = p.resolved.carrier?.id || null   // carriers never auto-created
     // BUDDY-owned columns are intentionally OMITTED from this payload so a
@@ -373,6 +394,8 @@ export async function applyBatch({ batchId, decisions, linkOverrides, onProgress
         ...baseCounts,
         applied_loads: appliedLoads, applied_legs: appliedLegs, removed_legs: removedLegs,
         applied_customers: custNames.length, applied_dispatchers: dispNames.length,
+        applied_customer_names: custNames.slice().sort((a, b) => a.localeCompare(b)),
+        unlinked_loads: unlinkedLoads,
         links_applied: linkCount, failed: 0,
       },
     }).eq('id', batchId)
@@ -382,6 +405,8 @@ export async function applyBatch({ batchId, decisions, linkOverrides, onProgress
   return {
     appliedLoads, appliedLegs,
     appliedCustomers: custNames.length, appliedDispatchers: dispNames.length,
+    appliedCustomerNames: custNames.slice().sort((a, b) => a.localeCompare(b)),
+    unlinkedLoads,
     linksApplied: linkCount,
   }
 }

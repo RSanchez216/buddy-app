@@ -88,11 +88,17 @@ export function buildPlan({ rows, refs, existing }) {
   const carrierByName = new Map()
   for (const c of refs.carriers) carrierByName.set(normName(c.name), c.id)
   const customerByName = new Map()
+  // Raw (verbatim) index alongside the normalized one, purely to measure how many
+  // rows match ONLY after normalisation — i.e. would have missed on an exact
+  // compare. That number tells us how much of the missed-link problem was
+  // whitespace/casing versus a genuinely absent customer.
+  const customerByRawName = new Map()
   // trailer_required per customer (default true) — drives the missing-trailer
   // "needs review" flag. Absent key → treated as true (requires a trailer).
   const customerTrailerReq = new Map()
   for (const c of refs.customers) {
     customerByName.set(normName(c.name), c.id)
+    if (c.name != null) customerByRawName.set(String(c.name), c.id)
     customerTrailerReq.set(normName(c.name), c.trailer_required !== false)
   }
   const dispatcherByName = new Map()
@@ -153,9 +159,12 @@ export function buildPlan({ rows, refs, existing }) {
   }
 
   const plan = []
-  const toCreateCustomers = new Set()
+  const toCreateCustomers = new Map() // normName -> verbatim name (for the created list)
   const toCreateDispatchers = new Set()
   const unmatchedKeys = new Set() // `${type}:${normalized raw}`
+  let customersMatched = 0        // resolved to an existing customer
+  let customersMatchedAfterNorm = 0 // matched only after normalisation
+  let rowsNoCustomer = 0          // source Customer cell blank — the only honest null
 
   for (const [loadNumber, group] of groups) {
     const existingLoad = existingLoadByNumber.get(loadNumber) || null
@@ -172,10 +181,22 @@ export function buildPlan({ rows, refs, existing }) {
     const custRaw = headerVal(group, 'customer_raw')
     const dispRaw = headerVal(group, 'dispatcher_raw')
     const carrRaw = headerVal(group, 'carrier_raw')
+    // Match on the normalised form (lower, trimmed, whitespace collapsed) — the
+    // same key both sides are indexed on. If it matches only there (not on the
+    // verbatim string) it was a whitespace/casing miss; count it so the summary
+    // can say how much of the problem that was.
+    const custMatchId = custRaw ? matchByName(custRaw, customerByName) : null
     const customer = custRaw
-      ? { name: custRaw, id: matchByName(custRaw, customerByName),
-          match_status: matchByName(custRaw, customerByName) ? 'matched' : 'to_create' }
+      ? { name: custRaw, id: custMatchId, match_status: custMatchId ? 'matched' : 'to_create' }
       : { name: null, id: null, match_status: 'none' }
+    if (custRaw) {
+      if (custMatchId) {
+        customersMatched++
+        if (!customerByRawName.has(custRaw)) customersMatchedAfterNorm++
+      }
+    } else {
+      rowsNoCustomer++
+    }
     // Some exports prefix the Dispatcher cell with a "{code} - " code, same
     // shape as the Driver cell ("24 - James Orunkulov Omurbek"). Reuse the
     // driver-cell parser so the two stay consistent, and match on the NAME
@@ -191,7 +212,7 @@ export function buildPlan({ rows, refs, existing }) {
       ? { name: carrRaw, id: matchByName(carrRaw, carrierByName),
           match_status: matchByName(carrRaw, carrierByName) ? 'matched' : 'unmatched' }
       : { name: null, id: null, match_status: 'none' }
-    if (customer.match_status === 'to_create') toCreateCustomers.add(normName(custRaw))
+    if (customer.match_status === 'to_create') toCreateCustomers.set(normName(custRaw), custRaw)
     if (dispatcher.match_status === 'to_create') toCreateDispatchers.add(normName(dispatcher.name))
 
     // Header watched-field diff (existing only).
@@ -201,6 +222,17 @@ export function buildPlan({ rows, refs, existing }) {
         if (!eqVal(existingLoad[f], header[f])) {
           headerDiffs.push({ scope: 'header', field: f, old: existingLoad[f] ?? null, new: header[f] ?? null })
         }
+      }
+      // Customer link is not a "watched value" field, but a load that could carry
+      // a customer and doesn't — or points at the wrong one — must be corrected on
+      // re-import, not left 'unchanged' and skipped. At plan time a to-create
+      // customer has no id yet, so compare on "the source names a customer this
+      // load is missing (or names a different one)" rather than on the id.
+      const existingCustId = existingLoad.customer_id ?? null
+      if (custRaw && existingCustId == null) {
+        headerDiffs.push({ scope: 'header', field: 'customer', old: null, new: custRaw })
+      } else if (custRaw && customer.id != null && customer.id !== existingCustId) {
+        headerDiffs.push({ scope: 'header', field: 'customer', old: existingCustId, new: custRaw })
       }
     }
 
@@ -311,6 +343,10 @@ export function buildPlan({ rows, refs, existing }) {
     // new legs only on EXISTING loads (legs of brand-new loads count under "new")
     new_legs: plan.reduce((n, p) => n + (p.existing_load_id ? p.legs.filter(l => l.classification === 'new_leg').length : 0), 0),
     new_customers: toCreateCustomers.size,
+    new_customer_names: [...toCreateCustomers.values()].sort((a, b) => a.localeCompare(b)),
+    customers_matched: customersMatched,
+    customers_matched_after_norm: customersMatchedAfterNorm,
+    rows_no_customer: rowsNoCustomer,
     new_dispatchers: toCreateDispatchers.size,
     unmatched: unmatchedKeys.size,
     status_flags: plan.filter(p => p.is_status_flag).length,
