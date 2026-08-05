@@ -468,8 +468,9 @@ function idleTone(days, threshold) {
 // Idle cell — the day count (days_since_delivery, from the board), plus a neutral
 // note glyph when the driver has an idle reason on record. 0d/1d and null/future
 // carry no signal, so the cell stays EMPTY there (not a dash — a column of dashes
-// still draws the eye). The glyph is independent: a driver with a reason shows it
-// even with the count hidden. days_since_delivery (this column) and days_on_reason
+// still draws the eye). The reason glyph rides the day count: when a driver isn't
+// idle any more (count hidden) the reason is stale — left over from a past idle
+// stint — so it's hidden too. days_since_delivery (this column) and days_on_reason
 // (the popover) are different numbers and are never shown in place of each other.
 function IdleCell({ days, idle, threshold }) {
   const [open, setOpen] = useState(false)
@@ -477,7 +478,7 @@ function IdleCell({ days, idle, threshold }) {
   const btnRef = useRef(null)
   const n = Number(days)
   const showDays = days != null && Number.isFinite(n) && n >= 2
-  const has = !!(idle && idle.reason)
+  const has = showDays && !!(idle && idle.reason)
   const title = has ? (idle.note ? truncate(`${idle.reason} — ${idle.note}`, 80) : idle.reason) : undefined
 
   const toggle = () => {
