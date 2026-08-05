@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { S } from '../../../lib/styles'
-import { copyText, fmtClock, fmtDuration, money } from './shiftBoardData'
+import { fmtClock, fmtDuration, money } from './shiftBoardData'
 import CheckpointFields from './CheckpointFields'
 import {
   DOC_TYPES, RESPONSES, typeLabel, docTypeLabel, statusMeta,
@@ -30,6 +30,15 @@ const normalizeMoney = (s) => String(s).replace(',', '.').replace(/[^0-9.]/g, ''
 const normalizeInt = (s) => String(s).replace(/[^0-9]/g, '')
 
 const EYEBROW = 'text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500'
+
+// Neutral chip — the shared look for +Attach / Copy for Telegram, so nothing in a
+// request card competes with its one orange action (Record response).
+const CHIP = 'inline-flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-lg border border-gray-200 dark:border-white/10 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors cursor-pointer'
+
+// Newest first, defensively: with no timestamp present it falls back to the RPC's
+// own order rather than shuffling the cards.
+const byNewest = (arr) => [...(arr || [])].sort((a, b) =>
+  String(b.created_at || b.event_date || '').localeCompare(String(a.created_at || a.event_date || '')))
 
 export default function AccessorialPanel({
   row, exception, meId, toast, onChanged, onTimesSaved, shiftId,
@@ -379,27 +388,45 @@ export default function AccessorialPanel({
         </div>
       </div>
 
-      {/* Logged this shift — the delayed-undo surface. Each entry removes with a
-          confirm (delete_shift_activity is a hard delete). */}
-      <ActivityLog activities={activities} onRemove={onRemoveActivity} />
-
-      {/* Already requested — this load and other loads, never merged */}
+      {/* ⑤ Accessorial requests — the last step of the job (record what the broker
+          said), so it sits after the four-column grid and before Logged activity.
+          Full width, not a fifth column: five columns would starve panel ①'s
+          datetime inputs, and it vanishes entirely on loads with no accessorial.
+          Only the numbered panel is gated on there being requests; the plain
+          empty line stays as it was, so Logged activity is always last. */}
       {accessorialsOn && (
-        <div className="border-t border-gray-200 dark:border-white/10 pt-3">
-          {requestsError ? (
-            <div className={S.errorBox}>{requestsError}</div>
-          ) : requestsLoading ? (
-            <div className="h-12 rounded-xl bg-gray-100 dark:bg-white/5 animate-pulse" />
-          ) : requests.length === 0 ? (
-            <p className="text-xs text-gray-400 dark:text-slate-500 italic">Nothing requested on this load or this driver yet.</p>
-          ) : (
-            <div className="space-y-3">
-              <RequestGroup title={`On this load (${onThisLoad.length})`} requests={onThisLoad} meId={meId} toast={toast} onChanged={async () => { await reloadRequests(); await onChanged?.() }} />
-              <RequestGroup title={`Other loads (${otherLoads.length})`} requests={otherLoads} meId={meId} toast={toast} onChanged={async () => { await reloadRequests(); await onChanged?.() }} showLoad />
+        requestsError ? (
+          <div className={S.errorBox}>{requestsError}</div>
+        ) : requestsLoading ? (
+          <div className="h-12 rounded-xl bg-gray-100 dark:bg-white/5 animate-pulse" />
+        ) : requests.length === 0 ? (
+          <p className="text-xs text-gray-400 dark:text-slate-500 italic">Nothing requested on this load or this driver yet.</p>
+        ) : (
+          <Column n={5} title="Accessorial requests" meta={`${onThisLoad.length} on this load`}>
+            {/* One vertical stack, newest first, 10px apart — never a two-column
+                grid (a 560px card beside another reads as two unrelated forms). */}
+            <div className="space-y-2.5">
+              {byNewest(onThisLoad).map(c => (
+                <RequestCard key={c.id} c={c} meId={meId} toast={toast} onChanged={async () => { await reloadRequests(); await onChanged?.() }} />
+              ))}
             </div>
-          )}
-        </div>
+            {otherLoads.length > 0 && (
+              <div className="mt-4">
+                <p className={`${EYEBROW} mb-1.5`}>Other loads for this driver ({otherLoads.length})</p>
+                <div className="space-y-2.5">
+                  {byNewest(otherLoads).map(c => (
+                    <RequestCard key={c.id} c={c} meId={meId} toast={toast} showLoad onChanged={async () => { await reloadRequests(); await onChanged?.() }} />
+                  ))}
+                </div>
+              </div>
+            )}
+          </Column>
+        )
       )}
+
+      {/* Logged activity — a record of work, not a step, so it's unnumbered and
+          last. The delayed-undo surface; each entry removes behind a confirm. */}
+      <ActivityLog activities={activities} onRemove={onRemoveActivity} />
 
       {addingType && (
         <AddTypeModal
@@ -535,13 +562,14 @@ function AddTypeModal({ onClose, onAdded }) {
 // `fill` makes the card a flex column so a child marked flex-1 can absorb the
 // height the grid row forces on it — panel ③ is stretched to panel ①'s height,
 // which otherwise left ~85px of dead space under the note box.
-function Column({ n, title, children, fill, tag }) {
+function Column({ n, title, children, fill, tag, meta }) {
   return (
     <div className={`rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-white/[0.02] p-3.5${fill ? ' flex flex-col' : ''}`}>
       <div className="flex items-center gap-2 mb-3">
         <span className="w-5 h-5 rounded-full bg-orange-100 dark:bg-orange-500/15 text-orange-600 dark:text-orange-400 inline-flex items-center justify-center text-[10px] font-bold">{n}</span>
         <h4 className="text-xs font-semibold text-gray-900 dark:text-white uppercase tracking-wide">{title}</h4>
-        {tag && <span className="ml-auto text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded border border-gray-200 dark:border-white/10 text-gray-400 dark:text-slate-500">{tag}</span>}
+        {meta && <span className="ml-auto text-[11px] text-gray-400 dark:text-slate-500 whitespace-nowrap">{meta}</span>}
+        {tag && <span className={`${meta ? '' : 'ml-auto'} text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded border border-gray-200 dark:border-white/10 text-gray-400 dark:text-slate-500`}>{tag}</span>}
       </div>
       {children}
     </div>
@@ -865,35 +893,44 @@ function ActivityRow({ a, onRemove }) {
   )
 }
 
-function RequestGroup({ title, requests, meId, toast, onChanged, showLoad }) {
-  if (requests.length === 0) return null
-  return (
-    <div>
-      <p className={`${EYEBROW} mb-1.5`}>{title}</p>
-      <div className="space-y-2">
-        {requests.map(c => <RequestCard key={c.id} c={c} meId={meId} toast={toast} onChanged={onChanged} showLoad={showLoad} />)}
-      </div>
-    </div>
-  )
+// The footer hint below the chips — describes the SELECTED option (today it sits
+// beside Denied and reads as a caption for it).
+const RESPONSE_HINT = {
+  approved: 'Broker agreed to the full amount.',
+  partial: 'Broker agreed to less than requested — enter the agreed amount.',
+  denied: 'Broker refused. The request stays on record.',
 }
+const RESPONSE_LABEL = { approved: 'Approved', partial: 'Partial', denied: 'Denied' }
 
-// One accessorial request on record. It can record what the broker SAID — never
-// that money arrived. confirm_accessorial_collected is Accounting's and is not
-// offered here.
+// One accessorial request on record, capped at 560px so the small form never
+// stretches to the full-width panel. It can record what the broker SAID — never
+// that money arrived; confirm_accessorial_collected is Accounting's and isn't
+// offered here. Two zones under an identity-only header: Documents, then Broker
+// response, each behind a divider so the one orange action is easy to find.
 function RequestCard({ c, meId, toast, onChanged, showLoad }) {
   const [showDocs, setShowDocs] = useState(false)
   const [docs, setDocs] = useState(null)
   const [newDocType, setNewDocType] = useState('broker_email')
-  const [replying, setReplying] = useState(false)
   const [response, setResponse] = useState('approved')
-  const [approved, setApproved] = useState('')
+  const [approved, setApproved] = useState(c.claimed_amount != null ? String(c.claimed_amount) : '')
   const [respNote, setRespNote] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  const amountRef = useRef(null)
 
   const meta = statusMeta(c.status)
   const collected = c.status === 'collected'
-  const needsAmount = !!RESPONSES.find(r => r.value === response)?.needsAmount
+  const needsAmount = response !== 'denied'
+  const docCount = c.doc_count ?? 0
+  const statusLabel = c.status === 'awaiting' ? 'Awaiting broker' : meta.label
+
+  // Amount follows the selection: prefill the claim on Approved, clear + focus on
+  // Partial (the agreed figure is the whole point), disable on Denied.
+  const selectResponse = (val) => {
+    setResponse(val); setErr('')
+    if (val === 'approved') setApproved(c.claimed_amount != null ? String(c.claimed_amount) : '')
+    else if (val === 'partial') { setApproved(''); requestAnimationFrame(() => amountRef.current?.focus()) }
+  }
 
   const loadDocs = useCallback(async () => {
     try { setDocs(await fetchAccessorialDocs(c.id)) }
@@ -918,7 +955,7 @@ function RequestCard({ c, meId, toast, onChanged, showLoad }) {
     setBusy(true)
     try {
       await uploadAccessorialDoc(c.id, docType, file, null, meId)
-      await loadDocs()
+      if (docs != null) await loadDocs()
       await onChanged?.()
       toast?.success('Document attached')
     } catch (e) { toast?.error("Couldn't attach the document", e) } finally { setBusy(false) }
@@ -927,110 +964,117 @@ function RequestCard({ c, meId, toast, onChanged, showLoad }) {
   async function submitResponse() {
     setErr('')
     const amt = num(approved)
-    if (needsAmount && !(amt > 0)) { setErr('An approved amount is required.'); return }
+    if (needsAmount && !(amt > 0)) { setErr('An agreed amount is required.'); return }
     setBusy(true)
     try {
       await recordBrokerResponse(c.id, response, needsAmount ? amt : null, respNote.trim() || null)
       toast?.success("Broker's answer recorded")
-      setReplying(false); setRespNote(''); setApproved('')
+      setRespNote('')
       await onChanged?.()
     } catch (e) {
       setErr(e?.message || "Couldn't record the answer.") // RPC reason, verbatim
     } finally { setBusy(false) }
   }
 
-  async function copy() {
-    try { await copyText(buildRequestCopy(c, money)); toast?.success('Request copied') }
-    catch (e) { toast?.error("Couldn't copy", e) }
-  }
-
   return (
-    <div className="rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-white/[0.02] px-3 py-2">
-      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+    <div className="max-w-[560px] rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-white/[0.02] px-3.5 py-3">
+      {/* Header — identity only: type, amount, status, filed date. */}
+      <div className="flex items-center gap-2.5">
         <span className="text-xs font-semibold text-gray-900 dark:text-white">{typeLabel(c.accessorial_type)}</span>
         <span className="text-sm font-bold font-mono tabular-nums text-gray-900 dark:text-white">{money(c.claimed_amount, 2)}</span>
-        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${meta.cls}`}>{meta.label}</span>
+        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${meta.cls}`}>{statusLabel}</span>
         {showLoad && c.load_number && <span className="text-[11px] text-gray-500 dark:text-slate-400 font-mono">#{c.load_number}</span>}
-        {c.event_date && <span className="text-[11px] text-gray-400 dark:text-slate-500">{c.event_date}</span>}
-        {c.approved_amount != null && <span className="text-[11px] text-gray-500 dark:text-slate-400">broker: {money(c.approved_amount, 2)}</span>}
-        {c.collected_amount != null && <span className="text-[11px] text-cyan-600 dark:text-cyan-400">collected: {money(c.collected_amount, 2)}</span>}
+        {c.event_date && <span className="ml-auto text-[11px] text-gray-400 dark:text-slate-500 whitespace-nowrap">Filed {c.event_date}</span>}
+      </div>
 
-        <div className="ml-auto flex items-center gap-2 shrink-0">
-          <button type="button" onClick={toggleDocs} className="text-[11px] font-medium text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200">
-            📎 {c.doc_count ?? 0} doc{(c.doc_count ?? 0) === 1 ? '' : 's'}
-          </button>
-          <button type="button" onClick={copy} className="text-[11px] font-medium text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200">📋 Copy for Telegram</button>
-          {!collected && (
-            <button type="button" onClick={() => { setReplying(r => !r); setErr('') }}
-              className="text-[11px] font-semibold text-orange-600 dark:text-orange-400 hover:underline">Broker replied</button>
-          )}
+      {/* ── Documents ── */}
+      <div className="mt-3 border-t border-gray-100 dark:border-white/5 pt-2.5">
+        <button type="button" onClick={docCount > 0 ? toggleDocs : undefined} disabled={docCount === 0}
+          className={`${EYEBROW} ${docCount > 0 ? 'hover:text-gray-600 dark:hover:text-slate-300 cursor-pointer' : 'cursor-default'}`}>
+          Documents · {docCount === 0 ? 'none attached' : `${docCount} attached`}{docCount > 0 && <span aria-hidden> {showDocs ? '▴' : '▾'}</span>}
+        </button>
+        {showDocs && (
+          <div className="mt-2 space-y-1.5">
+            {docs == null ? (
+              <div className="h-6 rounded bg-gray-100 dark:bg-white/5 animate-pulse" />
+            ) : docs.map(d => (
+              <div key={d.id} className="flex items-center gap-2 text-[11px]">
+                <span className="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/5 text-gray-600 dark:text-slate-300 shrink-0">{docTypeLabel(d.doc_type)}</span>
+                <button type="button" onClick={() => openDoc(d.file_path)} className="text-orange-600 dark:text-orange-400 hover:underline truncate">{d.file_name || d.file_path}</button>
+                {d.note && <span className="text-gray-400 dark:text-slate-500 truncate">· {d.note}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <select className={`${S.input} !py-1 !w-40 text-[11px]`} value={newDocType} onChange={e => setNewDocType(e.target.value)}>
+            {DOC_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+          <label className={`${CHIP} ${busy ? 'opacity-50 pointer-events-none' : ''}`}>
+            {busy ? 'Uploading…' : '+ Attach'}
+            <input type="file" className="hidden" disabled={busy}
+              onChange={e => { addDoc(e.target.files?.[0], newDocType); e.target.value = '' }} />
+          </label>
+          <CopyPill text={buildRequestCopy(c, money)} label="Copy for Telegram" className="ml-auto" />
         </div>
       </div>
 
-      {c.broker_response_note && (
-        <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-1">Broker said: {c.broker_response_note}</p>
-      )}
-      {collected && (
-        <p className="text-[11px] text-cyan-600 dark:text-cyan-400 mt-1">Accounting has closed this request.</p>
-      )}
-
-      {showDocs && (
-        <div className="mt-2 border-t border-gray-100 dark:border-white/5 pt-2 space-y-1.5">
-          {docs == null ? (
-            <div className="h-6 rounded bg-gray-100 dark:bg-white/5 animate-pulse" />
-          ) : docs.length === 0 ? (
-            <p className="text-[11px] text-gray-400 dark:text-slate-500 italic">No documents attached.</p>
-          ) : docs.map(d => (
-            <div key={d.id} className="flex items-center gap-2 text-[11px]">
-              <span className="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/5 text-gray-600 dark:text-slate-300 shrink-0">{docTypeLabel(d.doc_type)}</span>
-              <button type="button" onClick={() => openDoc(d.file_path)} className="text-orange-600 dark:text-orange-400 hover:underline truncate">{d.file_name || d.file_path}</button>
-              {d.note && <span className="text-gray-400 dark:text-slate-500 truncate">· {d.note}</span>}
-            </div>
-          ))}
-          <div className="flex items-center gap-2 pt-1">
-            <select className={`${S.input} !py-1 !w-40 text-[11px]`} value={newDocType} onChange={e => setNewDocType(e.target.value)}>
-              {DOC_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-            </select>
-            <label className="text-[11px] font-medium text-orange-600 dark:text-orange-400 hover:underline cursor-pointer">
-              {busy ? 'Uploading…' : 'Attach a document'}
-              <input type="file" className="hidden" disabled={busy}
-                onChange={e => { addDoc(e.target.files?.[0], newDocType); e.target.value = '' }} />
-            </label>
-          </div>
-        </div>
-      )}
-
-      {replying && !collected && (
-        <div className="mt-2 border-t border-gray-100 dark:border-white/5 pt-2 space-y-2">
-          <p className="text-[11px] text-gray-500 dark:text-slate-400">What the broker said — this is not collection. Accounting confirms the money.</p>
-          <div className="flex flex-wrap items-center gap-1.5">
-            {RESPONSES.map(r => (
-              <button key={r.value} type="button" onClick={() => { setResponse(r.value); setErr('') }}
-                className={`px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-colors ${
-                  response === r.value
-                    ? 'bg-orange-500 text-white border-orange-500'
-                    : 'border-gray-300 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5'
-                }`}>
-                {r.label}
-              </button>
-            ))}
-            <span className="text-[11px] text-gray-400 dark:text-slate-500">{RESPONSES.find(r => r.value === response)?.hint}</span>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {needsAmount && (
-              <input type="text" inputMode="decimal" className={`${S.input} !py-1 !w-32 text-xs font-mono tabular-nums`}
-                value={approved} onChange={e => setApproved(normalizeMoney(e.target.value))} placeholder="Amount" />
+      {/* ── Broker response ── */}
+      <div className="mt-3 border-t border-gray-100 dark:border-white/5 pt-2.5">
+        <p className={EYEBROW}>Broker response</p>
+        {collected ? (
+          <p className="mt-2 text-[11px] text-cyan-600 dark:text-cyan-400">
+            Accounting has closed this request{c.collected_amount != null ? ` — collected ${money(c.collected_amount, 2)}` : ''}.
+            {c.broker_response_note ? ` Broker said: ${c.broker_response_note}` : ''}
+          </p>
+        ) : (
+          <div className="mt-2 space-y-2.5">
+            {(c.approved_amount != null || c.broker_response_note) && (
+              <p className="text-[11px] text-gray-500 dark:text-slate-400">
+                Recorded{c.approved_amount != null ? `: broker agreed ${money(c.approved_amount, 2)}` : ''}{c.broker_response_note ? ` — “${c.broker_response_note}”` : ''}
+              </p>
             )}
-            <input className={`${S.input} !py-1 flex-1 min-w-[160px] text-xs`} value={respNote}
-              onChange={e => setRespNote(e.target.value)} placeholder="What they said (optional)" />
-            <button type="button" onClick={submitResponse} disabled={busy}
-              className="px-3 py-1.5 text-xs font-semibold bg-orange-500 hover:bg-orange-400 disabled:opacity-50 text-white rounded-lg transition-colors">
-              {busy ? 'Saving…' : 'Record it'}
-            </button>
+            <p className="text-[11px] text-gray-500 dark:text-slate-400 rounded-lg bg-gray-50 dark:bg-white/[0.03] border border-gray-200 dark:border-white/10 px-2.5 py-1.5">
+              Records what the broker <span className="font-semibold">said</span>. Collection is confirmed separately by Accounting.
+            </p>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {RESPONSES.map(r => (
+                <button key={r.value} type="button" onClick={() => selectResponse(r.value)}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-colors ${
+                    response === r.value
+                      ? 'bg-orange-500 text-white border-orange-500'
+                      : 'border-gray-300 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5'
+                  }`}>
+                  {r.label}
+                </button>
+              ))}
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <label className="w-[118px] shrink-0 text-[10px] font-bold uppercase tracking-wide text-gray-400 dark:text-slate-500">Amount agreed</label>
+                <input ref={amountRef} type="text" inputMode="decimal" disabled={!needsAmount}
+                  className={`${S.input} !py-1 max-w-[130px] text-xs font-mono tabular-nums disabled:opacity-40 disabled:cursor-not-allowed`}
+                  value={needsAmount ? approved : ''} onChange={e => setApproved(normalizeMoney(e.target.value))} placeholder="$0.00" />
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="w-[118px] shrink-0 text-[10px] font-bold uppercase tracking-wide text-gray-400 dark:text-slate-500">What they said</label>
+                <input className={`${S.input} !py-1 flex-1 min-w-0 text-xs`} value={respNote}
+                  onChange={e => setRespNote(e.target.value)} placeholder="Optional" />
+              </div>
+            </div>
+            {err && <div className={S.errorBox}>{err}</div>}
+            <div className="flex items-center gap-2">
+              <span className="flex-1 min-w-0 text-[11px] text-gray-500 dark:text-slate-400">
+                <span className="font-semibold text-gray-600 dark:text-slate-300">{RESPONSE_LABEL[response]}</span> — {RESPONSE_HINT[response]}
+              </span>
+              <button type="button" onClick={submitResponse} disabled={busy}
+                className="shrink-0 px-3 py-1.5 text-xs font-semibold bg-orange-500 hover:bg-orange-400 disabled:opacity-50 text-white rounded-lg transition-colors">
+                {busy ? 'Saving…' : 'Record response'}
+              </button>
+            </div>
           </div>
-          {err && <div className={S.errorBox}>{err}</div>}
-        </div>
-      )}
+        )}
+      </div>
     </div>
   )
 }
