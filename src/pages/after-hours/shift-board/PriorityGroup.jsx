@@ -39,7 +39,7 @@ const ACTIVITY_ACTIONS = [
 // Rendered as the body of the active tab. The tab bar carries the heading/count;
 // this is the driver table. It owns the vertical scroll (flex-1) with a sticky
 // header so the bands and tabs above stay put while the list scrolls.
-export default function PriorityGroup({ group, rows, settings, shift, rowActionsByDriver, recipientsById, meId, isManager, highlightDriver, stateSort, onToggleStateSort, onOk, onAct, onAcknowledge, onCopyEscalation, onOpenRequest, openDriverId, onToggleDriver, accByLoad, exByLoad, brokerByLoad, toast, onAccessorialChanged, onTimesSaved, shiftId, canAddTypes }) {
+export default function PriorityGroup({ group, rows, settings, shift, rowActionsByDriver, recipientsById, meId, isManager, highlightDriver, stateSort, onToggleStateSort, onOk, onAct, onAcknowledge, onCopyEscalation, onOpenRequest, openDriverId, onToggleDriver, accByLoad, exByLoad, brokerByLoad, undoInfo, onUndo, onRemoveActivity, toast, onAccessorialChanged, onTimesSaved, shiftId, canAddTypes }) {
   const curYear = Number(todayChicago().slice(0, 4))
   const cols = columnsFor(settings)
   // The row panel carries whichever phases are on — checkpoints, accessorials or
@@ -122,6 +122,7 @@ export default function PriorityGroup({ group, rows, settings, shift, rowActions
                   colSpan={cols.length} panelOpen={panelOn && openDriverId === r.driver_id} onToggleDriver={onToggleDriver}
                   acc={r.load_id ? accByLoad?.get(r.load_id) : null} exception={r.load_id ? exByLoad?.get(r.load_id) : null}
                   broker={r.load_id ? brokerByLoad?.get(r.load_id) : null}
+                  undo={undoInfo?.driverId === r.driver_id ? undoInfo : null} onUndo={onUndo} onRemoveActivity={onRemoveActivity}
                   toast={toast} onAccessorialChanged={onAccessorialChanged} onTimesSaved={onTimesSaved} shiftId={shiftId} canAddTypes={canAddTypes} />
               ))}
               {effectiveLimit < rows.length && (
@@ -211,6 +212,22 @@ function Chip({ label, on, muted, title }) {
   )
 }
 
+// A Paperwork chip that is also the control — like the Checkpoints chips. Clicks
+// open the collect modal (create, or edit when already logged); a collected chip
+// stays clickable so a mis-entry is fixable. Disabled/muted with no load.
+function PaperworkChip({ label, type, done, act, loadId, r, onAct }) {
+  const when = act?.at ? fmtClock(act.at) : ''
+  const title = !loadId ? 'No load'
+    : done ? `${label} collected${when ? ` ${when}` : ''} — click to edit`
+      : `Log ${label} collected`
+  return (
+    <button type="button" onClick={() => loadId && onAct(r, type, act || null)} disabled={!loadId} title={title}
+      className="disabled:cursor-not-allowed disabled:opacity-60">
+      <Chip label={label} on={done} muted={!loadId} />
+    </button>
+  )
+}
+
 // Neutral action button (nothing logged yet).
 function ActBtn({ children, onClick, disabled, title }) {
   return (
@@ -283,7 +300,7 @@ function AccessorialCell({ acc, exception }) {
   return <span className="text-gray-300 dark:text-slate-600">—</span>
 }
 
-function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isManager, highlighted, onOk, onAct, onAcknowledge, onCopyEscalation, onOpenRequest, colSpan, panelOpen, onToggleDriver, acc, exception, broker, toast, onAccessorialChanged, onTimesSaved, shiftId, canAddTypes }) {
+function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isManager, highlighted, onOk, onAct, onAcknowledge, onCopyEscalation, onOpenRequest, colSpan, panelOpen, onToggleDriver, acc, exception, broker, undo, onUndo, onRemoveActivity, toast, onAccessorialChanged, onTimesSaved, shiftId, canAddTypes }) {
   const muted = r.in_scope === false
   const panelOn = !!settings?.accessorials_enabled || !!settings?.track_checkpoints
 
@@ -370,6 +387,15 @@ function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isMan
         {broker?.broker && (
           <div className="mt-0.5 flex items-center gap-1">
             <span className="text-[10px] text-gray-400 dark:text-slate-500 truncate max-w-[6rem]" title={broker.broker}>{broker.broker}</span>
+            {/* Deadline marker first, then the detention dot — two glyphs is the
+                ceiling. Both sit here rather than tinting the row, which would
+                fight the priority-group colours. */}
+            {broker.deadline_severity === 'urgent' && (
+              <svg aria-hidden viewBox="0 0 12 12" title="POD due within 24h of delivery" className="shrink-0 w-2.5 h-2.5 text-rose-500 fill-current"><title>POD due within 24h of delivery</title><path d="M6 1l5 9H1z" /></svg>
+            )}
+            {broker.deadline_severity === 'soon' && (
+              <span title="POD due within 48h of delivery" className="shrink-0 w-1.5 h-1.5 rounded-full bg-amber-500" />
+            )}
             {broker.detention_policy === 'not_paid' && (
               <span title="This broker does not pay detention." className="shrink-0 w-1.5 h-1.5 rounded-full bg-rose-500" />
             )}
@@ -411,12 +437,13 @@ function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isMan
           </button>
         </td>
       )}
-      {/* Paperwork — only rendered while a POD/BOL phase is on */}
+      {/* Paperwork — the chips are the control now (like Checkpoints): each opens
+          the collect modal, so POD/BOL live here once, not also in Actions. */}
       {(settings?.track_bols || settings?.track_pods) && (
         <td className="px-3 py-2 whitespace-nowrap">
           <div className="flex items-center gap-1">
-            {settings?.track_bols && <Chip label="BOL" on={!!r.bol_done} />}
-            {settings?.track_pods && <Chip label="POD" on={!!r.pod_done} />}
+            {settings?.track_bols && <PaperworkChip label="BOL" type="bol_collected" done={!!doneAct('bol_collected') || !!r.bol_done} act={doneAct('bol_collected')} loadId={r.load_id} r={r} onAct={onAct} />}
+            {settings?.track_pods && <PaperworkChip label="POD" type="pod_collected" done={!!doneAct('pod_collected') || !!r.pod_done} act={doneAct('pod_collected')} loadId={r.load_id} r={r} onAct={onAct} />}
           </div>
         </td>
       )}
@@ -451,7 +478,8 @@ function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isMan
           it to edit / remove. A raised request is still booked from its panel. */}
       <td className="px-3 py-2 whitespace-nowrap">
         <div className="flex items-center gap-1">
-          {ACTIVITY_ACTIONS.filter(a => !a.flag || settings?.[a.flag]).map(a => {
+          {/* POD/BOL now live in the Paperwork column — Actions keeps Book · Esc · Flag. */}
+          {ACTIVITY_ACTIONS.filter(a => a.type === 'load_booked' || a.type === 'escalated').map(a => {
             const done = doneAct(a.type)
             if (a.type === 'load_booked' && r.open_request_id) {
               return <ActBtn key={a.type} onClick={() => onOpenRequest?.(r.open_request_id)} title="Open the request to book it">Book</ActBtn>
@@ -459,12 +487,19 @@ function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isMan
             if (done) {
               return <DoneBtn key={a.type} onClick={() => onAct(r, a.type, done)} title="Edit or remove">✓ {a.label}</DoneBtn>
             }
-            const needsLoad = a.type === 'pod_collected' || a.type === 'bol_collected'
-            return <ActBtn key={a.type} onClick={() => onAct(r, a.type, null)} disabled={needsLoad && !r.load_id} title={a.label}>{a.label}</ActBtn>
+            return <ActBtn key={a.type} onClick={() => onAct(r, a.type, null)} title={a.label}>{a.label}</ActBtn>
           })}
           {flagged
             ? <DoneBtn tone="flag" onClick={() => onAct(r, 'flag', { note: issueNote })} title="Edit or clear the flag">⚑ Flag</DoneBtn>
             : <ActBtn onClick={() => onAct(r, 'flag', null)} disabled={!shift} title={shift ? 'Flag an issue' : 'Start a shift to flag'}>Flag</ActBtn>}
+          {/* Inline undo for ~10s after a save — no confirm needed, intent is
+              unambiguous. */}
+          {undo && (
+            <span className="ml-1 inline-flex items-center gap-1 text-[10px] text-gray-500 dark:text-slate-400 whitespace-nowrap">
+              <span className="text-emerald-600 dark:text-emerald-400">{undo.label}</span>·
+              <button type="button" onClick={() => onUndo?.()} className="font-semibold text-orange-600 dark:text-orange-400 hover:underline">Undo</button>
+            </span>
+          )}
         </div>
       </td>
       {/* OK — ticking checks the driver; unticking clears the check row entirely */}
@@ -481,7 +516,7 @@ function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isMan
           <AccessorialPanel row={r} exception={exception} meId={meId} toast={toast}
             onChanged={onAccessorialChanged} onTimesSaved={onTimesSaved} shiftId={shiftId}
             accessorialsOn={!!settings?.accessorials_enabled} trackCheckpoints={!!settings?.track_checkpoints}
-            canAddTypes={canAddTypes} />
+            canAddTypes={canAddTypes} activities={ra?.activities} onRemoveActivity={onRemoveActivity} />
         </td>
       </tr>
     )}

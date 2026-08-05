@@ -37,6 +37,8 @@ export default function ShiftBoardPage() {
   const [recipients, setRecipients] = useState([]) // escalation targets (admins/managers)
   const [exceptions, setExceptions] = useState([]) // checkpoint exception queue (phase 3)
   const [actionTarget, setActionTarget] = useState(null) // { row, type, existing } — popover
+  const [undoInfo, setUndoInfo] = useState(null) // { driverId, activityId?, isCheck?, label } — 10s inline undo
+  const undoTimerRef = useRef(null)
   const [searchInput, setSearchInput] = useState('')    // raw search box value
   const [search, setSearch] = useState('')              // debounced query
   const [highlightDriver, setHighlightDriver] = useState(null) // deep-link target
@@ -270,21 +272,43 @@ export default function ShiftBoardPage() {
         return activityId || (t.existing?.id ?? null)
       }
 
+      const labels = { load_booked: 'Load booked', pod_collected: 'POD collected', bol_collected: 'BOL collected', flag: 'Issue flagged' }
+      let undo = null // set only for a fresh action → enables the 10s inline Undo
       if (t.type === 'flag') {
         if (!shift) { toast.error('Start a shift to flag'); return }
         await upsertDriverCheck({ shiftId: shift.id, driverId: t.row.driver_id, loadId: t.row.load_id, checkedBy: me?.id, isOk: false, issueNote: trimmed || null })
+        if (!t.existing) undo = { driverId: t.row.driver_id, isCheck: true, label: 'Issue flagged' }
       } else if (t.existing) {
         await updateShiftActivity(t.existing.id, trimmed || null, t.type === 'load_booked' ? (loadNumber || null) : null)
       } else {
         const res = await logShiftActivity(t.type, t.row.load_id, t.row.driver_id, trimmed || null)
         // Book captures the actual load number typed (may differ from the row's).
         if (t.type === 'load_booked' && loadNumber && res?.id) await updateShiftActivity(res.id, trimmed || null, loadNumber)
+        if (res?.id) undo = { driverId: t.row.driver_id, activityId: res.id, label: labels[t.type] }
       }
-      const labels = { load_booked: 'Load booked', pod_collected: 'POD logged', bol_collected: 'BOL logged', flag: 'Issue flagged' }
       toast.success(labels[t.type] || 'Saved')
       setActionTarget(null)
       await refreshActions()
+      if (undo) showUndo(undo)
     } catch (e) { toast.error("Couldn't save that", e) }
+  }
+
+  // Inline 10-second undo of the just-saved action, then it fades.
+  function showUndo(info) {
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current)
+    setUndoInfo(info)
+    undoTimerRef.current = setTimeout(() => setUndoInfo(null), 10000)
+  }
+  async function undoLast() {
+    const u = undoInfo
+    if (!u) return
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current)
+    setUndoInfo(null)
+    try {
+      if (u.activityId) await deleteShiftActivity(u.activityId)
+      else if (u.isCheck && shift) await clearDriverCheck(shift.id, u.driverId)
+      await refreshActions()
+    } catch (e) { toast.error("Couldn't undo", e) }
   }
 
   async function removeAction() {
@@ -296,6 +320,13 @@ export default function ShiftBoardPage() {
       setActionTarget(null)
       await refreshActions()
     } catch (e) { toast.error("Couldn't remove that", e) }
+  }
+
+  // Delayed undo — remove a specific logged activity (from the expanded row's
+  // activity list). The confirm lives at the call site; this just deletes.
+  async function removeActivityById(id) {
+    try { await deleteShiftActivity(id); await refreshActions() }
+    catch (e) { toast.error("Couldn't remove that", e) }
   }
 
   async function onAcknowledge(activityId) {
@@ -537,6 +568,7 @@ export default function ShiftBoardPage() {
               shiftId={shift?.id ?? null} canAddTypes={isManager} onTimesSaved={applyCheckpointTimes}
               openDriverId={openDriverId} onToggleDriver={(id) => setOpenDriverId(cur => (cur === id ? null : id))}
               accByLoad={accByLoad} exByLoad={exByLoad} brokerByLoad={brokerByLoad} toast={toast}
+              undoInfo={undoInfo} onUndo={undoLast} onRemoveActivity={removeActivityById}
               onAccessorialChanged={async () => { setAccTick(t => t + 1); await refreshActions() }} />
           )}
         </>
@@ -946,6 +978,7 @@ function ActionPopover({ target, recipients = [], meId, onClose, onSubmit, onRem
   const [loadNumber, setLoadNumber] = useState(meta.hasLoad ? (target.existing?.load_number || target.row.load_number || '') : '')
   const [showPicker, setShowPicker] = useState(false)
   const [savedId, setSavedId] = useState(null) // set after an escalate save → reveal Copy + Done
+  const [confirmingRemove, setConfirmingRemove] = useState(false) // delete is a hard delete
   const [busy, setBusy] = useState(false)
 
   const mentionIds = useMemo(() => (isEsc ? parseMentions(note, recipients, meId) : []), [isEsc, note, recipients, meId])
@@ -1015,9 +1048,15 @@ function ActionPopover({ target, recipients = [], meId, onClose, onSubmit, onRem
         ) : (
           <div className="flex items-center justify-between gap-2">
             <div>
-              {editing && (
-                <button onClick={remove} disabled={busy} className="px-3 py-2 text-sm font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-xl transition-colors disabled:opacity-50">Remove</button>
-              )}
+              {editing && (confirmingRemove ? (
+                <span className="inline-flex items-center gap-2 text-sm">
+                  <span className="text-gray-600 dark:text-slate-300">Remove for good?</span>
+                  <button onClick={remove} disabled={busy} className="px-2.5 py-1.5 text-sm font-semibold text-white bg-red-500 hover:bg-red-400 rounded-lg disabled:opacity-50">{busy ? 'Removing…' : 'Remove'}</button>
+                  <button onClick={() => setConfirmingRemove(false)} disabled={busy} className="text-sm text-gray-500 dark:text-slate-400 hover:underline">Keep</button>
+                </span>
+              ) : (
+                <button onClick={() => setConfirmingRemove(true)} disabled={busy} className="px-3 py-2 text-sm font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-xl transition-colors disabled:opacity-50">Remove</button>
+              ))}
             </div>
             <div className="flex gap-2">
               <button onClick={onClose} disabled={busy} className={S.btnCancel}>Cancel</button>

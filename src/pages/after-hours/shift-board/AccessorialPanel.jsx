@@ -34,6 +34,7 @@ const EYEBROW = 'text-[10px] font-bold uppercase tracking-widest text-gray-400 d
 export default function AccessorialPanel({
   row, exception, meId, toast, onChanged, onTimesSaved, shiftId,
   accessorialsOn = true, trackCheckpoints = true, canAddTypes,
+  activities, onRemoveActivity,
 }) {
   const loadId = row.load_id || null
 
@@ -377,6 +378,10 @@ export default function AccessorialPanel({
           <BrokerRulesPanel rules={brokerRules} loading={brokerLoading} />
         </div>
       </div>
+
+      {/* Logged this shift — the delayed-undo surface. Each entry removes with a
+          confirm (delete_shift_activity is a hard delete). */}
+      <ActivityLog activities={activities} onRemove={onRemoveActivity} />
 
       {/* Already requested — this load and other loads, never merged */}
       {accessorialsOn && (
@@ -734,6 +739,46 @@ function BrokerRulesPanel({ rules, loading }) {
           )
         })()}
       </Column>
+  )
+}
+
+// Delayed undo — this driver's logged shift activities, each removable with a
+// confirm (the immediate 10s Undo lives on the collapsed row).
+const ACTIVITY_LABELS = { load_booked: 'Booked', pod_collected: 'POD collected', bol_collected: 'BOL collected', escalated: 'Escalated' }
+function ActivityLog({ activities, onRemove }) {
+  const acts = activities || []
+  if (!acts.length) return null
+  return (
+    <div className="border-t border-gray-200 dark:border-white/10 pt-3">
+      <p className={`${EYEBROW} mb-1.5`}>Logged this shift ({acts.length})</p>
+      <div className="space-y-1">
+        {acts.map(a => <ActivityRow key={a.id} a={a} onRemove={onRemove} />)}
+      </div>
+    </div>
+  )
+}
+function ActivityRow({ a, onRemove }) {
+  const [confirming, setConfirming] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const remove = async () => { setBusy(true); try { await onRemove?.(a.id) } finally { setBusy(false) } }
+  return (
+    <div className="flex items-center gap-2 text-[11px]">
+      <span className="font-medium text-gray-700 dark:text-slate-300 shrink-0">{ACTIVITY_LABELS[a.type] || a.type}</span>
+      {a.load_number && <span className="font-mono text-gray-500 dark:text-slate-400 shrink-0">#{a.load_number}</span>}
+      {a.note && <span className="text-gray-400 dark:text-slate-500 truncate" title={a.note}>{a.note}</span>}
+      {a.at && <span className="text-gray-400 dark:text-slate-500 shrink-0 tabular-nums">{fmtClock(a.at)}</span>}
+      <div className="ml-auto shrink-0">
+        {confirming ? (
+          <span className="inline-flex items-center gap-1.5">
+            <span className="text-gray-500 dark:text-slate-400">Remove?</span>
+            <button type="button" onClick={remove} disabled={busy} className="font-semibold text-red-600 dark:text-red-400 hover:underline disabled:opacity-50">{busy ? 'Removing…' : 'Yes'}</button>
+            <button type="button" onClick={() => setConfirming(false)} disabled={busy} className="text-gray-500 dark:text-slate-400 hover:underline">No</button>
+          </span>
+        ) : (
+          <button type="button" onClick={() => setConfirming(true)} title="Remove this entry" className="text-gray-400 dark:text-slate-500 hover:text-red-500">✕</button>
+        )}
+      </div>
+    </div>
   )
 }
 
