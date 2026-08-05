@@ -116,6 +116,16 @@ export async function fetchBoard(shiftId) {
     destination_state: stopState(r.destination),
   }))
 }
+// Broker + rate-con summary per load, in ONE request for the whole board (never
+// per row). A companion RPC so after_hours_board's 40-column signature stays
+// untouched. Returns Map<load_id, { broker, has_rules, detention_policy, … }>.
+export async function fetchBoardBrokerMeta(loadIds) {
+  const ids = [...new Set((loadIds || []).filter(Boolean))]
+  if (ids.length === 0) return new Map()
+  const { data, error } = await supabase.rpc('after_hours_board_broker_meta', { p_load_ids: ids })
+  if (error) throw error
+  return new Map(Object.entries(data || {}))
+}
 // Tab headers with progress + tone, measured against the open shift (or since
 // midnight Chicago when off-shift). Returns { raised, active, never } where each
 // carries counts and a `tone` — use the tone as-is, don't recompute the colour.

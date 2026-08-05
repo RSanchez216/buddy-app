@@ -11,7 +11,7 @@ import TimesNeededGroup from './TimesNeededGroup'
 import RequestDetailPanel from './RequestDetailPanel'
 import {
   SHIFT_TYPES, GROUP_META, groupKeyFor, shiftName, LIFECYCLE, LIFECYCLE_RANK,
-  fetchSettings, fetchOpenShift, startShift, fetchShiftSummary, fetchWeekSummary, fetchBoard, fetchBoardTabs,
+  fetchSettings, fetchOpenShift, startShift, fetchShiftSummary, fetchWeekSummary, fetchBoard, fetchBoardTabs, fetchBoardBrokerMeta,
   fetchCheckpointExceptions,
   upsertDriverCheck, logShiftActivity,
   fetchRowActions, updateShiftActivity, deleteShiftActivity, clearDriverCheck,
@@ -49,6 +49,7 @@ export default function ShiftBoardPage() {
   const [cpOpen, setCpOpen] = useState(true)    // Times-needed group expanded
   const [openRequestId, setOpenRequestId] = useState(null) // raised request detail panel
   const [accByLoad, setAccByLoad] = useState(() => new Map()) // load_id → accessorial summary
+  const [brokerByLoad, setBrokerByLoad] = useState(() => new Map()) // load_id → broker + rate-con meta
   const [openDriverId, setOpenDriverId] = useState(null)      // ONE expanded accessorial row
   const [accTick, setAccTick] = useState(0)                   // re-reads the summary after a write
   const [, setNowTick] = useState(0)
@@ -157,6 +158,18 @@ export default function ShiftBoardPage() {
       .catch(() => { /* the column falls back to '—'; the panel still works */ })
     return () => { stale = true }
   }, [accessorialsOn, board, accTick])
+
+  // Broker + rate-con meta for every load, in ONE request (never per row). Keyed
+  // on the set of load ids, so it fires when the board's loads change — not on an
+  // in-place checkpoint patch, where the brokers are unchanged.
+  const loadIdsKey = useMemo(() => [...new Set(board.map(r => r.load_id).filter(Boolean))].sort().join(','), [board])
+  useEffect(() => {
+    let stale = false
+    fetchBoardBrokerMeta(loadIdsKey ? loadIdsKey.split(',') : [])
+      .then(m => { if (!stale) setBrokerByLoad(m) })
+      .catch(() => { /* the broker line just doesn't render */ })
+    return () => { stale = true }
+  }, [loadIdsKey])
 
   // Collapse the open row if the phase is switched off mid-session.
   useEffect(() => { if (!accessorialsOn) setOpenDriverId(null) }, [accessorialsOn])
@@ -523,7 +536,7 @@ export default function ShiftBoardPage() {
               onOk={onOk} onAct={openAct} onAcknowledge={onAcknowledge} onCopyEscalation={copyEscalation} onOpenRequest={setOpenRequestId}
               shiftId={shift?.id ?? null} canAddTypes={isManager} onTimesSaved={applyCheckpointTimes}
               openDriverId={openDriverId} onToggleDriver={(id) => setOpenDriverId(cur => (cur === id ? null : id))}
-              accByLoad={accByLoad} exByLoad={exByLoad} toast={toast}
+              accByLoad={accByLoad} exByLoad={exByLoad} brokerByLoad={brokerByLoad} toast={toast}
               onAccessorialChanged={async () => { setAccTick(t => t + 1); await refreshActions() }} />
           )}
         </>

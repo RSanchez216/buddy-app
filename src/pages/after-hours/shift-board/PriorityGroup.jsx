@@ -39,7 +39,7 @@ const ACTIVITY_ACTIONS = [
 // Rendered as the body of the active tab. The tab bar carries the heading/count;
 // this is the driver table. It owns the vertical scroll (flex-1) with a sticky
 // header so the bands and tabs above stay put while the list scrolls.
-export default function PriorityGroup({ group, rows, settings, shift, rowActionsByDriver, recipientsById, meId, isManager, highlightDriver, stateSort, onToggleStateSort, onOk, onAct, onAcknowledge, onCopyEscalation, onOpenRequest, openDriverId, onToggleDriver, accByLoad, exByLoad, toast, onAccessorialChanged, onTimesSaved, shiftId, canAddTypes }) {
+export default function PriorityGroup({ group, rows, settings, shift, rowActionsByDriver, recipientsById, meId, isManager, highlightDriver, stateSort, onToggleStateSort, onOk, onAct, onAcknowledge, onCopyEscalation, onOpenRequest, openDriverId, onToggleDriver, accByLoad, exByLoad, brokerByLoad, toast, onAccessorialChanged, onTimesSaved, shiftId, canAddTypes }) {
   const curYear = Number(todayChicago().slice(0, 4))
   const cols = columnsFor(settings)
   // The row panel carries whichever phases are on — checkpoints, accessorials or
@@ -121,6 +121,7 @@ export default function PriorityGroup({ group, rows, settings, shift, rowActions
                   onOk={onOk} onAct={onAct} onAcknowledge={onAcknowledge} onCopyEscalation={onCopyEscalation} onOpenRequest={onOpenRequest}
                   colSpan={cols.length} panelOpen={panelOn && openDriverId === r.driver_id} onToggleDriver={onToggleDriver}
                   acc={r.load_id ? accByLoad?.get(r.load_id) : null} exception={r.load_id ? exByLoad?.get(r.load_id) : null}
+                  broker={r.load_id ? brokerByLoad?.get(r.load_id) : null}
                   toast={toast} onAccessorialChanged={onAccessorialChanged} onTimesSaved={onTimesSaved} shiftId={shiftId} canAddTypes={canAddTypes} />
               ))}
               {effectiveLimit < rows.length && (
@@ -282,7 +283,7 @@ function AccessorialCell({ acc, exception }) {
   return <span className="text-gray-300 dark:text-slate-600">—</span>
 }
 
-function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isManager, highlighted, onOk, onAct, onAcknowledge, onCopyEscalation, onOpenRequest, colSpan, panelOpen, onToggleDriver, acc, exception, toast, onAccessorialChanged, onTimesSaved, shiftId, canAddTypes }) {
+function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isManager, highlighted, onOk, onAct, onAcknowledge, onCopyEscalation, onOpenRequest, colSpan, panelOpen, onToggleDriver, acc, exception, broker, toast, onAccessorialChanged, onTimesSaved, shiftId, canAddTypes }) {
   const muted = r.in_scope === false
   const panelOn = !!settings?.accessorials_enabled || !!settings?.track_checkpoints
 
@@ -360,9 +361,20 @@ function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isMan
           ? <span className="text-gray-500 dark:text-slate-400">covered — <span className="text-gray-700 dark:text-slate-300 font-medium">{r.team_name}</span></span>
           : <span className="text-gray-600 dark:text-slate-300">{r.load_status || '—'}</span>}
       </td>
-      {/* Load — its own column with paste-ready copy */}
-      <td className="px-3 py-2 whitespace-nowrap">
+      {/* Load — number + paste-ready copy, with the broker under it (like the
+          carrier under the driver name). The broker line truncates to the load
+          number's width so it never widens the column; nothing renders with no
+          broker. */}
+      <td className="px-3 py-2 align-top">
         {r.load_number == null ? <span className="text-gray-300 dark:text-slate-600">—</span> : <LoadCell number={r.load_number} />}
+        {broker?.broker && (
+          <div className="mt-0.5 flex items-center gap-1">
+            <span className="text-[10px] text-gray-400 dark:text-slate-500 truncate max-w-[6rem]" title={broker.broker}>{broker.broker}</span>
+            {broker.detention_policy === 'not_paid' && (
+              <span title="This broker does not pay detention." className="shrink-0 w-1.5 h-1.5 rounded-full bg-rose-500" />
+            )}
+          </div>
+        )}
       </td>
       {/* Origin → Destination, with pickup/delivery dates and honest load context */}
       <td className="px-3 py-2 text-gray-600 dark:text-slate-400">
