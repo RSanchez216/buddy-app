@@ -665,13 +665,82 @@ function DeadlineBanner({ rules }) {
   const win = deadlineWindow(r.deadline_minutes)
   // "unknown" must read as NOT STATED — never as "no deadline / no rush".
   const text = sev === 'unknown' || !win ? 'No submission deadline stated' : `POD due ${win} of delivery`
+  // When there's a Money-at-risk block below, it owns the penalty — don't echo
+  // it up here too.
+  const showPenalty = sev === 'urgent' && !rules.money_at_risk && (r.penalty_sentence || r.penalty)
   return (
     <div title={r.deadline_sentence || ''} className={`rounded-lg border px-2.5 py-2 text-xs leading-relaxed ${BANNER[sev] || BANNER.unknown}`}>
       {/* The window wraps naturally at 254px rather than shrinking; the penalty
           sits on its own line below. */}
       <span className="block">{sev === 'urgent' && <span aria-hidden>⚠ </span>}{text}</span>
-      {sev === 'urgent' && (r.penalty_sentence || r.penalty) && (
+      {showPenalty && (
         <span className="block mt-0.5 font-normal opacity-90">{r.penalty_sentence || r.penalty}</span>
+      )}
+    </div>
+  )
+}
+
+// Tier 1 — money at risk. The loudest thing in panel ④: a stated dollar figure
+// is more concrete than a deadline we may already be inside. Placed below the
+// banner but styled to dominate it.
+const TRIGGER_LABELS = {
+  paperwork: 'Late paperwork', tracking: 'Tracking not accepted', appointment: 'Missed appointment',
+  seal: 'Seal broken', check_in: 'Missed check-in', lumper: 'Lumper', accessorial: 'Accessorial',
+}
+function MoneyAtRisk({ penalties }) {
+  // Highest amount first; percentage penalties (amount_value null) fall to the
+  // bottom but keep their amount_text.
+  const list = [...(penalties || [])].sort((a, b) => {
+    if (a.amount_value == null && b.amount_value == null) return 0
+    if (a.amount_value == null) return 1
+    if (b.amount_value == null) return -1
+    return b.amount_value - a.amount_value
+  })
+  if (!list.length) return null
+  return (
+    <div className="rounded-lg border border-rose-300 dark:border-rose-500/40 bg-rose-50 dark:bg-rose-500/10 p-2.5 space-y-2">
+      <p className="text-[11px] font-bold uppercase tracking-wide text-rose-700 dark:text-rose-300">Money at risk{list.length > 1 ? ` (${list.length})` : ''}</p>
+      <div className="space-y-2">
+        {list.map((p, i) => (
+          <div key={i}>
+            <div className="flex items-baseline gap-2">
+              <span className="font-mono font-bold text-rose-800 dark:text-rose-200 whitespace-nowrap">{p.amount_text || '—'}</span>
+              {TRIGGER_LABELS[p.trigger] && <span className="text-[11px] font-semibold text-rose-700 dark:text-rose-300">{TRIGGER_LABELS[p.trigger]}</span>}
+            </div>
+            {p.sentence && <p className="mt-0.5 text-[11px] text-gray-600 dark:text-slate-400 leading-snug">{p.sentence}</p>}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// Tier 2 — requirements. Deliberately plain: no border, colour or icon. If
+// everything is flagged, nothing is. First three, then a disclosure.
+const REQ_LABELS = {
+  tracking_app: 'Tracking app', detention_preapproval: 'Detention pre-approval', lumper_receipt: 'Lumper receipt',
+  seal: 'Seal', reefer: 'Temperature', appointment: 'Appointment', check_in: 'Check-in',
+  photos: 'Photos', unloading: 'Unloading', weight: 'Weight',
+}
+function AlsoRequired({ requirements }) {
+  const [expanded, setExpanded] = useState(false)
+  const list = requirements || []
+  if (!list.length) return null
+  const shown = expanded ? list : list.slice(0, 3)
+  const extra = list.length - shown.length
+  return (
+    <div className="space-y-1">
+      <p className={EYEBROW}>Also required</p>
+      <dl className="space-y-1">
+        {shown.map((q, i) => (
+          <div key={i} className="flex items-start gap-2 text-[11px]">
+            <dt className="w-24 shrink-0 font-medium text-gray-500 dark:text-slate-400">{REQ_LABELS[q.kind] || q.kind}</dt>
+            <dd className="flex-1 min-w-0 text-gray-600 dark:text-slate-400 leading-snug">{q.sentence}</dd>
+          </div>
+        ))}
+      </dl>
+      {!expanded && extra > 0 && (
+        <button type="button" onClick={() => setExpanded(true)} className="text-[11px] font-medium text-gray-500 dark:text-slate-400 hover:underline">+{extra} more ▾</button>
       )}
     </div>
   )
@@ -694,10 +763,14 @@ function BrokerRulesPanel({ rules, loading }) {
           <p className="text-xs text-gray-400 dark:text-slate-500 italic">No rate confirmation notes on this load.</p>
         ) : (() => {
           const r = rules.rules || {}
-          const showPenaltyRow = (r.penalty_sentence || r.penalty) && rules.deadline_severity !== 'urgent'
+          // The Money-at-risk block owns penalties when it's shown, so the muted
+          // Penalty row only appears when there is no money block.
+          const showPenaltyRow = (r.penalty_sentence || r.penalty) && rules.deadline_severity !== 'urgent' && !rules.money_at_risk
           return (
             <div className="space-y-2.5">
               <DeadlineBanner rules={rules} />
+              {rules.money_at_risk && <MoneyAtRisk penalties={r.penalties} />}
+              {rules.requirement_count > 0 && <AlsoRequired requirements={r.requirements} />}
               {(r.after_hours_phone || r.tracking_sentence || showPenaltyRow) && (
                 <div className="space-y-1.5">
                   {r.after_hours_phone && (

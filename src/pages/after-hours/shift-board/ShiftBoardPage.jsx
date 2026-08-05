@@ -654,15 +654,19 @@ const RPC_KEY = { raised: 'raised', todo: 'active', never_dispatched: 'never' }
 // Alerts is a virtual, cross-cutting tab — not a groupKeyFor group. Its meta is
 // defined here (not in GROUPS, which drives grouping) and looked up when active.
 const ALERTS_META = { key: 'alerts', heading: 'Alerts', tone: 'rose', reason: 'this load has a broker-rules alert' }
-// A load has an alert when its POD deadline is close or the broker won't pay
-// detention. Ranked most-urgent-first for the tab's own sort (nothing else).
-const hasAlert = (b) => b?.deadline_severity === 'urgent' || b?.deadline_severity === 'soon' || b?.detention_policy === 'not_paid'
+// A load has an alert when money is at risk, its POD deadline is close, or the
+// broker won't pay detention. Ranked most-urgent-first for the tab's own sort
+// (nothing else). Tier 2 requirements never put a row here.
+const hasAlert = (b) => b?.money_at_risk || b?.deadline_severity === 'urgent' || b?.deadline_severity === 'soon' || b?.detention_policy === 'not_paid'
 function alertRank(b) {
-  const urgent = b?.deadline_severity === 'urgent', notPaid = b?.detention_policy === 'not_paid'
-  if (notPaid && urgent) return 0
-  if (urgent) return 1
-  if (notPaid) return 2
-  if (b?.deadline_severity === 'soon') return 3
+  const urgent = b?.deadline_severity === 'urgent'
+  const money = !!b?.money_at_risk
+  if (money && urgent) return 0
+  if (money && Number(b?.penalty_max_usd) >= 500) return 1
+  if (urgent) return 2
+  if (money) return 3
+  if (b?.detention_policy === 'not_paid') return 4
+  if (b?.deadline_severity === 'soon') return 5
   return 99
 }
 // One colour per tab so the bar reads at a glance instead of a wall of orange.

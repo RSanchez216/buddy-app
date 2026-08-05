@@ -51,6 +51,15 @@ function truncate(s, n) {
   return t.length > n ? `${t.slice(0, n - 1)}…` : t
 }
 
+// Tooltip for the collapsed-row money marker — names the amount when the rate
+// con stated one, otherwise just that a penalty exists.
+function moneyTitle(b) {
+  const amt = b?.penalty_max_usd
+  return amt != null
+    ? `Up to $${Number(amt).toLocaleString('en-US')} at risk on this load`
+    : 'Penalty stated on this rate con'
+}
+
 // Rendered as the body of the active tab. The tab bar carries the heading/count;
 // this is the driver table. It owns the vertical scroll (flex-1) with a sticky
 // header so the bands and tabs above stay put while the list scrolls.
@@ -533,6 +542,11 @@ function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isMan
             )}
             {broker?.deadline_severity === 'soon' && (
               <span title="POD due within 48h of delivery" className="shrink-0 w-3.5 h-3.5 rounded-full bg-amber-500" />
+            )}
+            {/* Money marker sits between the deadline marker and the detention dot.
+                Tier 2 requirements get NO marker — three glyphs is the ceiling. */}
+            {broker?.money_at_risk && (
+              <span title={moneyTitle(broker)} className="shrink-0 inline-flex items-center justify-center w-3.5 h-3.5 font-bold text-[11px] leading-none text-rose-600 dark:text-rose-400">$</span>
             )}
             {broker?.detention_policy === 'not_paid' && (
               <span title="This broker does not pay detention." className="shrink-0 w-3.5 h-3.5 rounded-full bg-rose-500" />
