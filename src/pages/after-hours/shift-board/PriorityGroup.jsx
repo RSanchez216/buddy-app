@@ -522,39 +522,41 @@ function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isMan
           ? <span className="text-gray-500 dark:text-slate-400">covered — <span className="text-gray-700 dark:text-slate-300 font-medium">{r.team_name}</span></span>
           : <span className="text-gray-600 dark:text-slate-300">{r.load_status || '—'}</span>}
       </td>
-      {/* Load — number + paste-ready copy on line one, broker (if any) on line
-          two. The deadline/detention glyphs belong to the LOAD, not the broker,
-          so they sit on line one beside the number and render even when broker is
-          null (88 urgent loads have no customer on the load). The broker line
-          truncates to the number's width so it never widens the column. */}
+      {/* Load — a fixed-width marker gutter, then the number + paste-ready copy on
+          line one, broker (if any) on line two. The gutter is ALWAYS rendered
+          (even empty) and right-aligned, so every load number starts at the same
+          x and the markers form a straight column instead of zig-zagging behind
+          numbers of different widths. w-12 fits the max three 14px glyphs + gaps.
+          Line two reuses an empty gutter so the broker lines up with the number. */}
       <td className="px-3 py-2 align-top">
-        {r.load_number == null ? (
-          <span className="text-gray-300 dark:text-slate-600">—</span>
-        ) : (
-          <div className="flex items-center gap-1">
-            <LoadCell number={r.load_number} />
-            {/* Deadline marker first, then the detention dot — two glyphs is the
-                ceiling. 14px so the shapes read; triangle for urgent, dot for
-                soon, so they're told apart in greyscale, not by colour alone.
-                Glyphs only, no row tint (it would fight the group colours). */}
+        <div className="flex items-center gap-1">
+          <span className="shrink-0 w-12 flex items-center justify-end gap-0.5">
+            {/* Deadline marker, then money, then the detention dot — three is the
+                ceiling. Triangle for urgent, dot for soon: told apart in greyscale,
+                not colour alone. The soon dot is smaller so it doesn't out-weigh
+                the urgent triangle. Glyphs only, no row tint. */}
             {broker?.deadline_severity === 'urgent' && (
               <svg aria-hidden viewBox="0 0 12 12" className="shrink-0 w-3.5 h-3.5 text-rose-500 fill-current"><title>POD due within 24h of delivery</title><path d="M6 1l5 9H1z" /></svg>
             )}
             {broker?.deadline_severity === 'soon' && (
-              <span title="POD due within 48h of delivery" className="shrink-0 w-3.5 h-3.5 rounded-full bg-amber-500" />
+              <span title="POD due within 48h of delivery" className="shrink-0 w-2 h-2 rounded-full bg-amber-500" />
             )}
-            {/* Money marker sits between the deadline marker and the detention dot.
-                Tier 2 requirements get NO marker — three glyphs is the ceiling. */}
             {broker?.money_at_risk && (
               <span title={moneyTitle(broker)} className="shrink-0 inline-flex items-center justify-center w-3.5 h-3.5 font-bold text-[11px] leading-none text-rose-600 dark:text-rose-400">$</span>
             )}
             {broker?.detention_policy === 'not_paid' && (
               <span title="This broker does not pay detention." className="shrink-0 w-3.5 h-3.5 rounded-full bg-rose-500" />
             )}
-          </div>
-        )}
+          </span>
+          {r.load_number == null
+            ? <span className="text-gray-300 dark:text-slate-600">—</span>
+            : <LoadCell number={r.load_number} />}
+        </div>
         {broker?.broker && (
-          <div className="mt-0.5 text-[10px] text-gray-400 dark:text-slate-500 truncate max-w-[6rem]" title={broker.broker}>{broker.broker}</div>
+          <div className="mt-0.5 flex items-center gap-1">
+            <span className="shrink-0 w-12" aria-hidden />
+            <span className="text-[10px] text-gray-400 dark:text-slate-500 truncate max-w-[6rem]" title={broker.broker}>{broker.broker}</span>
+          </div>
         )}
       </td>
       {/* Origin → Destination, with pickup/delivery dates and honest load context */}
