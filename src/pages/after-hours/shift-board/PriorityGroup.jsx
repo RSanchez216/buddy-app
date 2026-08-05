@@ -455,25 +455,28 @@ function fmtShortDate(v) {
   const m = String(v || '').match(/^(\d{4})-(\d{2})-(\d{2})/)
   return m ? new Date(+m[1], +m[2] - 1, +m[3]).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''
 }
-// Days-since-delivery colour bands. Null/negative render '—', not a number.
-function idleTone(days) {
-  if (days == null || days < 0) return 'text-gray-300 dark:text-slate-600'
-  if (days <= 3) return 'text-gray-500 dark:text-slate-400'
-  if (days <= 14) return 'text-amber-600 dark:text-amber-400'
-  return 'text-rose-600 dark:text-rose-400'
+// Days-since-delivery colour bands, anchored to after_hours_settings.idle_after_days
+// (4) so the column and the "Idle 4+ days" tab agree — below it is noticed, at/past
+// it is flagged. Text colour only; no fills. Only reached for shown values (>= 2).
+function idleTone(days, threshold) {
+  const t = Number(threshold) || 4 // idle_after_days
+  if (days < t) return 'text-gray-500 dark:text-slate-400'          // 2..t-1 — below the idle threshold
+  if (days <= 14) return 'text-amber-600 dark:text-amber-400 font-medium' // in the Idle group
+  return 'text-rose-600 dark:text-rose-400 font-medium'             // well past it
 }
 
 // Idle cell — the day count (days_since_delivery, from the board), plus a neutral
-// note glyph when the driver has an idle reason on record. The day count owns the
-// urgency colour; the glyph stays grey so it doesn't compete in the narrow cell.
-// days_since_delivery (this column) and days_on_reason (the popover) are different
-// numbers and are never shown in place of each other.
-function IdleCell({ days, idle }) {
+// note glyph when the driver has an idle reason on record. 0d/1d and null/future
+// carry no signal, so the cell stays EMPTY there (not a dash — a column of dashes
+// still draws the eye). The glyph is independent: a driver with a reason shows it
+// even with the count hidden. days_since_delivery (this column) and days_on_reason
+// (the popover) are different numbers and are never shown in place of each other.
+function IdleCell({ days, idle, threshold }) {
   const [open, setOpen] = useState(false)
   const [rect, setRect] = useState(null)
   const btnRef = useRef(null)
   const n = Number(days)
-  const label = days == null || !Number.isFinite(n) || n < 0 ? '—' : `${n}d`
+  const showDays = days != null && Number.isFinite(n) && n >= 2
   const has = !!(idle && idle.reason)
   const title = has ? (idle.note ? truncate(`${idle.reason} — ${idle.note}`, 80) : idle.reason) : undefined
 
@@ -484,7 +487,7 @@ function IdleCell({ days, idle }) {
   }
   return (
     <span className="inline-flex items-center justify-end gap-1">
-      <span className={`tabular-nums ${idleTone(days == null || !Number.isFinite(n) ? null : n)}`}>{label}</span>
+      {showDays && <span className={`tabular-nums ${idleTone(n, threshold)}`}>{n}d</span>}
       {has && (
         <button ref={btnRef} type="button" onClick={toggle} aria-expanded={open} title={title}
           className="shrink-0 leading-none text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-200">
@@ -618,7 +621,7 @@ function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isMan
       {/* Idle — days since last delivery (from the board), plus a neutral note
           glyph when the driver has an idle reason on record (from idle meta). */}
       <td className="px-3 py-2 align-top text-right whitespace-nowrap">
-        <IdleCell days={r.days_since_delivery} idle={idle} />
+        <IdleCell days={r.days_since_delivery} idle={idle} threshold={settings?.idle_after_days} />
       </td>
       {/* Equipment — truck / trailer, display only */}
       <td className="px-3 py-2 whitespace-nowrap text-gray-500 dark:text-slate-400 font-mono">{r.truck || '—'} / {r.trailer || '—'}</td>
