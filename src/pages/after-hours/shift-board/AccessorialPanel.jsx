@@ -388,45 +388,50 @@ export default function AccessorialPanel({
         </div>
       </div>
 
-      {/* ⑤ Accessorial requests — the last step of the job (record what the broker
-          said), so it sits after the four-column grid and before Logged activity.
-          Full width, not a fifth column: five columns would starve panel ①'s
-          datetime inputs, and it vanishes entirely on loads with no accessorial.
-          Only the numbered panel is gated on there being requests; the plain
-          empty line stays as it was, so Logged activity is always last. */}
-      {accessorialsOn && (
-        requestsError ? (
-          <div className={S.errorBox}>{requestsError}</div>
-        ) : requestsLoading ? (
-          <div className="h-12 rounded-xl bg-gray-100 dark:bg-white/5 animate-pulse" />
-        ) : requests.length === 0 ? (
-          <p className="text-xs text-gray-400 dark:text-slate-500 italic">Nothing requested on this load or this driver yet.</p>
-        ) : (
-          <Column n={5} title="Accessorial requests" meta={`${onThisLoad.length} on this load`}>
-            {/* One vertical stack, newest first, 10px apart — never a two-column
-                grid (a 560px card beside another reads as two unrelated forms). */}
-            <div className="space-y-2.5">
-              {byNewest(onThisLoad).map(c => (
-                <RequestCard key={c.id} c={c} meId={meId} toast={toast} onChanged={async () => { await reloadRequests(); await onChanged?.() }} />
-              ))}
-            </div>
-            {otherLoads.length > 0 && (
-              <div className="mt-4">
-                <p className={`${EYEBROW} mb-1.5`}>Other loads for this driver ({otherLoads.length})</p>
-                <div className="space-y-2.5">
-                  {byNewest(otherLoads).map(c => (
-                    <RequestCard key={c.id} c={c} meId={meId} toast={toast} showLoad onChanged={async () => { await reloadRequests(); await onChanged?.() }} />
-                  ))}
-                </div>
-              </div>
+      {/* ⑤ Accessorial requests and Logged activity share one row now: panel ⑤'s
+          card is 560px inside an otherwise-empty full-width strip, and Logged
+          activity was a mostly-empty strip below it. Side by side, ⑤ keeps its
+          560px and activity takes the rest. items-start so a short panel and an
+          empty log don't stretch to match each other. When ⑤ has nothing to show
+          (the common case) it drops out and activity goes full width. Below lg
+          they stack, ⑤ first. */}
+      {(() => {
+        const showPanel5 = accessorialsOn && !requestsError && !requestsLoading && requests.length > 0
+        const activityBlock = <ActivityLog activities={activities} onRemove={onRemoveActivity} />
+        return (
+          <>
+            {accessorialsOn && requestsError && <div className={S.errorBox}>{requestsError}</div>}
+            {accessorialsOn && requestsLoading && <div className="h-12 rounded-xl bg-gray-100 dark:bg-white/5 animate-pulse" />}
+            {accessorialsOn && !requestsError && !requestsLoading && requests.length === 0 && (
+              <p className="text-xs text-gray-400 dark:text-slate-500 italic">Nothing requested on this load or this driver yet.</p>
             )}
-          </Column>
+            {showPanel5 ? (
+              <div className="grid grid-cols-1 lg:grid-cols-[560px_1fr] gap-3 items-start">
+                <Column n={5} title="Accessorial requests" meta={`${onThisLoad.length} on this load`}>
+                  {/* One vertical stack, newest first, 10px apart — never a two-column
+                      grid (a 560px card beside another reads as two unrelated forms). */}
+                  <div className="space-y-2.5">
+                    {byNewest(onThisLoad).map(c => (
+                      <RequestCard key={c.id} c={c} meId={meId} toast={toast} onChanged={async () => { await reloadRequests(); await onChanged?.() }} />
+                    ))}
+                  </div>
+                  {otherLoads.length > 0 && (
+                    <div className="mt-4">
+                      <p className={`${EYEBROW} mb-1.5`}>Other loads for this driver ({otherLoads.length})</p>
+                      <div className="space-y-2.5">
+                        {byNewest(otherLoads).map(c => (
+                          <RequestCard key={c.id} c={c} meId={meId} toast={toast} showLoad onChanged={async () => { await reloadRequests(); await onChanged?.() }} />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </Column>
+                {activityBlock}
+              </div>
+            ) : activityBlock}
+          </>
         )
-      )}
-
-      {/* Logged activity — a record of work, not a step, so it's unnumbered and
-          last. The delayed-undo surface; each entry removes behind a confirm. */}
-      <ActivityLog activities={activities} onRemove={onRemoveActivity} />
+      })()}
 
       {addingType && (
         <AddTypeModal
@@ -846,13 +851,21 @@ function BrokerRulesPanel({ rules, loading }) {
 // Delayed undo — this driver's logged shift activities, each removable with a
 // confirm (the immediate 10s Undo lives on the collapsed row).
 const ACTIVITY_LABELS = { load_booked: 'Booked', pod_collected: 'POD collected', bol_collected: 'BOL collected', note: 'Note', escalated: 'Escalated' }
+const ACTIVITY_CAP = 8 // beyond this the list collapses behind a disclosure
 function ActivityLog({ activities, onRemove }) {
   // Not filtered by shift — shift_id is nullable by design and off-shift work is
   // still logged (and still removable), so the heading is "Logged activity", not
   // "this shift". The strip always renders, empty state included: it's the only
   // home for the delayed undo, so hiding it when empty loses the path the moment
   // it's needed.
-  const acts = activities || []
+  const [expanded, setExpanded] = useState(false)
+  // Newest first, defensively — the log grows without bound, so guarantee order
+  // rather than trust the RPC's.
+  const acts = [...(activities || [])].sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')))
+  // No internal scroll — a nested scrollbar in an expanded row is easy to miss.
+  // Instead cap the visible rows and let a disclosure reveal the rest.
+  const shown = expanded ? acts : acts.slice(0, ACTIVITY_CAP)
+  const extra = acts.length - shown.length
   return (
     <div className="border-t border-gray-200 dark:border-white/10 pt-3">
       <p className={`${EYEBROW} mb-1.5`}>Logged activity{acts.length ? ` (${acts.length})` : ''}</p>
@@ -860,7 +873,10 @@ function ActivityLog({ activities, onRemove }) {
         <p className="text-xs text-gray-400 dark:text-slate-500 italic">No activity logged for this driver yet.</p>
       ) : (
         <div className="space-y-1">
-          {acts.map(a => <ActivityRow key={a.id} a={a} onRemove={onRemove} />)}
+          {shown.map(a => <ActivityRow key={a.id} a={a} onRemove={onRemove} />)}
+          {!expanded && extra > 0 && (
+            <button type="button" onClick={() => setExpanded(true)} className="text-[11px] font-medium text-gray-500 dark:text-slate-400 hover:underline">+{extra} more ▾</button>
+          )}
         </div>
       )}
     </div>
