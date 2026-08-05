@@ -272,7 +272,7 @@ export default function ShiftBoardPage() {
         return activityId || (t.existing?.id ?? null)
       }
 
-      const labels = { load_booked: 'Load booked', pod_collected: 'POD collected', bol_collected: 'BOL collected', flag: 'Issue flagged' }
+      const labels = { load_booked: 'Load booked', pod_collected: 'POD collected', bol_collected: 'BOL collected', note: 'Note added', flag: 'Issue flagged' }
       let undo = null // set only for a fresh action → enables the 10s inline Undo
       if (t.type === 'flag') {
         if (!shift) { toast.error('Start a shift to flag'); return }
@@ -826,6 +826,7 @@ const ACTION_PROMPTS = {
   load_booked:   { title: 'Book a load',   prompt: 'What load did you book?', hasLoad: true },
   pod_collected: { title: 'POD collected', prompt: 'Anything to note?' },
   bol_collected: { title: 'BOL collected', prompt: 'Anything to note?' },
+  note:          { title: 'Add a note',    prompt: 'What happened?', required: true },
   escalated:     { title: 'Escalate',      prompt: "What's happening?", required: true },
   flag:          { title: 'Flag an issue', prompt: "What's the issue?", required: true },
 }

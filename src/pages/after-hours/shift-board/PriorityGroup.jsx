@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { fmtClock, fmtDuration, todayChicago, lifecycleLabel } from './shiftBoardData'
+import { createPortal } from 'react-dom'
+import { fmtClock, fmtChicagoTs, fmtDuration, todayChicago, lifecycleLabel } from './shiftBoardData'
 import { statusBadge } from '../requests/requestsData'
 import AccessorialPanel from './AccessorialPanel'
 import { statusMeta } from './accessorialData'
@@ -31,10 +32,24 @@ function columnsFor(settings) {
 // only appear while their phase flag is on.
 const ACTIVITY_ACTIONS = [
   { type: 'load_booked', label: 'Book' },
+  { type: 'note', label: 'Note' },
   { type: 'pod_collected', label: 'POD', flag: 'track_pods' },
   { type: 'bol_collected', label: 'BOL', flag: 'track_bols' },
   { type: 'escalated', label: 'Esc' },
 ]
+
+// Plain-words label per activity type, for the notes popover.
+const NOTE_ACTIVITY_LABELS = {
+  load_booked: 'Booked', pod_collected: 'POD collected', bol_collected: 'BOL collected',
+  broker_contacted: 'Broker contacted', driver_assisted: 'Driver assisted',
+  rescan_requested: 'Rescan requested', note: 'Note', escalated: 'Escalated',
+}
+
+// Collapse whitespace and cut to n chars with an ellipsis — for the glyph title.
+function truncate(s, n) {
+  const t = String(s || '').replace(/\s+/g, ' ').trim()
+  return t.length > n ? `${t.slice(0, n - 1)}…` : t
+}
 
 // Rendered as the body of the active tab. The tab bar carries the heading/count;
 // this is the driver table. It owns the vertical scroll (flex-1) with a sticky
@@ -300,6 +315,126 @@ function AccessorialCell({ acc, exception }) {
   return <span className="text-gray-300 dark:text-slate-600">—</span>
 }
 
+// Every note on a row, gathered from the three places they get written: the open
+// help request, each logged activity's note (Book / POD / BOL / Esc / Note), and
+// the flag's issue_note. One glyph summarises them (count when >1); clicking opens
+// a popover with the full text. An escalation's note is listed here too, but its
+// ack/copy controls stay on the dedicated line below (it can exist note-less).
+function NoteCell({ r, acts, issueNote, onOpenRequest, showDash }) {
+  const [open, setOpen] = useState(false)
+  const [rect, setRect] = useState(null)
+  const btnRef = useRef(null)
+
+  const notes = []
+  if (r.open_request_id) {
+    notes.push({
+      key: 'req', kind: 'request',
+      label: r.open_request_by ? `Request from ${r.open_request_by}` : 'Request raised',
+      note: r.open_request_note || '', load_number: r.load_number,
+      at: r.open_request_at || null, requestId: r.open_request_id,
+    })
+  }
+  for (const a of (acts || [])) {
+    if (!a.note || !a.note.trim()) continue
+    notes.push({
+      key: `act-${a.id}`, kind: 'activity',
+      label: NOTE_ACTIVITY_LABELS[a.type] || 'Note',
+      note: a.note, load_number: a.load_number ?? null, at: a.at || null,
+    })
+  }
+  if (issueNote && issueNote.trim()) {
+    notes.push({ key: 'flag', kind: 'flag', label: 'Flagged', note: issueNote, load_number: r.load_number, at: null })
+  }
+  // Newest first; a note without a timestamp (the flag) falls to the bottom.
+  notes.sort((a, b) => (b.at ? new Date(b.at).getTime() : 0) - (a.at ? new Date(a.at).getTime() : 0))
+
+  if (notes.length === 0) return showDash ? <span className="text-gray-300 dark:text-slate-600">—</span> : null
+
+  const hasRequest = !!r.open_request_id
+  const newest = notes[0]
+  const tone = hasRequest
+    ? 'text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10'
+    : 'text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-white/5'
+
+  const toggle = () => {
+    if (open) { setOpen(false); return }
+    if (btnRef.current) setRect(btnRef.current.getBoundingClientRect())
+    setOpen(true)
+  }
+
+  return (
+    <>
+      <button ref={btnRef} type="button" onClick={toggle} aria-expanded={open}
+        title={truncate(newest.note, 60) || newest.label}
+        className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-sm ${tone}`}>
+        <span aria-hidden>🗒</span>
+        {notes.length > 1 && <span className="text-xs font-semibold tabular-nums">{notes.length}</span>}
+      </button>
+      {open && rect && (
+        <NotePopover notes={notes} rect={rect} onClose={() => setOpen(false)} onOpenRequest={onOpenRequest} />
+      )}
+    </>
+  )
+}
+
+// Portaled to <body> — this board nests overflow-auto ancestors that clip any
+// in-flow dropdown, so the popover is positioned by the anchor's viewport rect and
+// closes on scroll/resize (when that rect would go stale).
+function NotePopover({ notes, rect, onClose, onOpenRequest }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', onKey)
+    window.addEventListener('scroll', onClose, true)
+    window.addEventListener('resize', onClose)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      window.removeEventListener('scroll', onClose, true)
+      window.removeEventListener('resize', onClose)
+    }
+  }, [onClose])
+
+  const WIDTH = 320
+  const left = Math.max(8, Math.min(rect.left, window.innerWidth - WIDTH - 8))
+  const spaceBelow = window.innerHeight - rect.bottom
+  const openUp = spaceBelow < 240 && rect.top > spaceBelow
+  const pos = openUp
+    ? { bottom: window.innerHeight - rect.top + 6 }
+    : { top: rect.bottom + 6 }
+
+  return createPortal(
+    <>
+      <div className="fixed inset-0 z-[125]" onClick={onClose} />
+      <div style={{ position: 'fixed', left, width: WIDTH, ...pos }}
+        className="z-[130] rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-[#0B1120] shadow-2xl max-h-[70vh] overflow-y-auto">
+        <div className="px-3 py-2 border-b border-gray-100 dark:border-white/5 text-[11px] font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500">
+          {notes.length === 1 ? 'Note' : `Notes · ${notes.length}`}
+        </div>
+        <ul className="divide-y divide-gray-100 dark:divide-white/5">
+          {notes.map(n => (
+            <li key={n.key} className="px-3 py-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className={`text-[11px] font-semibold ${n.kind === 'request' ? 'text-red-600 dark:text-red-400' : n.kind === 'flag' ? 'text-amber-600 dark:text-amber-400' : 'text-gray-500 dark:text-slate-400'}`}>{n.label}</span>
+                {n.at && <span className="text-[10px] text-gray-400 dark:text-slate-500 whitespace-nowrap">{fmtChicagoTs(n.at)}</span>}
+              </div>
+              {n.note && <p className="mt-1 text-sm text-gray-700 dark:text-slate-200 whitespace-pre-wrap break-words">{n.note}</p>}
+              {(n.load_number != null || n.kind === 'request') && (
+                <div className="mt-1 flex items-center justify-between gap-2">
+                  <span className="text-[10px] text-gray-400 dark:text-slate-500">{n.load_number != null ? `#${n.load_number}` : ''}</span>
+                  {n.kind === 'request' && (
+                    <button type="button" onClick={() => { onClose(); onOpenRequest?.(n.requestId) }}
+                      className="text-[11px] font-semibold text-red-600 dark:text-red-400 hover:underline whitespace-nowrap">See / Handle ▸</button>
+                  )}
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      </div>
+    </>,
+    document.body,
+  )
+}
+
 function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isManager, highlighted, onOk, onAct, onAcknowledge, onCopyEscalation, onOpenRequest, colSpan, panelOpen, onToggleDriver, acc, exception, broker, undo, onUndo, onRemoveActivity, toast, onAccessorialChanged, onTimesSaved, shiftId, canAddTypes }) {
   const muted = r.in_scope === false
   const panelOn = !!settings?.accessorials_enabled || !!settings?.track_checkpoints
@@ -451,16 +586,11 @@ function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isMan
       {settings?.accessorials_enabled && (
         <td className="px-3 py-2 whitespace-nowrap"><AccessorialCell acc={acc} exception={exception} /></td>
       )}
-      {/* Note — raised request, flag note, and/or escalation recipient + ack */}
+      {/* Note — one indicator over every note on the row (request, activity notes,
+          flag note), click to read them all. Escalation keeps its own status +
+          controls line below, since a note-less escalation still needs them. */}
       <td className="px-3 py-2 max-w-[240px] space-y-1">
-        {r.open_request_id ? (
-          <button type="button" onClick={() => onOpenRequest?.(r.open_request_id)} className="block text-left text-red-600 dark:text-red-400 hover:underline">
-            <p className="truncate" title={r.open_request_note || ''}>{r.open_request_note || 'Raised'} <span aria-hidden>▸</span></p>
-            {r.open_request_by && <p className="text-[10px] text-red-500/80 dark:text-red-400/70">raised by {r.open_request_by} {fmtClock(r.open_request_at)}</p>}
-          </button>
-        ) : issueNote ? (
-          <p className="truncate text-gray-500 dark:text-slate-400" title={issueNote}>{issueNote}</p>
-        ) : !escAct ? <span className="text-gray-300 dark:text-slate-600">—</span> : null}
+        <NoteCell r={r} acts={acts} issueNote={issueNote} onOpenRequest={onOpenRequest} showDash={!escAct} />
         {escAct && (
           <div className="text-[10px] leading-tight space-y-0.5">
             <span className="block text-amber-600 dark:text-amber-400 font-medium" title={escAct.note || ''}>⚠ Escalated to {shortName(escName) || '—'}</span>
@@ -478,8 +608,13 @@ function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isMan
           it to edit / remove. A raised request is still booked from its panel. */}
       <td className="px-3 py-2 whitespace-nowrap">
         <div className="flex items-center gap-1">
-          {/* POD/BOL now live in the Paperwork column — Actions keeps Book · Esc · Flag. */}
-          {ACTIVITY_ACTIONS.filter(a => a.type === 'load_booked' || a.type === 'escalated').map(a => {
+          {/* POD/BOL live in the Paperwork column now — Actions is Book · Note · Esc · Flag. */}
+          {ACTIVITY_ACTIONS.filter(a => a.type === 'load_booked' || a.type === 'note' || a.type === 'escalated').map(a => {
+            // A note isn't a one-per-row state — always an add button, so a row can
+            // carry several. It never renders "done".
+            if (a.type === 'note') {
+              return <ActBtn key="note" onClick={() => onAct(r, 'note', null)} title="Add a note">Note</ActBtn>
+            }
             const done = doneAct(a.type)
             if (a.type === 'load_booked' && r.open_request_id) {
               return <ActBtn key={a.type} onClick={() => onOpenRequest?.(r.open_request_id)} title="Open the request to book it">Book</ActBtn>

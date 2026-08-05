@@ -744,7 +744,7 @@ function BrokerRulesPanel({ rules, loading }) {
 
 // Delayed undo — this driver's logged shift activities, each removable with a
 // confirm (the immediate 10s Undo lives on the collapsed row).
-const ACTIVITY_LABELS = { load_booked: 'Booked', pod_collected: 'POD collected', bol_collected: 'BOL collected', escalated: 'Escalated' }
+const ACTIVITY_LABELS = { load_booked: 'Booked', pod_collected: 'POD collected', bol_collected: 'BOL collected', note: 'Note', escalated: 'Escalated' }
 function ActivityLog({ activities, onRemove }) {
   const acts = activities || []
   if (!acts.length) return null
