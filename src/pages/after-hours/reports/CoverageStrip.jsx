@@ -4,8 +4,8 @@ import { shiftTypeLabel, fmtWeekday, fmtDay, fmtHours } from './reportsData'
 // Who covered what, by shift type × day.
 //
 // The gap rule is INFERRED — there is no roster table — so the subtitle says so.
-// A red cell means "this slot ran on other days this week but not here", which is
-// a prompt to look, not a policy violation.
+// A red cell means the slot ran on at least two days this week and was missed on
+// a day BETWEEN them: a prompt to look, not a policy violation.
 
 const CELL = {
   covered: 'border-emerald-200 dark:border-emerald-400/25 bg-emerald-50 dark:bg-emerald-400/10 text-emerald-800 dark:text-emerald-300',
@@ -17,7 +17,7 @@ const CELL = {
 const LEGEND = [
   ['covered', 'Covered'],
   ['open', 'Open now'],
-  ['gap', 'No shift — slot ran on another day'],
+  ['gap', 'No shift — missed between covered days'],
   ['unused', 'Slot not in use this week'],
 ]
 
@@ -29,8 +29,8 @@ export default function CoverageStrip({ coverage, orphanCount }) {
       <div className="mb-3">
         <h2 className="text-sm font-bold text-gray-900 dark:text-white">Coverage</h2>
         <p className="text-xs text-gray-500 dark:text-slate-500 mt-0.5">
-          Gaps are inferred, not scheduled — there is no roster. A slot is only flagged on a day it
-          was missed if it ran on another day this week.
+          Gaps are inferred, not scheduled — there is no roster. A day is only flagged when the slot
+          ran on at least two days that week and was missed in between.
         </p>
       </div>
 

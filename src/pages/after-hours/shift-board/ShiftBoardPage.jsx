@@ -21,6 +21,7 @@ import {
 } from './shiftBoardData'
 import { REQUESTS_CHANGED_EVENT } from '../requests/requestsData'
 import { fetchBoardAccessorials } from './accessorialData'
+import { MetricStrip, StripLead, StripEyebrow, StripHero, StripCells, StripCell, StripTrailing } from '../../../components/MetricStrip'
 
 export default function ShiftBoardPage() {
   const { profile: me } = useAuth()
@@ -604,23 +605,21 @@ function WeekStrip({ week, onCopy }) {
     ['REQUESTS', week?.requests_raised ?? 0, 'Help requests raised by dispatch this week'],
   ]
   return (
-    <div className="flex items-stretch rounded-2xl border border-orange-100 dark:border-white/10 overflow-hidden bg-gradient-to-r from-[#FFF8F3] to-white dark:from-orange-500/[0.05] dark:to-transparent">
-      <div className="flex flex-col justify-center px-4 py-2 border-r-2 border-orange-400 dark:border-orange-500/40 shrink-0">
-        <span className="text-[10px] font-bold uppercase tracking-widest text-orange-600 dark:text-orange-400">This week</span>
+    <MetricStrip tone="orange">
+      <StripLead tone="orange">
+        <StripEyebrow tone="orange">This week</StripEyebrow>
         <span className="text-sm font-bold text-gray-900 dark:text-white tabular-nums whitespace-nowrap">{shortDay(week?.range_start)} – {shortDay(week?.range_end)}</span>
-      </div>
-      <div className="flex-1 flex items-stretch">
+      </StripLead>
+      <StripCells>
         {stats.map(([label, val, tip], i) => (
-          <div key={label} title={tip} className={`flex-1 flex flex-col items-center justify-center px-1 py-2 cursor-default ${i > 0 ? 'border-l border-orange-100/70 dark:border-white/5' : ''}`}>
-            <span className={`text-[19px] font-bold leading-none tabular-nums ${Number(val) > 0 ? 'text-orange-600 dark:text-orange-400' : 'text-gray-400 dark:text-slate-600'}`}>{val}</span>
-            <span className="mt-1 text-[9px] font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500">{label}</span>
-          </div>
+          <StripCell key={label} tone="orange" first={i === 0} title={tip} label={label} value={val}
+            valueCls={`text-[19px] ${Number(val) > 0 ? 'text-orange-600 dark:text-orange-400' : 'text-gray-400 dark:text-slate-600'}`} />
         ))}
-      </div>
-      <div className="flex items-center px-3 shrink-0 border-l border-orange-100/70 dark:border-white/5">
+      </StripCells>
+      <StripTrailing tone="orange">
         <button onClick={onCopy} className="text-[11px] font-medium text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200 whitespace-nowrap">📋 Copy week</button>
-      </div>
-    </div>
+      </StripTrailing>
+    </MetricStrip>
   )
 }
 
@@ -746,13 +745,13 @@ function ShiftStrip({ summary, shift }) {
     ['Flagged', summary.drivers_flagged, 'LOG'],
   ]
   return (
-    <div className="flex items-stretch rounded-2xl border border-emerald-100 dark:border-white/10 overflow-hidden bg-gradient-to-r from-emerald-50/70 to-white dark:from-emerald-500/[0.04] dark:to-transparent">
-      <div className="flex flex-col justify-center px-4 py-2 border-r-2 border-emerald-400 dark:border-emerald-500/40 shrink-0">
-        <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-600 dark:text-emerald-400">This shift</span>
+    <MetricStrip tone="emerald">
+      <StripLead tone="emerald">
+        <StripEyebrow tone="emerald">This shift</StripEyebrow>
         <span className="text-sm font-bold text-gray-900 dark:text-white whitespace-nowrap">{shiftName(shift.shift_type)} · {elapsedSince(shift.started_at)}</span>
-      </div>
+      </StripLead>
       {/* Hero — drivers reviewed */}
-      <div className="flex flex-col justify-center px-4 py-2 border-r border-emerald-100 dark:border-white/5 shrink-0 min-w-[8.5rem]" title={`${pct}% of active drivers checked this shift`}>
+      <StripHero tone="emerald" className="min-w-[8.5rem]" title={`${pct}% of active drivers checked this shift`}>
         <div className="flex items-baseline gap-1">
           <span className="text-[22px] font-bold leading-none tabular-nums text-orange-600 dark:text-orange-400">{reviewed}</span>
           <span className="text-sm text-gray-400 dark:text-slate-500 tabular-nums">/ {total}</span>
@@ -761,19 +760,15 @@ function ShiftStrip({ summary, shift }) {
         <div className="mt-1 h-1 rounded-full bg-gray-200 dark:bg-white/10 overflow-hidden">
           <div className="h-full rounded-full bg-orange-500" style={{ width: `${pct}%` }} />
         </div>
-      </div>
-      <div className="flex-1 flex items-stretch">
+      </StripHero>
+      <StripCells>
         {stats.map(([label, val, badge], i) => (
-          <div key={label} className={`flex-1 flex flex-col items-center justify-center px-1 py-2 ${i > 0 ? 'border-l border-emerald-100/70 dark:border-white/5' : ''}`}>
-            <span className="text-[16px] font-bold leading-none tabular-nums text-gray-900 dark:text-white">{Number(val) || 0}</span>
-            <span className="mt-1 flex items-center gap-1">
-              <span className="text-[9px] font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500">{label}</span>
-              <span className={`text-[6.5px] font-bold px-0.5 rounded ${badge === 'AUTO' ? 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400' : 'bg-gray-100 dark:bg-white/10 text-gray-500 dark:text-slate-400'}`}>{badge}</span>
-            </span>
-          </div>
+          <StripCell key={label} tone="emerald" first={i === 0} label={label} value={Number(val) || 0}
+            valueCls="text-[16px] text-gray-900 dark:text-white"
+            badge={<span className={`text-[6.5px] font-bold px-0.5 rounded ${badge === 'AUTO' ? 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400' : 'bg-gray-100 dark:bg-white/10 text-gray-500 dark:text-slate-400'}`}>{badge}</span>} />
         ))}
-      </div>
-    </div>
+      </StripCells>
+    </MetricStrip>
   )
 }
 

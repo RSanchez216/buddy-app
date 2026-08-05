@@ -5,6 +5,7 @@ import { S } from '../../../lib/styles'
 import CoverageStrip from './CoverageStrip'
 import ShiftHistory from './ShiftHistory'
 import AssociateTable from './AssociateTable'
+import { MetricStrip, StripLead, StripEyebrow, StripCells, StripCell } from '../../../components/MetricStrip'
 import {
   fetchShiftList, fetchAssociateRollup, fetchShiftDetail, fetchOrphanActivityCount,
   weekOf, shiftWeek, isCurrentWeek, fmtRange, shiftTypeLabel, orderShiftTypes,
@@ -198,40 +199,43 @@ const toggled = (set, key) => {
   return n
 }
 
-// ── Week tiles ──────────────────────────────────────────────────────────────
-// Summed from the shift list, never from after_hours_week_summary — that uses a
-// different lumper window and the two totals would contradict each other.
+// ── Week strip ──────────────────────────────────────────────────────────────
+// One compact row matching the Shift Board's band (shared MetricStrip). Summed
+// from the shift list, never from after_hours_week_summary — that uses a
+// different lumper window and the two totals would contradict each other. The
+// thirteen old tiles merge to eight cells so currency values never truncate.
 function Tiles({ t }) {
-  const cards = [
-    ['Avg reviewed', pct(t.avgReviewedPct)],
-    ['Booked', t.booked],
-    ['PODs', t.pods],
-    ['BOLs', t.bols],
-    ['Chkpt', t.checkpoints],
-    ['Req raised', t.requestsRaised],
-    ['Req handled', t.requestsHandled],
-    ['Escalations', t.escalations],
-    ['Acc claimed', money(t.accessorialsClaimed)],
-    ['Acc collected', money(t.accessorialsCollected)],
-    ['Lumpers', money(t.lumpersAmount)],
+  const V = 'text-[18px] text-gray-900 dark:text-white'
+  const cells = [
+    { label: 'Avg reviewed', value: pct(t.avgReviewedPct) },
+    { label: 'Booked', value: t.booked },
+    { label: 'Paperwork', sublabel: 'POD / BOL', value: `${t.pods} / ${t.bols}` },
+    { label: 'Chkpt', value: t.checkpoints },
+    { label: 'Requests', sublabel: 'Raised / Handled', value: `${t.requestsRaised} / ${t.requestsHandled}` },
+    { label: 'Escalations', value: t.escalations, valueCls: `text-[18px] ${t.escalations > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-gray-900 dark:text-white'}` },
+    {
+      label: 'Accessorials', sublabel: 'Claimed / Collected',
+      value: <>{money(t.accessorialsClaimed)} <span className="text-gray-300 dark:text-slate-600">/</span> <span className={t.accessorialsCollected > 0 ? 'text-emerald-600 dark:text-emerald-400' : ''}>{money(t.accessorialsCollected)}</span></>,
+    },
+    { label: 'Lumpers', value: money(t.lumpersAmount) },
   ]
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
-      <div className="col-span-2 rounded-2xl border-2 border-orange-300 dark:border-orange-500/40 bg-gradient-to-br from-orange-50 to-orange-100/60 dark:from-orange-500/[0.12] dark:to-orange-500/[0.04] p-4">
-        <p className="text-[11px] font-bold uppercase tracking-widest text-orange-700/80 dark:text-orange-400/80">Shifts logged</p>
-        <p className="text-3xl font-black text-orange-600 dark:text-orange-400 font-mono tabular-nums leading-tight mt-1">
-          {t.shifts}
-          {t.open > 0 && <span className="text-lg text-orange-500/70 dark:text-orange-400/60"> · {t.open} open</span>}
-        </p>
-        <p className="text-[11px] text-orange-700/70 dark:text-orange-400/70 mt-0.5">{fmtHours(t.hours)} covered</p>
-      </div>
-      {cards.map(([label, val]) => (
-        <div key={label} className={`${S.card} px-3 py-2.5`}>
-          <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-slate-500">{label}</p>
-          <p className="text-lg font-bold text-gray-900 dark:text-white font-mono tabular-nums leading-tight mt-0.5">{val}</p>
-        </div>
-      ))}
-    </div>
+    <MetricStrip tone="orange">
+      <StripLead tone="orange">
+        <StripEyebrow tone="orange">Shifts logged</StripEyebrow>
+        <span className="text-lg font-black text-orange-600 dark:text-orange-400 font-mono tabular-nums leading-none whitespace-nowrap">
+          {t.shifts}<span className="text-sm font-bold text-orange-500/70 dark:text-orange-400/60"> shifts</span>
+          {t.open > 0 && <span className="text-sm font-bold text-orange-500/70 dark:text-orange-400/60"> · {t.open} open</span>}
+        </span>
+        <span className="mt-0.5 text-[11px] text-orange-700/70 dark:text-orange-400/70 whitespace-nowrap">{fmtHours(t.hours)} covered</span>
+      </StripLead>
+      <StripCells>
+        {cells.map((c, i) => (
+          <StripCell key={c.label} tone="orange" first={i === 0} label={c.label} sublabel={c.sublabel}
+            value={c.value} valueCls={c.valueCls || V} />
+        ))}
+      </StripCells>
+    </MetricStrip>
   )
 }
 

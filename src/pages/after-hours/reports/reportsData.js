@@ -167,11 +167,14 @@ export function deriveTotals(shifts) {
 
 // The coverage grid, plus the gap rows the history table splices in.
 //
-// THE GAP RULE IS INFERRED. There is no roster in the database, so "a slot that
-// should have been covered" is guessed: a type counts as in-use on a day it has
-// no shift only if it ran on some OTHER day in the range. A slot missed every day
-// of the week reads as "not in use", not as seven gaps — a known limitation, and
-// the reason the subtitle says so out loud.
+// THE GAP RULE IS INFERRED — there is no roster. A missing cell is a GAP only
+// when both hold:
+//   1. the type ran on TWO OR MORE days in the range (one occurrence is not a
+//      routine — a single Saturday shift can't condemn the other six days), and
+//   2. the day falls BETWEEN that type's first and last occurrence (interior
+//      gaps only, never leading or trailing).
+// Everything else with no shift is simply NOT IN USE — which makes that legend
+// state reachable, unlike the old "ran on any other day" rule.
 export function buildCoverage(shifts, week) {
   const days = daysOf(week)
   const types = orderShiftTypes([...new Set(shifts.map(s => s.shift_type).filter(Boolean))])
@@ -181,19 +184,24 @@ export function buildCoverage(shifts, week) {
     if (!byKey.has(k)) byKey.set(k, [])
     byKey.get(k).push(s)
   }
-  const rows = types.map(type => ({
-    type,
-    cells: days.map(day => {
-      const found = byKey.get(`${type}|${day}`) || []
-      if (found.length) {
-        return { day, type, state: found.some(s => s.is_open) ? 'open' : 'covered', shifts: found }
-      }
-      // In use elsewhere in the range → a genuine gap; otherwise the slot simply
-      // isn't run.
-      const usedElsewhere = days.some(d => d !== day && (byKey.get(`${type}|${d}`) || []).length > 0)
-      return { day, type, state: usedElsewhere ? 'gap' : 'unused', shifts: [] }
-    }),
-  }))
+  const rows = types.map(type => {
+    // Days this type actually ran, in calendar order (dates sort lexicographically).
+    const ranDays = days.filter(d => (byKey.get(`${type}|${d}`) || []).length > 0)
+    const routine = ranDays.length >= 2                    // one occurrence ≠ a routine
+    const first = ranDays[0], last = ranDays[ranDays.length - 1]
+    return {
+      type,
+      cells: days.map(day => {
+        const found = byKey.get(`${type}|${day}`) || []
+        if (found.length) {
+          return { day, type, state: found.some(s => s.is_open) ? 'open' : 'covered', shifts: found }
+        }
+        // Interior gap only — leading/trailing days are "not in use", not misses.
+        const interior = routine && day > first && day < last
+        return { day, type, state: interior ? 'gap' : 'unused', shifts: [] }
+      }),
+    }
+  })
   return { days, types, rows }
 }
 
