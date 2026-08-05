@@ -746,21 +746,31 @@ function BrokerRulesPanel({ rules, loading }) {
 // confirm (the immediate 10s Undo lives on the collapsed row).
 const ACTIVITY_LABELS = { load_booked: 'Booked', pod_collected: 'POD collected', bol_collected: 'BOL collected', note: 'Note', escalated: 'Escalated' }
 function ActivityLog({ activities, onRemove }) {
+  // Not filtered by shift — shift_id is nullable by design and off-shift work is
+  // still logged (and still removable), so the heading is "Logged activity", not
+  // "this shift". The strip always renders, empty state included: it's the only
+  // home for the delayed undo, so hiding it when empty loses the path the moment
+  // it's needed.
   const acts = activities || []
-  if (!acts.length) return null
   return (
     <div className="border-t border-gray-200 dark:border-white/10 pt-3">
-      <p className={`${EYEBROW} mb-1.5`}>Logged this shift ({acts.length})</p>
-      <div className="space-y-1">
-        {acts.map(a => <ActivityRow key={a.id} a={a} onRemove={onRemove} />)}
-      </div>
+      <p className={`${EYEBROW} mb-1.5`}>Logged activity{acts.length ? ` (${acts.length})` : ''}</p>
+      {acts.length === 0 ? (
+        <p className="text-xs text-gray-400 dark:text-slate-500 italic">No activity logged for this driver yet.</p>
+      ) : (
+        <div className="space-y-1">
+          {acts.map(a => <ActivityRow key={a.id} a={a} onRemove={onRemove} />)}
+        </div>
+      )}
     </div>
   )
 }
 function ActivityRow({ a, onRemove }) {
   const [confirming, setConfirming] = useState(false)
   const [busy, setBusy] = useState(false)
-  const remove = async () => { setBusy(true); try { await onRemove?.(a.id) } finally { setBusy(false) } }
+  // Pass the whole activity up: the page needs its type + load_number to un-collect
+  // the matching Paperwork chip when a bol/pod entry is removed.
+  const remove = async () => { setBusy(true); try { await onRemove?.(a) } finally { setBusy(false) } }
   return (
     <div className="flex items-center gap-2 text-[11px]">
       <span className="font-medium text-gray-700 dark:text-slate-300 shrink-0">{ACTIVITY_LABELS[a.type] || a.type}</span>

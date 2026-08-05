@@ -284,7 +284,7 @@ export default function ShiftBoardPage() {
         const res = await logShiftActivity(t.type, t.row.load_id, t.row.driver_id, trimmed || null)
         // Book captures the actual load number typed (may differ from the row's).
         if (t.type === 'load_booked' && loadNumber && res?.id) await updateShiftActivity(res.id, trimmed || null, loadNumber)
-        if (res?.id) undo = { driverId: t.row.driver_id, activityId: res.id, label: labels[t.type] }
+        if (res?.id) undo = { driverId: t.row.driver_id, activityId: res.id, label: labels[t.type], type: t.type, load_number: t.row.load_number }
       }
       toast.success(labels[t.type] || 'Saved')
       setActionTarget(null)
@@ -307,6 +307,7 @@ export default function ShiftBoardPage() {
     try {
       if (u.activityId) await deleteShiftActivity(u.activityId)
       else if (u.isCheck && shift) await clearDriverCheck(shift.id, u.driverId)
+      unCollectChip(u)
       await refreshActions()
     } catch (e) { toast.error("Couldn't undo", e) }
   }
@@ -323,10 +324,26 @@ export default function ShiftBoardPage() {
   }
 
   // Delayed undo — remove a specific logged activity (from the expanded row's
-  // activity list). The confirm lives at the call site; this just deletes.
-  async function removeActivityById(id) {
-    try { await deleteShiftActivity(id); await refreshActions() }
-    catch (e) { toast.error("Couldn't remove that", e) }
+  // activity list). The confirm lives at the call site; this just deletes. Takes
+  // the whole activity so a removed bol/pod can un-collect its Paperwork chip.
+  async function removeActivityById(act) {
+    const id = act && typeof act === 'object' ? act.id : act
+    if (!id) return
+    try {
+      await deleteShiftActivity(id)
+      unCollectChip(act)
+      await refreshActions()
+    } catch (e) { toast.error("Couldn't remove that", e) }
+  }
+
+  // The board's bol_done/pod_done won't reflect a delete until a full reload,
+  // which we avoid (it reorders rows). So when a bol/pod activity is removed,
+  // patch the matching board row(s) in place, keyed by load number.
+  function unCollectChip(act) {
+    if (!act || typeof act !== 'object') return
+    const field = act.type === 'bol_collected' ? 'bol_done' : act.type === 'pod_collected' ? 'pod_done' : null
+    if (!field || act.load_number == null) return
+    setBoard(prev => prev.map(r => (r.load_number === act.load_number ? { ...r, [field]: false } : r)))
   }
 
   async function onAcknowledge(activityId) {
