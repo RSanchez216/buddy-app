@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { S } from '../../../lib/styles'
-import { fetchBrokerProfile, fetchBrokerDocuments } from './customersApply'
+import { fetchBrokerProfile, fetchBrokerDocuments, fetchBrokerCreditHistory } from './customersApply'
+import CreditEvent from '../../after-hours/shift-board/BrokerCredit'
+import { fmtEventDate, isNoCredit, daysSince } from '../../after-hours/shift-board/brokerCreditData'
 
 // Broker profile — read-only view of everything BUDDY knows about a customer:
 // contact, risk (impersonation, not accusation), the two volume figures kept
@@ -18,6 +20,7 @@ export default function CustomerProfile() {
   const [params] = useSearchParams()
   const [profile, setProfile] = useState(null)
   const [docs, setDocs] = useState([])
+  const [credit, setCredit] = useState([])   // full history, lifted events included
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
 
@@ -26,6 +29,10 @@ export default function CustomerProfile() {
     try {
       const [p, d] = await Promise.all([fetchBrokerProfile(id), fetchBrokerDocuments(id).catch(() => [])])
       setProfile(p); setDocs(d)
+      // MC comes off the profile, so the history fetch has to wait on it. Credit
+      // events match on MC only — the credit list and the customer record often
+      // spell the company differently.
+      setCredit(p?.mc_number ? await fetchBrokerCreditHistory(p.mc_number) : [])
     } catch { setError(true) }
     finally { setLoading(false) }
   }, [id])
@@ -91,6 +98,8 @@ export default function CustomerProfile() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
         {/* ── Identity and money ── */}
         <div className="space-y-4 min-w-0">
+          {/* Credit sits above the standing flags — it's the live one. */}
+          <CreditHistory events={credit} />
           {flagged && <RiskBlock risk={risk} />}
 
           <Card>
@@ -192,6 +201,65 @@ export default function CustomerProfile() {
         </div>
       </div>
     </div>
+  )
+}
+
+// ── Apex credit ───────────────────────────────────────────────────────────────
+// The open event in full, then everything that came before it. History matters
+// here in a way it doesn't for the standing flags: a broker stopped twice in six
+// months is a pattern, and broker_credit_status only ever returns the live one.
+function CreditHistory({ events }) {
+  const list = events || []
+  if (list.length === 0) return null
+  const open = list.filter(e => !e.resolved_on)
+  const past = list.filter(e => e.resolved_on)
+
+  return (
+    <Card>
+      <Eyebrow>Apex credit</Eyebrow>
+      <div className="mt-2 space-y-2">
+        {/* The open event reuses the board's block, so the wording an associate
+            reads at 2am and the wording Accounting reads here are the same. */}
+        {open.map(e => (
+          <CreditEvent key={e.id}
+            credit={{
+              event_type: e.event_type,
+              active_from: e.active_from,
+              days_active: daysSince(e.active_from),
+              is_stale: daysSince(e.active_from) > 90,
+              new_limit_usd: e.new_limit_usd,
+              exceeded_by_usd: e.exceeded_by_usd,
+              reason: e.reason,
+              source: e.source,
+            }} />
+        ))}
+
+        {past.length > 0 && (
+          <div className={open.length ? 'pt-2 border-t border-gray-100 dark:border-white/5' : ''}>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500 mb-1.5">
+              Earlier {past.length === 1 ? 'event' : 'events'}
+            </p>
+            <div className="space-y-1.5">
+              {past.map(e => (
+                <div key={e.id} className="text-[11px] leading-snug">
+                  <div className="flex items-baseline gap-1.5 flex-wrap">
+                    <span className="font-medium text-gray-700 dark:text-slate-300">
+                      {isNoCredit(e) ? 'No credit' : 'Credit limit reduced'}
+                    </span>
+                    <span className="text-gray-500 dark:text-slate-400">
+                      {fmtEventDate(e.active_from, true)} → lifted {fmtEventDate(e.resolved_on, true)}
+                    </span>
+                    <span className="ml-auto text-[10px] text-emerald-600 dark:text-emerald-400 shrink-0">Resolved</span>
+                  </div>
+                  {e.reason && <p className="text-gray-500 dark:text-slate-400 italic">“{e.reason}”</p>}
+                  {e.source && <p className="text-[10px] text-gray-400 dark:text-slate-500">{e.source}</p>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </Card>
   )
 }
 

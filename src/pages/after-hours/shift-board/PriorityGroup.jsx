@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom'
 import { fmtClock, fmtChicagoTs, fmtDuration, todayChicago, lifecycleLabel } from './shiftBoardData'
 import { statusBadge } from '../requests/requestsData'
 import AccessorialPanel from './AccessorialPanel'
+import { PauseGlyph } from './BrokerCredit'
+import { creditGlyphTitle } from './brokerCreditData'
 import { statusMeta } from './accessorialData'
 
 // 'Greenville' + 'NC' → 'Greenville, NC'; '' when the record wouldn't parse, so a
@@ -661,15 +663,16 @@ function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isMan
           numbers of different widths.
           Line two reuses an empty gutter so the broker lines up with the number.
 
-          WIDTH: four glyphs are now reachable — one deadline marker (urgent and
-          soon are mutually exclusive) + money + risk + detention. Four at 14px
-          with three 2px gaps is 62px, which w-12 (48px) would have overflowed
-          into the Status column, so the gutter is w-16 (64px). Widening moves
-          every load number by the same 16px, so the column stays a straight
-          edge — which is the property that matters. */}
+          WIDTH: five glyphs are reachable — one deadline marker (urgent and soon
+          are mutually exclusive) + money + credit + risk + detention. Credit is
+          independent of the risk shield: a broker can have a credit event with no
+          risk-list entry at all. Five at 14px with four 2px gaps is 78px, so the
+          gutter is w-20 (80px). Widening moves every load number by the same
+          amount, so the column stays a straight edge — which is the property that
+          matters. */}
       <td className="px-3 py-2 align-top">
         <div className="flex items-center gap-1">
-          <span className="shrink-0 w-16 flex items-center justify-end gap-0.5">
+          <span className="shrink-0 w-20 flex items-center justify-end gap-0.5">
             {/* Deadline marker, then money, then risk, then the detention dot.
                 Triangle for urgent, dot for soon: told apart in greyscale, not
                 colour alone. The soon dot is smaller so it doesn't out-weigh the
@@ -683,11 +686,28 @@ function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isMan
             {broker?.money_at_risk && (
               <span title={moneyTitle(broker)} className="shrink-0 inline-flex items-center justify-center w-3.5 h-3.5 font-bold text-[11px] leading-none text-rose-600 dark:text-rose-400">$</span>
             )}
+            {/* Credit event — a pause, not a warning. Rose when Apex won't fund
+                the broker at all, amber when the line was merely cut. A STALE
+                event gets no glyph: it's been open past 90 days without a lift,
+                so it can't earn a place in the gutter every night — it stays in
+                the panel instead. */}
+            {risk?.credit && !risk.credit.is_stale && (
+              <PauseGlyph
+                title={creditGlyphTitle(risk.credit)}
+                className={`shrink-0 w-3.5 h-3.5 ${risk.credit.event_type === 'no_credit'
+                  ? 'text-rose-600 dark:text-rose-400'
+                  : 'text-amber-600 dark:text-amber-400'}`}
+              />
+            )}
             {/* Broker risk — violet, matching the Broker risk block in the
                 expanded panel and deliberately outside the rose/amber set so it
-                doesn't read as another deadline or money alert. The RPC returns
-                flagged loads only, so presence is the condition. */}
-            {risk && (
+                doesn't read as another deadline or money alert.
+                Keyed on an ACTUAL standing flag, not on the meta entry existing:
+                since credit events landed, the RPC also returns brokers that have
+                only a credit event and no risk-list entry (Uber Freight, Raven
+                Cargo, Yellow Diamond), and jsonb_strip_nulls drops the flag keys
+                for them. Testing `risk` alone would put a shield on all three. */}
+            {(risk?.id_theft || risk?.nonpayment || risk?.double_brokering) && (
               <svg aria-hidden={false} role="img" viewBox="0 0 20 20"
                 className="shrink-0 w-3.5 h-3.5 text-violet-600 dark:text-violet-400 fill-current">
                 <title>{riskTitle(risk)}</title>
@@ -704,7 +724,7 @@ function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isMan
         </div>
         {broker?.broker && (
           <div className="mt-0.5 flex items-center gap-1">
-            <span className="shrink-0 w-16" aria-hidden />
+            <span className="shrink-0 w-20" aria-hidden />
             <span className="text-[10px] text-gray-400 dark:text-slate-500 truncate max-w-[6rem]" title={broker.broker}>{broker.broker}</span>
           </div>
         )}

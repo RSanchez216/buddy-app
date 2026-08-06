@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { S } from '../../../lib/styles'
 import { fmtClock, fmtDuration, money } from './shiftBoardData'
 import CheckpointFields from './CheckpointFields'
+import CreditEvent from './BrokerCredit'
 import {
   DOC_TYPES, RESPONSES, typeLabel, docTypeLabel, statusMeta,
   computeAmount, minutesBetween, fetchLoadAccessorials, fetchAccessorialDocs,
@@ -953,6 +954,10 @@ function BrokerRisk({ risk }) {
         <h4 className="text-xs font-semibold text-violet-700 dark:text-violet-300 uppercase tracking-wide">Broker risk</h4>
       </div>
       <div className="space-y-2">
+        {/* The credit event goes FIRST. The standing flags describe what a broker
+            is; a credit event is what's true right now between MANAS and Apex,
+            and it's the one that changes what you do tonight. */}
+        <CreditEvent credit={risk.credit} />
         {risk.id_theft && (
           <div className="rounded-lg border border-violet-200 dark:border-violet-500/25 bg-violet-50 dark:bg-violet-500/10 p-2.5 text-[11px] leading-snug">
             <p className="font-semibold text-violet-800 dark:text-violet-300">Identity theft reported</p>

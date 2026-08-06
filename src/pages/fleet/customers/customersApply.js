@@ -41,6 +41,22 @@ export async function fetchBrokerDocuments(customerId) {
   return data || []
 }
 
+// Full credit history for a broker, lifted events included, newest first — a
+// broker stopped twice in six months is worth seeing, which is exactly what
+// broker_credit_status can't tell you (it returns the open event only).
+// Matching is on MC, never name: the credit list and the customer record often
+// spell the company differently (Yellow Diamond Logistics vs Yellow Diamond
+// Consultants LLC).
+export async function fetchBrokerCreditHistory(mcNumber) {
+  if (!mcNumber) return []
+  const { data, error } = await supabase.from('broker_credit_events')
+    .select('id, event_type, active_from, resolved_on, new_limit_usd, prior_limit_usd, exceeded_by_usd, reason, source, source_posted_at')
+    .eq('mc_number', mcNumber)
+    .order('active_from', { ascending: false })
+  if (error) return []
+  return data || []
+}
+
 export async function loadRecentCustomerImports(limit = 20) {
   const { data, error } = await supabase.from('customer_imports')
     .select('*').order('created_at', { ascending: false }).limit(limit)
