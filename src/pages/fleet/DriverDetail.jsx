@@ -8,7 +8,6 @@ import { DRIVER_STATUSES, DRIVER_STATUS_LABELS, terminationFields, todayLocalYmd
 import DriverFormModal from './DriverFormModal'
 import DriverProfileHeader from './DriverProfileHeader'
 import ErrorBoundary from '../../components/ErrorBoundary'
-import { openAskAfterHours } from '../after-hours/requests/requestsData'
 
 // Canonical unit-number normalization — mirrors the importer / DB canonical key
 // lower(btrim(regexp_replace(x,'^#+',''))): strip leading '#'(s) → collapse
@@ -142,10 +141,7 @@ export default function DriverDetail() {
       <div className="flex items-start justify-between">
         <Link to="/fleet/drivers" className="text-xs text-orange-600 hover:underline">← Drivers</Link>
         <div className="flex items-center gap-2">
-          <button onClick={() => openAskAfterHours({ driverId: row.id, driverName: row.full_name })} className={S.btnSecondary} title="Raise this driver for the After-Hours team">
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
-            Ask After-Hours
-          </button>
+          {/* Ask After-Hours lives in the top bar on every page — no per-page copy. */}
           {canEdit && (
             <>
               <StatusQuickChange driver={row} userId={user?.id} onSaved={load} />

@@ -37,6 +37,10 @@ export default function CustomerProfile() {
 
   const { name, tms_code, mc_number, credit_limit, contact, risk, buddy, tms_snapshot, observed_terms } = profile
   const flagged = !!(risk && (risk.id_theft || risk.nonpayment || risk.double_brokering))
+  const synced = !!tms_snapshot?.synced_at
+  // No sync → no comparison at all (comparing against nothing reads the whole
+  // BUDDY figure as a discrepancy on every profile).
+  const gap = synced ? volumeGap(buddy, tms_snapshot) : null
 
   return (
     <div className="max-w-4xl mx-auto space-y-4">
@@ -77,19 +81,28 @@ export default function CustomerProfile() {
           </dl>
         </Card>
         <Card>
-          <Eyebrow>TMS at last sync{tms_snapshot?.synced_at ? ` · ${fmtDate(tms_snapshot.synced_at)}` : ''}</Eyebrow>
-          <p className="text-[11px] text-gray-400 dark:text-slate-500">A snapshot from the export — BUDDY&apos;s loads have moved on since.</p>
-          <dl className="mt-2 text-sm space-y-1.5">
-            <Row label="Loads this year" v={num(tms_snapshot?.loads_ytd)} mono />
-            <Row label="Sales this year" v={tms_snapshot?.sales_ytd != null ? money(tms_snapshot.sales_ytd) : null} mono />
-            <Row label="Last load" v={fmtDate(tms_snapshot?.last_load)} />
-            <Row label="Status" v={tms_snapshot?.status} />
-          </dl>
+          <Eyebrow>TMS at last sync{synced ? ` · ${fmtDate(tms_snapshot.synced_at)}` : ''}</Eyebrow>
+          {synced ? (
+            <>
+              <p className="text-[11px] text-gray-400 dark:text-slate-500">A snapshot from the export — BUDDY&apos;s loads have moved on since.</p>
+              <dl className="mt-2 text-sm space-y-1.5">
+                <Row label="Loads this year" v={num(tms_snapshot?.loads_ytd)} mono />
+                <Row label="Sales this year" v={tms_snapshot?.sales_ytd != null ? money(tms_snapshot.sales_ytd) : null} mono />
+                <Row label="Last load" v={fmtDate(tms_snapshot?.last_load)} />
+                <Row label="Status" v={tms_snapshot?.status} />
+              </dl>
+            </>
+          ) : (
+            <p className="mt-2 text-sm text-gray-400 dark:text-slate-500 italic">Not yet synced — run a Customers import.</p>
+          )}
         </Card>
       </div>
-      {volumeGap(buddy, tms_snapshot) && (
+      {/* Only after a sync, and only when the gap is beyond snapshot drift (~5%) —
+          the export is a moment in time and BUDDY's loads keep moving, so a few
+          loads' difference is expected, not a fault. */}
+      {gap?.significant && (
         <p className="text-[11px] text-amber-600 dark:text-amber-400 -mt-1">
-          BUDDY and the TMS snapshot differ by {volumeGap(buddy, tms_snapshot)} loads this year — a large gap can mean the loads importer missed rows.
+          BUDDY and the TMS snapshot differ by {gap.count.toLocaleString()} loads this year — a gap this large may mean the loads importer missed some rows.
         </p>
       )}
 
@@ -243,9 +256,14 @@ function fmtDate(v) {
   if (!m) return v ? String(v) : '—'
   return new Date(+m[1], +m[2] - 1, +m[3]).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
+// Gap between BUDDY's and the TMS snapshot's YTD load counts. "significant" only
+// past ~5% of the TMS figure — below that it's normal snapshot drift, not a
+// missed-rows signal.
 function volumeGap(buddy, tms) {
   const b = Number(buddy?.loads_ytd), t = Number(tms?.loads_ytd)
   if (!Number.isFinite(b) || !Number.isFinite(t)) return null
-  const gap = Math.abs(b - t)
-  return gap > 0 ? gap.toLocaleString() : null
+  const count = Math.abs(b - t)
+  if (count === 0) return null
+  const pct = t > 0 ? count / t : 1
+  return { count, significant: pct > 0.05 }
 }

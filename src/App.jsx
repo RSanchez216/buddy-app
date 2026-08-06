@@ -229,7 +229,7 @@ export default function App() {
                 </RequirePageAccess>
               } />
               <Route path="fleet/customers/import" element={
-                <RequirePageAccess pageKey="fleet/customers/import">
+                <RequirePageAccess pageKey="customers_import">
                   <ErrorBoundary label="Customers Import">
                     <Suspense fallback={<div className="px-4 py-12 text-center"><div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500" /></div>}>
                       <CustomersImport />
@@ -237,7 +237,7 @@ export default function App() {
                   </ErrorBoundary>
                 </RequirePageAccess>
               } />
-              <Route path="fleet/customers/:id" element={<RequirePageAccess pageKey="fleet/customers"><CustomerProfile /></RequirePageAccess>} />
+              <Route path="fleet/customers/:id" element={<RequirePageAccess pageKey="customer_profile"><CustomerProfile /></RequirePageAccess>} />
               <Route path="fleet/settlements/import" element={<RequirePageAccess pageKey="fleet/settlements/import"><SettlementsImport /></RequirePageAccess>} />
               <Route path="fleet/fuel-prices" element={<RequirePageAccess pageKey="fleet/fuel-prices"><FuelPrices /></RequirePageAccess>} />
               <Route path="fleet/profitability" element={<RequirePageAccess pageKey="fleet/profitability"><Profitability /></RequirePageAccess>} />
