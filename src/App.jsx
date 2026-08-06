@@ -45,6 +45,7 @@ import TrailersList from './pages/fleet/TrailersList'
 import TruckDetail from './pages/fleet/TruckDetail'
 import TrailerDetail from './pages/fleet/TrailerDetail'
 import DriverDetail from './pages/fleet/DriverDetail'
+import CustomersList from './pages/fleet/customers/CustomersList'
 import CustomerProfile from './pages/fleet/customers/CustomerProfile'
 import FleetCost from './pages/fleet/FleetCost'
 import SettlementsImport from './pages/fleet/settlements/SettlementsImport'
@@ -237,6 +238,10 @@ export default function App() {
                   </ErrorBoundary>
                 </RequirePageAccess>
               } />
+              {/* The directory. Its pages row is customer_profile → /fleet/customers,
+                  so the list and the profile share a key. Without this route the nav
+                  link resolved to nothing and fell through to Lane Map. */}
+              <Route path="fleet/customers" element={<RequirePageAccess pageKey="customer_profile"><CustomersList /></RequirePageAccess>} />
               <Route path="fleet/customers/:id" element={<RequirePageAccess pageKey="customer_profile"><CustomerProfile /></RequirePageAccess>} />
               <Route path="fleet/settlements/import" element={<RequirePageAccess pageKey="fleet/settlements/import"><SettlementsImport /></RequirePageAccess>} />
               <Route path="fleet/fuel-prices" element={<RequirePageAccess pageKey="fleet/fuel-prices"><FuelPrices /></RequirePageAccess>} />

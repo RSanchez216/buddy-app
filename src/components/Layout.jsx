@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { countOpenTasks, TASKS_CHANGED_EVENT } from '../pages/command-center/commandCenterData'
 import { useAuth } from '../contexts/AuthContext'
@@ -87,15 +87,17 @@ const STATIC_NAV_KEYS = new Set(STATIC_NAV_GROUPS.flatMap(g => g.pageKeys))
 // visible prop controls whether the item should be shown (default true)
 // `collapsed` (desktop icon-rail) is CSS-gated to lg: on mobile the drawer always
 // shows full labels, so the same state can't strand the off-canvas menu.
-function NavItem({ to, label, icon, end = false, onClick, visible = true, count = 0, collapsed = false }) {
+// `active` is decided by the sidebar (deepest matching route), not by NavLink's
+// own prefix match — that lit up a parent and its child at the same time.
+function NavItem({ to, label, icon, active = false, onClick, visible = true, count = 0, collapsed = false }) {
   if (!visible) return null
   return (
     <NavLink
-      to={to} end={end} onClick={onClick}
+      to={to} onClick={onClick}
       title={collapsed ? label : undefined}
-      className={({ isActive }) =>
+      className={() =>
         `relative flex items-center gap-2.5 pl-2.5 pr-3 py-2 rounded-xl text-sm font-medium transition-all duration-150 border-l-2 ${collapsed ? 'lg:justify-center lg:px-0' : ''} ${
-          isActive
+          active
             ? 'bg-cyan-50 dark:bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border-orange-500 shadow-[inset_0_0_0_1px_rgba(6,182,212,0.15)]'
             : 'border-transparent text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-white/5 hover:text-gray-900 dark:hover:text-slate-200'
         }`
@@ -171,6 +173,7 @@ function NavSection({ id, label, badge, children, defaultOpen = true, withDivide
 // (right side: bell + UserMenu). Sidebar is purely navigation.
 export default function Layout() {
   const { isAdmin, user, profile, refreshProfile } = useAuth()
+  const { pathname } = useLocation()
   // Sidebar pages come from the shared PageAccessProvider (my_pages() is fetched
   // once per app load and shared with the route guards + landing redirect).
   const { pages, setPages, pagesLoaded } = usePageAccess()
@@ -288,6 +291,26 @@ export default function Layout() {
     })
   }, [grouped])
 
+  // Which nav route the current path belongs to — the DEEPEST one that contains
+  // it, not every one that prefixes it.
+  //
+  // NavLink's default is a prefix match, so /fleet/customers/import lit up both
+  // Customers and Customers Import (and /fleet/profitability/lanes had already
+  // needed a one-off `end` patch for the same reason). A plain exact match fixes
+  // that but loses the highlight on every detail route — /fleet/trucks/:id,
+  // /fleet/customers/:id and the rest sit under a nav entry without equalling
+  // it. Longest match gives both: the deepest entry wins, and a detail page
+  // still lights its parent.
+  const activeRoute = useMemo(() => {
+    const routes = pages.map(p => p.route).filter(Boolean)
+    let best = null
+    for (const r of routes) {
+      const isUnder = pathname === r || pathname.startsWith(r.endsWith('/') ? r : `${r}/`)
+      if (isUnder && (!best || r.length > best.length)) best = r
+    }
+    return best
+  }, [pages, pathname])
+
   const simpleEmpty = navMode === 'simple' && pagesLoaded && !pages.some(p => p.is_bookmarked)
 
   return (
@@ -346,7 +369,7 @@ export default function Layout() {
                         to={p.route}
                         label={p.label}
                         icon={PAGE_ICON[p.page_key]}
-                        end={p.page_key === 'profitability'}
+                        active={p.route === activeRoute}
                         onClick={close}
                         count={p.page_key === 'command_center' ? openTaskCount : 0}
                         collapsed={collapsed}
@@ -358,7 +381,7 @@ export default function Layout() {
               {staticGroups.map((g, i) => (
                 <NavSection key={g.label} id={g.label.toLowerCase().replace(/\s+/g, '-')} label={g.label} withDivider={orderedGroups.length > 0 || i > 0} visibleCount={g.items.length} collapsed={collapsed}>
                   {g.items.map(p => (
-                    <NavItem key={p.page_key} to={p.route} label={p.label} icon={PAGE_ICON[p.page_key]} onClick={close} collapsed={collapsed} />
+                    <NavItem key={p.page_key} to={p.route} label={p.label} icon={PAGE_ICON[p.page_key]} active={p.route === activeRoute} onClick={close} collapsed={collapsed} />
                   ))}
                 </NavSection>
               ))}
