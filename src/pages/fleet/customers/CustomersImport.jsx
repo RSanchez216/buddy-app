@@ -2,14 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAuth } from '../../../contexts/AuthContext'
 import { useToast } from '../../../contexts/ToastContext'
 import { S } from '../../../lib/styles'
-import { parseCustomersWorkbook } from './customersParse'
-import { buildCustomerPlan } from './customersPlan'
+import { parseCustomersWorkbook, normName } from './customersParse'
+import { buildCustomerPlan, resolveConflicts } from './customersPlan'
 import { fetchAllCustomers, applyCustomerPlan, loadRecentCustomerImports } from './customersApply'
 
 // Customers ingest — modelled on the loads importer: upload the TMS "Customers"
 // export → parse + match → REVIEW a preview → Apply writes through. Nothing is
 // written until Apply (the preview is held in client state; only the completed
-// run is recorded, in customer_imports). Matching is MC → TMS code → name; a row
+// run is recorded, in customer_imports). Matching is MC → name; a row
 // two rules disagree on is a conflict for a human, applied to nothing.
 
 export default function CustomersImport() {
@@ -20,6 +20,9 @@ export default function CustomersImport() {
   const [busy, setBusy] = useState(false)
   const [staged, setStaged] = useState(null)   // { filename, plan, counts }
   const [applied, setApplied] = useState(null)  // durable success summary
+  // Conflict decisions, keyed `${groupKey}#${row_index}` → 'link' | 'create'.
+  // Held here, folded into the plan on every change, and dropped with the file.
+  const [resolutions, setResolutions] = useState({})
   const [recent, setRecent] = useState([])
 
   const toastRef = useRef(toast); toastRef.current = toast
@@ -33,11 +36,16 @@ export default function CustomersImport() {
       const { rows, errors, cols } = parseCustomersWorkbook(buf)
       if (errors.length) { toast.error(errors[0]); return }
       if (!rows.length) { toast.error('No customer rows found in the file.'); return }
-      if (!cols.mc) toast.error('No MC column found — matching will fall back to code/name.')
+      if (!cols.mc) toast.error('No MC column found — matching will fall back to name only.')
       // The full customers table, paged, is the match set.
       const existing = await fetchAllCustomers()
       const { plan, counts, conflictGroups } = buildCustomerPlan({ rows, existing })
-      setStaged({ filename: file.name, plan, counts, conflictGroups })
+      // The existing normalised names are what a resolved 'create' has to clear
+      // to satisfy the unique name index. normName is the canonical one — the
+      // same function the matcher uses, so the two can't drift.
+      const existingNames = existing.map(x => normName(x.name))
+      setResolutions({})
+      setStaged({ filename: file.name, plan, counts, conflictGroups, existingNames })
       toast.success(`Parsed ${rows.length.toLocaleString()} rows — review below`)
     } catch (e) {
       toast.error("Couldn't read the file", e)
@@ -59,6 +67,39 @@ export default function CustomersImport() {
       setRecent(await loadRecentCustomerImports())
     } finally { setBusy(false) }
   }, [staged, busy, user?.id, toast])
+
+  // A decision re-folds the whole plan, so the tiles, the Apply button and what
+  // actually gets written all move together. Only one side of a group may link —
+  // choosing it for one clears it from the other, which is what keeps the
+  // duplicate-target abort from coming back.
+  const decide = useCallback((group, rowIndex, choice) => {
+    setResolutions(prev => {
+      const next = { ...prev }
+      const key = `${group.key}#${rowIndex}`
+      if (next[key] === choice) delete next[key]
+      else {
+        if (choice === 'link') for (const s of group.sides) delete next[`${group.key}#${s.row_index}`]
+        next[key] = choice
+      }
+      return next
+    })
+  }, [])
+
+  // Re-derive the plan whenever a decision changes.
+  useEffect(() => {
+    if (!staged?.conflictGroups?.length) return
+    setStaged(st => {
+      if (!st) return st
+      const { plan, counts } = resolveConflicts({
+        plan: st.basePlan || st.plan,
+        conflictGroups: st.conflictGroups,
+        resolutions,
+        existingNames: st.existingNames,
+      })
+      return { ...st, basePlan: st.basePlan || st.plan, plan, counts }
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolutions])
 
   const c = staged?.counts
   // Rule-disagreement conflicts (two rules pointing at two customers) render as
@@ -110,7 +151,7 @@ export default function CustomersImport() {
           </div>
 
           <p className="text-xs text-gray-500 dark:text-slate-400">
-            Matched by MC {c.by_rule.MC.toLocaleString()} · TMS code {c.by_rule['TMS code'].toLocaleString()} · name {c.by_rule.Name.toLocaleString()}.
+            Matched by MC {c.by_rule.MC.toLocaleString()} · name {c.by_rule.Name.toLocaleString()}.
             {' '}is_active is never changed by an import.
           </p>
 
@@ -139,16 +180,18 @@ export default function CustomersImport() {
                             {s.loads_ytd != null ? `${s.loads_ytd} loads YTD` : 'no loads YTD'}
                           </span>
                           <span className="ml-auto flex items-center gap-1.5 shrink-0">
-                            <button type="button" disabled
-                              title="Resolving conflicts lands in a follow-up — for now, fix the pair in the TMS and re-import"
-                              className="px-1.5 py-0.5 rounded border border-gray-300 dark:border-slate-600 text-gray-400 dark:text-slate-500 cursor-not-allowed">
-                              Link to existing
-                            </button>
-                            <button type="button" disabled
-                              title="Resolving conflicts lands in a follow-up — for now, fix the pair in the TMS and re-import"
-                              className="px-1.5 py-0.5 rounded border border-gray-300 dark:border-slate-600 text-gray-400 dark:text-slate-500 cursor-not-allowed">
+                            {g.target_id && (
+                              <ResolveBtn active={resolutions[`${g.key}#${s.row_index}`] === 'link'}
+                                onClick={() => decide(g, s.row_index, 'link')}
+                                title={`Update ${g.target_name} from this row`}>
+                                Link to existing
+                              </ResolveBtn>
+                            )}
+                            <ResolveBtn active={resolutions[`${g.key}#${s.row_index}`] === 'create'}
+                              onClick={() => decide(g, s.row_index, 'create')}
+                              title="Create a separate customer for this row. No loads are moved.">
                               Create new
-                            </button>
+                            </ResolveBtn>
                           </span>
                         </div>
                       ))}
@@ -159,6 +202,9 @@ export default function CustomersImport() {
               <p className="text-[11px] text-gray-400 dark:text-slate-500">
                 Never auto-picked by volume. Spot Freight is 86 loads against 2, but Nu-Era is 1 against 1
                 with one of them in Ontario — guessing attributes one company&apos;s freight to another.
+                {' '}<span className="font-medium">Create new</span> makes a separate customer and moves no loads;
+                splitting freight between two brokers is a separate decision. Customer names are unique, so a
+                created row is suffixed with its MC.
               </p>
             </Section>
           )}
@@ -220,6 +266,19 @@ function fmtDate(ts) {
   const m = String(ts || '').match(/^(\d{4})-(\d{2})-(\d{2})/)
   if (!m) return ''
   return new Date(+m[1], +m[2] - 1, +m[3]).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+function ResolveBtn({ active, onClick, title, children }) {
+  return (
+    <button type="button" onClick={onClick} title={title}
+      className={`px-1.5 py-0.5 rounded border transition-colors ${
+        active
+          ? 'bg-cyan-500 text-white border-cyan-500'
+          : 'border-gray-300 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-white dark:hover:bg-white/5'
+      }`}>
+      {children}
+    </button>
+  )
 }
 
 function Stat({ label, value, tone }) {

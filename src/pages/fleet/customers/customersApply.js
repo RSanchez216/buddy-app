@@ -139,9 +139,11 @@ export async function applyCustomerPlan({ plan, counts, filename, userId, synced
   const now = syncedAt || new Date().toISOString()
 
   // Creates carry a client-generated id so they can ride in the same upsert as
-  // the updates. Name is verbatim from the file (never the code-prefixed form).
+  // the updates. Name is verbatim from the file (never the code-prefixed form),
+  // except where resolving a conflict had to disambiguate it past the unique
+  // name index — createName then carries the chosen one.
   const creates = plan.filter(p => p.isNew && !p.conflict)
-    .map(p => ({ id: crypto.randomUUID(), name: p.row.name, ...payloadFor(p.row, null, now) }))
+    .map(p => ({ id: crypto.randomUUID(), name: p.createName || p.row.name, ...payloadFor(p.row, null, now) }))
 
   // Updates echo the EXISTING name back so the upsert's insert arm has the NOT
   // NULL column it needs; customers.name is never rewritten from this file.

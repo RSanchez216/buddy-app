@@ -6,34 +6,36 @@ export const normMc = (s) => {
   const d = String(s ?? '').replace(/\D/g, '')
   return d || null
 }
-const normCode = (s) => (s ? String(s).trim().toLowerCase() : null)
-
-// Match each file row to an existing customer, first hit wins: MC → TMS code →
-// normalised name. If two rules point at DIFFERENT customers it's a conflict —
-// never guess; the person resolves it, and the row is applied to nothing. Rows
-// that match nothing are created.
+// Match each file row to an existing customer, first hit wins: MC → normalised
+// name. If the two rules point at DIFFERENT customers it's a conflict — never
+// guess; the person resolves it, and the row is applied to nothing. Rows that
+// match nothing are created.
+//
+// tms_code is deliberately NOT a match rule. It's an abbreviation, not an
+// identifier, and in an industry where most firms are called something-Logistics
+// it collides constantly: one `ML` covers Maco, Manco, Marek, Matson, Melton,
+// MGN, Mkita and Moeller. Matching on it resolved FitzMark to Fusion Logistics
+// and produced 563 conflicts on 1,000 rows while winning ZERO matches outright —
+// every code hit was already found by MC or name. It is still stored on the
+// customer and shown on the profile; it just cannot decide identity.
 export function buildCustomerPlan({ rows, existing }) {
-  const byMc = new Map(), byCode = new Map(), byName = new Map()
+  const byMc = new Map(), byName = new Map()
   for (const c of existing || []) {
     const mc = normMc(c.mc_number); if (mc && !byMc.has(mc)) byMc.set(mc, c)
-    const code = normCode(c.tms_code); if (code && !byCode.has(code)) byCode.set(code, c)
     const nm = normName(c.name); if (nm && !byName.has(nm)) byName.set(nm, c)
   }
 
   const plan = rows.map((r) => {
     const mc = normMc(r.mc_number)
-    const code = normCode(r.tms_code)
     const nm = normName(r.name)
     const mcHit = mc ? byMc.get(mc) : null
-    const codeHit = code ? byCode.get(code) : null
     const nameHit = nm ? byName.get(nm) : null
-    const ids = new Set([mcHit, codeHit, nameHit].filter(Boolean).map(c => c.id))
+    const ids = new Set([mcHit, nameHit].filter(Boolean).map(c => c.id))
 
     let match = null, rule = null, conflict = false
     if (ids.size > 1) {
       conflict = true
     } else if (mcHit) { match = mcHit; rule = 'MC' }
-    else if (codeHit) { match = codeHit; rule = 'TMS code' }
     else if (nameHit) { match = nameHit; rule = 'Name' }
 
     const isNew = !conflict && !match
@@ -49,7 +51,7 @@ export function buildCustomerPlan({ rows, existing }) {
       matchName: match?.name || null,
       rule,
       conflict,
-      conflictWith: conflict ? [mcHit, codeHit, nameHit].filter(Boolean).map(c => c.name) : [],
+      conflictWith: conflict ? [mcHit, nameHit].filter(Boolean).map(c => c.name) : [],
       isNew,
       willFillMc,
     }
@@ -120,20 +122,102 @@ export function buildCustomerPlan({ rows, existing }) {
     })),
   }))
 
-  const counts = {
+  return { plan, counts: countPlan(plan), conflictGroups }
+}
+
+// Counts are derived from the plan every time it changes — including after a
+// conflict is resolved — so the tiles can never drift from what Apply will do.
+export function countPlan(plan) {
+  return {
     total: plan.length,
     matched: plan.filter(p => p.match && !p.conflict).length,
-    created: plan.filter(p => p.isNew).length,
+    created: plan.filter(p => p.isNew && !p.conflict).length,
     conflicts: plan.filter(p => p.conflict).length,
     mc_filled: plan.filter(p => p.willFillMc).length,
     // Conflicts are excluded everywhere — nothing about them is applied, so
     // counting them under a match rule would overstate what the run will do.
     by_rule: {
       MC: plan.filter(p => p.rule === 'MC' && !p.conflict).length,
-      'TMS code': plan.filter(p => p.rule === 'TMS code' && !p.conflict).length,
       Name: plan.filter(p => p.rule === 'Name' && !p.conflict).length,
     },
-    created_names: plan.filter(p => p.isNew).map(p => p.row.name).sort((a, b) => a.localeCompare(b)),
+    created_names: plan.filter(p => p.isNew && !p.conflict).map(p => p.createName || p.row.name).sort((a, b) => a.localeCompare(b)),
   }
-  return { plan, counts, conflictGroups }
+}
+
+// customers has a UNIQUE index on lower(btrim(name)), so "Create new" cannot
+// reuse the name that caused the clash — verified: the insert is rejected
+// outright. The MC is what actually separates the two companies and is
+// searchable, so it goes in the name; city/state is the fallback when a row has
+// no MC, and a counter after that.
+export function disambiguateName(base, row, taken) {
+  const mc = normMc(row.mc_number)
+  const place = [row.city, row.state].filter(Boolean).join(', ')
+  const candidates = [
+    base,
+    mc ? `${base} (MC ${mc})` : null,
+    place ? `${base} (${place})` : null,
+  ].filter(Boolean)
+  for (const c of candidates) {
+    if (!taken.has(normName(c))) return c
+  }
+  for (let i = 2; i < 50; i++) {
+    const c = `${base} (${i})`
+    if (!taken.has(normName(c))) return c
+  }
+  return `${base} (${Date.now()})`
+}
+
+// Fold the human's conflict decisions back into the plan.
+//
+//   link   — this side updates the existing customer; it becomes an ordinary
+//            match. Only ONE side of a group may link, or the duplicate-target
+//            abort comes straight back.
+//   create — this side becomes a separate customer, with a name that clears the
+//            unique index. It creates a customer and NOTHING else: no load is
+//            reattributed. Splitting freight between two brokers is a separate
+//            decision and must never be a side effect of a customer import.
+//
+// Undecided sides stay conflicts and are not written.
+export function resolveConflicts({ plan, conflictGroups, resolutions, existingNames }) {
+  const taken = new Set(existingNames || [])
+  // Names this run already claims, so two creates can't collide either.
+  for (const p of plan) {
+    if (p.isNew && !p.conflict) taken.add(normName(p.row.name))
+  }
+
+  const next = plan.map(p => ({ ...p }))
+  const byIndex = new Map(next.map(p => [p.row.row_index, p]))
+
+  for (const g of conflictGroups || []) {
+    const linked = g.sides.filter(s => resolutions[`${g.key}#${s.row_index}`] === 'link')
+    for (const s of g.sides) {
+      const choice = resolutions[`${g.key}#${s.row_index}`]
+      const p = byIndex.get(s.row_index)
+      if (!p || !choice) continue
+
+      // Guard the invariant rather than trusting the UI to hold it.
+      if (choice === 'link' && (linked.length > 1 || !g.target_id)) continue
+
+      if (choice === 'link') {
+        p.conflict = false
+        p.conflictKind = undefined
+        p.isNew = false
+        p.rule = 'Resolved'
+        p.willFillMc = !!normMc(p.row.mc_number) && !normMc(p.match?.mc_number)
+      } else if (choice === 'create') {
+        const name = disambiguateName(p.row.name, p.row, taken)
+        taken.add(normName(name))
+        p.conflict = false
+        p.conflictKind = undefined
+        p.isNew = true
+        p.match = null
+        p.matchId = null
+        p.matchName = null
+        p.rule = null
+        p.createName = name
+        p.willFillMc = !!normMc(p.row.mc_number)
+      }
+    }
+  }
+  return { plan: next, counts: countPlan(next) }
 }
