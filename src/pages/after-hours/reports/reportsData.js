@@ -240,6 +240,14 @@ const KIND_META = {
   driver_assisted: { label: 'Driver assisted', dot: 'bg-slate-400' },
   escalated: { label: 'Escalated', dot: 'bg-rose-500' },
   rescan_requested: { label: 'Rescan requested', dot: 'bg-slate-400' },
+  // Shift-log notes arrive here already: the detail RPC's timeline selects every
+  // shift_activities row for the shift with no type filter, so a note with a
+  // NULL load_id lands in the Activity log beside the rest, in occurred_at
+  // order. This entry only gives it a proper label and its own dot instead of
+  // the generic fallback. A note attached to a load renders identically but
+  // carries the driver and load number, which is the distinction that matters
+  // when reading the log back.
+  note: { label: 'Note', dot: 'bg-amber-500' },
   accessorial_raised: { label: 'Accessorial raised', dot: 'bg-violet-500' },
   request_handled: { label: 'Request handled', dot: 'bg-emerald-500' },
 }

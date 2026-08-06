@@ -96,6 +96,11 @@ export default function EndShiftModal({ open, shift, users = [], onClose, onEnde
             )}
           </div>
 
+          {/* Hand off to stays half width — it's a short select and gains nothing
+              from stretching. Shift notes gets its own full-width row: it's free
+              text for the record and a one-line input hid everything past ~60
+              characters. This binds handoff_notes (via end_shift's p_notes), NOT
+              handoff_text — that one is the generated Telegram body above. */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className={S.label}>Hand off to <span className="font-normal normal-case text-gray-400">(optional)</span></label>
@@ -104,10 +109,17 @@ export default function EndShiftModal({ open, shift, users = [], onClose, onEnde
                 {users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
               </select>
             </div>
-            <div>
-              <label className={S.label}>Shift notes <span className="font-normal normal-case text-gray-400">(optional)</span></label>
-              <input className={S.input} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Anything for the record…" />
-            </div>
+          </div>
+
+          <div>
+            <label className={S.label}>Shift notes <span className="font-normal normal-case text-gray-400">(optional)</span></label>
+            <textarea
+              rows={4}
+              className={`${S.input} min-h-[96px] resize-y`}
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              placeholder="Anything for the record…"
+            />
           </div>
         </div>
 

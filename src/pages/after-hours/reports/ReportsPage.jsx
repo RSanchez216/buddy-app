@@ -12,6 +12,7 @@ import {
   deriveTotals, buildCoverage, gapRows, sortHistory,
   historyToCsv, downloadCsv, fmtHours, money, pct,
 } from './reportsData'
+import { buildShiftReportsPdf } from './reportsPdf'
 
 // After Hours › Shift Reports. Opens on the current Mon–Sun week in Central.
 //
@@ -34,6 +35,7 @@ export default function ReportsPage() {
 
   const [openId, setOpenId] = useState(null)
   const [details, setDetails] = useState({}) // shift_id → { loading, data, error }
+  const [pdfBusy, setPdfBusy] = useState(false)
 
   // toast identity changes on every toast show/dismiss, so it goes through a ref
   // rather than a dep array — putting it in one refires the fetch effect.
@@ -115,6 +117,46 @@ export default function ReportsPage() {
     toast.success('History exported')
   }
 
+  // PDF export. The report is what's on screen, so it exports the FULL week's
+  // rows — not the rows that happen to be expanded. Detail is lazily fetched per
+  // shift, so anything not yet opened is fetched here first; the session cache is
+  // reused for the rest and is written back so expanding a row afterwards is
+  // instant. A shift whose detail fails is still exported, just without its
+  // expanded block — one bad RPC shouldn't cost the whole document.
+  async function exportPdf() {
+    if (!history.length || pdfBusy) return
+    setPdfBusy(true)
+    try {
+      const ids = history.filter(r => !r.is_gap && r.shift_id).map(r => r.shift_id)
+      const missing = ids.filter(id => !details[id]?.data)
+      let merged = details
+      if (missing.length) {
+        const fetched = await Promise.all(
+          missing.map(id => fetchShiftDetail(id).then(data => [id, { loading: false, data }])
+            .catch(e => [id, { loading: false, error: e?.message || 'failed' }])),
+        )
+        merged = { ...details, ...Object.fromEntries(fetched) }
+        setDetails(merged) // keep it, so expanding a row after exporting is instant
+      }
+      const failed = ids.filter(id => !merged[id]?.data).length
+      await buildShiftReportsPdf({
+        week, totals, coverage, history, rollup, details: merged,
+        filterNote: filtersActive
+          ? `Filtered — ${[
+            typeFilter.size ? `${[...typeFilter].map(shiftTypeLabel).join(', ')}` : null,
+            assocFilter.size ? `${assocOptions.filter(a => assocFilter.has(a.id)).map(a => a.name).join(', ')}` : null,
+          ].filter(Boolean).join('  ·  ')}`
+          : '',
+      })
+      if (failed > 0) toast.error(`PDF exported — ${failed} shift${failed === 1 ? '' : 's'} without detail`)
+      else toast.success('PDF exported')
+    } catch (e) {
+      toast.error("Couldn't build the PDF", e)
+    } finally {
+      setPdfBusy(false)
+    }
+  }
+
   const empty = !loading && !error && filtered.length === 0
 
   return (
@@ -151,7 +193,17 @@ export default function ReportsPage() {
               This week
             </button>
           )}
-          <button onClick={exportCsv} disabled={!history.length} className={`${S.btnSecondary} disabled:opacity-40`}>Export</button>
+          {/* PDF is primary: it's the version that gets read and sent. Excel stays
+              because Accounting pulls the numbers back out of it — different
+              readers, and dropping it would cost a workflow to gain nothing. */}
+          <button onClick={exportPdf} disabled={!history.length || pdfBusy}
+            className="px-3 py-1.5 text-xs font-semibold bg-orange-500 hover:bg-orange-400 disabled:bg-gray-200 dark:disabled:bg-slate-700 disabled:text-gray-400 dark:disabled:text-slate-500 text-white rounded-xl transition-all">
+            {pdfBusy ? 'Building…' : 'Download PDF'}
+          </button>
+          <button onClick={exportCsv} disabled={!history.length || pdfBusy}
+            className="px-2.5 py-1.5 text-[11px] font-medium rounded-lg border border-gray-300 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-40 transition-colors">
+            Excel
+          </button>
         </div>
       </div>
 

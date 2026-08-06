@@ -9,11 +9,13 @@ import PriorityGroup from './PriorityGroup'
 import EndShiftModal from './EndShiftModal'
 import TimesNeededGroup from './TimesNeededGroup'
 import RequestDetailPanel from './RequestDetailPanel'
+import ShiftLog from './ShiftLog'
 import {
   SHIFT_TYPES, GROUP_META, groupKeyFor, shiftName, LIFECYCLE, LIFECYCLE_RANK,
   fetchSettings, fetchOpenShift, startShift, fetchShiftSummary, fetchWeekSummary, fetchBoard, fetchBoardTabs, fetchBoardBrokerMetaForShift, fetchBoardRiskMetaForShift, fetchBoardIdleMetaForShift,
   fetchCheckpointExceptions,
   upsertDriverCheck, logShiftActivity,
+  fetchShiftNotes, addShiftNote,
   fetchRowActions, updateShiftActivity, deleteShiftActivity, clearDriverCheck,
   fetchEscalationRecipients, acknowledgeEscalation, fetchEscalationCopyText,
   thisWeekChicago, weekOfYmd, stepWeek, fmtWeekRange, todayChicago, fmtDayLabel, elapsedSince,
@@ -39,6 +41,9 @@ export default function ShiftBoardPage() {
   const [actionTarget, setActionTarget] = useState(null) // { row, type, existing } — popover
   const [undoInfo, setUndoInfo] = useState(null) // { driverId, activityId?, isCheck?, label } — 10s inline undo
   const undoTimerRef = useRef(null)
+  const [shiftNotes, setShiftNotes] = useState([])   // running notes (shift log)
+  const [noteUndo, setNoteUndo] = useState(null)     // { id } — 10s undo of the last added note
+  const noteUndoTimerRef = useRef(null)
   const [searchInput, setSearchInput] = useState('')    // raw search box value
   const [search, setSearch] = useState('')              // debounced query
   const [highlightDriver, setHighlightDriver] = useState(null) // deep-link target
@@ -95,7 +100,7 @@ export default function ShiftBoardPage() {
     // Respect the browsed week so a shift transition doesn't yank the view back
     // to live. Live week → no dates (identical to before).
     const vw = viewWeekRef.current, live = vw.start === weekRange.start
-    const [bd, sm, ex, tb, ra, bm, rk, im, wk] = await Promise.all([
+    const [bd, sm, ex, tb, ra, bm, rk, im, wk, nt] = await Promise.all([
       fetchBoard(sh?.id ?? null, live ? null : vw.start, live ? null : vw.end),
       sh ? fetchShiftSummary(sh.id) : Promise.resolve(null),
       // The queue also feeds the ACCESSORIAL column's "Detention likely"
@@ -110,8 +115,10 @@ export default function ShiftBoardPage() {
       fetchBoardRiskMetaForShift(sh?.id ?? null).catch((e) => { console.error('risk meta failed', e); return new Map() }),
       fetchBoardIdleMetaForShift(sh?.id ?? null).catch((e) => { console.error('idle meta failed', e); return new Map() }),
       week ? fetchWeekSummary(weekRange.start, weekRange.end) : Promise.resolve(undefined),
+      sh ? fetchShiftNotes(sh.id).catch(() => []) : Promise.resolve([]),
     ])
     setBoard(bd); setSummary(sm); setExceptions(ex); setBoardTabs(tb); setRowActions(ra); setBrokerByLoad(bm); setRiskByLoad(rk); setIdleByDriver(im)
+    setShiftNotes(nt)
     if (week && wk !== undefined) setWeek(wk)
   }, [weekRange.start, weekRange.end])
 
@@ -121,12 +128,15 @@ export default function ShiftBoardPage() {
   const refreshActions = useCallback(async () => {
     const sh = shiftRef.current
     if (!sh) { await refresh(); return }
-    const [ra, tb, sm] = await Promise.all([
+    const [ra, tb, sm, nt] = await Promise.all([
       fetchRowActions(sh.id).catch(() => []),
       fetchBoardTabs(sh.id).catch(() => null),
       fetchShiftSummary(sh.id),
+      // Rides this cycle too, so the realtime shift_activities subscription that
+      // already calls refreshActions keeps the shift log current across tabs.
+      fetchShiftNotes(sh.id).catch(() => []),
     ])
-    setRowActions(ra); setBoardTabs(tb); setSummary(sm)
+    setRowActions(ra); setBoardTabs(tb); setSummary(sm); setShiftNotes(nt)
   }, [refresh])
 
   // Checkpoint times just saved — patch the board row in place rather than
@@ -352,6 +362,43 @@ export default function ShiftBoardPage() {
     } catch (e) { toast.error("Couldn't undo", e) }
   }
 
+  // ── Shift log ────────────────────────────────────────────────────────────
+  // Notes go through log_shift_activity like every other activity — it resolves
+  // the caller's open shift itself, so there's no shift id to pass. Its own 10s
+  // undo slot, separate from the row-action one: both can legitimately be armed
+  // at once and sharing a slot would have one silently cancel the other.
+  async function addNote(text) {
+    try {
+      const res = await addShiftNote(text)
+      await refreshActions()
+      if (res?.id) {
+        if (noteUndoTimerRef.current) clearTimeout(noteUndoTimerRef.current)
+        setNoteUndo({ id: res.id })
+        noteUndoTimerRef.current = setTimeout(() => setNoteUndo(null), 10000)
+      }
+    } catch (e) {
+      toast.error("Couldn't add the note", e)
+      throw e // the card keeps the typed text so it can be retried
+    }
+  }
+  async function undoNote() {
+    const u = noteUndo
+    if (!u) return
+    if (noteUndoTimerRef.current) clearTimeout(noteUndoTimerRef.current)
+    setNoteUndo(null)
+    try { await deleteShiftActivity(u.id); await refreshActions() }
+    catch (e) { toast.error("Couldn't undo", e) }
+  }
+  // Confirm lives in the card's row, same as Logged activity; this just deletes.
+  async function removeNote(n) {
+    if (!n?.id) return
+    try {
+      await deleteShiftActivity(n.id)
+      if (noteUndo?.id === n.id) { clearTimeout(noteUndoTimerRef.current); setNoteUndo(null) }
+      await refreshActions()
+    } catch (e) { toast.error("Couldn't remove the note", e) }
+  }
+
   async function removeAction() {
     const t = actionTarget
     if (!t) return
@@ -465,10 +512,22 @@ export default function ShiftBoardPage() {
         return { ...t, tone, chip }
       })
       .sort((a, b) => a.order - b.order)
-    // Alerts is a cross-cutting filter, always last and always shown — disabled
-    // and muted at zero, because "no alerts" is good news worth seeing, and a
-    // missing tab reads as broken.
-    ordered.push({ key: 'alerts', g: ALERTS_META, count: alertRows.length, order: Infinity, tone: 'rose', chip: String(alertRows.length), disabled: alertRows.length === 0 })
+    // Alerts is a cross-cutting filter, always shown — disabled and muted at
+    // zero, because "no alerts" is good news worth seeing and a missing tab
+    // reads as broken.
+    //
+    // It sits at position 2, immediately after Raised by dispatch. Inserted by
+    // finding raised's key rather than splicing at a literal index: raised and
+    // uncovered both carry group_order 1 from the RPC, so their relative
+    // position rests on a stable sort of equal keys — pinning Alerts to index 1
+    // would put it in the wrong place the moment that resolves differently.
+    // raised is guaranteed present (pushed above at count 0 when absent), so
+    // this always finds a home.
+    const alertsTab = {
+      key: 'alerts', g: ALERTS_META, count: alertRows.length,
+      tone: 'rose', chip: String(alertRows.length), disabled: alertRows.length === 0,
+    }
+    ordered.splice(ordered.findIndex(t => t.key === 'raised') + 1, 0, alertsTab)
     return ordered
   }, [grouped, boardTabs, alertRows.length, isLiveWeek])
 
@@ -617,6 +676,20 @@ export default function ShiftBoardPage() {
               something waiting at a dock. */}
           {trackCheckpoints && exceptions.length > 0 && (
             <TimesNeededGroup exceptions={exceptions} expanded={cpOpen} onToggle={() => setCpOpen(o => !o)} onOpen={openFromException} />
+          )}
+
+          {/* Shift log — running notes with no board row to hang them on. Live
+              week only: the notes belong to tonight's shift, and showing them
+              while browsing a past week would read as that week's. */}
+          {isLiveWeek && (
+            <ShiftLog
+              notes={shiftNotes}
+              canAdd={!!shift}
+              onAdd={addNote}
+              onRemove={removeNote}
+              undo={noteUndo}
+              onUndo={undoNote}
+            />
           )}
 
           {/* Tabs replace the stacked groups; Copy group sits on the right */}

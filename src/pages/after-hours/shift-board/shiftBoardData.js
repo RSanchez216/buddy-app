@@ -212,6 +212,39 @@ export async function logShiftActivity(type, loadId, driverId, note, escalatedTo
   if (data && data.ok === false) throw new Error(data.reason || 'Could not record the activity.')
   return data
 }
+// ── Shift log ──────────────────────────────────────────────────────────────
+// Running notes: work done during the shift with no board row to hang it on —
+// a broker call about nothing in particular, a systems outage, a message from
+// Accounting. Stored as ordinary shift_activities rows, distinguished by
+// load_id IS NULL rather than a new activity_type (the CHECK already allows
+// 'note', and log_shift_activity now accepts it).
+//
+// The author embed must name the constraint: shift_activities has THREE foreign
+// keys to users (user_id, escalated_to, acknowledged_by), so a bare users(...)
+// embed is ambiguous and PostgREST rejects it.
+export async function fetchShiftNotes(shiftId) {
+  if (!shiftId) return []
+  const { data, error } = await supabase.from('shift_activities')
+    .select('id, note, occurred_at, user_id, author:users!shift_activities_user_id_fkey(full_name)')
+    .eq('shift_id', shiftId)
+    .eq('activity_type', 'note')
+    .is('load_id', null)
+    .order('occurred_at', { ascending: false })
+  if (error) throw error
+  // A row whose note was blanked would render as an empty bullet here and be
+  // dropped by the handoff generator — filter so the two agree.
+  return (data || [])
+    .filter(r => (r.note || '').trim())
+    .map(r => ({ id: r.id, note: r.note, at: r.occurred_at, user_id: r.user_id, author: r.author?.full_name || null }))
+}
+
+// Goes through the RPC like every other activity — it resolves the caller's open
+// shift, so there is no shift id to pass and none to get wrong. Returns the new
+// row's id for the 10s undo.
+export async function addShiftNote(text) {
+  return logShiftActivity('note', null, null, text)
+}
+
 // Active admins/managers (minus the caller) an escalation can be routed to.
 export async function fetchEscalationRecipients() {
   const { data, error } = await supabase.rpc('escalation_recipients')
