@@ -81,13 +81,18 @@ export default function ShiftLog({ notes = [], canAdd, onAdd, onRemove, undo, on
         <div className="px-4 pb-3.5 space-y-3">
           {canAdd ? (
             <div className="space-y-1.5">
+              {/* Fixed height, resized by hand — deliberately NOT auto-growing.
+                  This box sits directly above the tab row and the driver table,
+                  so growing it on each keystroke would push the whole board down
+                  while someone is mid-sentence. The card is collapsed by default,
+                  so the extra height costs nothing until it's opened. */}
               <textarea
-                rows={2}
+                rows={6}
                 value={text}
                 onChange={e => setText(e.target.value)}
                 onKeyDown={onKeyDown}
                 placeholder="Something worth passing on — a broker call, an outage, a message from Accounting…"
-                className="w-full text-sm rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-slate-800/60 text-gray-700 dark:text-slate-200 placeholder-gray-400 dark:placeholder-slate-500 px-3 py-2 resize-y min-h-[56px] focus:outline-none focus:ring-2 focus:ring-orange-500/40"
+                className="w-full text-sm rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-slate-800/60 text-gray-700 dark:text-slate-200 placeholder-gray-400 dark:placeholder-slate-500 px-3 py-2 resize-y min-h-[140px] focus:outline-none focus:ring-2 focus:ring-orange-500/40"
               />
               <div className="flex items-center gap-2">
                 <button
