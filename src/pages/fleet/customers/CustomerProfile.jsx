@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { S } from '../../../lib/styles'
 import { fetchBrokerProfile, fetchBrokerDocuments } from './customersApply'
 
@@ -8,8 +8,14 @@ import { fetchBrokerProfile, fetchBrokerDocuments } from './customersApply'
 // separate, the accessorial terms OBSERVED across its loads, and where paperwork
 // actually goes. Setting idle reasons / editing terms lives elsewhere.
 
+// The four list filters, so the back control can name the view it returns to.
+const FILTER_LABEL = { loads: 'With loads', all: 'All customers', hold: 'Credit hold', risk: 'On a risk list' }
+
 export default function CustomerProfile() {
   const { id } = useParams()
+  // The list carries its view here on the URL, so back returns to the filter and
+  // search you left — and still does after a refresh, when history is gone.
+  const [params] = useSearchParams()
   const [profile, setProfile] = useState(null)
   const [docs, setDocs] = useState([])
   const [loading, setLoading] = useState(true)
@@ -30,7 +36,7 @@ export default function CustomerProfile() {
     return (
       <div className="max-w-4xl mx-auto py-12 text-center">
         <p className="text-sm text-gray-500 dark:text-slate-400">This broker profile couldn&apos;t be loaded.</p>
-        <Link to="/fleet/customers/import" className="text-sm text-orange-600 dark:text-orange-400 hover:underline mt-2 inline-block">Back to Customers Import</Link>
+        <Link to="/fleet/customers?filter=all" className="text-sm text-orange-600 dark:text-orange-400 hover:underline mt-2 inline-block">Back to Customers</Link>
       </div>
     )
   }
@@ -45,10 +51,23 @@ export default function CustomerProfile() {
   // BUDDY figure as a discrepancy on every profile).
   const gap = synced ? volumeGap(buddy, tms_snapshot) : null
 
+  // Arriving straight from a URL there is no view to return to, so back offers
+  // the whole directory rather than the narrower default.
+  const qs = params.toString()
+  const backTo = qs ? `/fleet/customers?${qs}` : '/fleet/customers?filter=all'
+  const backLabel = qs
+    ? (FILTER_LABEL[params.get('filter') || 'loads'] || 'Customers') + (params.get('q') ? ` · “${params.get('q')}”` : '')
+    : 'All customers'
+
   return (
-    <div className="max-w-4xl mx-auto space-y-4">
-      {/* Header */}
+    <div className="max-w-6xl mx-auto space-y-4">
+      {/* Header — full width above the columns */}
       <div>
+        <Link to={backTo}
+          className="inline-flex items-center gap-1.5 text-sm text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200 transition-colors mb-2">
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
+          {backLabel}
+        </Link>
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{name || 'Broker'}</h1>
           {onHold && (
@@ -65,102 +84,113 @@ export default function CustomerProfile() {
         </p>
       </div>
 
-      {flagged && <RiskBlock risk={risk} />}
+      {/* Two columns from lg: who they are and what they owe on the left, how
+          they actually trade on the right. items-start so a clean broker's short
+          left column doesn't stretch to match the right. Single column below lg,
+          in the original order. */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+        {/* ── Identity and money ── */}
+        <div className="space-y-4 min-w-0">
+          {flagged && <RiskBlock risk={risk} />}
 
-      {/* Contact */}
-      <Card>
-        <Eyebrow>Contact</Eyebrow>
-        <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5 mt-2 text-sm">
-          <Row label="Phone" v={contact?.phone} mono />
-          <Row label="Email" v={contact?.email} />
-          <Row label="Location" v={[contact?.city, contact?.state, contact?.country].filter(Boolean).join(', ')} />
-        </dl>
-      </Card>
+          <Card>
+            <Eyebrow>Contact</Eyebrow>
+            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5 mt-2 text-sm">
+              <Row label="Phone" v={contact?.phone} mono />
+              <Row label="Email" v={contact?.email} />
+              <Row label="Location" v={[contact?.city, contact?.state, contact?.country].filter(Boolean).join(', ')} />
+            </dl>
+          </Card>
 
-      <Billing billing={billing} creditLimit={credit_limit} />
-      <Address address={address} contact={contact} />
+          <Billing billing={billing} creditLimit={credit_limit} />
+          <Address address={address} contact={contact} />
+        </div>
 
-      {/* Two volume figures — never blended. */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
-        <Card>
-          <Eyebrow>BUDDY</Eyebrow>
-          <p className="text-[11px] text-gray-400 dark:text-slate-500">Counted from BUDDY&apos;s own loads table.</p>
-          <dl className="mt-2 text-sm space-y-1.5">
-            <Row label="Loads (all time)" v={num(buddy?.loads_total)} mono />
-            <Row label="Loads this year" v={num(buddy?.loads_ytd)} mono />
-            <Row label="Last load" v={fmtDate(buddy?.last_load)} />
-          </dl>
-        </Card>
-        <Card>
-          <Eyebrow>TMS at last sync{synced ? ` · ${fmtDate(tms_snapshot.synced_at)}` : ''}</Eyebrow>
-          {synced ? (
-            <>
-              <p className="text-[11px] text-gray-400 dark:text-slate-500">A snapshot from the export — BUDDY&apos;s loads have moved on since.</p>
+        {/* ── The operational picture ── */}
+        <div className="space-y-4 min-w-0">
+          {/* Two volume figures — never blended. */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
+            <Card>
+              <Eyebrow>BUDDY</Eyebrow>
+              <p className="text-[11px] text-gray-400 dark:text-slate-500">Counted from BUDDY&apos;s own loads table.</p>
               <dl className="mt-2 text-sm space-y-1.5">
-                <Row label="Loads this year" v={num(tms_snapshot?.loads_ytd)} mono />
-                <Row label="Sales this year" v={tms_snapshot?.sales_ytd != null ? money(tms_snapshot.sales_ytd) : null} mono />
-                <Row label="Last load" v={fmtDate(tms_snapshot?.last_load)} />
-                <Row label="Status" v={tms_snapshot?.status} />
+                <Row label="Loads (all time)" v={num(buddy?.loads_total)} mono />
+                <Row label="Loads this year" v={num(buddy?.loads_ytd)} mono />
+                <Row label="Last load" v={fmtDate(buddy?.last_load)} />
               </dl>
-            </>
-          ) : (
-            <p className="mt-2 text-sm text-gray-400 dark:text-slate-500 italic">Not yet synced — run a Customers import.</p>
+            </Card>
+            <Card>
+              <Eyebrow>TMS at last sync{synced ? ` · ${fmtDate(tms_snapshot.synced_at)}` : ''}</Eyebrow>
+              {synced ? (
+                <>
+                  <p className="text-[11px] text-gray-400 dark:text-slate-500">A snapshot from the export — BUDDY&apos;s loads have moved on since.</p>
+                  <dl className="mt-2 text-sm space-y-1.5">
+                    <Row label="Loads this year" v={num(tms_snapshot?.loads_ytd)} mono />
+                    <Row label="Sales this year" v={tms_snapshot?.sales_ytd != null ? money(tms_snapshot.sales_ytd) : null} mono />
+                    <Row label="Last load" v={fmtDate(tms_snapshot?.last_load)} />
+                    <Row label="Status" v={tms_snapshot?.status} />
+                  </dl>
+                </>
+              ) : (
+                <p className="mt-2 text-sm text-gray-400 dark:text-slate-500 italic">Not yet synced — run a Customers import.</p>
+              )}
+            </Card>
+          </div>
+          {/* Only after a sync, and only when the gap is beyond snapshot drift (~5%) —
+              the export is a moment in time and BUDDY's loads keep moving, so a few
+              loads' difference is expected, not a fault. */}
+          {gap?.significant && (
+            <p className="text-[11px] text-amber-600 dark:text-amber-400 -mt-1">
+              BUDDY and the TMS snapshot differ by {gap.count.toLocaleString()} loads this year — a gap this large may mean the loads importer missed some rows.
+            </p>
           )}
-        </Card>
-      </div>
-      {/* Only after a sync, and only when the gap is beyond snapshot drift (~5%) —
-          the export is a moment in time and BUDDY's loads keep moving, so a few
-          loads' difference is expected, not a fault. */}
-      {gap?.significant && (
-        <p className="text-[11px] text-amber-600 dark:text-amber-400 -mt-1">
-          BUDDY and the TMS snapshot differ by {gap.count.toLocaleString()} loads this year — a gap this large may mean the loads importer missed some rows.
-        </p>
-      )}
 
-      {/* Accessorial terms observed */}
-      <Card>
-        <Eyebrow>Accessorial terms observed</Eyebrow>
-        {observed_terms && observed_terms.loads_with_terms > 0 ? (
-          <div className="mt-2 space-y-1 text-sm text-gray-700 dark:text-slate-300">
-            {observed_terms.free_hours?.length > 0 && (
-              <p>Detention free hours seen: <span className="font-mono">{observed_terms.free_hours.join(', ')}</span></p>
-            )}
-            <p>
-              {observed_terms.rates?.length > 0 && <>Rates seen: <span className="font-mono">{observed_terms.rates.map(r => money(r)).join(', ')}</span></>}
-              {observed_terms.penalty_max != null && <> · Highest penalty: <span className="font-mono">{money(observed_terms.penalty_max)}</span></>}
-            </p>
-            <p className="text-[11px] text-gray-400 dark:text-slate-500">
-              From {observed_terms.loads_with_terms.toLocaleString()} load{observed_terms.loads_with_terms === 1 ? '' : 's'} with stated terms. Terms are negotiated per load, not set per broker — this is the observed range, not a rule to apply.
-            </p>
-          </div>
-        ) : (
-          <p className="mt-2 text-sm text-gray-400 dark:text-slate-500 italic">No stated accessorial terms observed on this broker&apos;s loads yet.</p>
-        )}
-      </Card>
-
-      {/* Paperwork destinations */}
-      <Card>
-        <Eyebrow>Paperwork destinations</Eyebrow>
-        <PodEmails observed={observed_terms} />
-      </Card>
-
-      {/* Documents */}
-      <Card>
-        <Eyebrow>Documents</Eyebrow>
-        {docs.length === 0 ? (
-          <p className="mt-2 text-sm text-gray-400 dark:text-slate-500 italic">No documents attached. Rate confirmations can be attached here.</p>
-        ) : (
-          <div className="mt-2 space-y-1.5">
-            {docs.map(d => (
-              <div key={d.id} className="flex items-center gap-2 text-[11px]">
-                <span className="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/5 text-gray-600 dark:text-slate-300 shrink-0">{d.doc_type || 'doc'}</span>
-                <span className="text-gray-700 dark:text-slate-300 truncate">{d.file_name || d.file_path}</span>
-                <span className="ml-auto text-gray-400 dark:text-slate-500 shrink-0">{fmtDate(d.uploaded_at)}</span>
+          {/* Accessorial terms observed */}
+          <Card>
+            <Eyebrow>Accessorial terms observed</Eyebrow>
+            {observed_terms && observed_terms.loads_with_terms > 0 ? (
+              <div className="mt-2 space-y-1 text-sm text-gray-700 dark:text-slate-300">
+                {observed_terms.free_hours?.length > 0 && (
+                  <p>Detention free hours seen: <span className="font-mono">{observed_terms.free_hours.join(', ')}</span></p>
+                )}
+                <p>
+                  {observed_terms.rates?.length > 0 && <>Rates seen: <span className="font-mono">{observed_terms.rates.map(r => money(r)).join(', ')}</span></>}
+                  {observed_terms.penalty_max != null && <> · Highest penalty: <span className="font-mono">{money(observed_terms.penalty_max)}</span></>}
+                </p>
+                <p className="text-[11px] text-gray-400 dark:text-slate-500">
+                  From {observed_terms.loads_with_terms.toLocaleString()} load{observed_terms.loads_with_terms === 1 ? '' : 's'} with stated terms. Terms are negotiated per load, not set per broker — this is the observed range, not a rule to apply.
+                </p>
               </div>
-            ))}
-          </div>
-        )}
-      </Card>
+            ) : (
+              <p className="mt-2 text-sm text-gray-400 dark:text-slate-500 italic">No stated accessorial terms observed on this broker&apos;s loads yet.</p>
+            )}
+          </Card>
+
+          {/* Paperwork destinations */}
+          <Card>
+            <Eyebrow>Paperwork destinations</Eyebrow>
+            <PodEmails observed={observed_terms} />
+          </Card>
+
+          {/* Documents */}
+          <Card>
+            <Eyebrow>Documents</Eyebrow>
+            {docs.length === 0 ? (
+              <p className="mt-2 text-sm text-gray-400 dark:text-slate-500 italic">No documents attached. Rate confirmations can be attached here.</p>
+            ) : (
+              <div className="mt-2 space-y-1.5">
+                {docs.map(d => (
+                  <div key={d.id} className="flex items-center gap-2 text-[11px]">
+                    <span className="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-white/5 text-gray-600 dark:text-slate-300 shrink-0">{d.doc_type || 'doc'}</span>
+                    <span className="text-gray-700 dark:text-slate-300 truncate">{d.file_name || d.file_path}</span>
+                    <span className="ml-auto text-gray-400 dark:text-slate-500 shrink-0">{fmtDate(d.uploaded_at)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        </div>
+      </div>
     </div>
   )
 }
