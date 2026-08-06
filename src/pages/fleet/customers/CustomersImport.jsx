@@ -36,8 +36,8 @@ export default function CustomersImport() {
       if (!cols.mc) toast.error('No MC column found — matching will fall back to code/name.')
       // The full customers table, paged, is the match set.
       const existing = await fetchAllCustomers()
-      const { plan, counts } = buildCustomerPlan({ rows, existing })
-      setStaged({ filename: file.name, plan, counts })
+      const { plan, counts, conflictGroups } = buildCustomerPlan({ rows, existing })
+      setStaged({ filename: file.name, plan, counts, conflictGroups })
       toast.success(`Parsed ${rows.length.toLocaleString()} rows — review below`)
     } catch (e) {
       toast.error("Couldn't read the file", e)
@@ -61,7 +61,11 @@ export default function CustomersImport() {
   }, [staged, busy, user?.id, toast])
 
   const c = staged?.counts
-  const conflicts = staged?.plan.filter(p => p.conflict) || []
+  // Rule-disagreement conflicts (two rules pointing at two customers) render as
+  // one line each; duplicate-target ones get the side-by-side treatment — MC,
+  // city and volume are the only things that tell those companies apart.
+  const ruleConflicts = staged?.plan.filter(p => p.conflict && p.conflictKind !== 'duplicate_target') || []
+  const dupGroups = staged?.conflictGroups || []
 
   return (
     <div className="max-w-5xl mx-auto space-y-5">
@@ -116,10 +120,53 @@ export default function CustomersImport() {
             </Section>
           )}
 
-          {conflicts.length > 0 && (
-            <Section title={`Conflicts (${conflicts.length})`} subtitle="Two match rules point at different customers — resolve these by hand; they will not be applied.">
+          {dupGroups.length > 0 && (
+            <Section title={`Conflicts (${dupGroups.length})`}
+              subtitle="Two rows resolve to the same customer — different companies sharing a name. Neither is applied. Choose one per pair, or create the second as new.">
+              <div className="space-y-3">
+                {dupGroups.map(g => (
+                  <div key={g.key} className="rounded-lg border border-red-200 dark:border-red-500/25 bg-red-50/50 dark:bg-red-500/[0.06] p-2.5">
+                    <p className="text-xs font-semibold text-gray-800 dark:text-slate-100">{g.target_name}</p>
+                    <div className="mt-1.5 space-y-1">
+                      {g.sides.map((s, i) => (
+                        <div key={i} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]">
+                          <span className="text-gray-400 dark:text-slate-500">·</span>
+                          {/* MC, location and volume — the three facts that
+                              actually separate the two companies. */}
+                          <span className="font-mono text-gray-700 dark:text-slate-200">MC {s.mc || '—'}</span>
+                          <span className="text-gray-500 dark:text-slate-400">{[s.city, s.state].filter(Boolean).join(', ') || '—'}</span>
+                          <span className="text-gray-500 dark:text-slate-400 tabular-nums">
+                            {s.loads_ytd != null ? `${s.loads_ytd} loads YTD` : 'no loads YTD'}
+                          </span>
+                          <span className="ml-auto flex items-center gap-1.5 shrink-0">
+                            <button type="button" disabled
+                              title="Resolving conflicts lands in a follow-up — for now, fix the pair in the TMS and re-import"
+                              className="px-1.5 py-0.5 rounded border border-gray-300 dark:border-slate-600 text-gray-400 dark:text-slate-500 cursor-not-allowed">
+                              Link to existing
+                            </button>
+                            <button type="button" disabled
+                              title="Resolving conflicts lands in a follow-up — for now, fix the pair in the TMS and re-import"
+                              className="px-1.5 py-0.5 rounded border border-gray-300 dark:border-slate-600 text-gray-400 dark:text-slate-500 cursor-not-allowed">
+                              Create new
+                            </button>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p className="text-[11px] text-gray-400 dark:text-slate-500">
+                Never auto-picked by volume. Spot Freight is 86 loads against 2, but Nu-Era is 1 against 1
+                with one of them in Ontario — guessing attributes one company&apos;s freight to another.
+              </p>
+            </Section>
+          )}
+
+          {ruleConflicts.length > 0 && (
+            <Section title={`Rule disagreements (${ruleConflicts.length})`} subtitle="Two match rules point at different customers — resolve these by hand; they will not be applied.">
               <div className="space-y-1.5">
-                {conflicts.map((p, i) => (
+                {ruleConflicts.map((p, i) => (
                   <div key={i} className="text-[11px] flex items-start gap-2">
                     <span className="font-semibold text-gray-700 dark:text-slate-200 shrink-0">{p.row.name}</span>
                     <span className="text-gray-400 dark:text-slate-500">MC {p.row.mc_number || '—'} · code {p.row.tms_code || '—'}</span>
@@ -147,10 +194,13 @@ export default function CustomersImport() {
           <div className="space-y-1.5">
             {recent.map(r => (
               <div key={r.id} className="flex items-center justify-between gap-3 text-[11px] text-gray-600 dark:text-slate-300">
-                <span className="truncate">{r.filename || 'Customers import'}</span>
+                <span className="truncate">
+                  {r.status === 'failed' && <span className="text-red-600 dark:text-red-400 font-semibold mr-1">failed</span>}
+                  {r.file_name || 'Customers import'}
+                </span>
                 <span className="text-gray-400 dark:text-slate-500 shrink-0 tabular-nums">
-                  {r.total_rows != null ? `${r.total_rows} rows` : ''}
-                  {r.counts?.created != null ? ` · ${r.counts.created} created` : ''}
+                  {r.rows_in_file != null ? `${r.rows_in_file} rows` : ''}
+                  {r.created != null ? ` · ${r.created} created` : ''}
                   {r.applied_at ? ` · ${fmtDate(r.applied_at)}` : ''}
                 </span>
               </div>

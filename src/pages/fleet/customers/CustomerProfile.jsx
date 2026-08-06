@@ -35,8 +35,11 @@ export default function CustomerProfile() {
     )
   }
 
-  const { name, tms_code, mc_number, credit_limit, contact, risk, buddy, tms_snapshot, observed_terms } = profile
+  const { name, tms_code, mc_number, credit_limit, contact, risk, buddy, tms_snapshot, observed_terms, billing, address } = profile
   const flagged = !!(risk && (risk.id_theft || risk.nonpayment || risk.double_brokering))
+  // 1 broker in 1,000 is on hold — rare enough that it belongs beside the name,
+  // not buried in the Billing block.
+  const onHold = billing?.credit_hold === true
   const synced = !!tms_snapshot?.synced_at
   // No sync → no comparison at all (comparing against nothing reads the whole
   // BUDDY figure as a discrepancy on every profile).
@@ -48,6 +51,12 @@ export default function CustomerProfile() {
       <div>
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{name || 'Broker'}</h1>
+          {onHold && (
+            <span title="This broker is on credit hold in the TMS"
+              className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded border bg-rose-100 dark:bg-rose-500/20 text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-500/40">
+              Credit hold
+            </span>
+          )}
           {flagged && <RiskChips risk={risk} />}
         </div>
         <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">
@@ -58,16 +67,18 @@ export default function CustomerProfile() {
 
       {flagged && <RiskBlock risk={risk} />}
 
-      {/* Contact + credit */}
+      {/* Contact */}
       <Card>
         <Eyebrow>Contact</Eyebrow>
         <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5 mt-2 text-sm">
           <Row label="Phone" v={contact?.phone} mono />
           <Row label="Email" v={contact?.email} />
           <Row label="Location" v={[contact?.city, contact?.state, contact?.country].filter(Boolean).join(', ')} />
-          <Row label="Credit limit" v={credit_limit != null ? money(credit_limit) : null} mono />
         </dl>
       </Card>
+
+      <Billing billing={billing} creditLimit={credit_limit} />
+      <Address address={address} contact={contact} />
 
       {/* Two volume figures — never blended. */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
@@ -151,6 +162,82 @@ export default function CustomerProfile() {
         )}
       </Card>
     </div>
+  )
+}
+
+// ── Billing ───────────────────────────────────────────────────────────────────
+// Everything the TMS knows about paying and being paid. The AP address is the
+// INVOICE desk and is labelled as such: at four of the eleven top brokers it is a
+// different mailbox from the one POD and BOL go to, and sending paperwork to
+// apinvoices@ sends it to the wrong desk.
+function Billing({ billing, creditLimit }) {
+  const b = billing || {}
+  // credit_limit lives at the top level of the RPC as well; prefer the billing
+  // block and fall back, so this reads right either way.
+  const limit = b.credit_limit ?? creditLimit
+  const balance = b.open_balance
+  const hasBalance = balance != null && Number(balance) !== 0
+  const nothing = [limit, b.payment_terms, b.billing_preference, b.ap_emails, b.ap_phone, b.setup_date].every(v => v == null)
+    && b.credit_hold == null && !hasBalance
+
+  return (
+    <Card>
+      <Eyebrow>Billing</Eyebrow>
+      {nothing ? (
+        <p className="mt-2 text-sm text-gray-400 dark:text-slate-500 italic">No billing details yet — run a Customers import.</p>
+      ) : (
+        <>
+          <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5 mt-2 text-sm">
+            <Row label="Payment terms" v={b.payment_terms} />
+            <Row label="Billing preference" v={b.billing_preference} />
+            {/* A zero limit is a real, deliberate value — not the same as "no
+                limit on record", so it renders as $0 rather than a dash. */}
+            <Row label="Credit limit" v={limit != null ? money(limit) : null} mono />
+            <Row label="Credit hold" v={b.credit_hold == null ? null : (b.credit_hold ? 'Yes' : 'No')}
+              tone={b.credit_hold ? 'text-rose-600 dark:text-rose-400 font-semibold' : ''} />
+            {/* Only 14 brokers carry a balance; a zero is noise on the other 986. */}
+            {hasBalance && <Row label="Open balance" v={money(balance)} mono tone="text-amber-600 dark:text-amber-400 font-semibold" />}
+            <Row label="Setup date" v={fmtDate(b.setup_date)} />
+            <Row label="AP phone" v={b.ap_phone} mono />
+          </dl>
+
+          {b.ap_emails && (
+            <div className="mt-3 pt-3 border-t border-gray-100 dark:border-white/5">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500">Invoices to</p>
+              <p className="mt-1 text-sm font-mono text-gray-700 dark:text-slate-200 break-all">{b.ap_emails}</p>
+              <p className="mt-1 text-[11px] text-gray-400 dark:text-slate-500">
+                Where the invoice goes. POD and BOL destinations come from the rate confirmation and
+                are listed under Paperwork destinations — at several brokers they are a different desk.
+              </p>
+            </div>
+          )}
+        </>
+      )}
+    </Card>
+  )
+}
+
+// ── Address ───────────────────────────────────────────────────────────────────
+function Address({ address, contact }) {
+  const a = address || {}
+  const nothing = [a.full, a.street1, a.street2, a.zip].every(v => v == null)
+    && [contact?.city, contact?.state, contact?.country].every(v => v == null)
+  if (nothing) return null
+
+  return (
+    <Card>
+      <Eyebrow>Address</Eyebrow>
+      {a.full && <p className="mt-2 text-sm text-gray-700 dark:text-slate-200">{a.full}</p>}
+      <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5 mt-2 text-sm">
+        <Row label="Street" v={a.street1} />
+        {a.street2 && <Row label="Street 2" v={a.street2} />}
+        <Row label="City" v={contact?.city} />
+        <Row label="State" v={contact?.state} />
+        {/* Text, never a number — leading zeros are part of the zip. */}
+        <Row label="Zip" v={a.zip} mono />
+        <Row label="Country" v={contact?.country} />
+      </dl>
+    </Card>
   )
 }
 
@@ -241,11 +328,14 @@ function PodEmails({ observed }) {
 // ── small presentational helpers ──
 function Card({ children }) { return <div className={`${S.card} p-4`}>{children}</div> }
 function Eyebrow({ children }) { return <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500">{children}</p> }
-function Row({ label, v, mono }) {
+function Row({ label, v, mono, tone }) {
+  // `v || '—'` would turn a legitimate $0 or "0" into a dash, so only null and
+  // empty fall back.
+  const shown = v == null || v === '' ? '—' : v
   return (
     <div className="flex items-baseline justify-between gap-3">
       <dt className="text-gray-400 dark:text-slate-500 shrink-0">{label}</dt>
-      <dd className={`text-right text-gray-700 dark:text-slate-200 ${mono ? 'font-mono tabular-nums' : ''}`}>{v || '—'}</dd>
+      <dd className={`text-right ${tone || 'text-gray-700 dark:text-slate-200'} ${mono ? 'font-mono tabular-nums' : ''}`}>{shown}</dd>
     </div>
   )
 }

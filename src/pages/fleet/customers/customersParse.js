@@ -47,6 +47,9 @@ export function splitTmsName(raw) {
 }
 
 // Best-effort date → 'YYYY-MM-DD'. Excel dates arrive as strings (raw:false).
+// Covers the export's MM-DD-YYYY Setup Date as well as MM/DD/YYYY and ISO. A
+// blank or unparseable cell returns null — never an epoch date, which would read
+// as a real 1970 setup.
 function toYmd(v) {
   const s = cleanStr(v)
   if (!s) return null
@@ -55,6 +58,26 @@ function toYmd(v) {
   m = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/)
   if (m) return `${m[3]}-${String(m[1]).padStart(2, '0')}-${String(m[2]).padStart(2, '0')}`
   return null
+}
+
+// Yes/No → boolean. Anything unrecognised (including blank) stays null rather
+// than defaulting to false: "we don't know" and "not on hold" are different, and
+// only the latter should ever clear an existing hold.
+function toBool(v) {
+  const s = cleanStr(v)
+  if (!s) return null
+  const t = s.toLowerCase()
+  if (['yes', 'y', 'true', '1'].includes(t)) return true
+  if (['no', 'n', 'false', '0'].includes(t)) return false
+  return null
+}
+
+// Zip stays TEXT and is never run through toNum — 07094 must not become 7094.
+// Also strips a trailing '.0' from a cell Excel decided was numeric.
+function toZip(v) {
+  const s = cleanStr(v)
+  if (!s) return null
+  return s.replace(/\.0+$/, '')
 }
 
 // ArrayBuffer → { rows, errors, cols }. Account Manager / Capacity Manager / CI
@@ -81,6 +104,23 @@ export function parseCustomersWorkbook(arrayBuffer) {
     salesYtd:    findCol(sample, ['Sales this year', 'Sales YTD']),
     loadsYtd:    findCol(sample, ['Loads this year', 'Loads YTD']),
     lastLoad:    findCol(sample, ['Last Active Load', 'Last Load']),
+    // The 27-column export. Every one is optional: findCol returns null on the
+    // older 15-column file and each field then parses to null, so the old export
+    // still imports without error.
+    creditHold:  findCol(sample, ['Credit hold', 'Credit Hold']),
+    address:     findCol(sample, ['Address']),
+    street1:     findCol(sample, ['Street 1', 'Street1']),
+    street2:     findCol(sample, ['Street 2', 'Street2']),
+    zip:         findCol(sample, ['Zip Code', 'Zip', 'Postal Code']),
+    setupDate:   findCol(sample, ['Setup Date']),
+    billingPref: findCol(sample, ['Billing Preference']),
+    paymentTerms: findCol(sample, ['Payment Terms']),
+    apPhone:     findCol(sample, ['AP phone', 'AP Phone']),
+    // The INVOICE address. Never the POD/BOL desk — that comes from the rate
+    // confirmation and lives in observed pod_emails. Four of eleven top brokers
+    // route them to different departments.
+    apEmails:    findCol(sample, ['AP Emails', 'AP Email']),
+    openBalance: findCol(sample, ['Open balance', 'Open Balance']),
   }
   if (!cols.name) return { rows: [], errors: ['No "Name" column found in the first sheet.'], cols }
 
@@ -106,6 +146,18 @@ export function parseCustomersWorkbook(arrayBuffer) {
       tms_loads_ytd: cols.loadsYtd ? toInt(r[cols.loadsYtd]) : null,
       tms_sales_ytd: cols.salesYtd ? toNum(r[cols.salesYtd]) : null,
       tms_last_load_date: cols.lastLoad ? toYmd(r[cols.lastLoad]) : null,
+      // ── 27-column export ──
+      credit_hold: cols.creditHold ? toBool(r[cols.creditHold]) : null,
+      address: get(r, cols.address),
+      street1: get(r, cols.street1),
+      street2: get(r, cols.street2),
+      zip_code: cols.zip ? toZip(r[cols.zip]) : null,
+      setup_date: cols.setupDate ? toYmd(r[cols.setupDate]) : null,
+      billing_preference: get(r, cols.billingPref),
+      payment_terms: get(r, cols.paymentTerms),
+      ap_phone: get(r, cols.apPhone),
+      ap_emails: get(r, cols.apEmails),
+      tms_open_balance: cols.openBalance ? toNum(r[cols.openBalance]) : null,
     })
   })
   return { rows, errors, cols }
