@@ -63,6 +63,21 @@ function moneyTitle(b) {
     : 'Penalty stated on this rate con'
 }
 
+// Tooltip for the collapsed-row risk shield, by flag combination.
+//
+// The wording is deliberately "reported" and "verify" — never blacklisted, bad
+// broker or do not use. These are companies MANAS hauls for daily; the shield
+// says check who you're talking to, not refuse the load.
+function riskTitle(risk) {
+  if (!risk) return ''
+  const { id_theft, nonpayment, double_brokering } = risk
+  if (double_brokering) return 'Double brokering reported for this broker'
+  if (id_theft && nonpayment) return 'Identity theft and nonpayment reported for this broker'
+  if (id_theft) return 'Identity theft reported for this broker — verify the rep and load number'
+  if (nonpayment) return 'Nonpayment history reported for this broker'
+  return 'This broker appears on a risk list'
+}
+
 // Rendered as the body of the active tab. The tab bar carries the heading/count;
 // this is the driver table. It owns the vertical scroll (flex-1) with a sticky
 // header so the bands and tabs above stay put while the list scrolls.
@@ -643,15 +658,22 @@ function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isMan
           line one, broker (if any) on line two. The gutter is ALWAYS rendered
           (even empty) and right-aligned, so every load number starts at the same
           x and the markers form a straight column instead of zig-zagging behind
-          numbers of different widths. w-12 fits the max three 14px glyphs + gaps.
-          Line two reuses an empty gutter so the broker lines up with the number. */}
+          numbers of different widths.
+          Line two reuses an empty gutter so the broker lines up with the number.
+
+          WIDTH: four glyphs are now reachable — one deadline marker (urgent and
+          soon are mutually exclusive) + money + risk + detention. Four at 14px
+          with three 2px gaps is 62px, which w-12 (48px) would have overflowed
+          into the Status column, so the gutter is w-16 (64px). Widening moves
+          every load number by the same 16px, so the column stays a straight
+          edge — which is the property that matters. */}
       <td className="px-3 py-2 align-top">
         <div className="flex items-center gap-1">
-          <span className="shrink-0 w-12 flex items-center justify-end gap-0.5">
-            {/* Deadline marker, then money, then the detention dot — three is the
-                ceiling. Triangle for urgent, dot for soon: told apart in greyscale,
-                not colour alone. The soon dot is smaller so it doesn't out-weigh
-                the urgent triangle. Glyphs only, no row tint. */}
+          <span className="shrink-0 w-16 flex items-center justify-end gap-0.5">
+            {/* Deadline marker, then money, then risk, then the detention dot.
+                Triangle for urgent, dot for soon: told apart in greyscale, not
+                colour alone. The soon dot is smaller so it doesn't out-weigh the
+                urgent triangle. Glyphs only, no row tint. */}
             {broker?.deadline_severity === 'urgent' && (
               <svg aria-hidden viewBox="0 0 12 12" className="shrink-0 w-3.5 h-3.5 text-rose-500 fill-current"><title>POD due within 24h of delivery</title><path d="M6 1l5 9H1z" /></svg>
             )}
@@ -660,6 +682,17 @@ function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isMan
             )}
             {broker?.money_at_risk && (
               <span title={moneyTitle(broker)} className="shrink-0 inline-flex items-center justify-center w-3.5 h-3.5 font-bold text-[11px] leading-none text-rose-600 dark:text-rose-400">$</span>
+            )}
+            {/* Broker risk — violet, matching the Broker risk block in the
+                expanded panel and deliberately outside the rose/amber set so it
+                doesn't read as another deadline or money alert. The RPC returns
+                flagged loads only, so presence is the condition. */}
+            {risk && (
+              <svg aria-hidden={false} role="img" viewBox="0 0 20 20"
+                className="shrink-0 w-3.5 h-3.5 text-violet-600 dark:text-violet-400 fill-current">
+                <title>{riskTitle(risk)}</title>
+                <path d="M10 1l7 3v5c0 4.4-3 8.3-7 9.4C6 17.3 3 13.4 3 9V4l7-3z" />
+              </svg>
             )}
             {broker?.detention_policy === 'not_paid' && (
               <span title="This broker does not pay detention." className="shrink-0 w-3.5 h-3.5 rounded-full bg-rose-500" />
@@ -671,7 +704,7 @@ function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isMan
         </div>
         {broker?.broker && (
           <div className="mt-0.5 flex items-center gap-1">
-            <span className="shrink-0 w-12" aria-hidden />
+            <span className="shrink-0 w-16" aria-hidden />
             <span className="text-[10px] text-gray-400 dark:text-slate-500 truncate max-w-[6rem]" title={broker.broker}>{broker.broker}</span>
           </div>
         )}
