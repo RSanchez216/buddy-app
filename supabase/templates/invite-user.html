@@ -1,0 +1,51 @@
+<!--
+  BUDDY — "Invite user" email.
+  Paste into: Supabase Dashboard -> Authentication -> Emails -> Invite user
+  Subject:    Your BUDDY account is ready — set your password
+
+  ONE clickable thing, on purpose. The stock Supabase template renders
+  {{ .SiteURL }} as bare text, which most mail clients auto-linkify — so the
+  email arrived with two links and the FIRST one was the site root. That link
+  carries no token, so clicking it lands on the sign-in page with no way
+  forward. It is the one Meerim clicked. Do not add a link to the site here.
+
+  {{ .ConfirmationURL }} is the only variable this template needs.
+-->
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:32px 0;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <tr>
+    <td align="center">
+      <table width="100%" style="max-width:520px;background:#ffffff;border-radius:12px;padding:36px 40px;">
+
+        <tr><td style="font-size:22px;font-weight:700;color:#0f172a;padding-bottom:6px;">
+          BUDDY
+        </td></tr>
+
+        <tr><td style="font-size:15px;color:#334155;line-height:1.55;padding-bottom:22px;">
+          Your account at MANAS Express has been created.<br>
+          Click the button below to choose a password and sign in.
+        </td></tr>
+
+        <tr><td align="center" style="padding:6px 0 24px;">
+          <a href="{{ .ConfirmationURL }}"
+             style="display:inline-block;background:#F97316;color:#ffffff;text-decoration:none;
+                    font-size:16px;font-weight:600;padding:15px 34px;border-radius:8px;">
+            Set my password
+          </a>
+        </td></tr>
+
+        <tr><td style="font-size:13px;color:#64748b;line-height:1.55;padding-bottom:18px;
+                       border-top:1px solid #e2e8f0;padding-top:18px;">
+          <strong>This link works once.</strong> After you set your password, use it to sign in from then on —
+          the link itself will stop working. If it says the link is invalid, ask Rebeca to send a new one.
+        </td></tr>
+
+        <tr><td style="font-size:13px;color:#334155;line-height:1.55;padding-bottom:6px;">
+          <strong>Ваш аккаунт BUDDY готов.</strong><br>
+          Нажмите оранжевую кнопку выше, чтобы задать пароль и войти.
+          <span style="color:#64748b;">Ссылка действует один раз — после установки пароля входите обычным способом.</span>
+        </td></tr>
+
+      </table>
+    </td>
+  </tr>
+</table>
