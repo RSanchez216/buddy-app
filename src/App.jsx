@@ -45,6 +45,7 @@ import TrailersList from './pages/fleet/TrailersList'
 import TruckDetail from './pages/fleet/TruckDetail'
 import TrailerDetail from './pages/fleet/TrailerDetail'
 import DriverDetail from './pages/fleet/DriverDetail'
+import CustomerProfile from './pages/fleet/customers/CustomerProfile'
 import FleetCost from './pages/fleet/FleetCost'
 import SettlementsImport from './pages/fleet/settlements/SettlementsImport'
 import FuelPrices from './pages/fleet/fuel-prices/FuelPrices'
@@ -84,6 +85,7 @@ const DebtSchedule = lazyWithReload(() => import('./pages/financial-controls/Deb
 // Lazy — the Loads importer statically pulls SheetJS (xlsx) to parse workbooks;
 // splitting it keeps that heavy lib out of the main bundle.
 const LoadsImport = lazyWithReload(() => import('./pages/fleet/loads/LoadsImport'))
+const CustomersImport = lazyWithReload(() => import('./pages/fleet/customers/CustomersImport'))
 // Lazy — Drivers list (its Upload modal statically pulls SheetJS) ships as its
 // own chunk.
 const DriversList = lazyWithReload(() => import('./pages/fleet/DriversList'))
@@ -226,6 +228,16 @@ export default function App() {
                   </ErrorBoundary>
                 </RequirePageAccess>
               } />
+              <Route path="fleet/customers/import" element={
+                <RequirePageAccess pageKey="fleet/customers/import">
+                  <ErrorBoundary label="Customers Import">
+                    <Suspense fallback={<div className="px-4 py-12 text-center"><div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500" /></div>}>
+                      <CustomersImport />
+                    </Suspense>
+                  </ErrorBoundary>
+                </RequirePageAccess>
+              } />
+              <Route path="fleet/customers/:id" element={<RequirePageAccess pageKey="fleet/customers"><CustomerProfile /></RequirePageAccess>} />
               <Route path="fleet/settlements/import" element={<RequirePageAccess pageKey="fleet/settlements/import"><SettlementsImport /></RequirePageAccess>} />
               <Route path="fleet/fuel-prices" element={<RequirePageAccess pageKey="fleet/fuel-prices"><FuelPrices /></RequirePageAccess>} />
               <Route path="fleet/profitability" element={<RequirePageAccess pageKey="fleet/profitability"><Profitability /></RequirePageAccess>} />

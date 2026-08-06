@@ -60,6 +60,9 @@ const PAGE_ICON = {
   trucks: Icons.truck, trailers: Icons.trailer, drivers: Icons.driver, teams: Icons.users,
   equipment_cost: Icons.cost, loads_import: Icons.truck, settlement_import: Icons.payment,
   combined_loads: Icons.merge,
+  // Customers import + broker profiles. Icon is keyed by the DB page_key; a few
+  // likely spellings are mapped so the sidebar link isn't iconless.
+  customers: Icons.vendors, customers_import: Icons.vendors, customer_import: Icons.vendors,
   dashboard: Icons.dashboard, vendor_master: Icons.vendors, invoice_inbox: Icons.invoices,
   transaction_feed: Icons.txns, monthly_report: Icons.report,
   lumpers: Icons.moon, shift_board: Icons.report, after_hours_requests: Icons.lifeline,
