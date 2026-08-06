@@ -147,6 +147,15 @@ export async function fetchBoardIdleMeta(driverIds) {
   if (error) throw error
   return new Map(Object.entries(data || {}))
 }
+// Same payload keyed by driver_id, derived from shift_id server-side — so the
+// board's initial load can fire it in parallel instead of waiting to read driver
+// ids out of the board's rows. Byte-identical to fetchBoardIdleMeta for the same
+// shift. The per-driver-id version above stays for callers that hold ids.
+export async function fetchBoardIdleMetaForShift(shiftId) {
+  const { data, error } = await supabase.rpc('after_hours_board_idle_meta_for_shift', { p_shift_id: shiftId ?? null })
+  if (error) throw error
+  return new Map(Object.entries(data || {}))
+}
 // Broker-risk meta per load, derived from shift_id server-side so it can fire in
 // parallel with the board (same pattern as the broker meta). Returns ONLY flagged
 // loads — an absent load_id means the broker is clean. Matched on MC number.

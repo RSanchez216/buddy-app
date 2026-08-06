@@ -135,7 +135,10 @@ export default function PriorityGroup({ group, rows, settings, shift, rowActions
                   ) : h === 'Equipment' ? (
                     <th key={h} title="Truck / Trailer" className={`${thCls} cursor-default`}>{h}</th>
                   ) : h === 'Idle' ? (
-                    <th key={h} title="Days since last delivery" className={`${thCls} !text-right cursor-default`}>{h}</th>
+                    // Reserve the width from first paint — it sits between Driver
+                    // and Equipment, so any late-arriving glyph must not widen it
+                    // and shift every column to its right.
+                    <th key={h} title="Days since last delivery" className={`${thCls} !text-right cursor-default min-w-[3.25rem]`}>{h}</th>
                   ) : (
                     <th key={h} className={thCls}>{h}</th>
                   )
@@ -622,7 +625,7 @@ function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isMan
       </td>
       {/* Idle — days since last delivery (from the board), plus a neutral note
           glyph when the driver has an idle reason on record (from idle meta). */}
-      <td className="px-3 py-2 align-top text-right whitespace-nowrap">
+      <td className="px-3 py-2 align-top text-right whitespace-nowrap min-w-[3.25rem]">
         <IdleCell days={r.days_since_delivery} idle={idle} threshold={settings?.idle_after_days} />
       </td>
       {/* Equipment — truck / trailer, display only */}

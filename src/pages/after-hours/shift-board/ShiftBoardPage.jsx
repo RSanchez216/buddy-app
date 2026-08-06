@@ -11,7 +11,7 @@ import TimesNeededGroup from './TimesNeededGroup'
 import RequestDetailPanel from './RequestDetailPanel'
 import {
   SHIFT_TYPES, GROUP_META, groupKeyFor, shiftName, LIFECYCLE, LIFECYCLE_RANK,
-  fetchSettings, fetchOpenShift, startShift, fetchShiftSummary, fetchWeekSummary, fetchBoard, fetchBoardTabs, fetchBoardBrokerMetaForShift, fetchBoardRiskMetaForShift, fetchBoardIdleMeta,
+  fetchSettings, fetchOpenShift, startShift, fetchShiftSummary, fetchWeekSummary, fetchBoard, fetchBoardTabs, fetchBoardBrokerMetaForShift, fetchBoardRiskMetaForShift, fetchBoardIdleMetaForShift,
   fetchCheckpointExceptions,
   upsertDriverCheck, logShiftActivity,
   fetchRowActions, updateShiftActivity, deleteShiftActivity, clearDriverCheck,
@@ -95,7 +95,7 @@ export default function ShiftBoardPage() {
     // Respect the browsed week so a shift transition doesn't yank the view back
     // to live. Live week → no dates (identical to before).
     const vw = viewWeekRef.current, live = vw.start === weekRange.start
-    const [bd, sm, ex, tb, ra, bm, rk, wk] = await Promise.all([
+    const [bd, sm, ex, tb, ra, bm, rk, im, wk] = await Promise.all([
       fetchBoard(sh?.id ?? null, live ? null : vw.start, live ? null : vw.end),
       sh ? fetchShiftSummary(sh.id) : Promise.resolve(null),
       // The queue also feeds the ACCESSORIAL column's "Detention likely"
@@ -103,13 +103,15 @@ export default function ShiftBoardPage() {
       (settingsRef.current?.track_checkpoints || settingsRef.current?.accessorials_enabled) ? fetchCheckpointExceptions() : Promise.resolve([]),
       fetchBoardTabs(sh?.id ?? null).catch(() => null),
       sh ? fetchRowActions(sh.id).catch(() => []) : Promise.resolve([]),
-      // Broker meta and broker-RISK meta ride the same batch, keyed by shift_id —
-      // both parallel with the board. On failure the blocks just don't render.
+      // Broker meta, RISK meta and IDLE meta all ride the same batch, each keyed by
+      // shift_id — all parallel with the board. On failure the block just doesn't
+      // render.
       fetchBoardBrokerMetaForShift(sh?.id ?? null).catch((e) => { console.error('broker meta failed', e); return new Map() }),
       fetchBoardRiskMetaForShift(sh?.id ?? null).catch((e) => { console.error('risk meta failed', e); return new Map() }),
+      fetchBoardIdleMetaForShift(sh?.id ?? null).catch((e) => { console.error('idle meta failed', e); return new Map() }),
       week ? fetchWeekSummary(weekRange.start, weekRange.end) : Promise.resolve(undefined),
     ])
-    setBoard(bd); setSummary(sm); setExceptions(ex); setBoardTabs(tb); setRowActions(ra); setBrokerByLoad(bm); setRiskByLoad(rk)
+    setBoard(bd); setSummary(sm); setExceptions(ex); setBoardTabs(tb); setRowActions(ra); setBrokerByLoad(bm); setRiskByLoad(rk); setIdleByDriver(im)
     if (week && wk !== undefined) setWeek(wk)
   }, [weekRange.start, weekRange.end])
 
@@ -145,18 +147,19 @@ export default function ShiftBoardPage() {
       ])
       setSettings(st || {}); setWeek(wk); setShift(sh)
       settingsRef.current = st || {} // so a refresh in the same tick sees track_checkpoints
-      const [bd, sm, ex, tb, ra, bm, rk] = await Promise.all([
+      const [bd, sm, ex, tb, ra, bm, rk, im] = await Promise.all([
         fetchBoard(sh?.id ?? null),
         sh ? fetchShiftSummary(sh.id) : Promise.resolve(null),
         (st?.track_checkpoints || st?.accessorials_enabled) ? fetchCheckpointExceptions() : Promise.resolve([]),
         fetchBoardTabs(sh?.id ?? null).catch(() => null),
         sh ? fetchRowActions(sh.id).catch(() => []) : Promise.resolve([]),
-        // Fires with the board (not after it), keyed by shift_id — the fix that
-        // removes the serial broker-meta tail and the marker pop-in.
+        // All keyed by shift_id so they fire WITH the board, not after it — the
+        // idle meta was the last serial tail (it took driver ids from the rows).
         fetchBoardBrokerMetaForShift(sh?.id ?? null).catch((e) => { console.error('broker meta failed', e); return new Map() }),
         fetchBoardRiskMetaForShift(sh?.id ?? null).catch((e) => { console.error('risk meta failed', e); return new Map() }),
+        fetchBoardIdleMetaForShift(sh?.id ?? null).catch((e) => { console.error('idle meta failed', e); return new Map() }),
       ])
-      setBoard(bd); setSummary(sm); setExceptions(ex); setBoardTabs(tb); setRowActions(ra); setBrokerByLoad(bm); setRiskByLoad(rk)
+      setBoard(bd); setSummary(sm); setExceptions(ex); setBoardTabs(tb); setRowActions(ra); setBrokerByLoad(bm); setRiskByLoad(rk); setIdleByDriver(im)
     } catch (e) {
       setError(true); toastRef.current.error("Couldn't load the shift board", e)
     } finally { setLoading(false) }
@@ -205,18 +208,10 @@ export default function ShiftBoardPage() {
   // read load ids out of its rows. An in-place checkpoint patch leaves it alone —
   // that path never re-runs the batch — and switching tabs reuses this same Map.
 
-  // Idle reason/note for every driver, in ONE call. Keyed on the driver-id SET so
-  // it fires once per board load (a checkpoint patch keeps the same drivers → no
-  // refetch), and switching tabs reuses the Map. The day count itself comes off
-  // the board, so only the reason glyph fills in when this lands — no row moves.
-  const driverIdsKey = useMemo(() => [...new Set(board.map(r => r.driver_id).filter(Boolean))].sort().join(','), [board])
-  useEffect(() => {
-    let stale = false
-    fetchBoardIdleMeta(driverIdsKey ? driverIdsKey.split(',') : [])
-      .then(m => { if (!stale) setIdleByDriver(m) })
-      .catch(() => { /* the reason glyph just doesn't render */ })
-    return () => { stale = true }
-  }, [driverIdsKey])
+  // Idle reason/note now rides the board's own load/refresh batch (keyed by
+  // shift_id), so it fires WITH the board instead of waiting to read driver ids
+  // out of its rows. A checkpoint patch never re-runs the batch, and switching
+  // tabs reuses this same Map.
 
   // Collapse the open row if the phase is switched off mid-session.
   useEffect(() => { if (!accessorialsOn) setOpenDriverId(null) }, [accessorialsOn])
