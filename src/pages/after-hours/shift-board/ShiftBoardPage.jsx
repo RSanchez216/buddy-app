@@ -15,7 +15,7 @@ import {
   fetchSettings, fetchOpenShift, startShift, fetchShiftSummary, fetchWeekSummary, fetchBoard, fetchBoardTabs, fetchBoardBrokerMetaForShift, fetchBoardRiskMetaForShift, fetchBoardIdleMetaForShift,
   fetchCheckpointExceptions,
   upsertDriverCheck, logShiftActivity,
-  fetchShiftNotes, addShiftNote,
+  fetchShiftNotes, addShiftNote, fetchBoardBrokerRisk,
   fetchRowActions, updateShiftActivity, deleteShiftActivity, clearDriverCheck,
   fetchEscalationRecipients, acknowledgeEscalation, fetchEscalationCopyText,
   thisWeekChicago, weekOfYmd, stepWeek, fmtWeekRange, todayChicago, fmtDayLabel, elapsedSince,
@@ -58,6 +58,7 @@ export default function ShiftBoardPage() {
   const [accByLoad, setAccByLoad] = useState(() => new Map()) // load_id → accessorial summary
   const [brokerByLoad, setBrokerByLoad] = useState(() => new Map()) // load_id → broker + rate-con meta
   const [riskByLoad, setRiskByLoad] = useState(() => new Map())     // load_id → broker-risk flags (flagged loads only)
+  const [brokerRiskByLoad, setBrokerRiskByLoad] = useState(() => new Map()) // load_id → v_load_broker_risk row
   const [idleByDriver, setIdleByDriver] = useState(() => new Map()) // driver_id → idle reason/note
   const [openDriverId, setOpenDriverId] = useState(null)      // ONE expanded accessorial row
   const [accTick, setAccTick] = useState(0)                   // re-reads the summary after a write
@@ -120,6 +121,16 @@ export default function ShiftBoardPage() {
     setBoard(bd); setSummary(sm); setExceptions(ex); setBoardTabs(tb); setRowActions(ra); setBrokerByLoad(bm); setRiskByLoad(rk); setIdleByDriver(im)
     setShiftNotes(nt)
     if (week && wk !== undefined) setWeek(wk)
+
+    // Broker risk for the expanded row's panel. Fired here, off the load ids the
+    // board just returned, rather than as another *_for_shift RPC: each of those
+    // re-runs after_hours_board internally (~2.7s) to gain parallelism, and this
+    // view is 7.8ms over 200 loads — a fifth copy of the board query would cost
+    // far more than the round trip it saves. A failure leaves the panel absent,
+    // never the board.
+    fetchBoardBrokerRisk((bd || []).map(r => r.load_id))
+      .then(setBrokerRiskByLoad)
+      .catch((e) => { console.error('broker risk failed', e); setBrokerRiskByLoad(new Map()) })
   }, [weekRange.start, weekRange.end])
 
   // Light refresh after a row action: just the affected state and counters — row
@@ -748,7 +759,7 @@ export default function ShiftBoardPage() {
               onOk={onOk} onAct={openAct} onAcknowledge={onAcknowledge} onCopyEscalation={copyEscalation} onOpenRequest={setOpenRequestId}
               shiftId={shift?.id ?? null} canAddTypes={isManager} onTimesSaved={applyCheckpointTimes}
               openDriverId={openDriverId} onToggleDriver={(id) => setOpenDriverId(cur => (cur === id ? null : id))}
-              accByLoad={accByLoad} exByLoad={exByLoad} brokerByLoad={brokerByLoad} riskByLoad={riskByLoad} idleByDriver={idleByDriver} toast={toast}
+              accByLoad={accByLoad} exByLoad={exByLoad} brokerByLoad={brokerByLoad} riskByLoad={riskByLoad} brokerRiskByLoad={brokerRiskByLoad} idleByDriver={idleByDriver} toast={toast}
               undoInfo={undoInfo} onUndo={undoLast} onRemoveActivity={removeActivityById}
               browsing={!isLiveWeek}
               onAccessorialChanged={async () => { setAccTick(t => t + 1); await refreshActions() }} />

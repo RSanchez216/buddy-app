@@ -164,6 +164,27 @@ export async function fetchBoardRiskMetaForShift(shiftId) {
   if (error) throw error
   return new Map(Object.entries(data || {}))
 }
+// Broker risk for the expanded row's panel — one batched call for the whole
+// board, keyed by load_id. Returns Map<load_id, row> where every flag is a real
+// boolean, never an absent key.
+//
+// This is a VIEW behind an RPC, not a jsonb payload, and that distinction is the
+// point: the older risk meta builds its object with jsonb_strip_nulls, so a
+// falsy-computed flag disappears from the payload entirely. Testing presence
+// against that shape mislabelled 1,204 loads once already. Read the booleans.
+//
+// Takes load ids rather than a shift id on purpose. Every *_for_shift meta RPC
+// re-runs after_hours_board internally (~2.7s) to fire in parallel; the view
+// itself measures 7.8ms over 200 loads, so a fifth copy of the board query would
+// cost far more than the round trip it saves.
+export async function fetchBoardBrokerRisk(loadIds) {
+  const ids = [...new Set((loadIds || []).filter(Boolean))]
+  if (ids.length === 0) return new Map()
+  const { data, error } = await supabase.rpc('after_hours_board_broker_risk', { p_load_ids: ids })
+  if (error) throw error
+  return new Map((data || []).map(r => [r.load_id, r]))
+}
+
 export async function fetchBoardBrokerMetaForShift(shiftId) {
   const { data, error } = await supabase.rpc('after_hours_board_broker_meta_for_shift', { p_shift_id: shiftId ?? null })
   if (error) throw error

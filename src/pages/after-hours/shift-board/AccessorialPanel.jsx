@@ -3,7 +3,8 @@ import { createPortal } from 'react-dom'
 import { S } from '../../../lib/styles'
 import { fmtClock, fmtDuration, money } from './shiftBoardData'
 import CheckpointFields from './CheckpointFields'
-import CreditEvent from './BrokerCredit'
+import BrokerRiskPanel from './BrokerRiskPanel'
+import { hasAnyBlock } from './brokerRiskCopy'
 import {
   DOC_TYPES, RESPONSES, typeLabel, docTypeLabel, statusMeta,
   computeAmount, minutesBetween, fetchLoadAccessorials, fetchAccessorialDocs,
@@ -44,7 +45,10 @@ const byNewest = (arr) => [...(arr || [])].sort((a, b) =>
 export default function AccessorialPanel({
   row, exception, meId, toast, onChanged, onTimesSaved, shiftId,
   accessorialsOn = true, trackCheckpoints = true, canAddTypes,
-  activities, onRemoveActivity, risk,
+  // brokerRisk is the v_load_broker_risk row. The older jsonb risk meta is NOT
+  // taken here any more — it still drives the collapsed row's glyphs upstream,
+  // but this panel reads only the view's typed booleans.
+  activities, onRemoveActivity, brokerRisk,
 }) {
   const loadId = row.load_id || null
 
@@ -438,7 +442,13 @@ export default function AccessorialPanel({
           the ⑤ → risk → ⑥ order they're rendered. */}
       {(() => {
         const showPanel5 = accessorialsOn && !requestsError && !requestsLoading && requests.length > 0
-        const showRisk = !!(risk && (risk.id_theft || risk.nonpayment || risk.double_brokering))
+        // Read the booleans off the view — never a presence test. `rts_tone`
+        // carries the RTS gating already ('hidden' = this carrier doesn't factor
+        // with RTS), so it is trusted rather than re-derived from carrier ids.
+        // Read the booleans off the view — never a presence test. hasAnyBlock is
+        // the same predicate the panel uses, so the grid template and the panel
+        // can't disagree about whether the column exists.
+        const showRisk = hasAnyBlock(brokerRisk)
         const activityBlock = <ActivityLog activities={activities} onRemove={onRemoveActivity} />
         const panel5Block = (
           <Column n={5} title="Accessorial requests" meta={`${onThisLoad.length} on this load`}>
@@ -476,7 +486,7 @@ export default function AccessorialPanel({
             {(showPanel5 || showRisk) ? (
               <div className={`grid grid-cols-1 ${gridCols} gap-3 items-start`}>
                 {showPanel5 && panel5Block}
-                {showRisk && <BrokerRisk risk={risk} />}
+                {showRisk && <BrokerRiskPanel risk={brokerRisk} carrierName={brokerRisk.carrier_name} />}
                 {activityBlock}
               </div>
             ) : activityBlock}
@@ -939,53 +949,15 @@ function BrokerRulesPanel({ rules, loading }) {
 // Delayed undo — this driver's logged shift activities, each removable with a
 // confirm (the immediate 10s Undo lives on the collapsed row).
 const ACTIVITY_LABELS = { load_booked: 'Booked', pod_collected: 'POD collected', bol_collected: 'BOL collected', note: 'Note', escalated: 'Escalated' }
-// Broker risk — an ADVISORY block (unnumbered; it carries a shield, not a step
-// number). Violet chrome because it's a caution, not an error. The message is
-// VERIFY, never avoid: an ID-theft flag means the broker is being IMPERSONATED —
-// the company (TQL, FitzMark, Trinity…) is legitimate and MANAS works with them
-// daily. Nothing here may read as "bad broker" / "blacklisted" / "do not use".
-function BrokerRisk({ risk }) {
-  if (!risk) return null
-  const footer = [risk.broker, risk.mc_number ? `MC ${risk.mc_number}` : null, risk.source].filter(Boolean).join(' · ')
-  return (
-    <div className="rounded-xl border border-violet-300 dark:border-violet-500/40 bg-white dark:bg-white/[0.02] p-3.5 self-start">
-      <div className="flex items-center gap-2 mb-3">
-        <svg aria-hidden viewBox="0 0 20 20" className="w-4 h-4 shrink-0 text-violet-600 dark:text-violet-400 fill-current"><path d="M10 1l7 3v5c0 4.4-3 8.3-7 9.4C6 17.3 3 13.4 3 9V4l7-3z" /></svg>
-        <h4 className="text-xs font-semibold text-violet-700 dark:text-violet-300 uppercase tracking-wide">Broker risk</h4>
-      </div>
-      <div className="space-y-2">
-        {/* The credit event goes FIRST. The standing flags describe what a broker
-            is; a credit event is what's true right now between MANAS and Apex,
-            and it's the one that changes what you do tonight. */}
-        <CreditEvent credit={risk.credit} />
-        {risk.id_theft && (
-          <div className="rounded-lg border border-violet-200 dark:border-violet-500/25 bg-violet-50 dark:bg-violet-500/10 p-2.5 text-[11px] leading-snug">
-            <p className="font-semibold text-violet-800 dark:text-violet-300">Identity theft reported</p>
-            <p className="mt-0.5 text-gray-600 dark:text-slate-300">Someone has impersonated this broker. The company itself is legitimate — verify you are dealing with the real one.</p>
-            <ul className="mt-1 space-y-0.5 text-gray-600 dark:text-slate-300">
-              <li>· Confirm the rep works there</li>
-              <li>· Confirm the load # is in their system</li>
-              <li>· Do not accept a changed remit-to</li>
-            </ul>
-          </div>
-        )}
-        {risk.nonpayment && (
-          <div className="rounded-lg border border-amber-200 dark:border-amber-500/25 bg-amber-50 dark:bg-amber-500/10 p-2.5 text-[11px] leading-snug">
-            <p className="font-semibold text-amber-800 dark:text-amber-300">Nonpayment history</p>
-            <p className="mt-0.5 text-gray-600 dark:text-slate-300">Reported for slow or non-payment. Get the POD in on time — late paperwork is the first thing disputed.</p>
-          </div>
-        )}
-        {risk.double_brokering && (
-          <div className="rounded-lg border border-rose-200 dark:border-rose-500/25 bg-rose-50 dark:bg-rose-500/10 p-2.5 text-[11px] leading-snug">
-            <p className="font-semibold text-rose-800 dark:text-rose-300">Double brokering reported</p>
-            <p className="mt-0.5 text-gray-600 dark:text-slate-300">Confirm this broker actually holds the load before dispatching.</p>
-          </div>
-        )}
-      </div>
-      {footer && <p className="mt-3 pt-2 border-t border-gray-100 dark:border-white/5 text-[10px] text-gray-400 dark:text-slate-500 break-words">{footer}</p>}
-    </div>
-  )
-}
+// The old BrokerRisk block lived here. It has been replaced by BrokerRiskPanel,
+// which reads v_load_broker_risk — typed booleans instead of a jsonb payload
+// whose falsy keys went missing — and adds the RTS rating and advance-fee
+// blocks. Its identity-theft copy survives in the risk-list block there: the
+// message is still VERIFY, never avoid, because an ID-theft flag means the
+// broker was IMPERSONATED and the company itself is one MANAS hauls for daily.
+//
+// The collapsed row's glyphs still read the older `risk` meta; they were not in
+// this brief's scope and are untouched.
 
 const ACTIVITY_CAP = 8 // beyond this the list collapses behind a disclosure
 function ActivityLog({ activities, onRemove }) {
