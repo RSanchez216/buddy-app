@@ -143,6 +143,12 @@ export const NONPAYMENT_BODY = 'Reported for slow or non-payment. Get the POD in
 export const RISK_LIST_TITLE = 'On the risk list'
 export const RISK_LIST_BODY = 'This broker is flagged, without a recorded reason. Confirm the contact against the rate confirmation before you dispatch.'
 
+// Billing requirements — paperwork conditions this broker attaches to getting
+// paid. Slate, not a warning colour: nothing is wrong with the broker, there is
+// just a condition to meet.
+export const BILLING_TITLE = 'Billing requirements'
+export const BILLING_BODY = 'This broker has paperwork conditions. Check the requirement before you invoice.'
+
 // '{broker} · MC {mc} · {which list}' — small italic grey under the flag blocks.
 // Named lists rather than "Accounting" alone so the associate knows which record
 // to go and read.
@@ -151,6 +157,7 @@ export function riskSourceLine(v, brokerName) {
   const lists = []
   if (v.risk_identity === true) lists.push('identity list')
   if (v.risk_nonpayment === true) lists.push('payment list')
+  if (v.risk_billing === true) lists.push('billing requirements')
   if (v.risk_unclassified === true) lists.push('risk list')
   if (!lists.length) return null
   return [brokerName, v.mc_number ? `MC ${v.mc_number}` : null, lists.join(' + ')]
@@ -159,7 +166,8 @@ export function riskSourceLine(v, brokerName) {
 
 // Does this row render any of the three flag blocks?
 export const hasFlagBlock = (v) =>
-  v?.risk_identity === true || v?.risk_nonpayment === true || v?.risk_unclassified === true
+  v?.risk_identity === true || v?.risk_nonpayment === true ||
+  v?.risk_billing === true || v?.risk_unclassified === true
 
 // Always shown when at least one block rendered. Nothing above may read as a
 // guarantee — recourse applies at every grade, an A included.
@@ -251,6 +259,9 @@ export function riskWarningLines(v, load) {
     // 6–7.
     if (v.risk_nonpayment === true) {
       out.push('! Nonpayment history. Get the POD in on time — late paperwork is the first thing disputed.')
+    }
+    if (v.risk_billing === true) {
+      out.push('$ Billing requirements on this broker. Check the paperwork condition before you invoice.')
     }
     if (v.risk_unclassified === true) {
       out.push('! On the risk list.')

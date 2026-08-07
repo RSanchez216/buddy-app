@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { S } from '../../../lib/styles'
-import { fetchBrokerProfile, fetchBrokerDocuments, fetchBrokerCreditHistory } from './customersApply'
+import { fetchBrokerProfile, fetchBrokerDocuments } from './customersApply'
+import BrokerFlagsPanel from './BrokerFlagsPanel'
 import CreditEvent from '../../after-hours/shift-board/BrokerCredit'
 import { fmtEventDate, isNoCredit, daysSince } from '../../after-hours/shift-board/brokerCreditData'
 
@@ -20,7 +21,6 @@ export default function CustomerProfile() {
   const [params] = useSearchParams()
   const [profile, setProfile] = useState(null)
   const [docs, setDocs] = useState([])
-  const [credit, setCredit] = useState([])   // full history, lifted events included
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
 
@@ -29,10 +29,8 @@ export default function CustomerProfile() {
     try {
       const [p, d] = await Promise.all([fetchBrokerProfile(id), fetchBrokerDocuments(id).catch(() => [])])
       setProfile(p); setDocs(d)
-      // MC comes off the profile, so the history fetch has to wait on it. Credit
-      // events match on MC only — the credit list and the customer record often
-      // spell the company differently.
-      setCredit(p?.mc_number ? await fetchBrokerCreditHistory(p.mc_number) : [])
+      // Flags and credit events are fetched by BrokerFlagsPanel off the MC, so
+      // they no longer wait on this call to finish.
     } catch { setError(true) }
     finally { setLoading(false) }
   }, [id])
@@ -98,9 +96,12 @@ export default function CustomerProfile() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
         {/* ── Identity and money ── */}
         <div className="space-y-4 min-w-0">
-          {/* Credit sits above the standing flags — it's the live one. */}
-          <CreditHistory events={credit} />
-          {flagged && <RiskBlock risk={risk} />}
+          {/* Broker flags — active first, history underneath, credit stops and
+              manual flags merged into one list. This REPLACES the old read-only
+              CreditHistory and RiskBlock: both rendered the same facts from the
+              same rows without any way to add or resolve one, which is the whole
+              point of this panel. */}
+          <BrokerFlagsPanel mcNumber={profile?.mc_number} brokerName={profile?.name} />
 
           <Card>
             <Eyebrow>Contact</Eyebrow>

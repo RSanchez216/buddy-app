@@ -2,7 +2,7 @@ import {
   ratingCopy, creditTitle, creditBody, feeTitle, feeBody, feeMeta,
   IDENTITY_TITLE, IDENTITY_BODY, IDENTITY_CHECKS,
   NONPAYMENT_TITLE, NONPAYMENT_BODY,
-  RISK_LIST_TITLE, RISK_LIST_BODY,
+  RISK_LIST_TITLE, RISK_LIST_BODY, BILLING_TITLE, BILLING_BODY,
   PANEL_FOOTER, hasAnyBlock, hasFlagBlock, riskSourceLine,
 } from './brokerRiskCopy'
 import { PANEL_HEADING } from './panelChrome'
@@ -74,6 +74,12 @@ const CoinGlyph = (p) => (
 const StopGlyph = (p) => (
   <svg aria-hidden viewBox="0 0 20 20" className={G} {...p}>
     <rect x="3" y="3" width="14" height="14" rx="3" />
+  </svg>
+)
+// A document — a paperwork condition, not an alert.
+const DocGlyph = (p) => (
+  <svg aria-hidden viewBox="0 0 20 20" className={G} {...p}>
+    <path fillRule="evenodd" d="M5 2h6l4 4v12H5V2zm6 1.5V7h3.5L11 3.5zM7 10h6v1.5H7V10zm0 3h6v1.5H7V13z" clipRule="evenodd" />
   </svg>
 )
 const DollarGlyph = (p) => (
@@ -155,6 +161,13 @@ export default function BrokerRiskPanel({ risk, carrierName, brokerName }) {
         {risk.risk_nonpayment === true && (
           <Block tone="amber" chip="APEX" glyph={<CoinGlyph />}
             title={NONPAYMENT_TITLE} body={NONPAYMENT_BODY} />
+        )}
+
+        {/* Billing — a condition to meet, not a warning about the broker, so
+            slate and an ACCOUNTING chip rather than a risk colour. */}
+        {risk.risk_billing === true && (
+          <Block tone="slate" chip="ACCOUNTING" glyph={<DocGlyph />}
+            title={BILLING_TITLE} body={BILLING_BODY} />
         )}
 
         {risk.risk_unclassified === true && (
