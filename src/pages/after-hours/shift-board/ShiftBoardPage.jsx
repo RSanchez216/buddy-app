@@ -91,6 +91,29 @@ export default function ShiftBoardPage() {
   const settingsRef = useRef(settings); settingsRef.current = settings
   const shiftRef = useRef(shift); shiftRef.current = shift
 
+  // Board-DERIVED fetches: the ones keyed by the load ids the board returned
+  // rather than by shift_id. Extracted so load() and refresh() share one
+  // definition instead of each keeping their own copy.
+  //
+  // THIS IS WHY THE PANEL NEVER RENDERED. The broker-risk fetch lived inline in
+  // refresh() only, so a fresh page load left brokerRiskByLoad empty and every
+  // expanded row got null — the component was mounted and correct, and simply
+  // never received data. The shift log had the identical bug for the identical
+  // reason a release earlier. load() and refresh() are two parallel fetch paths
+  // and keeping them in sync by hand has now failed twice.
+  //
+  // Add board-derived fetches HERE, not to either caller.
+  const hydrateFromBoard = useCallback((bd) => {
+    // Broker risk for the expanded row's panel. Batched off the ids the board
+    // already returned — never one call per row, and never another *_for_shift
+    // RPC: each of those re-runs after_hours_board internally (~2.7s) to gain
+    // parallelism, while this view is 7.8ms over 200 loads. A failure leaves the
+    // panel absent, never the board.
+    fetchBoardBrokerRisk((bd || []).map(r => r.load_id))
+      .then(setBrokerRiskByLoad)
+      .catch((e) => { console.error('broker risk failed', e); setBrokerRiskByLoad(new Map()) })
+  }, [])
+
   // One coordinated refresh of everything that moves after a shift transition or
   // a board action: board, its tabs, the shift summary, the checkpoint queue and
   // (only when asked) the week strip. Deliberately does NOT refetch settings — a
@@ -123,15 +146,7 @@ export default function ShiftBoardPage() {
     setShiftNotes(nt)
     if (week && wk !== undefined) setWeek(wk)
 
-    // Broker risk for the expanded row's panel. Fired here, off the load ids the
-    // board just returned, rather than as another *_for_shift RPC: each of those
-    // re-runs after_hours_board internally (~2.7s) to gain parallelism, and this
-    // view is 7.8ms over 200 loads — a fifth copy of the board query would cost
-    // far more than the round trip it saves. A failure leaves the panel absent,
-    // never the board.
-    fetchBoardBrokerRisk((bd || []).map(r => r.load_id))
-      .then(setBrokerRiskByLoad)
-      .catch((e) => { console.error('broker risk failed', e); setBrokerRiskByLoad(new Map()) })
+    hydrateFromBoard(bd)
 
     // Refreshed here too: this runs after a shift starts or ends, which is
     // exactly when the set of people on shift changes — including someone
@@ -139,7 +154,10 @@ export default function ShiftBoardPage() {
     fetchOpenShifts()
       .then(setOpenShifts)
       .catch((e) => { console.error('open shifts failed', e) })
-  }, [weekRange.start, weekRange.end])
+    // hydrateFromBoard has a stable identity ([] deps), so listing it here can't
+    // churn this callback — but leaving it out is how the two paths drifted apart
+    // in the first place.
+  }, [weekRange.start, weekRange.end, hydrateFromBoard])
 
   // Light refresh after a row action: just the affected state and counters — row
   // actions, tab progress and the shift summary — never the 128-row board. One
@@ -204,10 +222,13 @@ export default function ShiftBoardPage() {
       ])
       setBoard(bd); setSummary(sm); setExceptions(ex); setBoardTabs(tb); setRowActions(ra); setBrokerByLoad(bm); setRiskByLoad(rk); setIdleByDriver(im)
       setShiftNotes(nt)
+      // THE MISSING CALL. Without this the broker risk panel had no data on a
+      // fresh page load — which is every page load — so it never rendered at all.
+      hydrateFromBoard(bd)
     } catch (e) {
       setError(true); toastRef.current.error("Couldn't load the shift board", e)
     } finally { setLoading(false) }
-  }, [me?.id, weekRange.start, weekRange.end])
+  }, [me?.id, weekRange.start, weekRange.end, hydrateFromBoard])
 
   useEffect(() => { load() }, [load])
 
