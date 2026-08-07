@@ -165,6 +165,118 @@ export const hasFlagBlock = (v) =>
 // guarantee — recourse applies at every grade, an A included.
 export const PANEL_FOOTER = "Factored with recourse — the balance comes back to us if the broker doesn't pay."
 
+// ── Clipboard message ───────────────────────────────────────────────────────
+// Plain text for Telegram: no markdown, no tables, no bold. Telegram renders
+// pasted markdown as literal asterisks, so anything decorative arrives as
+// punctuation the reader has to look past.
+//
+// Built entirely from data already on the board row and its v_load_broker_risk
+// entry — the same data driving the glyphs. No per-row query.
+
+// Money WITH cents here, unlike the panel. The panel's "$15" is a label; this is
+// a figure being pasted into a conversation about money, where $15 and $15.00
+// read differently.
+const usd2 = (n) => (n == null ? null : `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
+
+// 'Aug 7' from a date-only value, from the parts so it can't shift through UTC.
+function shortDay(v) {
+  const m = String(v || '').match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (!m) return null
+  return new Date(+m[1], +m[2] - 1, +m[3]).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+// 'Wasco, CA' from 'Wasco, CA, US (PST) 08-07-2026 14:00 14:00'. City and state
+// only — everything from the country onward is cut.
+//
+// Some source rows carry a state with no city. Emitting ', CA' for those would
+// look like a bug in the message, so whichever half exists is used alone.
+export function stopShort(city, state) {
+  const c = (city || '').trim(), s = (state || '').trim()
+  if (c && s) return `${c}, ${s}`
+  return c || s || ''
+}
+
+// The fee, formatted for the message rather than for a title.
+function feeAmount(v) {
+  const flat = usd2(v?.fee_flat)
+  const pct = v?.fee_pct == null ? null : `${Number(v.fee_pct)}%`
+  switch (v?.fee_rule) {
+    case 'flat': return flat
+    case 'percent': return pct
+    case 'greater_of': return flat && pct ? `${flat} or ${pct}` : (flat || pct)
+    case 'sum': return flat && pct ? `${flat} + ${pct}` : (flat || pct)
+    default: return v?.fee_raw || null
+  }
+}
+
+// Warning lines, in the panel's own order: rating, credit, identity,
+// nonpayment, unclassified, fee.
+//
+// 'good' and 'neutral' ratings produce NOTHING. A clear grade is not a warning,
+// and padding the message with reassurance buries the lines that matter — the
+// whole point of pasting this is that someone reads the flags.
+export function riskWarningLines(v) {
+  if (!v) return []
+  const out = []
+
+  if (v.rts_action === 'call_factor') {
+    out.push(`! RTS rating ${v.rts_rating} — slow pay. Call RTS to approve the rate before booking.`)
+  } else if (v.rts_action === 'do_not_book') {
+    out.push(`! RTS rating ${v.rts_rating} — do not book. Escalate to Accounting.`)
+  }
+
+  if (v.has_credit_event === true) {
+    const when = fmtDate(v.credit_active_from)
+    const head = `! Apex pulled credit to ${usd(v.credit_new_limit) ?? '$0'}${when ? ` on ${when}` : ''}.`
+    out.push(v.credit_is_binding === true
+      ? `${head} Do not book — Apex will not fund this load.`
+      : `${head} Advisory — Apex does not fund ${v.carrier_name || 'this carrier'}.`)
+  }
+
+  // "Impersonated", and the company called legitimate — never "bad broker".
+  if (v.risk_identity === true) {
+    out.push('! Identity theft reported. The company is legitimate — confirm the rep works there and that the load # is in their system. Do not accept a changed remit-to.')
+  }
+  if (v.risk_nonpayment === true) {
+    out.push('! Nonpayment history. Get the POD in on time — late paperwork is the first thing disputed.')
+  }
+  if (v.risk_unclassified === true) {
+    out.push('! On the risk list.')
+  }
+
+  if (v.has_advance_fee === true) {
+    const amt = feeAmount(v)
+    out.push(`$ Advance fee: ${amt ?? '—'}. Pay the lumper first, then claim reimbursement.`)
+  }
+
+  return out
+}
+
+// The whole message. `row` is the board row, `v` its v_load_broker_risk entry
+// (may be absent — an unflagged broker still copies cleanly).
+export function buildBrokerCopyText({ row, risk, brokerName }) {
+  const v = risk || null
+  const name = brokerName || v?.mc_number ? (brokerName || 'Broker') : 'Broker'
+  const head = [name, v?.mc_number ? `MC ${v.mc_number}` : null].filter(Boolean).join(' · ')
+
+  const carrier = v?.carrier_name
+  const line2 = [`Load ${row?.load_number ?? '—'}`, carrier].filter(Boolean).join(' · ')
+
+  const from = stopShort(row?.origin_city, row?.origin_state)
+  const to = stopShort(row?.destination_city, row?.destination_state)
+  const lane = from || to ? `${from || '—'} → ${to || '—'}` : null
+  const pu = shortDay(row?.pickup_date), del = shortDay(row?.delivery_date)
+  const when = pu || del ? `${pu || '—'} → ${del || '—'}` : null
+  const line3 = [lane, when].filter(Boolean).join(' · ')
+
+  const warnings = riskWarningLines(v)
+  // Never an empty block: someone pasting a clean broker has to be able to tell
+  // "no flags" apart from "the copy silently failed".
+  const body = warnings.length ? warnings.join('\n') : 'No broker flags on record.'
+
+  return [head, line2, line3].filter(Boolean).join('\n') + `\n\n${body}`
+}
+
 // Does this row produce any block at all? on_risk_list is kept in the test
 // rather than replaced by the three derived flags: it is the column that says
 // "this broker is on the list at all", and a flag string nobody anticipated must

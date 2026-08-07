@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { fmtClock, fmtChicagoTs, fmtDuration, todayChicago, lifecycleLabel } from './shiftBoardData'
+import { fmtClock, fmtChicagoTs, fmtDuration, todayChicago, lifecycleLabel, copyText } from './shiftBoardData'
+import { buildBrokerCopyText } from './brokerRiskCopy'
 import { statusBadge } from '../requests/requestsData'
 import AccessorialPanel from './AccessorialPanel'
 import { PauseGlyph } from './BrokerCredit'
@@ -574,6 +575,44 @@ function IdlePopover({ idle, rect, onClose }) {
   )
 }
 
+// Copy the broker, the load and every flag as plain text for Telegram.
+//
+// ALWAYS VISIBLE, never hover-only. The row's other affordances use
+// `opacity-0 group-hover/row:opacity-100`, which is unreachable on a touch
+// device — and the person who needs this most is the associate on a phone at
+// 2am. It sits at low opacity instead and comes to full on hover or focus, so
+// it reads as quiet on a desktop without ever being untappable.
+//
+// stopPropagation because the whole row is the expand toggle: copying a broker
+// must not also open the panel underneath it.
+function CopyBrokerButton({ row, risk, brokerName }) {
+  const [done, setDone] = useState(false)
+  const copy = async (e) => {
+    e.stopPropagation()
+    e.preventDefault()
+    try {
+      await copyText(buildBrokerCopyText({ row, risk, brokerName }))
+      setDone(true)
+      setTimeout(() => setDone(false), 1400)
+    } catch { /* clipboard blocked — stay silent, never alert() */ }
+  }
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      title={`Copy ${brokerName} + load ${row?.load_number ?? ''} + flags`}
+      aria-label={`Copy broker and load details for ${brokerName}`}
+      className="shrink-0 inline-flex items-center justify-center min-w-[22px] h-[18px] px-1 rounded
+                 text-[10px] leading-none text-gray-400 dark:text-slate-500
+                 opacity-60 hover:opacity-100 focus:opacity-100
+                 hover:bg-gray-100 dark:hover:bg-white/10
+                 focus:outline-none focus:ring-1 focus:ring-orange-500/50 transition-opacity"
+    >
+      {done ? <span className="text-emerald-600 dark:text-emerald-400">✓</span> : '⧉'}
+    </button>
+  )
+}
+
 function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isManager, highlighted, onOk, onAct, onAcknowledge, onCopyEscalation, onOpenRequest, colSpan, panelOpen, onToggleDriver, acc, exception, broker, idle, risk, brokerRisk, undo, onUndo, onRemoveActivity, toast, onAccessorialChanged, onTimesSaved, shiftId, canAddTypes, browsing }) {
   const muted = r.in_scope === false
   const panelOn = !!settings?.accessorials_enabled || !!settings?.track_checkpoints
@@ -727,6 +766,10 @@ function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isMan
           <div className="mt-0.5 flex items-center gap-1">
             <span className="shrink-0 w-20" aria-hidden />
             <span className="text-[10px] text-gray-400 dark:text-slate-500 truncate max-w-[6rem]" title={broker.broker}>{broker.broker}</span>
+            {/* Broker + load + every flag, as plain text for Telegram. The glyphs
+                above say THAT something is wrong; this is the only way to share
+                what. Built from data already on the row — no per-row query. */}
+            <CopyBrokerButton row={r} risk={brokerRisk} brokerName={broker.broker} />
           </div>
         )}
       </td>
