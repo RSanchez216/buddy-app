@@ -209,42 +209,70 @@ function feeAmount(v) {
   }
 }
 
-// Warning lines, in the panel's own order: rating, credit, identity,
-// nonpayment, unclassified, fee.
+// Alert lines: what STOPS you, then what is DUE, then what it COSTS.
 //
-// 'good' and 'neutral' ratings produce NOTHING. A clear grade is not a warning,
-// and padding the message with reassurance buries the lines that matter — the
-// whole point of pasting this is that someone reads the flags.
-export function riskWarningLines(v) {
-  if (!v) return []
+// Three of the six row glyphs come from the LOAD, not the broker — the two POD
+// deadline markers and the money-at-risk `$`. They are read from the same broker
+// meta object the gutter renders from (`deadline_severity`, `money_at_risk`,
+// `penalty_max_usd`); nothing here recomputes a threshold or an amount, because
+// a glyph and a line that disagree are worse than no line at all.
+//
+// 'good' and 'neutral' ratings produce NOTHING. A clear grade is not an alert,
+// and padding the message with reassurance buries what someone is being asked
+// to act on.
+export function riskWarningLines(v, load) {
   const out = []
 
-  if (v.rts_action === 'call_factor') {
-    out.push(`! RTS rating ${v.rts_rating} — slow pay. Call RTS to approve the rate before booking.`)
-  } else if (v.rts_action === 'do_not_book') {
-    out.push(`! RTS rating ${v.rts_rating} — do not book. Escalate to Accounting.`)
+  if (v) {
+    // 1–2. Credit stop first: it is the only line that can stop the load.
+    if (v.has_credit_event === true) {
+      const when = fmtDate(v.credit_active_from)
+      const head = `! Apex pulled credit to ${usd(v.credit_new_limit) ?? '$0'}${when ? ` on ${when}` : ''}.`
+      out.push(v.credit_is_binding === true
+        ? `${head} Do not book — Apex will not fund this load.`
+        : `${head} Advisory — Apex does not fund ${v.carrier_name || 'this carrier'}.`)
+    }
+
+    // 3–4. Rating.
+    if (v.rts_action === 'call_factor') {
+      out.push(`! RTS rating ${v.rts_rating} — slow pay. Call RTS to approve the rate before booking.`)
+    } else if (v.rts_action === 'do_not_book') {
+      out.push(`! RTS rating ${v.rts_rating} — do not book. Escalate to Accounting.`)
+    }
+
+    // 5. Identity. "Impersonated", company called legitimate — never "bad
+    // broker". The verify number rides on this line because this is the line
+    // that asks someone to make a call.
+    if (v.risk_identity === true) {
+      const phone = (v.risk_verify_phone || '').trim()
+      out.push('! Identity theft reported. The company is legitimate — confirm the rep works there and that the load # is in their system. Do not accept a changed remit-to.'
+        + (phone ? ` Verify on ${phone}.` : ''))
+    }
+    // 6–7.
+    if (v.risk_nonpayment === true) {
+      out.push('! Nonpayment history. Get the POD in on time — late paperwork is the first thing disputed.')
+    }
+    if (v.risk_unclassified === true) {
+      out.push('! On the risk list.')
+    }
   }
 
-  if (v.has_credit_event === true) {
-    const when = fmtDate(v.credit_active_from)
-    const head = `! Apex pulled credit to ${usd(v.credit_new_limit) ?? '$0'}${when ? ` on ${when}` : ''}.`
-    out.push(v.credit_is_binding === true
-      ? `${head} Do not book — Apex will not fund this load.`
-      : `${head} Advisory — Apex does not fund ${v.carrier_name || 'this carrier'}.`)
+  // 8–9. POD deadlines — LOAD alerts. Only 'urgent' and 'soon' draw a glyph;
+  // 'relaxed' and 'unknown' draw nothing, so they say nothing here either.
+  if (load?.deadline_severity === 'urgent') out.push('! POD due within 24h of delivery.')
+  else if (load?.deadline_severity === 'soon') out.push('! POD due within 48h of delivery.')
+
+  // 10. Money at risk — LOAD alert. The amount is whatever the glyph's tooltip
+  // shows, including its fallback when no figure is stated on the rate con.
+  if (load?.money_at_risk) {
+    const amt = load.penalty_max_usd
+    out.push(amt != null
+      ? `$ Up to $${Number(amt).toLocaleString('en-US')} at risk on this load.`
+      : '$ Penalty stated on this rate con.')
   }
 
-  // "Impersonated", and the company called legitimate — never "bad broker".
-  if (v.risk_identity === true) {
-    out.push('! Identity theft reported. The company is legitimate — confirm the rep works there and that the load # is in their system. Do not accept a changed remit-to.')
-  }
-  if (v.risk_nonpayment === true) {
-    out.push('! Nonpayment history. Get the POD in on time — late paperwork is the first thing disputed.')
-  }
-  if (v.risk_unclassified === true) {
-    out.push('! On the risk list.')
-  }
-
-  if (v.has_advance_fee === true) {
+  // 11. Advance fee.
+  if (v?.has_advance_fee === true) {
     const amt = feeAmount(v)
     out.push(`$ Advance fee: ${amt ?? '—'}. Pay the lumper first, then claim reimbursement.`)
   }
@@ -252,15 +280,23 @@ export function riskWarningLines(v) {
   return out
 }
 
-// The whole message. `row` is the board row, `v` its v_load_broker_risk entry
-// (may be absent — an unflagged broker still copies cleanly).
-export function buildBrokerCopyText({ row, risk, brokerName }) {
+// The whole message.
+//
+// DRIVER FIRST. This goes to the dispatcher who owns the load, and a dispatcher
+// navigates by driver — the broker name is how the problem is described, not how
+// the load is found.
+//
+// `row` is the board row, `risk` its v_load_broker_risk entry, `load` the broker
+// meta that drives the row's gutter glyphs. Any of them may be absent.
+export function buildBrokerCopyText({ row, risk, brokerName, load }) {
   const v = risk || null
-  const name = brokerName || v?.mc_number ? (brokerName || 'Broker') : 'Broker'
-  const head = [name, v?.mc_number ? `MC ${v.mc_number}` : null].filter(Boolean).join(' · ')
 
-  const carrier = v?.carrier_name
-  const line2 = [`Load ${row?.load_number ?? '—'}`, carrier].filter(Boolean).join(' · ')
+  const line1 = [row?.driver_name, row?.load_number].filter(Boolean).join(' · ') || 'Load —'
+  const line2 = [
+    brokerName || null,
+    v?.mc_number ? `MC ${v.mc_number}` : null,
+    v?.carrier_name || null,
+  ].filter(Boolean).join(' · ')
 
   const from = stopShort(row?.origin_city, row?.origin_state)
   const to = stopShort(row?.destination_city, row?.destination_state)
@@ -269,12 +305,12 @@ export function buildBrokerCopyText({ row, risk, brokerName }) {
   const when = pu || del ? `${pu || '—'} → ${del || '—'}` : null
   const line3 = [lane, when].filter(Boolean).join(' · ')
 
-  const warnings = riskWarningLines(v)
-  // Never an empty block: someone pasting a clean broker has to be able to tell
-  // "no flags" apart from "the copy silently failed".
-  const body = warnings.length ? warnings.join('\n') : 'No broker flags on record.'
+  const alerts = riskWarningLines(v, load)
+  // "No broker flags on record" was wrong once load alerts existed: a clean
+  // broker with a POD deadline would have printed it and hidden a real alert.
+  const body = alerts.length ? alerts.join('\n') : 'No alerts on this load.'
 
-  return [head, line2, line3].filter(Boolean).join('\n') + `\n\n${body}`
+  return [line1, line2, line3].filter(Boolean).join('\n') + `\n\n${body}`
 }
 
 // Does this row produce any block at all? on_risk_list is kept in the test

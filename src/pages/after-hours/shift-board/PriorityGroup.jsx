@@ -66,20 +66,15 @@ function moneyTitle(b) {
     : 'Penalty stated on this rate con'
 }
 
-// Tooltip for the collapsed-row risk shield, by flag combination.
+// riskTitle lived here: one tooltip for one shield, switching its wording by
+// flag combination. Identity and nonpayment now have their OWN glyphs in their
+// own colours, each carrying its own fixed title, so there is nothing left to
+// switch. Deleted rather than left behind — it read the old jsonb meta's
+// id_theft/nonpayment keys, and a second source for "what does this flag mean"
+// is how the gutter and the panel would drift apart again.
 //
-// The wording is deliberately "reported" and "verify" — never blacklisted, bad
-// broker or do not use. These are companies MANAS hauls for daily; the shield
-// says check who you're talking to, not refuse the load.
-function riskTitle(risk) {
-  if (!risk) return ''
-  const { id_theft, nonpayment, double_brokering } = risk
-  if (double_brokering) return 'Double brokering reported for this broker'
-  if (id_theft && nonpayment) return 'Identity theft and nonpayment reported for this broker'
-  if (id_theft) return 'Identity theft reported for this broker — verify the rep and load number'
-  if (nonpayment) return 'Nonpayment history reported for this broker'
-  return 'This broker appears on a risk list'
-}
+// The register is unchanged in the titles that replaced it: "reported" and
+// "verify", never blacklisted, bad broker or do not use.
 
 // Rendered as the body of the active tab. The tab bar carries the heading/count;
 // this is the driver table. It owns the vertical scroll (flex-1) with a sticky
@@ -712,7 +707,7 @@ function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isMan
           matters. */}
       <td className="px-3 py-2 align-top">
         <div className="flex items-center gap-1">
-          <span className="shrink-0 w-20 flex items-center justify-end gap-0.5">
+          <span className="shrink-0 w-24 flex items-center justify-end gap-0.5">
             {/* Deadline marker, then money, then risk, then the detention dot.
                 Triangle for urgent, dot for soon: told apart in greyscale, not
                 colour alone. The soon dot is smaller so it doesn't out-weigh the
@@ -747,10 +742,33 @@ function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isMan
                 only a credit event and no risk-list entry (Uber Freight, Raven
                 Cargo, Yellow Diamond), and jsonb_strip_nulls drops the flag keys
                 for them. Testing `risk` alone would put a shield on all three. */}
-            {(risk?.id_theft || risk?.nonpayment || risk?.double_brokering) && (
+            {/* Identity — violet shield. Read from the VIEW (risk_identity), the
+                same column the panel and the copied message use, so the three can
+                never disagree about what a flag string means. */}
+            {brokerRisk?.risk_identity === true && (
               <svg aria-hidden={false} role="img" viewBox="0 0 20 20"
                 className="shrink-0 w-3.5 h-3.5 text-violet-600 dark:text-violet-400 fill-current">
-                <title>{riskTitle(risk)}</title>
+                <title>Identity theft reported for this broker — verify the rep and load number</title>
+                <path d="M10 1l7 3v5c0 4.4-3 8.3-7 9.4C6 17.3 3 13.4 3 9V4l7-3z" />
+              </svg>
+            )}
+            {/* Nonpayment — its OWN glyph, amber, beside the shield rather than
+                sharing it. It used to be the same violet shield with a different
+                tooltip, so a slow payer and an impersonation were indistinguishable
+                at a glance — which is the confusion the identity/payment split
+                exists to end. Amber matches the panel's nonpayment block. */}
+            {brokerRisk?.risk_nonpayment === true && (
+              <svg aria-hidden={false} role="img" viewBox="0 0 20 20"
+                className="shrink-0 w-3.5 h-3.5 text-[#B45309] dark:text-[#FBBF24] fill-current">
+                <title>Nonpayment history reported for this broker</title>
+                <path fillRule="evenodd" d="M10 1a9 9 0 100 18 9 9 0 000-18zm0 2a7 7 0 110 14 7 7 0 010-14zm0 2.5a4.5 4.5 0 100 9 4.5 4.5 0 000-9z" clipRule="evenodd" />
+              </svg>
+            )}
+            {/* A flag string matching neither keeps the old generic shield. */}
+            {brokerRisk?.risk_unclassified === true && (
+              <svg aria-hidden={false} role="img" viewBox="0 0 20 20"
+                className="shrink-0 w-3.5 h-3.5 text-gray-400 dark:text-slate-500 fill-current">
+                <title>This broker appears on a risk list</title>
                 <path d="M10 1l7 3v5c0 4.4-3 8.3-7 9.4C6 17.3 3 13.4 3 9V4l7-3z" />
               </svg>
             )}
@@ -764,12 +782,12 @@ function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isMan
         </div>
         {broker?.broker && (
           <div className="mt-0.5 flex items-center gap-1">
-            <span className="shrink-0 w-20" aria-hidden />
+            <span className="shrink-0 w-24" aria-hidden />
             <span className="text-[10px] text-gray-400 dark:text-slate-500 truncate max-w-[6rem]" title={broker.broker}>{broker.broker}</span>
             {/* Broker + load + every flag, as plain text for Telegram. The glyphs
                 above say THAT something is wrong; this is the only way to share
                 what. Built from data already on the row — no per-row query. */}
-            <CopyBrokerButton row={r} risk={brokerRisk} brokerName={broker.broker} />
+            <CopyBrokerButton row={r} risk={brokerRisk} brokerName={broker.broker} load={broker} />
           </div>
         )}
       </td>
