@@ -78,6 +78,18 @@ export async function fetchOpenShift(userId) {
   return data || null
 }
 
+// Everyone currently on shift, oldest start first. More than one is normal —
+// two are open in production right now — so nothing that consumes this may
+// assume a single row. The viewer's own shift is in here too; the header sorts
+// it first rather than filtering it out.
+export async function fetchOpenShifts() {
+  const { data, error } = await supabase.from('v_open_shifts')
+    .select('shift_id, user_id, display_name, shift_type, started_at')
+    .order('started_at', { ascending: true })
+  if (error) throw error
+  return data || []
+}
+
 // Resumes an open shift instead of erroring → { resumed, shift_id, shift_type, started_at }.
 export async function startShift(shiftType) {
   const { data, error } = await supabase.rpc('start_shift', { p_shift_type: shiftType })
@@ -396,13 +408,72 @@ export function fmtChicagoTs(ts) {
   try { return new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(ts)) + ' CT' } catch { return '' }
 }
 // 'Xh Ym' elapsed since a timestamptz.
-export function elapsedSince(ts) {
-  if (!ts) return '—'
-  const ms = Date.now() - new Date(ts).getTime()
-  if (isNaN(ms) || ms < 0) return '0m'
-  const mins = Math.floor(ms / 60000)
-  const h = Math.floor(mins / 60), m = mins % 60
-  return h > 0 ? `${h}h ${m}m` : `${m}m`
+// elapsedSince lived here. It floored to whole minutes and had no day component,
+// so a 45-hour shift read '45h 18m' in the header while the reports said
+// something else — two formatters for one quantity. Replaced entirely by
+// fmtShiftDuration below; deleted rather than left in place, because the second
+// one would inevitably be picked up again.
+
+// ── Shift duration ──────────────────────────────────────────────────────────
+// ONE formatter for every surface that prints how long a shift ran — the header
+// pill, the Shift Reports detail block and the PDF — so the same shift can never
+// print two different numbers.
+//
+// Computed from started_at and ended_at, never from a stored column: there isn't
+// one, and there shouldn't be. `ended_at - started_at` is exact and cannot drift
+// out of sync with the timestamps it describes.
+//
+// Shifts routinely run past midnight — of the last eight, three crossed a
+// midnight and one ran 45 hours — so anything over a day gets a day component
+// rather than an unreadable hour count.
+//   under 24h → '7h 42m'
+//   24h+      → '1d 21h 18m'
+//   still open → measured to now, suffixed '(running)'
+export function fmtShiftDuration(startedAt, endedAt) {
+  if (!startedAt) return '—'
+  const start = new Date(startedAt).getTime()
+  if (Number.isNaN(start)) return '—'
+  const open = !endedAt
+  const end = open ? Date.now() : new Date(endedAt).getTime()
+  if (Number.isNaN(end)) return '—'
+
+  // Rounded to the nearest minute, not truncated. The Aug 5 shift is
+  // 21:17:51.5 — flooring prints 21h 17m and loses almost a whole minute for no
+  // reason. Rounding the TOTAL before splitting it keeps the parts coherent:
+  // 23h 59m 40s becomes 1440 minutes and reads '1d 0h 0m', never '24h 0m'.
+  const mins = Math.max(0, Math.round((end - start) / 60000))
+  const d = Math.floor(mins / 1440)
+  const h = Math.floor((mins % 1440) / 60)
+  const m = mins % 60
+  const core = d > 0 ? `${d}d ${h}h ${m}m` : h > 0 ? `${h}h ${m}m` : `${m}m`
+  return open ? `${core} (running)` : core
+}
+
+// 'Aug 5, 2:06 PM' / '2:06 PM' — Chicago, always.
+const CT_DATE = { timeZone: 'America/Chicago', month: 'short', day: 'numeric' }
+const CT_TIME = { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit' }
+const ctDay = (ts) => new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ts))
+const ctPart = (ts, withDate) => new Intl.DateTimeFormat('en-US', withDate ? { ...CT_DATE, ...CT_TIME } : CT_TIME).format(new Date(ts))
+
+// The full span line:
+//   same calendar day → '2:06 PM → 9:48 PM CT · 7h 42m'
+//   across days       → 'Aug 5, 2:06 PM → Aug 7, 11:23 AM CT · 1d 21h 18m'
+//   still open        → 'Aug 5, 2:06 PM → now CT · 1d 21h 18m (running)'
+//
+// The date is shown on BOTH ends whenever they differ, never just one: a lone
+// '2:06 PM → 11:23 AM' reads as a nine-hour shift running backwards.
+export function fmtShiftSpan(startedAt, endedAt) {
+  if (!startedAt) return '—'
+  const s = new Date(startedAt)
+  if (Number.isNaN(s.getTime())) return '—'
+  const dur = fmtShiftDuration(startedAt, endedAt)
+
+  if (!endedAt) return `${ctPart(s, true)} → now CT · ${dur}`
+  const e = new Date(endedAt)
+  if (Number.isNaN(e.getTime())) return `${ctPart(s, true)} → — CT · ${dur}`
+
+  const crossesDay = ctDay(s) !== ctDay(e)
+  return `${ctPart(s, crossesDay)} → ${ctPart(e, crossesDay)} CT · ${dur}`
 }
 // ── Stop strings ────────────────────────────────────────────────────────────
 // 'Pleasanton, TX, US (CST) …' → city 'Pleasanton', state 'TX'.

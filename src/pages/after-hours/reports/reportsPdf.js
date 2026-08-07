@@ -2,7 +2,7 @@ import {
   fmtRange, fmtDay, fmtClock, fmtTs, fmtHours, money, pct, shiftTypeLabel, kindMeta,
   shiftLogNotes, handoffAlreadyHasShiftLog, splitLumpers, lumperActor, lumperSource, shiftPdfFilename,
 } from './reportsData'
-import { pdfSafeText } from '../shift-board/shiftBoardData'
+import { pdfSafeText, fmtShiftSpan } from '../shift-board/shiftBoardData'
 
 // PDF export for Shift Reports — the whole week, as the page reads on screen:
 // the metric strip, the coverage grid, the shift history with each shift's
@@ -225,8 +225,10 @@ export async function buildShiftReportsPdf({ week, totals, coverage, history, ro
       doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(...INK)
       doc.text(pdfSafeText(`${fmtDay(row.shift_date)} · ${shiftTypeLabel(row.shift_type)} · ${row.associate || '—'}`), M, y)
       doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...MUTED)
+      // Same formatter as the screen, so a shift can't print one duration in the
+      // detail block and another in the exported copy of it.
       doc.text(pdfSafeText(
-        `${fmtClock(d.started_at)} → ${d.is_open ? 'open' : fmtClock(d.ended_at)}`
+        fmtShiftSpan(d.started_at, d.ended_at)
         + (d.handoff?.handed_to ? `   ·   handed to ${d.handoff.handed_to}` : '')
         + (d.handoff?.is_frozen ? '   ·   handoff frozen' : '')
       ), M, y + 11)

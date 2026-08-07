@@ -15,10 +15,10 @@ import {
   fetchSettings, fetchOpenShift, startShift, fetchShiftSummary, fetchWeekSummary, fetchBoard, fetchBoardTabs, fetchBoardBrokerMetaForShift, fetchBoardRiskMetaForShift, fetchBoardIdleMetaForShift,
   fetchCheckpointExceptions,
   upsertDriverCheck, logShiftActivity,
-  fetchShiftNotes, addShiftNote, fetchBoardBrokerRisk,
+  fetchShiftNotes, addShiftNote, fetchBoardBrokerRisk, fetchOpenShifts, fmtShiftDuration,
   fetchRowActions, updateShiftActivity, deleteShiftActivity, clearDriverCheck,
   fetchEscalationRecipients, acknowledgeEscalation, fetchEscalationCopyText,
-  thisWeekChicago, weekOfYmd, stepWeek, fmtWeekRange, todayChicago, fmtDayLabel, elapsedSince,
+  thisWeekChicago, weekOfYmd, stepWeek, fmtWeekRange, todayChicago, fmtDayLabel,
   buildGroupCopy, buildWeekCopy, copyText,
 } from './shiftBoardData'
 import { REQUESTS_CHANGED_EVENT } from '../requests/requestsData'
@@ -41,6 +41,7 @@ export default function ShiftBoardPage() {
   const [actionTarget, setActionTarget] = useState(null) // { row, type, existing } — popover
   const [undoInfo, setUndoInfo] = useState(null) // { driverId, activityId?, isCheck?, label } — 10s inline undo
   const undoTimerRef = useRef(null)
+  const [openShifts, setOpenShifts] = useState([])   // EVERYONE on shift, not just me
   const [shiftNotes, setShiftNotes] = useState([])   // running notes (shift log)
   const [noteUndo, setNoteUndo] = useState(null)     // { id } — 10s undo of the last added note
   const noteUndoTimerRef = useRef(null)
@@ -131,6 +132,13 @@ export default function ShiftBoardPage() {
     fetchBoardBrokerRisk((bd || []).map(r => r.load_id))
       .then(setBrokerRiskByLoad)
       .catch((e) => { console.error('broker risk failed', e); setBrokerRiskByLoad(new Map()) })
+
+    // Refreshed here too: this runs after a shift starts or ends, which is
+    // exactly when the set of people on shift changes — including someone
+    // else's shift ending while this page is open.
+    fetchOpenShifts()
+      .then(setOpenShifts)
+      .catch((e) => { console.error('open shifts failed', e) })
   }, [weekRange.start, weekRange.end])
 
   // Light refresh after a row action: just the affected state and counters — row
@@ -163,12 +171,15 @@ export default function ShiftBoardPage() {
   const load = useCallback(async () => {
     setLoading(true); setError(false)
     try {
-      const [st, wk, sh] = await Promise.all([
+      const [st, wk, sh, os] = await Promise.all([
         fetchSettings(), fetchWeekSummary(weekRange.start, weekRange.end), fetchOpenShift(me?.id),
+        // Everyone on shift, not just me. Never assume one: two are open in
+        // production right now.
+        fetchOpenShifts().catch((e) => { console.error('open shifts failed', e); return [] }),
       ])
-      setSettings(st || {}); setWeek(wk); setShift(sh)
+      setSettings(st || {}); setWeek(wk); setShift(sh); setOpenShifts(os)
       settingsRef.current = st || {} // so a refresh in the same tick sees track_checkpoints
-      const [bd, sm, ex, tb, ra, bm, rk, im] = await Promise.all([
+      const [bd, sm, ex, tb, ra, bm, rk, im, nt] = await Promise.all([
         fetchBoard(sh?.id ?? null),
         sh ? fetchShiftSummary(sh.id) : Promise.resolve(null),
         (st?.track_checkpoints || st?.accessorials_enabled) ? fetchCheckpointExceptions() : Promise.resolve([]),
@@ -179,8 +190,20 @@ export default function ShiftBoardPage() {
         fetchBoardBrokerMetaForShift(sh?.id ?? null).catch((e) => { console.error('broker meta failed', e); return new Map() }),
         fetchBoardRiskMetaForShift(sh?.id ?? null).catch((e) => { console.error('risk meta failed', e); return new Map() }),
         fetchBoardIdleMetaForShift(sh?.id ?? null).catch((e) => { console.error('idle meta failed', e); return new Map() }),
+        // THE SHIFT-LOG BUG. This line was missing. refresh() and refreshActions()
+        // both fetch the notes, but load() — the mount path — did not, so
+        // shiftNotes stayed at its initial [] on every page load and the card
+        // read "No notes on this shift yet" until some other action triggered a
+        // refresh. Adding a note did exactly that, which is why they all
+        // reappeared at once and why it looked like a write that hadn't stuck.
+        //
+        // It was never a date-scoping problem: fetchShiftNotes filters on
+        // shift_id, activity_type and load_id and touches no date column, which
+        // is why the handoff text and the PDF — same scoping — were always right.
+        sh ? fetchShiftNotes(sh.id).catch(() => []) : Promise.resolve([]),
       ])
       setBoard(bd); setSummary(sm); setExceptions(ex); setBoardTabs(tb); setRowActions(ra); setBrokerByLoad(bm); setRiskByLoad(rk); setIdleByDriver(im)
+      setShiftNotes(nt)
     } catch (e) {
       setError(true); toastRef.current.error("Couldn't load the shift board", e)
     } finally { setLoading(false) }
@@ -653,7 +676,7 @@ export default function ShiftBoardPage() {
     <div className="h-[calc(100vh-6rem)] flex flex-col min-h-0 gap-3">
       {error ? (
         <>
-          <BoardHeader shift={shift} starting={starting} onStart={doStart} onEnd={() => setShowEnd(true)} />
+          <BoardHeader shift={shift} openShifts={openShifts} meId={me?.id} starting={starting} onStart={doStart} onEnd={() => setShowEnd(true)} />
           <div className={S.errorBox}>Couldn&apos;t load the shift board. <button onClick={load} className="underline font-medium">Retry</button></div>
         </>
       ) : loading ? (
@@ -666,7 +689,7 @@ export default function ShiftBoardPage() {
         <>
           {/* Title + shift control, then the labelled week band; the shift band
               only when a shift is open. */}
-          <BoardHeader shift={shift} starting={starting} onStart={doStart} onEnd={() => setShowEnd(true)} />
+          <BoardHeader shift={shift} openShifts={openShifts} meId={me?.id} starting={starting} onStart={doStart} onEnd={() => setShowEnd(true)} />
           <WeekStrip week={week} onCopy={copyWeek} />
           {/* Shift progress is tonight's — hidden while browsing a past week so
               its reviewed count can't be read against the wrong rows. */}
@@ -864,7 +887,7 @@ function shortDay(v) {
   return new Date(+m[1], +m[2] - 1, +m[3]).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
-function BoardHeader({ shift, starting, onStart, onEnd }) {
+function BoardHeader({ shift, openShifts, meId, starting, onStart, onEnd }) {
   return (
     <div className="flex items-start justify-between gap-3">
       <div className="min-w-0">
@@ -873,7 +896,7 @@ function BoardHeader({ shift, starting, onStart, onEnd }) {
         </div>
         <h1 className="text-xl font-bold text-gray-900 dark:text-white leading-tight">Shift Board</h1>
       </div>
-      <ShiftControl shift={shift} starting={starting} onStart={onStart} onEnd={onEnd} />
+      <ShiftControl shift={shift} openShifts={openShifts} meId={meId} starting={starting} onStart={onStart} onEnd={onEnd} />
     </div>
   )
 }
@@ -915,19 +938,43 @@ function WeekStrip({ week, onCopy }) {
 // Top-right shift control: a loud NOT ON SHIFT alarm + four one-click shift pills
 // (hours on hover), or the live on-shift state + End shift. Off-shift status
 // carries the "still recorded" note as a tooltip, so the old banner isn't needed.
-function ShiftControl({ shift, starting, onStart, onEnd }) {
+function ShiftControl({ shift, openShifts = [], meId, starting, onStart, onEnd }) {
   if (shift) {
-    // On shift: static green state — the absence of motion is what gives the
-    // off-shift pulse its meaning.
+    // More than one person can be on at once — two are open in production right
+    // now — so the others are listed beneath the viewer's own pill. With a single
+    // open shift this renders exactly as it did before: one pill, nothing added.
+    //
+    // The viewer's own row is excluded from the list rather than re-sorted into
+    // it: it is already the pill above, and printing it twice reads as two
+    // shifts. Duration uses the shared formatter, so a 45-hour shift says
+    // "1d 21h 18m (running)" here and in the reports rather than "45h 18m" here
+    // and something else there.
+    const others = openShifts.filter(s => s.user_id !== meId && s.shift_id !== shift.id)
     return (
-      <div className="flex items-center gap-2 shrink-0">
-        <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
-          <span className="w-2 h-2 rounded-full bg-emerald-500" /> On shift · {shiftName(shift.shift_type)} · {elapsedSince(shift.started_at)}
-        </span>
-        <button onClick={onEnd} className={ORANGE_BTN_SM}>End shift</button>
+      <div className="flex flex-col items-end gap-1 shrink-0">
+        <div className="flex items-center gap-2">
+          <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
+            <span className="w-2 h-2 rounded-full bg-emerald-500" /> On shift · {shiftName(shift.shift_type)} · {fmtShiftDuration(shift.started_at, null)}
+          </span>
+          <button onClick={onEnd} className={ORANGE_BTN_SM}>End shift</button>
+        </div>
+        {others.length > 0 && (
+          <ul className="flex flex-col items-end gap-0.5">
+            {others.map(s => (
+              <li key={s.shift_id}
+                className="inline-flex items-center gap-1.5 text-[11px] font-medium text-gray-500 dark:text-slate-400 whitespace-nowrap">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500/60" />
+                {s.display_name || 'Someone'} · {shiftName(s.shift_type)} · {fmtShiftDuration(s.started_at, null)}
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
     )
   }
+
+  // Off shift, but someone else is on — worth knowing before starting one.
+  const onNow = openShifts.filter(s => s.user_id !== meId)
   return (
     <div className="flex items-center gap-3 shrink-0 flex-wrap justify-end">
       <span aria-live="polite" title="Actions are still recorded, just not counted toward a shift."
@@ -945,6 +992,17 @@ function ShiftControl({ shift, starting, onStart, onEnd }) {
           </button>
         ))}
       </div>
+      {onNow.length > 0 && (
+        <ul className="w-full flex flex-col items-end gap-0.5">
+          {onNow.map(s => (
+            <li key={s.shift_id}
+              className="inline-flex items-center gap-1.5 text-[11px] font-medium text-gray-500 dark:text-slate-400 whitespace-nowrap">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500/60" />
+              {s.display_name || 'Someone'} · {shiftName(s.shift_type)} · {fmtShiftDuration(s.started_at, null)}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }
@@ -1037,7 +1095,7 @@ function ShiftStrip({ summary, shift }) {
     <MetricStrip tone="emerald">
       <StripLead tone="emerald">
         <StripEyebrow tone="emerald">This shift</StripEyebrow>
-        <span className="text-sm font-bold text-gray-900 dark:text-white whitespace-nowrap">{shiftName(shift.shift_type)} · {elapsedSince(shift.started_at)}</span>
+        <span className="text-sm font-bold text-gray-900 dark:text-white whitespace-nowrap">{shiftName(shift.shift_type)} · {fmtShiftDuration(shift.started_at, null)}</span>
       </StripLead>
       {/* Hero — drivers reviewed */}
       <StripHero tone="emerald" className="min-w-[8.5rem]" title={`${pct}% of active drivers checked this shift`}>

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { S } from '../../../lib/styles'
-import { fmtClock, fmtTs, fmtHours, money, kindMeta, splitLumpers, lumperActor, lumperSource } from './reportsData'
+import { fmtClock, fmtTs, money, kindMeta, splitLumpers, lumperActor, lumperSource } from './reportsData'
+import { fmtShiftSpan } from '../shift-board/shiftBoardData'
 
 // The expanded row. Two columns: a fixed 300px left (handoff, what was raised)
 // and a flexible right (drivers worked, activity log).
@@ -142,7 +143,10 @@ function LumperSection({ label, hint, rows, subtotal, muted }) {
 // ── ① Handoff ───────────────────────────────────────────────────────────────
 function Handoff({ detail }) {
   const h = detail.handoff || {}
-  const duration = detail.is_open ? null : fmtHours(detail.hours)
+  // Computed from the timestamps, not read off the payload. This used to be
+  // fmtHours(detail.hours) and after_hours_shift_detail has never returned an
+  // `hours` field, so DURATION rendered '—' on every shift ever opened.
+  const span = fmtShiftSpan(detail.started_at, detail.ended_at)
 
   return (
     <Card n={1} title="Handoff">
@@ -164,8 +168,11 @@ function Handoff({ detail }) {
       <div className="mt-3 pt-3 border-t border-gray-100 dark:border-white/5 space-y-1 text-[11px] text-gray-500 dark:text-slate-400">
         <Line label="Handed to" value={h.handed_to} />
         <Line label="Sent" value={h.sent_at ? fmtTs(h.sent_at) : null} />
-        <Line label="Shift" value={`${fmtClock(detail.started_at)} → ${detail.is_open ? 'open' : fmtClock(detail.ended_at)}`} />
-        {duration && <Line label="Duration" value={duration} />}
+        {/* One line, not two: the span already carries both ends and the
+            duration, and a separate Duration row was where the '—' lived. The
+            date appears on both ends whenever the shift crossed a midnight —
+            three of the last eight did. */}
+        <Line label="Shift" value={span} />
       </div>
       <p className="text-[10px] text-gray-400 dark:text-slate-500 mt-2">
         Stored as it was sent — this text never re-renders from live data, so it still reads the way
