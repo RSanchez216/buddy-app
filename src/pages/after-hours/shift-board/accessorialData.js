@@ -206,6 +206,49 @@ export function termsForType(rules, code) {
   return { ...raw, freeMinutes }
 }
 
+// ── Free time is entered in HOURS and stored in MINUTES ─────────────────────
+// The industry says "two hours free". The input used to be labelled (MIN), and
+// on load 2608-108 somebody typed 4 — four MINUTES of free time against 1,110
+// detained, which billed 19 hours instead of 15 and over-claimed by $140.
+export const hoursToMinutes = (h) => {
+  // An EMPTY field is "not stated", not "zero free time" — Number('') is 0, and
+  // returning 0 here would file a claim asserting the broker allows no free time
+  // at all, and would replace "free window not stated" with a confident 0.
+  if (h == null || String(h).trim() === '') return null
+  const n = Number(h)
+  return Number.isFinite(n) && n >= 0 ? Math.round(n * 60) : null
+}
+export const minutesToHours = (m) => {
+  const n = Number(m)
+  if (!Number.isFinite(n)) return ''
+  const h = n / 60
+  // 120 → '2', 90 → '1.5'. Never '2.0000000004'.
+  return String(Math.round(h * 100) / 100)
+}
+
+// Nobody negotiates four minutes of free time. If a free-time value lands under
+// half an hour while an hourly rate is set, it is almost certainly hours typed
+// into a minutes box — the exact mistake that produced the $665 claim.
+export const FREE_TIME_FLOOR_MIN = 30
+export function freeTimeLooksLikeMinutes(freeMinutes, ratePerHour) {
+  const f = Number(freeMinutes), r = Number(ratePerHour)
+  if (!Number.isFinite(f) || f <= 0) return false
+  if (!Number.isFinite(r) || r <= 0) return false
+  return f < FREE_TIME_FLOOR_MIN
+}
+
+// Which terms apply to this load — rate con first, the broker's recorded
+// defaults second, nothing third. One RPC so precedence lives in one place; the
+// form never decides this for itself.
+export async function fetchTermsForLoad(loadId, type, location) {
+  if (!loadId || !type) return null
+  const { data, error } = await supabase.rpc('broker_accessorial_terms_for_load', {
+    p_load_id: loadId, p_type: type, p_location: location || 'any',
+  })
+  if (error) throw error
+  return data || null
+}
+
 export async function fetchAccessorialDocs(accessorialId) {
   const { data, error } = await supabase.from('accessorial_documents')
     .select('id, doc_type, file_path, file_name, note, uploaded_at')

@@ -3,6 +3,7 @@ import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { S } from '../../../lib/styles'
 import { fetchBrokerProfile, fetchBrokerDocuments } from './customersApply'
 import BrokerFlagsPanel from './BrokerFlagsPanel'
+import AccessorialTermsPanel from './AccessorialTermsPanel'
 import CreditEvent from '../../after-hours/shift-board/BrokerCredit'
 import { fmtEventDate, isNoCredit, daysSince } from '../../after-hours/shift-board/brokerCreditData'
 
@@ -102,6 +103,12 @@ export default function CustomerProfile() {
               same rows without any way to add or resolve one, which is the whole
               point of this panel. */}
           <BrokerFlagsPanel mcNumber={profile?.mc_number} brokerName={profile?.name} />
+
+          {/* Terms sit under the flags: flags are what's wrong with a broker,
+              terms are what they've agreed to pay. Keyed on customer_id, not MC —
+              18 brokers with live loads have no MC and would silently never get
+              terms. */}
+          <AccessorialTermsPanel customerId={id} brokerName={profile?.name} />
 
           <Card>
             <Eyebrow>Contact</Eyebrow>

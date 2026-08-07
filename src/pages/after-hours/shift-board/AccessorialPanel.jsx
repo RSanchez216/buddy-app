@@ -6,12 +6,16 @@ import CheckpointFields from './CheckpointFields'
 import BrokerRiskPanel from './BrokerRiskPanel'
 import { hasAnyBlock } from './brokerRiskCopy'
 import { PANEL_HEADING, PANEL_STEP_BADGE } from './panelChrome'
+// The SAME terms form the customer profile uses — one definition, so the two
+// cannot drift apart on validation or units.
+import { TermsForm } from '../../fleet/customers/AccessorialTermsPanel'
 import {
   DOC_TYPES, RESPONSES, typeLabel, docTypeLabel, statusMeta,
   computeAmount, minutesBetween, fetchLoadAccessorials, fetchAccessorialDocs,
   fetchAccessorialTypes, addAccessorialType,
   raiseAccessorial, recordBrokerResponse, uploadAccessorialDoc, signedDocUrl, buildRequestCopy,
   fetchBrokerRules, policyForType, termsForType,
+  hoursToMinutes, minutesToHours, freeTimeLooksLikeMinutes, fetchTermsForLoad,
 } from './accessorialData'
 
 // The panel that opens under a driver row on the Shift Board. Three columns:
@@ -108,7 +112,8 @@ export default function AccessorialPanel({
 
   // ── The request being raised ──────────────────────────────────────────────
   const [stop, setStop] = useState(() => (row.cp_delivery_in && !row.cp_pickup_in ? 'receiver' : 'shipper'))
-  const [freeMin, setFreeMin] = useState('')
+  // HOURS in the field, minutes in the payload. See hoursToMinutes.
+  const [freeHours, setFreeHours] = useState('')
   const [rate, setRate] = useState('')
   const [amount, setAmount] = useState('')
   const [amountTouched, setAmountTouched] = useState(false)
@@ -122,21 +127,49 @@ export default function AccessorialPanel({
   // real one, so absence must stay blank.
   const terms = useMemo(() => termsForType(brokerRules, typeDef?.code), [brokerRules, typeDef?.code])
 
-  // Prefill Free time and Rate from the load's rate confirmation where it states
-  // them, leaving them blank (not 120/75) where it doesn't. Flat types (Layover,
-  // TONU) prefill the flat amount instead. Re-runs when the load's terms arrive.
+  // Which terms actually apply: the rate con if it says anything, else the
+  // broker's recorded defaults, else nothing. Resolved server-side so the form
+  // never decides precedence for itself, and so the banner and the numbers can't
+  // come from different places.
+  const [resolved, setResolved] = useState(null)
+  useEffect(() => {
+    let stale = false
+    if (!row?.load_id || !typeDef?.code) { setResolved(null); return () => {} }
+    fetchTermsForLoad(row.load_id, typeDef.code, stop)
+      .then(r => { if (!stale) setResolved(r) })
+      .catch(() => { if (!stale) setResolved(null) })
+    return () => { stale = true }
+  }, [row?.load_id, typeDef?.code, stop])
+
+  // Prefill from the resolver. Free time is in HOURS in the field and minutes in
+  // the payload. Flat types (Layover, TONU) prefill the flat amount instead.
+  //
+  // prefilled records what was put there, so editing it can be detected: an
+  // adjusted figure must file as `manual`, never as `calculated`.
+  const [recordingTerms, setRecordingTerms] = useState(false)
+  const [prefilled, setPrefilled] = useState(null)
   useEffect(() => {
     if (!typeDef) return
+    const r = resolved
     if (flat) {
-      setFreeMin(''); setRate('')
-      setAmount(terms?.flat_usd != null ? Number(terms.flat_usd).toFixed(2) : '')
+      setFreeHours(''); setRate('')
+      const f = r?.flat_amount ?? terms?.flat_usd
+      setAmount(f != null ? Number(f).toFixed(2) : '')
+      setPrefilled({ freeHours: '', rate: '', amount: f != null ? Number(f).toFixed(2) : '' })
     } else {
-      setFreeMin(terms?.freeMinutes != null ? String(terms.freeMinutes) : '')
-      setRate(terms?.rate_per_hour != null ? String(terms.rate_per_hour) : '')
-      setAmount('')
+      const fh = r?.free_minutes != null ? minutesToHours(r.free_minutes) : ''
+      const rt = r?.rate_per_hour != null ? String(r.rate_per_hour) : ''
+      setFreeHours(fh); setRate(rt); setAmount('')
+      setPrefilled({ freeHours: fh, rate: rt, amount: '' })
     }
     setAmountTouched(false); setErr('')
-  }, [typeDef, terms, flat])
+  }, [typeDef, resolved, terms, flat])
+
+  // True once the associate has changed a value that arrived prefilled. The
+  // claim is then hand-adjusted, and recording it as calculated would be a
+  // false statement about how the figure was reached.
+  const prefillEdited = !!prefilled && !flat &&
+    (freeHours !== prefilled.freeHours || rate !== prefilled.rate)
 
   const shipperMinutes = minutesBetween(row.cp_pickup_in, row.cp_pickup_out)
   const receiverMinutes = minutesBetween(row.cp_delivery_in, row.cp_delivery_out)
@@ -145,8 +178,9 @@ export default function AccessorialPanel({
   const stopCityLabel = stop === 'shipper' ? row.origin_city : row.destination_city
 
   const calc = useMemo(
-    () => computeAmount(detainedMinutes, freeMin, rate),
-    [detainedMinutes, freeMin, rate],
+    // computeAmount takes MINUTES — the field holds hours.
+    () => computeAmount(detainedMinutes, hoursToMinutes(freeHours), rate),
+    [detainedMinutes, freeHours, rate],
   )
 
   // The amount auto-fills from time × rate and stays editable at all times.
@@ -172,21 +206,46 @@ export default function AccessorialPanel({
     if (!loadId) { setErr('This driver has no load on the board — an accessorial request must be tied to a load.'); return }
     if (!type) { setErr('Pick a type.'); return }
 
+    // The units guard. Blocked, not warned: once filed, four minutes of free
+    // time is indistinguishable from four hours, and the broker only disputes it
+    // after the money is claimed.
+    const freeMinutes = flat ? null : hoursToMinutes(freeHours)
+    if (freeTimeLooksLikeMinutes(freeMinutes, num(rate))) {
+      setErr(`Free time of ${freeHours} hours is only ${freeMinutes} minutes. That looks like hours typed into a minutes box — check the rate confirmation.`)
+      return
+    }
+
     setSaving(true)
     try {
       // Send a null amount when nothing was typed and the maths can run — the
       // RPC calculates and reports amount_source. Otherwise send what was typed.
+      //
+      // prefillEdited forces the explicit amount: a figure the associate adjusted
+      // by hand must record as `manual`, never as `calculated`, or the claim
+      // says it was derived from terms it wasn't.
       const typed = num(amount)
-      const useCalculated = !amountTouched && !flat && canCalculate
+      const useCalculated = !amountTouched && !prefillEdited && !flat && canCalculate
+
+      // The claim carries its own justification: which terms were used and what
+      // they said, so a broker pushing back in six weeks meets a record rather
+      // than a memory.
+      const basis = resolved?.source && resolved.source !== 'none'
+        ? `terms:${resolved.source}${resolved.terms_id ? ` id:${resolved.terms_id}` : ''}`
+          + `${resolved.free_minutes != null ? ` free:${resolved.free_minutes}m` : ''}`
+          + `${resolved.rate_per_hour != null ? ` rate:$${resolved.rate_per_hour}/h` : ''}`
+          + `${resolved.terms_source_text ? ` — ${resolved.terms_source_text}` : ''}`
+        : null
+      const fullNote = [note.trim() || null, basis].filter(Boolean).join(' · ')
+
       const res = await raiseAccessorial({
         loadId,
         type,
         amount: useCalculated ? null : typed,
         location: flat ? null : stop,
         detainedMinutes: flat ? null : detainedMinutes,
-        freeMinutes: flat ? null : num(freeMin),
+        freeMinutes,
         ratePerHour: flat ? null : num(rate),
-        note: note.trim() || null,
+        note: fullNote || null,
       })
 
       // Documents can only be attached once the request has an id.
@@ -246,7 +305,7 @@ export default function AccessorialPanel({
         {trackCheckpoints && (
           <Column n={1} title="Checkpoint times">
             <CheckpointFields row={row} shiftId={shiftId} toast={toast}
-              freeMinutes={flat ? null : num(freeMin)}
+              freeMinutes={flat ? null : hoursToMinutes(freeHours)}
               onSaved={onChanged} onTimesSaved={onTimesSaved} />
           </Column>
         )}
@@ -298,9 +357,16 @@ export default function AccessorialPanel({
 
                   <div className="grid grid-cols-2 gap-2 mt-3">
                     <div>
-                      <label className={S.label}>Free time (min)</label>
-                      <input type="text" inputMode="numeric" className={S.input} value={freeMin}
-                        onChange={e => { setFreeMin(normalizeInt(e.target.value)); setAmountTouched(false) }} placeholder="—" />
+                      {/* HOURS, and the unit is on the field, not just the label.
+                          This box said (MIN) and someone typed 4 for "four hours
+                          free" — four minutes against 1,110 detained, which
+                          billed 19 hours instead of 15 and over-claimed $140. */}
+                      <label className={S.label}>Free time</label>
+                      <div className="relative">
+                        <input type="text" inputMode="decimal" className={`${S.input} pr-14`} value={freeHours}
+                          onChange={e => { setFreeHours(normalizeMoney(e.target.value)); setAmountTouched(false) }} placeholder="—" />
+                        <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500 pointer-events-none">hours</span>
+                      </div>
                     </div>
                     <div>
                       <label className={S.label}>Rate per hour</label>
@@ -308,26 +374,53 @@ export default function AccessorialPanel({
                         onChange={e => { setRate(normalizeMoney(e.target.value)); setAmountTouched(false) }} placeholder="Enter rate" />
                     </div>
                   </div>
-                  {/* The values are this LOAD's rate-con terms or nothing — the
-                      global 120/$75 default is gone, and "not stated" is the honest
-                      common case, styled as normal (grey), never as an error. */}
-                  {terms && (terms.clause || terms.freeMinutes != null || terms.rate_per_hour != null || terms.cap_usd != null) ? (
-                    <p className="text-[11px] text-emerald-700 dark:text-emerald-400 mt-1.5">
-                      From this load&apos;s rate confirmation{terms.clause ? <>: <span className="italic">{terms.clause}</span></> : '.'}
-                    </p>
-                  ) : (
-                    <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1.5">
-                      No {(typeDef?.label || 'detention').toLowerCase()} terms stated on this rate confirmation. Enter the free time and rate from the document before filing.
-                    </p>
+
+                  {/* Three states, and every one of them NAMES ITS SOURCE. A
+                      prefilled number that looks like it came from the rate con
+                      but didn't is worse than an empty field: the broker refuses
+                      the claim by pointing at their own document. */}
+                  <TermsBanner resolved={resolved} typeLabel={typeDef?.label} brokerName={brokerName}
+                    canRecord={canAddTypes && !!resolved?.customer_id}
+                    onRecord={() => setRecordingTerms(true)} />
+
+                  {/* The SAME form the customer profile uses, prefilled with
+                      whatever has been typed — not a second copy that could
+                      drift from it. customer_id comes off the resolver, since
+                      the board row doesn't carry one. */}
+                  {recordingTerms && resolved?.customer_id && (
+                    <div className="mt-2 rounded-lg border border-orange-200 dark:border-orange-500/30 bg-orange-50/40 dark:bg-orange-500/[0.06] p-2">
+                      <p className="text-[11px] font-semibold text-orange-700 dark:text-orange-300">
+                        Record standing terms for {brokerName || 'this broker'}
+                      </p>
+                      <TermsForm
+                        customerId={resolved.customer_id}
+                        prefill={{ freeHours, rate }}
+                        onCancel={() => setRecordingTerms(false)}
+                        onDone={async () => {
+                          setRecordingTerms(false)
+                          // Re-resolve so the banner flips from slate to amber
+                          // without a reload.
+                          try { setResolved(await fetchTermsForLoad(row.load_id, typeDef.code, stop)) } catch { /* keep the old banner */ }
+                        }} />
+                    </div>
                   )}
 
                   <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-2 tabular-nums">
                     {detainedMinutes == null
                       ? 'No time recorded at this stop yet — enter it on the left, or type an amount.'
-                      : num(freeMin) == null
+                      : hoursToMinutes(freeHours) == null
                         ? `${fmtDuration(detainedMinutes)} detained · free window not stated`
-                        : `${fmtDuration(detainedMinutes)} detained − ${fmtDuration(num(freeMin))} free = ${calc.hours} billable hour${calc.hours === 1 ? '' : 's'} (rounded up)`}
+                        : `${fmtDuration(detainedMinutes)} detained − ${fmtDuration(hoursToMinutes(freeHours))} free = ${calc.hours} billable hour${calc.hours === 1 ? '' : 's'} (rounded up)`}
                   </p>
+
+                  {/* The guard. Blocks the save rather than warning, because the
+                      wrong number here is indistinguishable from a right one once
+                      it is filed. */}
+                  {freeTimeLooksLikeMinutes(hoursToMinutes(freeHours), rate) && (
+                    <p className="text-[11px] text-rose-600 dark:text-rose-400 mt-1.5">
+                      {freeHours} hours is {hoursToMinutes(freeHours)} minutes of free time. That looks like hours typed into a minutes box — check the document.
+                    </p>
+                  )}
                 </>
               )}
 
@@ -964,6 +1057,54 @@ const ACTIVITY_LABELS = { load_booked: 'Booked', pod_collected: 'POD collected',
 //
 // The collapsed row's glyphs still read the older `risk` meta; they were not in
 // this brief's scope and are untouched.
+
+// The three terms states. Every one names where its numbers came from.
+//
+// emerald — the rate con on THIS load states them, and they win outright.
+// amber   — the con is silent and the broker's recorded defaults are filling in.
+//           Deliberately not green: it is a real number from a real source, but
+//           it is not the document the broker will quote back.
+// slate   — nothing on record. Not an error; it is the common case.
+function TermsBanner({ resolved, typeLabel, brokerName, canRecord, onRecord }) {
+  const t = (typeLabel || 'detention').toLowerCase()
+  const src = resolved?.source
+
+  if (src === 'rate_con') {
+    const bits = [
+      resolved.free_minutes != null ? `${minutesToHours(resolved.free_minutes)}h free` : null,
+      resolved.rate_per_hour != null ? `$${Number(resolved.rate_per_hour)}/hour` : null,
+      resolved.flat_amount != null ? `$${Number(resolved.flat_amount)} flat` : null,
+    ].filter(Boolean).join(' · ')
+    return (
+      <p className="text-[11px] text-emerald-700 dark:text-emerald-400 mt-1.5">
+        From this load&apos;s rate confirmation{bits ? ` — ${bits}` : ''}.
+        {resolved.terms_source_text && <> <span className="italic">{resolved.terms_source_text}</span></>}
+      </p>
+    )
+  }
+
+  if (src === 'broker_default') {
+    const free = resolved.free_minutes != null ? minutesToHours(resolved.free_minutes) : null
+    const rate = resolved.rate_per_hour != null ? Number(resolved.rate_per_hour) : null
+    const bits = [free != null ? `${free}h free` : null, rate != null ? `$${rate}/hour` : null].filter(Boolean).join(', ')
+    return (
+      <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-1.5">
+        This rate con states no {t} terms. Using {brokerName || 'this broker'}&apos;s recorded terms{bits ? ` — ${bits}` : ''}.
+        {' '}Check the document before filing.
+      </p>
+    )
+  }
+
+  return (
+    <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1.5">
+      No {t} terms stated on this rate confirmation. Enter the free time and rate from the document before filing.
+      {canRecord && onRecord && (
+        <> <button type="button" onClick={onRecord}
+          className="font-medium text-orange-600 dark:text-orange-400 hover:underline">Record terms for this broker</button></>
+      )}
+    </p>
+  )
+}
 
 const ACTIVITY_CAP = 8 // beyond this the list collapses behind a disclosure
 function ActivityLog({ activities, onRemove }) {
