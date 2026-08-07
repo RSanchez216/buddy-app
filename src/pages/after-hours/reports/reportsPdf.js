@@ -1,4 +1,7 @@
-import { fmtRange, fmtDay, fmtClock, fmtTs, fmtHours, money, pct, shiftTypeLabel, kindMeta } from './reportsData'
+import {
+  fmtRange, fmtDay, fmtClock, fmtTs, fmtHours, money, pct, shiftTypeLabel, kindMeta,
+  shiftLogNotes, handoffAlreadyHasShiftLog, splitLumpers, lumperActor, lumperSource, shiftPdfFilename,
+} from './reportsData'
 import { pdfSafeText } from '../shift-board/shiftBoardData'
 
 // PDF export for Shift Reports — the whole week, as the page reads on screen:
@@ -38,7 +41,27 @@ const COVER_TEXT = { gap: [185, 28, 28], open: [194, 65, 12], covered: [4, 120, 
 
 const txt = (v) => pdfSafeText(v == null || v === '' ? '—' : String(v))
 
-export async function buildShiftReportsPdf({ week, totals, coverage, history, rollup, details = {}, filterNote = '' }) {
+// 24-hour Chicago clock for the SHIFT LOG lines — matches the Telegram body's
+// `HH:MM  note` shape, which is 24h there and should not silently become 12h here.
+const hhmm = (ts) => {
+  if (!ts) return '--:--'
+  try {
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'America/Chicago', hour: '2-digit', minute: '2-digit', hour12: false,
+    }).format(new Date(ts))
+  } catch { return '--:--' }
+}
+
+// `onlyShiftId` narrows the whole document to one shift: the week summary, the
+// coverage grid, the history table and the by-associate rollup all drop out and
+// what remains is that shift's own block. It is the SAME renderer either way —
+// the per-shift export is a parameter, not a fork, so the two can't drift.
+export async function buildShiftReportsPdf({ week, totals, coverage, history, rollup, details = {}, filterNote = '', onlyShiftId = null }) {
+  const single = onlyShiftId
+    ? (history.find(r => r.shift_id === onlyShiftId && !r.is_gap) || null)
+    : null
+  if (onlyShiftId && !single) throw new Error('That shift is not in the current week.')
+
   const [{ jsPDF }, { default: autoTable }] = await Promise.all([
     import('jspdf'),
     import('jspdf-autotable'),
@@ -55,11 +78,18 @@ export async function buildShiftReportsPdf({ week, totals, coverage, history, ro
   // without the didDrawPage hook a table that spills lands on a bare sheet.
   const paintChrome = () => {
     doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(...INK)
-    doc.text('After Hours — Shift Reports', M, 30)
+    doc.text(pdfSafeText(single
+      ? `After Hours — ${fmtDay(single.shift_date)} · ${shiftTypeLabel(single.shift_type)}`
+      : 'After Hours — Shift Reports'), M, 30)
 
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(...MUTED)
-    doc.text(pdfSafeText(`${fmtRange(week)}   ·   generated ${generated}`), pw - M, 30, { align: 'right' })
-    if (filterNote) doc.text(pdfSafeText(filterNote), M, 42)
+    // A single-shift export still carries the week it was pulled from, so a
+    // loose page can be placed without hunting for the date.
+    doc.text(pdfSafeText(
+      (single ? `${single.associate || '—'}   ·   week of ${fmtRange(week)}` : fmtRange(week))
+      + `   ·   generated ${generated}`
+    ), pw - M, 30, { align: 'right' })
+    if (filterNote && !single) doc.text(pdfSafeText(filterNote), M, 42)
 
     doc.setDrawColor(...RULE); doc.setLineWidth(0.5)
     doc.line(M, 48, pw - M, 48)
@@ -99,7 +129,14 @@ export async function buildShiftReportsPdf({ week, totals, coverage, history, ro
   paintChrome()
   y = 66
 
+  const nShifts = history.filter(r => !r.is_gap).length
+  const nGaps = history.length - nShifts
+
   // ── Summary (the metric strip) ─────────────────────────────────────────────
+  // Week-level sections. All four drop out for a single-shift export — the point
+  // of that document is one shift, so a week summary, a coverage grid for days
+  // it didn't run, and a rollup of other people's work are all noise.
+  if (!single) {
   heading('Summary', `${totals.shifts} shifts · ${fmtHours(totals.hours)} covered${totals.open > 0 ? ` · ${totals.open} open` : ''}`)
   table({
     head: [['Avg reviewed', 'Booked', 'POD / BOL', 'Chkpt', 'Requests raised / handled', 'Escalations', 'Acc. claimed', 'Acc. collected', 'Lumpers']],
@@ -140,8 +177,6 @@ export async function buildShiftReportsPdf({ week, totals, coverage, history, ro
 
   // ── Shift history ──────────────────────────────────────────────────────────
   // The whole week, gap rows included — never only what happens to be on screen.
-  const nShifts = history.filter(r => !r.is_gap).length
-  const nGaps = history.length - nShifts
   heading('Shift history', `${nShifts} shifts${nGaps ? ` · ${nGaps} gap${nGaps === 1 ? '' : 's'}` : ''}`)
   table({
     head: [['Date', 'Shift', 'Associate', 'Status', 'Start', 'End', 'Hrs', 'Rev', 'Rev %', 'Flag', 'Book', 'POD', 'BOL', 'Chk', 'Req', 'Esc']],
@@ -174,13 +209,15 @@ export async function buildShiftReportsPdf({ week, totals, coverage, history, ro
       }
     },
   })
+  } // end week-only sections
 
   // ── Per-shift detail ───────────────────────────────────────────────────────
-  // The same four blocks the expanded row shows, in reading order rather than the
+  // The same blocks the expanded row shows, in reading order rather than the
   // screen's two columns — a PDF page is wide, not tall.
-  const detailed = history.filter(r => !r.is_gap && details[r.shift_id]?.data)
+  const detailed = (single ? [single] : history.filter(r => !r.is_gap))
+    .filter(r => details[r.shift_id]?.data)
   if (detailed.length) {
-    heading('Shift detail', `${detailed.length} of ${nShifts} shifts`)
+    if (!single) heading('Shift detail', `${detailed.length} of ${nShifts} shifts`)
     for (const row of detailed) {
       const d = details[row.shift_id].data
       room(96)
@@ -195,6 +232,30 @@ export async function buildShiftReportsPdf({ week, totals, coverage, history, ro
       ), M, y + 11)
       y += 24
 
+      // This shift's own metrics. On a week export the history table above
+      // already carries them, so they'd be a second copy; on a single-shift
+      // export that table isn't there and these are the only numbers.
+      if (single) {
+        table({
+          head: [['Hours', 'Reviewed', 'Rev %', 'Flagged', 'Booked', 'POD / BOL', 'Chkpt', 'Requests', 'Escalations', 'Accessorials']],
+          body: [[
+            row.hours == null ? '—' : fmtHours(row.hours),
+            `${row.drivers_reviewed ?? 0} / ${row.active_drivers ?? 0}`,
+            pct(row.reviewed_pct),
+            String(row.drivers_flagged ?? 0),
+            String(row.loads_booked ?? 0),
+            `${row.pods ?? 0} / ${row.bols ?? 0}`,
+            String(row.checkpoints ?? 0),
+            `${row.requests_raised ?? 0} raised / ${row.requests_handled ?? 0} handled`,
+            String(row.escalations ?? 0),
+            money(row.accessorials_claimed, 2),
+          ]],
+          styles: { fontSize: 8, cellPadding: 5, halign: 'center', overflow: 'linebreak', textColor: INK, lineColor: RULE, lineWidth: 0.4 },
+          headStyles: { fillColor: ORANGE, textColor: [255, 255, 255], fontSize: 7, fontStyle: 'bold', halign: 'center' },
+          alternateRowStyles: {},
+        })
+      }
+
       // Handoff body verbatim, behind a rule so it reads as a quotation and can't
       // be mistaken for the report's own prose.
       if (d.handoff?.text) {
@@ -206,6 +267,42 @@ export async function buildShiftReportsPdf({ week, totals, coverage, history, ro
           doc.setTextColor(60, 60, 66)
           doc.text(ln, M + 12, y)
           y += 9
+        }
+        y += 10
+      }
+
+      // ── SHIFT LOG ────────────────────────────────────────────────────────
+      // Running notes, oldest first, HH:MM Chicago — the same shape as the
+      // Telegram body.
+      //
+      // Rendered ONLY when the frozen handoff above isn't already showing them.
+      // handoff_text is stored as it was sent and never re-renders: a shift
+      // frozen after the feature shipped already contains its own SHIFT LOG
+      // section, and printing a live one too would duplicate it. A shift frozen
+      // before it never will, so the live section is the only way those notes
+      // appear. Notes added after the freeze also land here, correctly — they
+      // happened, and the frozen text cannot retroactively contain them.
+      const notes = shiftLogNotes(d)
+      if (notes.length && !handoffAlreadyHasShiftLog(d)) {
+        room(30)
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(...ORANGE)
+        doc.text('SHIFT LOG', M, y)
+        y += 10
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(60, 60, 66)
+        for (const n of notes) {
+          const stamp = hhmm(n.at)
+          // Continuation lines of a multi-line note indent under their own entry
+          // rather than starting a new bullet.
+          const wrapped = doc.splitTextToSize(pdfSafeText(String(n.note)), pw - 2 * M - 52)
+          wrapped.forEach((ln, i) => {
+            if (y > ph - 34) newPage()
+            if (i === 0) {
+              doc.setTextColor(...MUTED); doc.text(stamp, M + 6, y)
+              doc.setTextColor(60, 60, 66)
+            }
+            doc.text(ln, M + 46, y)
+            y += 9
+          })
         }
         y += 10
       }
@@ -267,11 +364,68 @@ export async function buildShiftReportsPdf({ week, totals, coverage, history, ro
         doc.setFont('helvetica', 'normal')
         y += 18
       }
+
+      // ── Lumpers ──────────────────────────────────────────────────────────
+      // Split by who actually entered them. The shift's window matches on TIME,
+      // not actor, so an event recorded the next morning by someone who wasn't
+      // on shift still falls inside it. Those are kept — they are real context
+      // for this shift's loads — but they are no longer credited to the
+      // associate. Subtotals are on total_amount, which includes the EFS fee.
+      const L = splitLumpers(d)
+      if (L.all.length) {
+        room(40)
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(...ORANGE)
+        doc.text('LUMPERS', M, y)
+        doc.setFont('helvetica', 'normal'); doc.setTextColor(...MUTED)
+        doc.text(pdfSafeText(`${L.all.length} event${L.all.length === 1 ? '' : 's'}  ·  ${money(L.total, 2)} advanced, EFS fee included`), M + 52, y)
+        y += 10
+
+        for (const sec of [
+          { label: 'Raised on shift', hint: 'recorded by the associate on shift', rows: L.onShift, sub: L.onShiftTotal },
+          { label: 'Entered by others during this window', hint: 'the window matches on time, not on who recorded it', rows: L.others, sub: L.othersTotal },
+        ]) {
+          room(26)
+          doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(...INK)
+          doc.text(pdfSafeText(sec.label), M + 6, y)
+          doc.setFont('helvetica', 'italic'); doc.setTextColor(...MUTED)
+          doc.text(pdfSafeText(`— ${sec.hint}`), M + 6 + doc.getTextWidth(sec.label) + 6, y)
+          doc.setFont('helvetica', 'bold'); doc.setTextColor(...INK)
+          doc.text(pdfSafeText(money(sec.sub, 2)), pw - M, y, { align: 'right' })
+          doc.setFont('helvetica', 'normal')
+          y += 6
+
+          if (!sec.rows.length) {
+            doc.setFont('helvetica', 'italic'); doc.setFontSize(7); doc.setTextColor(...MUTED)
+            doc.text('None.', M + 12, y + 6)
+            doc.setFont('helvetica', 'normal')
+            y += 16
+            continue
+          }
+          table({
+            head: [['Load', 'Amount', 'EFS fee', 'Total', 'Recorded by', 'Entered', 'Source']],
+            body: sec.rows.map(l => [
+              txt(l.load_number), money(l.amount, 2), money(l.efs_fee, 2), money(l.total_amount, 2),
+              pdfSafeText(lumperActor(l)), fmtTs(l.created_at), lumperSource(l),
+            ]),
+            columnStyles: {
+              0: { cellWidth: 70 },
+              1: { cellWidth: 58, halign: 'right' }, 2: { cellWidth: 52, halign: 'right' },
+              3: { cellWidth: 62, halign: 'right', fontStyle: 'bold' },
+              4: { cellWidth: 118 }, 5: { cellWidth: 92 },
+            },
+          })
+        }
+        doc.setFont('helvetica', 'italic'); doc.setFontSize(6.5); doc.setTextColor(...MUTED)
+        room(14)
+        doc.text('Source shows where the row came from. No field separates a shift-board entry from one made in the Lumpers section.', M, y)
+        doc.setFont('helvetica', 'normal')
+        y += 16
+      }
     }
   }
 
   // ── By associate ───────────────────────────────────────────────────────────
-  if (rollup?.length) {
+  if (!single && rollup?.length) {
     room(80)
     heading('By associate')
     table({
@@ -303,5 +457,5 @@ export async function buildShiftReportsPdf({ week, totals, coverage, history, ro
     })
   }
 
-  doc.save(`shift-reports-${week.start}-to-${week.end}.pdf`)
+  doc.save(single ? shiftPdfFilename(single) : `shift-reports-${week.start}-to-${week.end}.pdf`)
 }

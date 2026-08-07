@@ -258,6 +258,90 @@ export function kindMeta(kind) {
   }
 }
 
+// ── Shift detail derivations ────────────────────────────────────────────────
+// Shared by the on-screen detail and the PDF so the two can never disagree.
+
+// The shift log — running notes with no load attached. They already arrive in
+// the detail's timeline (the RPC selects every shift_activities row for the
+// shift with no type filter), so this is a filter, not another fetch.
+//
+// A shift-log note is `note` with no load. load_number is the discriminator
+// available on a timeline entry; a note attached to a load whose load_number is
+// somehow blank would be misread as a shift-log note, which is a far smaller
+// problem than an extra round trip per shift.
+//
+// Oldest first — the timeline arrives ordered by occurred_at, and the section
+// reads as the night unfolded, matching the Telegram body.
+export function shiftLogNotes(detail) {
+  return (detail?.timeline || [])
+    .filter(e => e.kind === 'note' && !e.load_number && String(e.note || '').trim())
+    .map(e => ({ at: e.occurred_at, note: e.note }))
+}
+
+// Does this shift's FROZEN handoff already carry a SHIFT LOG section?
+//
+// handoff_text is stored as it was sent and never re-renders. Shifts frozen
+// after the SHIFT LOG feature shipped contain that section inside the frozen
+// text; shifts frozen before it do not, and never will. So the report renders a
+// live SHIFT LOG section only when the frozen text isn't already showing one —
+// otherwise the same notes would print twice.
+//
+// Notes added AFTER a handoff was frozen still surface in the live section, and
+// that is correct: they happened, and the frozen text cannot retroactively
+// contain them.
+export function handoffAlreadyHasShiftLog(detail) {
+  const h = detail?.handoff
+  if (!h?.is_frozen || !h.text) return false
+  return /^[ \t]*SHIFT LOG[ \t]*$/m.test(String(h.text))
+}
+
+// Lumpers split by who actually entered them.
+//
+// The shift's lumper window matches on TIME, not actor — every lumper_event
+// whose created_at falls between started_at and (ended_at or now). That is left
+// alone deliberately: those events are real context for the shift's loads. What
+// this does is separate the ones the associate on shift recorded from the ones
+// somebody else did, so the report can say which is which instead of crediting
+// the whole figure to whoever was on shift.
+//
+// Subtotals use total_amount (amount + efs_fee). The old lumpers_amount summed
+// `amount` alone and silently dropped the fee — real money, since several
+// brokers deduct it when issuing the electronic check.
+export function splitLumpers(detail) {
+  const all = detail?.raised?.lumpers || []
+  const onShift = all.filter(l => l.by_associate === true)
+  const others = all.filter(l => l.by_associate !== true)
+  const sum = (rows) => rows.reduce((a, l) => a + (Number(l.total_amount) || 0), 0)
+  return {
+    all,
+    onShift,
+    others,
+    onShiftTotal: sum(onShift),
+    othersTotal: sum(others),
+    total: sum(all),
+    // Falls back to lumpers_total from the RPC when the array is absent (an old
+    // cached detail), so a subtotal is never silently zero.
+    rpcTotal: Number(detail?.raised?.lumpers_total ?? 0),
+  }
+}
+
+// recorded_by_name, with the recorded_by user's email as the fallback — the RPC
+// already coalesces to email, this covers a row where both are null.
+export const lumperActor = (l) => l?.recorded_by_name || l?.recorded_by_email || 'Unknown'
+
+// `source` on lumper_events distinguishes clickup_import from buddy — i.e. where
+// the row CAME FROM, not which BUDDY screen it was typed into. There is no
+// column that separates a shift-board entry from a Lumpers-section entry, so
+// this reports what the data actually says and nothing more.
+export const lumperSource = (l) => (l?.source === 'clickup_import' ? 'ClickUp import' : l?.source === 'buddy' ? 'BUDDY' : (l?.source || '—'))
+
+// shift-report-2026-08-05-shift-1.pdf. Weekend types keep their own name rather
+// than being forced into a number that would collide with shift_1 / shift_2.
+export function shiftPdfFilename(row) {
+  const type = String(row?.shift_type || 'shift').replace(/_/g, '-')
+  return `shift-report-${row?.shift_date || 'unknown'}-${type}.pdf`
+}
+
 // ── Export ──────────────────────────────────────────────────────────────────
 const CSV_COLUMNS = [
   ['Date', r => r.shift_date],

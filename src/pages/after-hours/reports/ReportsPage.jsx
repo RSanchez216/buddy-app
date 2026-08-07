@@ -10,7 +10,7 @@ import {
   fetchShiftList, fetchAssociateRollup, fetchShiftDetail, fetchOrphanActivityCount,
   weekOf, shiftWeek, isCurrentWeek, fmtRange, shiftTypeLabel, orderShiftTypes,
   deriveTotals, buildCoverage, gapRows, sortHistory,
-  historyToCsv, downloadCsv, fmtHours, money, pct,
+  historyToCsv, downloadCsv, fmtHours, fmtDay, money, pct,
 } from './reportsData'
 import { buildShiftReportsPdf } from './reportsPdf'
 
@@ -36,6 +36,7 @@ export default function ReportsPage() {
   const [openId, setOpenId] = useState(null)
   const [details, setDetails] = useState({}) // shift_id → { loading, data, error }
   const [pdfBusy, setPdfBusy] = useState(false)
+  const [shiftPdfId, setShiftPdfId] = useState(null) // which row's PDF is building
 
   // toast identity changes on every toast show/dismiss, so it goes through a ref
   // rather than a dep array — putting it in one refires the fetch effect.
@@ -123,30 +124,37 @@ export default function ReportsPage() {
   // reused for the rest and is written back so expanding a row afterwards is
   // instant. A shift whose detail fails is still exported, just without its
   // expanded block — one bad RPC shouldn't cost the whole document.
+  // Fetch whatever detail these ids don't have yet, and write it back to the
+  // session cache so expanding a row afterwards is instant. Returns the merged
+  // map; a shift whose RPC failed simply has no `data` and is reported.
+  const ensureDetails = useCallback(async (ids) => {
+    const missing = ids.filter(id => !details[id]?.data)
+    if (!missing.length) return details
+    const fetched = await Promise.all(
+      missing.map(id => fetchShiftDetail(id).then(data => [id, { loading: false, data }])
+        .catch(e => [id, { loading: false, error: e?.message || 'failed' }])),
+    )
+    const merged = { ...details, ...Object.fromEntries(fetched) }
+    setDetails(merged)
+    return merged
+  }, [details])
+
+  const filterNote = () => (filtersActive
+    ? `Filtered — ${[
+      typeFilter.size ? `${[...typeFilter].map(shiftTypeLabel).join(', ')}` : null,
+      assocFilter.size ? `${assocOptions.filter(a => assocFilter.has(a.id)).map(a => a.name).join(', ')}` : null,
+    ].filter(Boolean).join('  ·  ')}`
+    : '')
+
   async function exportPdf() {
     if (!history.length || pdfBusy) return
     setPdfBusy(true)
     try {
       const ids = history.filter(r => !r.is_gap && r.shift_id).map(r => r.shift_id)
-      const missing = ids.filter(id => !details[id]?.data)
-      let merged = details
-      if (missing.length) {
-        const fetched = await Promise.all(
-          missing.map(id => fetchShiftDetail(id).then(data => [id, { loading: false, data }])
-            .catch(e => [id, { loading: false, error: e?.message || 'failed' }])),
-        )
-        merged = { ...details, ...Object.fromEntries(fetched) }
-        setDetails(merged) // keep it, so expanding a row after exporting is instant
-      }
+      const merged = await ensureDetails(ids)
       const failed = ids.filter(id => !merged[id]?.data).length
       await buildShiftReportsPdf({
-        week, totals, coverage, history, rollup, details: merged,
-        filterNote: filtersActive
-          ? `Filtered — ${[
-            typeFilter.size ? `${[...typeFilter].map(shiftTypeLabel).join(', ')}` : null,
-            assocFilter.size ? `${assocOptions.filter(a => assocFilter.has(a.id)).map(a => a.name).join(', ')}` : null,
-          ].filter(Boolean).join('  ·  ')}`
-          : '',
+        week, totals, coverage, history, rollup, details: merged, filterNote: filterNote(),
       })
       if (failed > 0) toast.error(`PDF exported — ${failed} shift${failed === 1 ? '' : 's'} without detail`)
       else toast.success('PDF exported')
@@ -154,6 +162,25 @@ export default function ReportsPage() {
       toast.error("Couldn't build the PDF", e)
     } finally {
       setPdfBusy(false)
+    }
+  }
+
+  // One shift's own PDF. Same generator, narrowed by onlyShiftId — the week
+  // summary, coverage grid, history table and rollup all drop out.
+  async function exportShiftPdf(row) {
+    if (!row?.shift_id || row.is_gap || shiftPdfId) return
+    setShiftPdfId(row.shift_id)
+    try {
+      const merged = await ensureDetails([row.shift_id])
+      if (!merged[row.shift_id]?.data) throw new Error("Couldn't load that shift's detail.")
+      await buildShiftReportsPdf({
+        week, totals, coverage, history, rollup, details: merged, onlyShiftId: row.shift_id,
+      })
+      toast.success(`${fmtDay(row.shift_date)} ${shiftTypeLabel(row.shift_type)} exported`)
+    } catch (e) {
+      toast.error("Couldn't build that shift's PDF", e)
+    } finally {
+      setShiftPdfId(null)
     }
   }
 
@@ -237,7 +264,8 @@ export default function ReportsPage() {
         <>
           <Tiles t={totals} />
           <CoverageStrip coverage={coverage} orphanCount={orphans} />
-          <ShiftHistory rows={history} openId={openId} onToggle={toggleRow} details={details} onRetry={openDetail} />
+          <ShiftHistory rows={history} openId={openId} onToggle={toggleRow} details={details} onRetry={openDetail}
+            onDownloadShift={exportShiftPdf} downloadingId={shiftPdfId} />
           <AssociateTable rows={rollup} />
         </>
       )}

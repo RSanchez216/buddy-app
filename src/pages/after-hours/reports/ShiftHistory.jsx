@@ -10,9 +10,9 @@ import ShiftDetail from './ShiftDetail'
 // Ordering is computed once by sortHistory and never depends on which row is
 // open — expanding must not move anything under the cursor.
 
-const COLS = ['Date', 'Shift', 'Associate', 'Hours', 'Reviewed', 'Booked', 'Paperwork', 'Chkpt', 'Req', 'Esc', 'Accessorials', 'Lumpers', 'Handoff']
+const COLS = ['Date', 'Shift', 'Associate', 'Hours', 'Reviewed', 'Booked', 'Paperwork', 'Chkpt', 'Req', 'Esc', 'Accessorials', 'Lumpers', 'Handoff', '']
 
-export default function ShiftHistory({ rows, openId, onToggle, details, onRetry }) {
+export default function ShiftHistory({ rows, openId, onToggle, details, onRetry, onDownloadShift, downloadingId }) {
   return (
     <div className={`${S.card} overflow-hidden`}>
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-white/5">
@@ -37,7 +37,9 @@ export default function ShiftHistory({ rows, openId, onToggle, details, onRetry 
                     open={openId === r.shift_id}
                     onToggle={() => onToggle(r.shift_id)}
                     detail={details[r.shift_id]}
-                    onRetry={() => onRetry(r.shift_id)} />
+                    onRetry={() => onRetry(r.shift_id)}
+                    onDownload={() => onDownloadShift?.(r)}
+                    downloading={downloadingId === r.shift_id} />
                 )
             ))}
           </tbody>
@@ -47,7 +49,7 @@ export default function ShiftHistory({ rows, openId, onToggle, details, onRetry 
   )
 }
 
-function Row({ r, open, onToggle, detail, onRetry }) {
+function Row({ r, open, onToggle, detail, onRetry, onDownload, downloading }) {
   const paperwork = (Number(r.pods) || 0) + (Number(r.bols) || 0)
 
   return (
@@ -116,6 +118,20 @@ function Row({ r, open, onToggle, detail, onRetry }) {
           ) : (
             <span className="text-gray-300 dark:text-slate-600">—</span>
           )}
+        </td>
+        {/* Per-shift PDF. stopPropagation because the whole row is the expand
+            toggle — downloading a report shouldn't also open the row. A quiet
+            text link, not a second full-width button per row. */}
+        <td className="px-3 py-2.5 whitespace-nowrap text-right">
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onDownload?.() }}
+            disabled={downloading}
+            title="Download a PDF for this shift only"
+            aria-label={`Download PDF for ${fmtDay(r.shift_date)} ${shiftTypeLabel(r.shift_type)}`}
+            className="text-[10px] font-bold tracking-wide text-gray-400 dark:text-slate-500 hover:text-orange-600 dark:hover:text-orange-400 disabled:opacity-50 disabled:hover:text-gray-400 transition-colors">
+            {downloading ? '…' : 'PDF'}
+          </button>
         </td>
       </tr>
 

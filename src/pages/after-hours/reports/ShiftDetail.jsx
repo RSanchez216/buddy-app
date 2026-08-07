@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { S } from '../../../lib/styles'
-import { fmtClock, fmtTs, fmtHours, money, kindMeta } from './reportsData'
+import { fmtClock, fmtTs, fmtHours, money, kindMeta, splitLumpers, lumperActor, lumperSource } from './reportsData'
 
 // The expanded row. Two columns: a fixed 300px left (handoff, what was raised)
 // and a flexible right (drivers worked, activity log).
@@ -49,6 +49,92 @@ export default function ShiftDetail({ detail, loading, error, onRetry }) {
           <Timeline entries={detail.timeline || []} />
         </div>
       </div>
+
+      {/* Lumpers sit BELOW the two columns, full width: the breakdown is a
+          seven-column table and the Raised card it used to live in is 300px. */}
+      <Lumpers detail={detail} />
+    </div>
+  )
+}
+
+// ── ⑤ Lumpers ───────────────────────────────────────────────────────────────
+// The shift's lumper window matches on TIME, not actor — every event created
+// between the shift's start and its end (or now, while it's open). That is left
+// alone: the events are real context for this shift's loads. What changed is
+// that the block no longer implies the associate on shift recorded them.
+//
+// Verified on prod: every lumper credited to Aug 5 Shift 1 was entered by
+// Meerim Rakhmanova the next morning, and every one on Aug 4 Shift 2 by Altyn
+// Berdimatov — none by the associate whose shift it was.
+function Lumpers({ detail }) {
+  const L = splitLumpers(detail)
+  if (!L.all.length) return null
+
+  return (
+    <div className="mt-4">
+      <Card n={5} title="Lumpers"
+        right={
+          <span className="text-[11px] text-gray-500 dark:text-slate-400">
+            {L.all.length} event{L.all.length === 1 ? '' : 's'} ·{' '}
+            <span className="font-mono tabular-nums font-semibold text-gray-900 dark:text-white">{money(L.total, 2)}</span>
+          </span>
+        }>
+        <LumperSection
+          label="Raised on shift"
+          hint="recorded by the associate on shift, inside the window"
+          rows={L.onShift} subtotal={L.onShiftTotal} />
+        <LumperSection
+          label="Entered by others during this window"
+          hint="the window matches on time, not on who recorded it"
+          rows={L.others} subtotal={L.othersTotal} muted />
+        <p className="mt-2.5 pt-2.5 border-t border-gray-100 dark:border-white/5 text-[10px] text-gray-400 dark:text-slate-500">
+          Total advanced includes the EFS fee. Source shows where the row came from — there is no field
+          separating a shift-board entry from one made in the Lumpers section.
+        </p>
+      </Card>
+    </div>
+  )
+}
+
+function LumperSection({ label, hint, rows, subtotal, muted }) {
+  return (
+    <div className={muted ? 'mt-3 pt-3 border-t border-gray-100 dark:border-white/5' : ''}>
+      <div className="flex items-baseline gap-2 flex-wrap mb-1.5">
+        <p className={EYEBROW}>{label}</p>
+        <span className="text-[10px] text-gray-400 dark:text-slate-500">{hint}</span>
+        <span className="ml-auto text-[11px] font-mono tabular-nums font-semibold text-gray-900 dark:text-white">
+          {money(subtotal, 2)}
+        </span>
+      </div>
+
+      {rows.length === 0 ? (
+        <p className="text-xs text-gray-400 dark:text-slate-500 italic">None.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-[11px]">
+            <thead>
+              <tr className="text-gray-400 dark:text-slate-500">
+                {['Load', 'Amount', 'EFS fee', 'Total', 'Recorded by', 'Entered', 'Source'].map((h, i) => (
+                  <th key={h} className={`font-semibold py-1 pr-3 whitespace-nowrap ${i >= 1 && i <= 3 ? 'text-right' : 'text-left'}`}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(l => (
+                <tr key={l.id} className="border-t border-gray-100 dark:border-white/5">
+                  <td className="py-1 pr-3 font-mono text-gray-700 dark:text-slate-300 whitespace-nowrap">{l.load_number || '—'}</td>
+                  <td className="py-1 pr-3 text-right tabular-nums text-gray-600 dark:text-slate-400 whitespace-nowrap">{money(l.amount, 2)}</td>
+                  <td className="py-1 pr-3 text-right tabular-nums text-gray-500 dark:text-slate-500 whitespace-nowrap">{money(l.efs_fee, 2)}</td>
+                  <td className="py-1 pr-3 text-right tabular-nums font-semibold text-gray-900 dark:text-white whitespace-nowrap">{money(l.total_amount, 2)}</td>
+                  <td className="py-1 pr-3 text-gray-700 dark:text-slate-300 whitespace-nowrap">{lumperActor(l)}</td>
+                  <td className="py-1 pr-3 text-gray-500 dark:text-slate-400 tabular-nums whitespace-nowrap">{fmtTs(l.created_at)}</td>
+                  <td className="py-1 text-gray-400 dark:text-slate-500 whitespace-nowrap">{lumperSource(l)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }
@@ -93,7 +179,10 @@ function Handoff({ detail }) {
 function Raised({ raised }) {
   const r = raised || {}
   const acc = r.accessorials || []
-  const nothing = acc.length === 0 && !r.requests_raised && !r.requests_handled && !r.lumpers_count
+  // Lumpers are excluded from this test now that they render in their own block:
+  // a shift whose only "activity" was somebody else's lumper entry the next
+  // morning genuinely did not raise anything, and should say so.
+  const nothing = acc.length === 0 && !r.requests_raised && !r.requests_handled
 
   return (
     <Card n={3} title="Raised this shift">
@@ -121,13 +210,13 @@ function Raised({ raised }) {
               <span className="tabular-nums font-semibold">{r.requests_handled || 0}</span><span className="-ml-2">handled</span>
             </div>
           )}
-          {r.lumpers_count > 0 && (
-            <div className="flex items-center gap-2 text-[11px] text-gray-600 dark:text-slate-300">
-              <span className={EYEBROW}>Lumpers</span>
-              <span className="tabular-nums font-semibold">{r.lumpers_count}</span>
-              <span className="ml-auto font-mono tabular-nums font-semibold text-gray-900 dark:text-white">{money(r.lumpers_amount, 2)}</span>
-            </div>
-          )}
+          {/* Lumpers deliberately do NOT appear here any more. This line read
+              "LUMPERS 3 · $1,014.00" inside "Raised this shift", which asserted
+              two things that weren't true: that the associate on shift raised
+              them (the window matches on time, not actor), and that $1,014 was
+              the figure (it summed `amount` and dropped `efs_fee` — the real
+              total was $1,020). Both are now shown properly in the full-width
+              Lumpers block below, named and itemised. */}
         </div>
       )}
     </Card>
