@@ -118,16 +118,57 @@ export const feeMeta = (v) => {
 }
 
 // ── Risk list ───────────────────────────────────────────────────────────────
-// "Impersonated", never "bad broker" or "blacklisted": these are companies MANAS
-// hauls for daily and the instruction is to VERIFY, not to avoid.
+// Split by what the flag actually MEANS. One generic "this broker has been
+// impersonated" was a false statement about every nonpayment-flagged company —
+// 53 loads in the last 30 days — and it sent the associate to verify an identity
+// when the real task was getting the POD in before the invoice got disputed.
+//
+// identity and nonpayment are independent: 32 MCs carry 'IN' and render both.
+//
+// "Impersonated", never "bad broker" or "blacklisted". These are companies MANAS
+// hauls for daily; the instruction is to VERIFY, not to avoid.
+export const IDENTITY_TITLE = 'Identity theft reported'
+export const IDENTITY_BODY = 'Someone has impersonated this broker. The company itself is legitimate — verify you are dealing with the real one.'
+export const IDENTITY_CHECKS = [
+  'Confirm the rep works there',
+  'Confirm the load # is in their system',
+  'Do not accept a changed remit-to',
+]
+
+export const NONPAYMENT_TITLE = 'Nonpayment history'
+export const NONPAYMENT_BODY = 'Reported for slow or non-payment. Get the POD in on time — late paperwork is the first thing disputed.'
+
+// The one 'U' broker. Kept rather than dropped: a panel whose job is to say what
+// is known should not go silent on a flag it doesn't recognise.
 export const RISK_LIST_TITLE = 'On the risk list'
-export const RISK_LIST_BODY = 'This broker has been impersonated. Confirm the contact against the rate confirmation before you dispatch.'
+export const RISK_LIST_BODY = 'This broker is flagged, without a recorded reason. Confirm the contact against the rate confirmation before you dispatch.'
+
+// '{broker} · MC {mc} · {which list}' — small italic grey under the flag blocks.
+// Named lists rather than "Accounting" alone so the associate knows which record
+// to go and read.
+export function riskSourceLine(v, brokerName) {
+  if (!v) return null
+  const lists = []
+  if (v.risk_identity === true) lists.push('identity list')
+  if (v.risk_nonpayment === true) lists.push('payment list')
+  if (v.risk_unclassified === true) lists.push('risk list')
+  if (!lists.length) return null
+  return [brokerName, v.mc_number ? `MC ${v.mc_number}` : null, lists.join(' + ')]
+    .filter(Boolean).join(' · ')
+}
+
+// Does this row render any of the three flag blocks?
+export const hasFlagBlock = (v) =>
+  v?.risk_identity === true || v?.risk_nonpayment === true || v?.risk_unclassified === true
 
 // Always shown when at least one block rendered. Nothing above may read as a
 // guarantee — recourse applies at every grade, an A included.
 export const PANEL_FOOTER = "Factored with recourse — the balance comes back to us if the broker doesn't pay."
 
-// Does this row produce any block at all?
+// Does this row produce any block at all? on_risk_list is kept in the test
+// rather than replaced by the three derived flags: it is the column that says
+// "this broker is on the list at all", and a flag string nobody anticipated must
+// still open the panel.
 export const hasAnyBlock = (v) => !!v && (
   v.rts_tone !== 'hidden' ||
   v.on_risk_list === true ||

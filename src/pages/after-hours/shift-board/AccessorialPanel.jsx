@@ -5,6 +5,7 @@ import { fmtClock, fmtDuration, money } from './shiftBoardData'
 import CheckpointFields from './CheckpointFields'
 import BrokerRiskPanel from './BrokerRiskPanel'
 import { hasAnyBlock } from './brokerRiskCopy'
+import { PANEL_HEADING, PANEL_STEP_BADGE } from './panelChrome'
 import {
   DOC_TYPES, RESPONSES, typeLabel, docTypeLabel, statusMeta,
   computeAmount, minutesBetween, fetchLoadAccessorials, fetchAccessorialDocs,
@@ -48,7 +49,9 @@ export default function AccessorialPanel({
   // brokerRisk is the v_load_broker_risk row. The older jsonb risk meta is NOT
   // taken here any more — it still drives the collapsed row's glyphs upstream,
   // but this panel reads only the view's typed booleans.
-  activities, onRemoveActivity, brokerRisk,
+  // brokerName comes from the broker meta (the board row doesn't carry it) and
+  // only feeds the risk source line.
+  activities, onRemoveActivity, brokerRisk, brokerName,
 }) {
   const loadId = row.load_id || null
 
@@ -486,7 +489,10 @@ export default function AccessorialPanel({
             {(showPanel5 || showRisk) ? (
               <div className={`grid grid-cols-1 ${gridCols} gap-3 items-start`}>
                 {showPanel5 && panel5Block}
-                {showRisk && <BrokerRiskPanel risk={brokerRisk} carrierName={brokerRisk.carrier_name} />}
+                {showRisk && (
+                  <BrokerRiskPanel risk={brokerRisk} carrierName={brokerRisk.carrier_name}
+                    brokerName={brokerName} />
+                )}
                 {activityBlock}
               </div>
             ) : activityBlock}
@@ -632,8 +638,8 @@ function Column({ n, title, children, fill, tag, meta }) {
   return (
     <div className={`rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-white/[0.02] p-3.5${fill ? ' flex flex-col' : ''}`}>
       <div className="flex items-center gap-2 mb-3">
-        <span className="w-5 h-5 rounded-full bg-orange-100 dark:bg-orange-500/15 text-orange-600 dark:text-orange-400 inline-flex items-center justify-center text-[10px] font-bold">{n}</span>
-        <h4 className="text-xs font-semibold text-gray-900 dark:text-white uppercase tracking-wide">{title}</h4>
+        <span className={PANEL_STEP_BADGE}>{n}</span>
+        <h4 className={PANEL_HEADING}>{title}</h4>
         {meta && <span className="ml-auto text-[11px] text-gray-400 dark:text-slate-500 whitespace-nowrap">{meta}</span>}
         {tag && <span className={`${meta ? '' : 'ml-auto'} text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded border border-gray-200 dark:border-white/10 text-gray-400 dark:text-slate-500`}>{tag}</span>}
       </div>
@@ -979,8 +985,10 @@ function ActivityLog({ activities, onRemove }) {
       {/* Now numbered ⑥ — it IS a step (record the work), the last in the
           sequence. The circle matches panels ①–⑤. */}
       <div className="flex items-center gap-2 mb-1.5">
-        <span className="w-5 h-5 rounded-full bg-orange-100 dark:bg-orange-500/15 text-orange-600 dark:text-orange-400 inline-flex items-center justify-center text-[10px] font-bold">6</span>
-        <span className={EYEBROW}>Logged activity{acts.length ? ` (${acts.length})` : ''}</span>
+        <span className={PANEL_STEP_BADGE}>6</span>
+        {/* Same heading treatment as ①–⑤. It used EYEBROW, which is smaller and
+            grey, so ⑥ read as a caption rather than a panel of equal standing. */}
+        <h4 className={PANEL_HEADING}>Logged activity{acts.length ? ` (${acts.length})` : ''}</h4>
       </div>
       {acts.length === 0 ? (
         <p className="text-xs text-gray-400 dark:text-slate-500 italic">No activity logged for this driver yet.</p>

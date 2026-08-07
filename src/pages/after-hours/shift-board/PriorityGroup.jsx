@@ -847,7 +847,8 @@ function BoardRow({ r, curYear, settings, shift, ra, recipientsById, meId, isMan
           <AccessorialPanel row={r} exception={exception} meId={meId} toast={toast}
             onChanged={onAccessorialChanged} onTimesSaved={onTimesSaved} shiftId={shiftId}
             accessorialsOn={!!settings?.accessorials_enabled} trackCheckpoints={!!settings?.track_checkpoints}
-            canAddTypes={canAddTypes} activities={ra?.activities} onRemoveActivity={onRemoveActivity} brokerRisk={brokerRisk} />
+            canAddTypes={canAddTypes} activities={ra?.activities} onRemoveActivity={onRemoveActivity}
+            brokerRisk={brokerRisk} brokerName={broker?.broker || null} />
         </td>
       </tr>
     )}

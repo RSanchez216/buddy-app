@@ -961,35 +961,44 @@ function WeekStrip({ week, onCopy }) {
 // carries the "still recorded" note as a tooltip, so the old banner isn't needed.
 function ShiftControl({ shift, openShifts = [], meId, starting, onStart, onEnd }) {
   if (shift) {
-    // More than one person can be on at once — two are open in production right
-    // now — so the others are listed beneath the viewer's own pill. With a single
-    // open shift this renders exactly as it did before: one pill, nothing added.
+    // More than one person can be on at once. The rows are ONE left-aligned
+    // column that is right-aligned as a whole — previously each row was
+    // right-aligned independently, so rows of different width stepped in and out
+    // and the dots never lined up.
     //
-    // The viewer's own row is excluded from the list rather than re-sorted into
-    // it: it is already the pill above, and printing it twice reads as two
-    // shifts. Duration uses the shared formatter, so a 45-hour shift says
-    // "1d 21h 18m (running)" here and in the reports rather than "45h 18m" here
-    // and something else there.
-    const others = openShifts.filter(s => s.user_id !== meId && s.shift_id !== shift.id)
+    // The viewer is always first regardless of who started earlier, and their
+    // row carries their NAME: "On shift" alone isn't parallel with the rows
+    // beneath it, and the reader shouldn't have to work out which one is them.
+    //
+    // Duration uses the shared formatter, so a 45-hour shift reads
+    // "1d 21h 18m (running)" here and in the reports, not "45h 18m" here and
+    // something else there.
+    const mine = openShifts.find(s => s.shift_id === shift.id)
+      || { shift_id: shift.id, shift_type: shift.shift_type, started_at: shift.started_at, display_name: null }
+    const others = openShifts.filter(s => s.shift_id !== shift.id)
+    const rows = [{ ...mine, isMe: true }, ...others.map(s => ({ ...s, isMe: false }))]
+
     return (
-      <div className="flex flex-col items-end gap-1 shrink-0">
-        <div className="flex items-center gap-2">
-          <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
-            <span className="w-2 h-2 rounded-full bg-emerald-500" /> On shift · {shiftName(shift.shift_type)} · {fmtShiftDuration(shift.started_at, null)}
-          </span>
-          <button onClick={onEnd} className={ORANGE_BTN_SM}>End shift</button>
-        </div>
-        {others.length > 0 && (
-          <ul className="flex flex-col items-end gap-0.5">
-            {others.map(s => (
-              <li key={s.shift_id}
-                className="inline-flex items-center gap-1.5 text-[11px] font-medium text-gray-500 dark:text-slate-400 whitespace-nowrap">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500/60" />
-                {s.display_name || 'Someone'} · {shiftName(s.shift_type)} · {fmtShiftDuration(s.started_at, null)}
-              </li>
-            ))}
-          </ul>
-        )}
+      // items-center so End shift sits vertically centred against the whole
+      // column rather than pinned to the first row.
+      <div className="flex items-center gap-2 shrink-0">
+        <ul className="flex flex-col items-start gap-0.5">
+          {rows.map(s => (
+            <li key={s.shift_id}
+              className={`inline-flex items-center gap-1.5 text-[11px] whitespace-nowrap ${
+                s.isMe
+                  ? 'font-semibold text-emerald-600 dark:text-emerald-400'
+                  : 'font-medium text-gray-500 dark:text-slate-400'
+              }`}>
+              <span className={`rounded-full bg-emerald-500 ${s.isMe ? 'w-2 h-2' : 'w-1.5 h-1.5 opacity-60'}`} />
+              {/* Falls back to "On shift" only when the view hasn't resolved a
+                  name — never a hardcoded person. */}
+              {s.display_name || (s.isMe ? 'On shift' : 'Someone')} · {shiftName(s.shift_type)} · {fmtShiftDuration(s.started_at, null)}
+            </li>
+          ))}
+        </ul>
+        {/* Acts only on the viewer's own shift, whatever else is open. */}
+        <button onClick={onEnd} className={ORANGE_BTN_SM}>End shift</button>
       </div>
     )
   }
