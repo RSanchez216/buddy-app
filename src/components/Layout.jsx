@@ -62,6 +62,7 @@ const PAGE_ICON = {
   combined_loads: Icons.merge,
   // Customers import + broker profiles, keyed by their pages.page_key.
   customers_import: Icons.vendors, customer_profile: Icons.vendors,
+  cross_matching: Icons.merge,
   dashboard: Icons.dashboard, vendor_master: Icons.vendors, invoice_inbox: Icons.invoices,
   transaction_feed: Icons.txns, monthly_report: Icons.report,
   lumpers: Icons.moon, shift_board: Icons.report, after_hours_requests: Icons.lifeline,

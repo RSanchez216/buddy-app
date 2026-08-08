@@ -1,0 +1,429 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { useAuth } from '../../contexts/AuthContext'
+import { useToast } from '../../contexts/ToastContext'
+import { S } from '../../lib/styles'
+import {
+  fetchEfsWeeks, fetchWeekChecks, fetchMatchers, createTargetsFrom, fetchCandidates,
+  reconConfirm, createLumperFromCheck, createAccessorialFromCheck,
+  parseEfsWorkbook, checkYearOverlap, detectSwaps, applySwaps, feeSanity, fetchRosterDriverNames, applyEfsImport,
+  addDays, todayYmd, fmtRange, money,
+} from './crossMatchingData'
+
+// EFS cross-matching hub. Screen A is the weekly table; a row click drills into
+// Screen B (that week's checks + one action per row). Import a report opens the
+// guarded importer. All matching is done in the DB — this reads the views/RPCs.
+
+const g = (o, ...keys) => { for (const k of keys) { const v = o?.[k]; if (v != null) return v } return null }
+
+export default function CrossMatching() {
+  const { user, canEdit } = useAuth()
+  const toast = useToast()
+
+  const [params] = useSearchParams()
+  const [year, setYear] = useState(() => Number((params.get('week') || todayYmd()).slice(0, 4)))
+  const [weeks, setWeeks] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(false)
+  // ?week=YYYY-MM-DD (from the Lumpers banner) opens that week's drill-in.
+  const [selectedWeek, setSelectedWeek] = useState(() => params.get('week') || null)
+  const [importOpen, setImportOpen] = useState(false)
+  const [targets, setTargets] = useState({})
+
+  const toastRef = useRef(toast); toastRef.current = toast
+  useEffect(() => { fetchMatchers().then(m => setTargets(createTargetsFrom(m))).catch(() => {}) }, [])
+
+  const load = useCallback(async () => {
+    setLoading(true); setError(false)
+    try {
+      setWeeks(await fetchEfsWeeks(`${year}-01-01`, `${year}-12-31`))
+    } catch (e) { setError(true); toastRef.current.error("Couldn't load the weekly reconciliation", e) }
+    finally { setLoading(false) }
+  }, [year])
+  useEffect(() => { load() }, [load])
+
+  if (selectedWeek) {
+    return <WeekDrillIn weekStart={selectedWeek} targets={targets} canEdit={canEdit} toast={toast}
+      onBack={() => setSelectedWeek(null)} onChanged={load} />
+  }
+
+  return (
+    <div className="max-w-6xl mx-auto space-y-5">
+      <div className="flex items-start justify-between flex-wrap gap-3">
+        <div>
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-orange-600 dark:text-orange-400 mb-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-orange-500" /> Cross-matching
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">EFS checks → Load-related charges</h1>
+          <p className="text-sm text-gray-500 dark:text-slate-500 mt-0.5">
+            Every EFS check for the week, matched against what&apos;s on the Lumpers and Accessorials boards. The broker reimburses these only if they&apos;re recorded.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <select value={year} onChange={e => setYear(Number(e.target.value))}
+            className="text-sm rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800/80 px-2.5 py-1.5 text-gray-900 dark:text-slate-100">
+            {yearOptions().map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+          {canEdit && (
+            <button onClick={() => setImportOpen(true)} className={S.btnPrimary}>Import a report</button>
+          )}
+        </div>
+      </div>
+
+      {error ? (
+        <div className={S.errorBox}>Couldn&apos;t load the weekly table. <button onClick={load} className="underline font-medium">Retry</button></div>
+      ) : loading ? (
+        <div className="h-64 rounded-2xl bg-gray-100 dark:bg-white/[0.03] animate-pulse" />
+      ) : (
+        <div className={`${S.card} overflow-x-auto`}>
+          <table className="w-full text-sm">
+            <thead className="text-gray-500 dark:text-slate-400 border-b border-gray-200 dark:border-white/10">
+              <tr className="text-left">
+                {['Week', 'Checks', 'Total', 'Load-related', 'Reimbursable $', 'Recorded', 'To review', 'Missing', 'Status'].map(h => (
+                  <th key={h} className="px-3 py-2 font-semibold whitespace-nowrap">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {weeks.map((w, i) => {
+                const start = g(w, 'week_start', 'week')
+                const end = g(w, 'week_end') || (start ? addDays(start, 6) : null)
+                const checks = g(w, 'checks', 'check_count')
+                const imported = g(w, 'imported') != null ? !!g(w, 'imported') : (checks != null && Number(checks) > 0)
+                const missing = Number(g(w, 'missing') || 0)
+                const toReview = Number(g(w, 'to_review') || 0)
+                const dot = !imported ? 'bg-gray-300 dark:bg-slate-600' : missing > 0 ? 'bg-red-500' : toReview > 0 ? 'bg-amber-500' : 'bg-emerald-500'
+                return (
+                  <tr key={start || i} onClick={() => imported && setSelectedWeek(start)}
+                    className={`border-b border-gray-100 dark:border-white/[0.04] ${imported ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-white/5' : 'opacity-70'}`}>
+                    <td className="px-3 py-2 whitespace-nowrap font-medium text-gray-800 dark:text-slate-200">{start ? fmtRange(start, end) : '—'}</td>
+                    {!imported ? (
+                      <td colSpan={7} className="px-3 py-2 text-gray-400 dark:text-slate-500 italic">— Not imported</td>
+                    ) : (
+                      <>
+                        <td className="px-3 py-2 tabular-nums">{num(checks)}</td>
+                        <td className="px-3 py-2 tabular-nums">{money(g(w, 'total', 'total_amount'))}</td>
+                        <td className="px-3 py-2 tabular-nums">{num(g(w, 'load_related', 'load_related_count'))}</td>
+                        <td className="px-3 py-2 tabular-nums">{money(g(w, 'reimbursable', 'reimbursable_amount'))}</td>
+                        <td className="px-3 py-2 tabular-nums">{num(g(w, 'recorded'))}</td>
+                        <td className="px-3 py-2 tabular-nums">{num(toReview)}</td>
+                        <td className={`px-3 py-2 tabular-nums ${missing > 0 ? 'text-red-600 dark:text-red-400 font-semibold' : ''}`}>{num(missing)}</td>
+                      </>
+                    )}
+                    <td className="px-3 py-2"><span className={`inline-block w-2.5 h-2.5 rounded-full ${dot}`} title={!imported ? 'Not imported' : missing > 0 ? 'Missing records' : toReview > 0 ? 'To review' : 'All recorded'} /></td>
+                  </tr>
+                )
+              })}
+              {weeks.length === 0 && <tr><td colSpan={9} className="px-3 py-8 text-center text-gray-400 dark:text-slate-500">No weeks in {year}.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {importOpen && <ImportModal userId={user?.id} onClose={() => setImportOpen(false)} onDone={() => { setImportOpen(false); load() }} toast={toast} />}
+    </div>
+  )
+}
+
+// ── Screen B ──────────────────────────────────────────────────────────────────
+function WeekDrillIn({ weekStart, targets, canEdit, toast, onBack, onChanged }) {
+  const [checks, setChecks] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [filter, setFilter] = useState(null) // purpose_category chip
+  const [reviewFor, setReviewFor] = useState(null) // check being reviewed
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try { setChecks(await fetchWeekChecks(weekStart)) }
+    catch (e) { toast.error("Couldn't load the week", e) }
+    finally { setLoading(false) }
+  }, [weekStart, toast])
+  useEffect(() => { load() }, [load])
+
+  const cards = useMemo(() => {
+    const recorded = checks.filter(c => g(c, 'lumper_state') === 'yes' || g(c, 'accessorial_state') === 'yes')
+    const needsChoice = checks.filter(c => !recorded.includes(c) && (g(c, 'lumper_state') === 'maybe' || g(c, 'accessorial_state') === 'maybe'))
+    const notRecorded = checks.filter(c => isLoadRelated(c) && g(c, 'lumper_state') === 'no' && g(c, 'accessorial_state') === 'no')
+    const notLoad = checks.filter(c => !isLoadRelated(c))
+    const notRecordedTotal = notRecorded.reduce((s, c) => s + (Number(g(c, 'total', 'check_amount')) || 0), 0)
+    return { recorded, needsChoice, notRecorded, notLoad, notRecordedTotal }
+  }, [checks])
+
+  const categories = useMemo(() => [...new Set(checks.map(c => g(c, 'purpose_category')).filter(Boolean))].sort(), [checks])
+  const rows = filter ? checks.filter(c => g(c, 'purpose_category') === filter) : checks
+
+  const afterAction = async () => { await load(); await onChanged?.() }
+
+  return (
+    <div className="max-w-6xl mx-auto space-y-4">
+      <button onClick={onBack} className="text-xs text-orange-600 dark:text-orange-400 hover:underline">← All weeks</button>
+      <h1 className="text-xl font-bold text-gray-900 dark:text-white">Week of {fmtRange(weekStart, addDays(weekStart, 6))}</h1>
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <CardStat label="Already recorded" value={cards.recorded.length} tone="emerald" />
+        <CardStat label="Needs a choice" value={cards.needsChoice.length} tone="amber" />
+        <CardStat label="Not recorded anywhere" value={cards.notRecorded.length} sub={money(cards.notRecordedTotal)} tone="red" />
+        <CardStat label="Not load-related" value={cards.notLoad.length} tone="slate" />
+      </div>
+
+      {categories.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          <Chip on={!filter} onClick={() => setFilter(null)}>All</Chip>
+          {categories.map(cat => <Chip key={cat} on={filter === cat} onClick={() => setFilter(cat)}>{labelCat(cat)}</Chip>)}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="h-64 rounded-2xl bg-gray-100 dark:bg-white/[0.03] animate-pulse" />
+      ) : (
+        <div className={`${S.card} overflow-x-auto`}>
+          <table className="w-full text-sm">
+            <thead className="text-gray-500 dark:text-slate-400 border-b border-gray-200 dark:border-white/10">
+              <tr className="text-left">
+                {['Date', 'Money code', 'Driver', 'Description', 'Amount', 'Lumpers', 'Accessorials', 'Action'].map(h => (
+                  <th key={h} className="px-3 py-2 font-semibold whitespace-nowrap">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(c => (
+                <tr key={g(c, 'id', 'check_id', 'efs_check_id', 'money_code')} className="border-b border-gray-100 dark:border-white/[0.04]">
+                  <td className="px-3 py-2 whitespace-nowrap">{fmtDay(g(c, 'event_date'))}</td>
+                  <td className="px-3 py-2 font-mono text-[11px]">{g(c, 'money_code') || '—'}</td>
+                  <td className="px-3 py-2 whitespace-nowrap">{g(c, 'driver') || '—'}</td>
+                  <td className="px-3 py-2 max-w-[220px] truncate" title={g(c, 'purpose_raw') || ''}>{g(c, 'purpose_raw') || '—'}</td>
+                  <td className="px-3 py-2 tabular-nums whitespace-nowrap">{money(g(c, 'total', 'check_amount'))}</td>
+                  <td className="px-3 py-2 text-center"><StateCell s={g(c, 'lumper_state')} /></td>
+                  <td className="px-3 py-2 text-center"><StateCell s={g(c, 'accessorial_state')} /></td>
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    <RowAction c={c} targets={targets} canEdit={canEdit} toast={toast}
+                      onReview={() => setReviewFor(c)} onChanged={afterAction} />
+                  </td>
+                </tr>
+              ))}
+              {rows.length === 0 && <tr><td colSpan={8} className="px-3 py-8 text-center text-gray-400 dark:text-slate-500">No checks{filter ? ' in this category' : ''}.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {reviewFor && <ReviewModal check={reviewFor} toast={toast} onClose={() => setReviewFor(null)} onConfirmed={async () => { setReviewFor(null); await afterAction() }} />}
+    </div>
+  )
+}
+
+// One action per row, decided by state (never Create + Review together).
+function RowAction({ c, targets, canEdit, toast, onReview, onChanged }) {
+  const [busy, setBusy] = useState(false)
+  const lumper = g(c, 'lumper_state'), acc = g(c, 'accessorial_state')
+  const cat = g(c, 'purpose_category')
+  const checkId = g(c, 'id', 'check_id', 'efs_check_id')
+
+  if (lumper === 'yes' || acc === 'yes') {
+    const to = lumper === 'yes' ? '/after-hours/lumpers' : '/after-hours/requests'
+    return <a href={to} className="text-[11px] font-semibold text-orange-600 dark:text-orange-400 hover:underline">Open</a>
+  }
+  if (lumper === 'maybe' || acc === 'maybe') {
+    const n = Number(g(c, 'candidate_count') || 0)
+    return <button onClick={onReview} className="text-[11px] font-semibold text-amber-600 dark:text-amber-400 hover:underline">Review {n || ''}→</button>
+  }
+  if (!isLoadRelated(c)) {
+    return <span className="text-[11px] text-gray-400 dark:text-slate-500">Ignore</span>
+  }
+  // both 'no', load-related → create per category (from recon_matchers config)
+  const t = targets[cat] || defaultTargets(cat)
+  const doCreate = async (fn) => {
+    if (!canEdit || busy) return
+    setBusy(true)
+    try {
+      const { data, error } = await fn()
+      if (error) { toast.error("Couldn't create that", error); return }
+      toast.success('Created — check the board'); void data
+      await onChanged()
+    } finally { setBusy(false) }
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      {t?.lumper && (
+        <button disabled={busy || !canEdit} onClick={() => doCreate(() => createLumperFromCheck(checkId))}
+          className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 hover:underline disabled:opacity-50">+ Create lumper</button>
+      )}
+      {t?.lumper && t?.accessorial && <span className="text-gray-300 dark:text-slate-600">|</span>}
+      {t?.accessorial && (
+        <button disabled={busy || !canEdit} onClick={() => doCreate(() => createAccessorialFromCheck(checkId, t.accessorial.type_code))}
+          className="text-[11px] font-semibold text-cyan-600 dark:text-cyan-400 hover:underline disabled:opacity-50">+ Create accessorial</button>
+      )}
+      {!t?.lumper && !t?.accessorial && <span className="text-[11px] text-gray-400 dark:text-slate-500">—</span>}
+    </span>
+  )
+}
+
+function ReviewModal({ check, toast, onClose, onConfirmed }) {
+  const [cands, setCands] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const checkId = g(check, 'id', 'check_id', 'efs_check_id')
+  useEffect(() => { fetchCandidates(checkId).then(setCands).catch(() => setCands([])) }, [checkId])
+  const confirm = async (matchId) => {
+    setBusy(true)
+    try {
+      const { error } = await reconConfirm(matchId)
+      if (error) { toast.error("Couldn't link that", error); return }
+      toast.success('Linked — money code written back')
+      await onConfirmed()
+    } finally { setBusy(false) }
+  }
+  return (
+    <Modal onClose={onClose} title="Link this check">
+      <p className="text-xs text-gray-500 dark:text-slate-400 mb-3">{g(check, 'driver') || '—'} · {money(g(check, 'total', 'check_amount'))} · {g(check, 'purpose_raw') || ''}</p>
+      {cands == null ? (
+        <div className="h-16 rounded-lg bg-gray-100 dark:bg-white/5 animate-pulse" />
+      ) : cands.length === 0 ? (
+        <p className="text-sm text-gray-400 dark:text-slate-500 italic">No candidates found.</p>
+      ) : (
+        <div className="space-y-1.5">
+          {cands.map(m => (
+            <button key={m.id} disabled={busy} onClick={() => confirm(m.id)}
+              className="w-full text-left px-3 py-2 rounded-lg border border-gray-200 dark:border-white/10 hover:bg-gray-50 dark:hover:bg-white/5 text-sm disabled:opacity-50">
+              <span className="font-medium text-gray-800 dark:text-slate-200">{g(m, 'candidate_label', 'target_label', 'driver') || 'Candidate'}</span>
+              <span className="text-gray-400 dark:text-slate-500 ml-2 text-xs">{money(g(m, 'candidate_amount', 'amount'))}{g(m, 'score') != null ? ` · ${Math.round(Number(g(m, 'score')) * 100)}%` : ''}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </Modal>
+  )
+}
+
+// ── Import modal (client-side parse + three guards) ───────────────────────────
+function ImportModal({ userId, onClose, onDone, toast }) {
+  const fileRef = useRef(null)
+  const [busy, setBusy] = useState(false)
+  const [staged, setStaged] = useState(null) // { filename, rows, span, swaps, feeIssues }
+  const [yearBlock, setYearBlock] = useState(null)
+  const [swapChoice, setSwapChoice] = useState(true)
+
+  const onFile = async (file) => {
+    if (!file) return
+    setBusy(true); setYearBlock(null); setStaged(null)
+    try {
+      const buf = await file.arrayBuffer()
+      const { rows, errors, span } = parseEfsWorkbook(buf)
+      if (errors.length) { toast.error(errors[0]); return }
+      if (!rows.length) { toast.error('No check rows found.'); return }
+      const overlap = await checkYearOverlap(span)
+      if (!overlap.ok) { setYearBlock({ span, board: overlap }); return }
+      const roster = await fetchRosterDriverNames()
+      const swaps = detectSwaps(rows, roster)
+      const feeIssues = feeSanity(rows)
+      setStaged({ filename: file.name, rows, span, swaps, feeIssues })
+    } catch (e) { toast.error("Couldn't read the file", e) }
+    finally { setBusy(false); if (fileRef.current) fileRef.current.value = '' }
+  }
+
+  const apply = async () => {
+    if (!staged || busy) return
+    setBusy(true)
+    try {
+      const rows = swapChoice && staged.swaps.length ? applySwaps(staged.rows, staged.swaps) : staged.rows
+      const res = await applyEfsImport({ rows, filename: staged.filename, userId })
+      if (res.error) { toast.error("Couldn't apply the import", res.error); return }
+      toast.success(`Imported ${res.imported} checks`)
+      onDone()
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <Modal onClose={onClose} title="Import an EFS report" wide>
+      {!staged && !yearBlock && (
+        <label className={`${S.btnPrimary} cursor-pointer inline-block ${busy ? 'opacity-50 pointer-events-none' : ''}`}>
+          {busy ? 'Reading…' : 'Choose file'}
+          <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={e => onFile(e.target.files?.[0])} disabled={busy} />
+        </label>
+      )}
+
+      {yearBlock && (
+        <div className="space-y-3">
+          <div className={S.errorBox}>
+            This file covers {fmtRange(yearBlock.span.min, yearBlock.span.max)} — no overlap with the board&apos;s data
+            ({fmtRange(yearBlock.board.boardMin, yearBlock.board.boardMax)}). It looks like the wrong year&apos;s export. Nothing was imported.
+          </div>
+          <div className="flex justify-end"><button onClick={() => setYearBlock(null)} className={S.btnCancel}>Choose another file</button></div>
+        </div>
+      )}
+
+      {staged && (
+        <div className="space-y-3">
+          <p className="text-sm text-gray-700 dark:text-slate-300">
+            <span className="font-semibold">{staged.rows.length}</span> checks from {fmtRange(staged.span?.min, staged.span?.max)}. Re-importing is safe — existing checks are skipped.
+          </p>
+          {staged.swaps.length > 0 && (
+            <label className="flex items-start gap-2 rounded-lg border border-amber-200 dark:border-amber-500/25 bg-amber-50/70 dark:bg-amber-500/10 p-2.5 text-xs text-amber-800 dark:text-amber-300">
+              <input type="checkbox" checked={swapChoice} onChange={e => setSwapChoice(e.target.checked)} className="mt-0.5 accent-amber-600" />
+              <span>{staged.swaps.length} row{staged.swaps.length === 1 ? '' : 's'} look like Purpose/Driver were transposed (a driver name in the purpose cell). Swap them back on import.</span>
+            </label>
+          )}
+          {staged.feeIssues.length > 0 && (
+            <p className="text-xs text-gray-500 dark:text-slate-400">{staged.feeIssues.length} row{staged.feeIssues.length === 1 ? '' : 's'} where amount + fee ≠ total — imported as-is, worth a look.</p>
+          )}
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setStaged(null)} disabled={busy} className={S.btnCancel}>Cancel</button>
+            <button onClick={apply} disabled={busy} className={S.btnPrimary}>{busy ? 'Importing…' : `Import ${staged.rows.length} checks`}</button>
+          </div>
+        </div>
+      )}
+    </Modal>
+  )
+}
+
+// ── small components ──────────────────────────────────────────────────────────
+function isLoadRelated(c) {
+  const v = g(c, 'is_load_related')
+  if (v != null) return !!v
+  // Fallback: a check with any lumper/accessorial state other than absent is load-related.
+  return g(c, 'lumper_state') != null || g(c, 'accessorial_state') != null
+}
+function defaultTargets(cat) {
+  if (cat === 'lumper') return { lumper: true }
+  if (cat === 'escort_fee' || cat === 'late_fee') return { lumper: true, accessorial: { type_code: cat } }
+  if (cat === 'detention' || cat === 'layover') return { accessorial: { type_code: cat } }
+  return {}
+}
+function StateCell({ s }) {
+  if (s === 'yes') return <span className="text-emerald-600 dark:text-emerald-400 font-bold" title="Recorded">✓</span>
+  if (s === 'maybe') return <span className="text-amber-600 dark:text-amber-400 font-bold" title="Candidate found">?</span>
+  return <span className="text-gray-300 dark:text-slate-600" title="Not found">–</span>
+}
+function CardStat({ label, value, sub, tone }) {
+  const t = { emerald: 'text-emerald-700 dark:text-emerald-400', amber: 'text-amber-700 dark:text-amber-400', red: 'text-red-700 dark:text-red-400', slate: 'text-gray-900 dark:text-slate-200' }[tone] || 'text-gray-900 dark:text-slate-200'
+  return (
+    <div className={`${S.card} p-3`}>
+      <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-500 dark:text-slate-400">{label}</p>
+      <p className={`text-xl font-mono font-medium ${t}`}>{num(value)}</p>
+      {sub && <p className="text-[11px] text-gray-400 dark:text-slate-500 tabular-nums">{sub}</p>}
+    </div>
+  )
+}
+function Chip({ on, onClick, children }) {
+  return (
+    <button onClick={onClick} className={`px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors ${on ? 'bg-orange-500 text-white border-orange-500' : 'border-gray-300 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5'}`}>{children}</button>
+  )
+}
+function Modal({ title, children, onClose, wide }) {
+  return (
+    <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className={`relative bg-white dark:bg-[#0B1120] border border-gray-200 dark:border-white/10 rounded-2xl shadow-2xl w-full ${wide ? 'max-w-lg' : 'max-w-md'} p-5 space-y-1`}>
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-white">{title}</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 dark:hover:text-slate-200" aria-label="Close">✕</button>
+        </div>
+        <div className="pt-2">{children}</div>
+      </div>
+    </div>
+  )
+}
+
+const num = (n) => (n == null ? '—' : Number(n).toLocaleString('en-US'))
+function fmtDay(v) { const m = String(v || '').match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? new Date(+m[1], +m[2] - 1, +m[3]).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—' }
+function labelCat(cat) { return String(cat || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) }
+function yearOptions() { const y = Number(todayYmd().slice(0, 4)); return [y + 1, y, y - 1, y - 2] }

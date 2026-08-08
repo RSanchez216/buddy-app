@@ -87,6 +87,7 @@ const DebtSchedule = lazyWithReload(() => import('./pages/financial-controls/Deb
 // splitting it keeps that heavy lib out of the main bundle.
 const LoadsImport = lazyWithReload(() => import('./pages/fleet/loads/LoadsImport'))
 const CustomersImport = lazyWithReload(() => import('./pages/fleet/customers/CustomersImport'))
+const CrossMatching = lazyWithReload(() => import('./pages/cross-matching/CrossMatching'))
 // Lazy — Drivers list (its Upload modal statically pulls SheetJS) ships as its
 // own chunk.
 const DriversList = lazyWithReload(() => import('./pages/fleet/DriversList'))
@@ -151,6 +152,15 @@ export default function App() {
                   <ErrorBoundary label="the Command Center">
                     <Suspense fallback={<div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500" /></div>}>
                       <CommandCenter />
+                    </Suspense>
+                  </ErrorBoundary>
+                </RequirePageAccess>
+              } />
+              <Route path="cross-matching" element={
+                <RequirePageAccess pageKey="cross-matching">
+                  <ErrorBoundary label="Cross-matching">
+                    <Suspense fallback={<div className="px-4 py-12 text-center"><div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500" /></div>}>
+                      <CrossMatching />
                     </Suspense>
                   </ErrorBoundary>
                 </RequirePageAccess>

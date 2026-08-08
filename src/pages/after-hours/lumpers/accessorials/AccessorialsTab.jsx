@@ -3,6 +3,7 @@ import { S } from '../../../../lib/styles'
 import { useAuth } from '../../../../contexts/AuthContext'
 import { useToast } from '../../../../contexts/ToastContext'
 import UsageRangeControl from '../../../settings/users/UsageRangeControl'
+import EfsChip from '../EfsChip'
 import { money, fmtDate, rangeForDays } from '../lumperData'
 import { copyText } from '../../shift-board/shiftBoardData'
 import SummaryBand from './SummaryBand'
@@ -269,15 +270,23 @@ function RequestRow({ r, onOpen, onDocs }) {
         {awaiting && <p className={`text-[10px] leading-tight ${awaiting.cls}`}>{awaiting.label}</p>}
       </td>
       <td className="px-3 py-2.5 align-top min-w-[120px]">
-        <p className="font-medium text-gray-900 dark:text-slate-200 leading-tight">{r.driver_name || '—'}</p>
+        <p className="font-medium text-gray-900 dark:text-slate-200 leading-tight flex items-center gap-1.5">
+          <span>{r.driver_name || '—'}</span>
+          {r.source === 'efs_import' && <EfsChip />}
+        </p>
         {r.dispatcher_name && <p className="text-[10px] text-gray-400 dark:text-slate-500 leading-tight">{r.dispatcher_name}</p>}
       </td>
       <td className="px-3 py-2.5 align-top">
-        <p className="font-mono text-gray-900 dark:text-slate-200 leading-tight">{r.load_number || '—'}</p>
+        {/* EFS-created records carry no load/broker — show "— to confirm". */}
+        <p className="font-mono text-gray-900 dark:text-slate-200 leading-tight">
+          {r.load_number || (r.source === 'efs_import' ? <span className="italic font-sans text-gray-400 dark:text-slate-500">— to confirm</span> : '—')}
+        </p>
         {r.carrier_name && <p className="text-[10px] text-gray-400 dark:text-slate-500 leading-tight truncate max-w-[140px]" title={r.carrier_name}>{r.carrier_name}</p>}
       </td>
       <td className="px-3 py-2.5 align-top text-gray-600 dark:text-slate-400">
-        <span className="block truncate max-w-[150px]" title={r.broker_name || ''}>{r.broker_name || '—'}</span>
+        <span className="block truncate max-w-[150px]" title={r.broker_name || ''}>
+          {r.broker_name || (r.source === 'efs_import' ? <span className="italic text-gray-400 dark:text-slate-500">— to confirm</span> : '—')}
+        </span>
       </td>
       <td className="px-3 py-2.5 align-top whitespace-nowrap text-gray-700 dark:text-slate-300">{typeLabel(r.accessorial_type)}</td>
       <td className="px-3 py-2.5 align-top text-gray-500 dark:text-slate-400">

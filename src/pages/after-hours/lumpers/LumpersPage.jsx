@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { S } from '../../../lib/styles'
 import Select from '../../../components/Select'
+import EfsChip from './EfsChip'
+import { fetchWeekUnmatchedSummary, mondayOf, todayYmd, fmtRange as fmtWeekRange } from '../../cross-matching/crossMatchingData'
 import { useToast } from '../../../contexts/ToastContext'
 import UsageRangeControl from '../../settings/users/UsageRangeControl'
 import StatsBand from './StatsBand'
@@ -195,6 +198,7 @@ function LumpersTab({ onCount }) {
 
   return (
     <div className="space-y-5">
+      <EfsBanner />
       {/* Header — the page title lives on the tab shell above */}
       <div className="flex items-start justify-between flex-wrap gap-3">
         <p className="text-sm text-gray-500 dark:text-slate-500">Advances paid at the dock — what&apos;s still owed, who owes it, and whether it came back.</p>
@@ -336,16 +340,23 @@ function LumperRow({ row, usersById, onClick }) {
     >
       <td className="px-4 py-2.5 whitespace-nowrap text-gray-600 dark:text-slate-400">{fmtDate(row.event_date)}</td>
       <td className="px-3 py-2.5 min-w-[130px]">
-        <p className="font-medium text-gray-900 dark:text-slate-200 leading-tight">{row.driver?.full_name || row.driver_name || '—'}</p>
+        <p className="font-medium text-gray-900 dark:text-slate-200 leading-tight flex items-center gap-1.5">
+          <span>{row.driver?.full_name || row.driver_name || '—'}</span>
+          {row.source === 'efs_import' && <EfsChip />}
+        </p>
         {row.state_code && <p className="text-[10px] text-gray-400 dark:text-slate-500 leading-tight">{row.state_code}</p>}
       </td>
       <td className="px-3 py-2.5 min-w-[130px]">
-        <p className="font-mono text-gray-900 dark:text-slate-200 leading-tight">{row.load_number || '—'}</p>
+        {/* An EFS-created record has no load/broker (the file has neither) — show
+            "— to confirm" so it reads as unfinished, not broken. */}
+        <p className="font-mono text-gray-900 dark:text-slate-200 leading-tight">
+          {row.load_number || (row.source === 'efs_import' ? <span className="italic font-sans text-gray-400 dark:text-slate-500">— to confirm</span> : '—')}
+        </p>
         {(() => {
-          // Broker: prefer the joined customers.name, fall back to the denormalized
-          // broker_name text; render nothing when both are empty.
           const broker = row.customer?.name || row.broker_name
-          return broker ? <p className="text-[10px] text-gray-400 dark:text-slate-500 leading-tight truncate max-w-[160px]" title={broker}>{broker}</p> : null
+          if (broker) return <p className="text-[10px] text-gray-400 dark:text-slate-500 leading-tight truncate max-w-[160px]" title={broker}>{broker}</p>
+          if (row.source === 'efs_import') return <p className="text-[10px] italic text-gray-400 dark:text-slate-500 leading-tight">— to confirm</p>
+          return null
         })()}
       </td>
       <td className="px-3 py-2.5 text-gray-600 dark:text-slate-400 whitespace-nowrap">{row.carrier?.name || '—'}</td>
@@ -388,5 +399,41 @@ function DocChip({ label, title, state }) {
   return (
     <span title={`${title}: ${v.tip}`}
       className={`inline-flex items-center justify-center min-w-[20px] h-5 px-1 rounded text-[9px] font-bold border ${v.cls}`}>{label}</span>
+  )
+}
+
+// Screen C — a session-dismissible banner when the CURRENT (Mon–Sun) week has
+// load-related EFS checks that aren't on the Lumpers/Accessorials boards. Dismiss
+// is session-only: the money is still unrecovered, so it returns on next load.
+function EfsBanner() {
+  const [sum, setSum] = useState(null)
+  const [dismissed, setDismissed] = useState(false)
+  useEffect(() => {
+    let stale = false
+    fetchWeekUnmatchedSummary(mondayOf(todayYmd()))
+      .then(s => { if (!stale) setSum(s) })
+      .catch(() => { /* the hub still surfaces it; the banner just stays hidden */ })
+    return () => { stale = true }
+  }, [])
+  if (dismissed || !sum || sum.count === 0) return null
+  const breakdown = Object.entries(sum.byCat).map(([k, n]) => `${n} ${k.replace(/_/g, ' ')}`).join(' · ')
+  return (
+    <div className="rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50/70 dark:bg-amber-500/[0.08] px-4 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="text-sm text-amber-800 dark:text-amber-300">
+          <p className="font-semibold">EFS cross-matching found {sum.count} transaction{sum.count === 1 ? '' : 's'} missed in the Lumpers / Accessorials page</p>
+          <p className="mt-0.5 text-[13px]">
+            Week of {fmtWeekRange(sum.weekStart, sum.weekEnd)}{breakdown ? ` · ${breakdown}` : ''} · <span className="font-semibold">${sum.total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span> paid by EFS check and not recorded. The broker reimburses these only if they are on the board.
+          </p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <button onClick={() => setDismissed(true)} className="text-[11px] font-medium text-amber-700/80 dark:text-amber-400/70 hover:underline">Dismiss</button>
+          <Link to={`/cross-matching?week=${sum.weekStart}`}
+            className="px-2.5 py-1 rounded-lg text-[11px] font-semibold border border-amber-300 dark:border-amber-500/40 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-500/15 whitespace-nowrap">
+            Review {sum.count} →
+          </Link>
+        </div>
+      </div>
+    </div>
   )
 }
