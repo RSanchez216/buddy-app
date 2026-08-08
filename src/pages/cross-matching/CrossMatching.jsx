@@ -6,7 +6,7 @@ import { S } from '../../lib/styles'
 import {
   fetchEfsWeeks, fetchWeekChecks, fetchMatchers, createTargetsFrom, fetchCandidates,
   reconConfirm, createLumperFromCheck, createAccessorialFromCheck,
-  parseEfsWorkbook, checkYearOverlap, detectSwaps, applySwaps, feeSanity, fetchRosterDriverNames, applyEfsImport,
+  parseEfsWorkbook, checkYearOverlap, detectSwaps, applySwaps, feeSanity, fetchRosterDriverNames, applyEfsImport, REQUIRED_FIELDS,
   addDays, todayYmd, fmtRange, money,
 } from './crossMatchingData'
 
@@ -17,7 +17,7 @@ import {
 const g = (o, ...keys) => { for (const k of keys) { const v = o?.[k]; if (v != null) return v } return null }
 
 export default function CrossMatching() {
-  const { user, canEdit } = useAuth()
+  const { canEdit } = useAuth()
   const toast = useToast()
 
   const [params] = useSearchParams()
@@ -120,7 +120,7 @@ export default function CrossMatching() {
         </div>
       )}
 
-      {importOpen && <ImportModal userId={user?.id} onClose={() => setImportOpen(false)} onDone={() => { setImportOpen(false); load() }} toast={toast} />}
+      {importOpen && <ImportModal onClose={() => setImportOpen(false)} onDone={() => { setImportOpen(false); load() }} toast={toast} />}
     </div>
   )
 }
@@ -294,30 +294,46 @@ function ReviewModal({ check, toast, onClose, onConfirmed }) {
   )
 }
 
-// ── Import modal (client-side parse + three guards) ───────────────────────────
-function ImportModal({ userId, onClose, onDone, toast }) {
+// ── Import modal (client-side parse + mapping fallback + three guards) ────────
+function ImportModal({ onClose, onDone, toast }) {
   const fileRef = useRef(null)
   const [busy, setBusy] = useState(false)
   const [staged, setStaged] = useState(null) // { filename, rows, span, swaps, feeIssues }
   const [yearBlock, setYearBlock] = useState(null)
+  const [mapStep, setMapStep] = useState(null) // { buf, filename, headers, missing, cols }
   const [swapChoice, setSwapChoice] = useState(true)
+
+  // Continue past parse: year guard → swap/fee guards → stage.
+  const stageParsed = async ({ rows, span, filename }) => {
+    if (!rows.length) { toast.error('No check rows found.'); return }
+    const overlap = await checkYearOverlap(span)
+    if (!overlap.ok) { setYearBlock({ span, board: overlap }); return }
+    const roster = await fetchRosterDriverNames()
+    setStaged({ filename, rows, span, swaps: detectSwaps(rows, roster), feeIssues: feeSanity(rows) })
+  }
 
   const onFile = async (file) => {
     if (!file) return
-    setBusy(true); setYearBlock(null); setStaged(null)
+    setBusy(true); setYearBlock(null); setStaged(null); setMapStep(null)
     try {
       const buf = await file.arrayBuffer()
-      const { rows, errors, span } = parseEfsWorkbook(buf)
-      if (errors.length) { toast.error(errors[0]); return }
-      if (!rows.length) { toast.error('No check rows found.'); return }
-      const overlap = await checkYearOverlap(span)
-      if (!overlap.ok) { setYearBlock({ span, board: overlap }); return }
-      const roster = await fetchRosterDriverNames()
-      const swaps = detectSwaps(rows, roster)
-      const feeIssues = feeSanity(rows)
-      setStaged({ filename: file.name, rows, span, swaps, feeIssues })
+      const parsed = parseEfsWorkbook(buf)
+      if (parsed.errors.length) { toast.error(parsed.errors[0]); return }
+      // A required header couldn't be resolved → let the user map it, never fail.
+      if (parsed.missing.length) { setMapStep({ buf, filename: file.name, headers: parsed.headers, missing: parsed.missing, cols: parsed.cols }); return }
+      await stageParsed({ ...parsed, filename: file.name })
     } catch (e) { toast.error("Couldn't read the file", e) }
     finally { setBusy(false); if (fileRef.current) fileRef.current.value = '' }
+  }
+
+  const applyMapping = async (mapping) => {
+    setBusy(true)
+    try {
+      const parsed = parseEfsWorkbook(mapStep.buf, mapping)
+      if (parsed.missing.length) { toast.error('Still missing a required column.'); return }
+      setMapStep(null)
+      await stageParsed({ ...parsed, filename: mapStep.filename })
+    } finally { setBusy(false) }
   }
 
   const apply = async () => {
@@ -325,21 +341,23 @@ function ImportModal({ userId, onClose, onDone, toast }) {
     setBusy(true)
     try {
       const rows = swapChoice && staged.swaps.length ? applySwaps(staged.rows, staged.swaps) : staged.rows
-      const res = await applyEfsImport({ rows, filename: staged.filename, userId })
+      const res = await applyEfsImport({ rows, filename: staged.filename, span: staged.span })
       if (res.error) { toast.error("Couldn't apply the import", res.error); return }
-      toast.success(`Imported ${res.imported} checks`)
+      toast.success(`Imported ${res.imported} checks${res.skipped ? `, ${res.skipped} already present` : ''}`)
       onDone()
     } finally { setBusy(false) }
   }
 
   return (
     <Modal onClose={onClose} title="Import an EFS report" wide>
-      {!staged && !yearBlock && (
+      {!staged && !yearBlock && !mapStep && (
         <label className={`${S.btnPrimary} cursor-pointer inline-block ${busy ? 'opacity-50 pointer-events-none' : ''}`}>
           {busy ? 'Reading…' : 'Choose file'}
           <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={e => onFile(e.target.files?.[0])} disabled={busy} />
         </label>
       )}
+
+      {mapStep && <MappingStep step={mapStep} busy={busy} onCancel={() => setMapStep(null)} onConfirm={applyMapping} />}
 
       {yearBlock && (
         <div className="space-y-3">
@@ -372,6 +390,38 @@ function ImportModal({ userId, onClose, onDone, toast }) {
         </div>
       )}
     </Modal>
+  )
+}
+
+const FIELD_LABELS = { money: 'Money Code', date: 'TX Date', purpose: 'Check Purpose', amount: 'Check Amount', driver: 'Driver' }
+// Column-mapping fallback — shown instead of an error when a required header can't
+// be auto-detected, so a renamed export never needs hand-editing.
+function MappingStep({ step, busy, onCancel, onConfirm }) {
+  const fields = ['money', 'date', 'purpose', 'amount', 'driver']
+  const [map, setMap] = useState(() => { const m = {}; for (const f of fields) m[f] = step.cols?.[f] || ''; return m })
+  const canGo = REQUIRED_FIELDS.every(f => map[f])
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-gray-700 dark:text-slate-300">
+        Couldn&apos;t auto-detect {step.missing.map(f => FIELD_LABELS[f] || f).join(', ')}. Pick the matching column{step.missing.length > 1 ? 's' : ''} — no need to edit the file.
+      </p>
+      <div className="space-y-2">
+        {fields.map(f => (
+          <label key={f} className="flex items-center justify-between gap-3 text-sm">
+            <span className="text-gray-500 dark:text-slate-400">{FIELD_LABELS[f]}{REQUIRED_FIELDS.includes(f) ? ' *' : ''}</span>
+            <select value={map[f] || ''} onChange={e => setMap(m => ({ ...m, [f]: e.target.value }))}
+              className="w-1/2 text-sm rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800/80 px-2 py-1.5 text-gray-900 dark:text-slate-100">
+              <option value="">— none —</option>
+              {step.headers.map(h => <option key={h} value={h}>{h}</option>)}
+            </select>
+          </label>
+        ))}
+      </div>
+      <div className="flex justify-end gap-2">
+        <button onClick={onCancel} disabled={busy} className={S.btnCancel}>Back</button>
+        <button onClick={() => onConfirm(map)} disabled={busy || !canGo} className={S.btnPrimary}>Continue</button>
+      </div>
+    </div>
   )
 }
 

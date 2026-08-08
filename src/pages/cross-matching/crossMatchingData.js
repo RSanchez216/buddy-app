@@ -144,56 +144,84 @@ export function categorizePurpose(raw) {
 // ── importer ──────────────────────────────────────────────────────────────────
 const cleanStr = (v) => { if (v == null) return null; const s = String(v).trim(); return s === '' ? null : s }
 const toNum = (v) => { if (v == null || v === '') return null; const n = Number(String(v).replace(/[$,\s]/g, '')); return Number.isFinite(n) ? n : null }
-function findCol(row, cands) {
-  const keys = Object.keys(row)
-  for (const c of cands) { const k = keys.find(x => x.trim().toLowerCase() === c.trim().toLowerCase()); if (k) return k }
+function findCol(headers, cands) {
+  for (const c of cands) { const k = headers.find(x => x.trim().toLowerCase() === c.trim().toLowerCase()); if (k) return k }
   return null
 }
 function toYmd(v) {
   const s = cleanStr(v); if (!s) return null
-  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/); if (m) return `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`
-  m = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/)
+  let m = s.match(/(\d{4})-(\d{1,2})-(\d{1,2})/); if (m) return `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`
+  m = s.match(/(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/)
   if (m) { let yy = m[3]; if (yy.length === 2) yy = `20${yy}`; return `${yy}-${String(m[1]).padStart(2, '0')}-${String(m[2]).padStart(2, '0')}` }
   return null
 }
+// Full timestamp if the cell carries a time, else the date at midnight — a
+// date-only string is a valid timestamptz literal, so this never fails the insert.
+function toTs(v, ymd) {
+  const s = cleanStr(v)
+  const m = s && s.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/)
+  if (ymd && m) return `${ymd}T${String(m[1]).padStart(2, '0')}:${m[2]}:${m[3] || '00'}`
+  return ymd || null
+}
 
-// Parse the EFS export → normalized check rows. Keeps purpose_raw + the whole
-// original row; never sets is_load_related (generated in the DB).
-export function parseEfsWorkbook(arrayBuffer) {
+// Header aliases — EFS renames its export columns from time to time, so accept
+// alternatives (case-insensitive, trimmed) rather than failing.
+const HEADER_ALIASES = {
+  money: ['Money Code', 'Code', 'Check Number', 'Check #'],
+  date: ['TX Date', 'Transaction Date', 'Date', 'Issue Date', 'Check Date'],
+  driver: ['Check Driver Information', 'Driver', 'Driver Name', 'Driver Information'],
+  issued_to: ['Check Issued To', 'Issued To'],
+  location: ['Check Location', 'Location'],
+  purpose: ['Check Purpose', 'Purpose', 'Reason'],
+  amount: ['Check Amount', 'Amount'],
+  fee: ['Fee', 'Check Fee'],
+  total: ['Total', 'Total Amount'],
+  transaction_id: ['Transaction ID', 'TX ID', 'Trans ID'],
+}
+// The importer can't group/idempotency without these.
+export const REQUIRED_FIELDS = ['money', 'date', 'purpose', 'amount']
+
+// Parse the EFS export (xlsx or csv). `mapping` overrides the auto-detected
+// columns (from the manual column-mapping step). Keeps purpose_raw UNTRIMMED and
+// the whole source row; never sets is_load_related (generated in the DB).
+export function parseEfsWorkbook(arrayBuffer, mapping) {
   const wb = XLSX.read(arrayBuffer, { type: 'array' })
   const sheet = wb.Sheets[wb.SheetNames[0]]
   const raw = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false })
-  if (!raw.length) return { rows: [], errors: ['Workbook has no rows in the first sheet.'] }
-  const s = raw[0]
-  const cols = {
-    money: findCol(s, ['Money Code', 'Check Number', 'Check #', 'Money code', 'Card Number']),
-    date: findCol(s, ['Date', 'Issue Date', 'Transaction Date', 'Check Date']),
-    driver: findCol(s, ['Check Driver Information', 'Driver', 'Driver Information', 'Driver Name']),
-    purpose: findCol(s, ['Check Purpose', 'Purpose', 'Reason']),
-    amount: findCol(s, ['Check Amount', 'Amount']),
-    fee: findCol(s, ['Fee', 'Check Fee']),
-    total: findCol(s, ['Total', 'Total Amount']),
-  }
+  if (!raw.length) return { rows: [], errors: ['File has no rows in the first sheet.'], headers: [], missing: [] }
+  const headers = Object.keys(raw[0])
+  const cols = {}
+  for (const f of Object.keys(HEADER_ALIASES)) cols[f] = mapping?.[f] || findCol(headers, HEADER_ALIASES[f])
+  const missing = REQUIRED_FIELDS.filter(f => !cols[f])
+  if (missing.length) return { rows: [], errors: [], headers, missing, cols }
+
+  const get = (r, f) => (cols[f] ? r[cols[f]] : null)
   const rows = []
   raw.forEach((r, i) => {
-    const money_code = cleanStr(cols.money && r[cols.money])
-    const purpose_raw = cleanStr(cols.purpose && r[cols.purpose])
+    const money_code = cleanStr(get(r, 'money'))
+    const rawPurpose = get(r, 'purpose')
+    const purpose_raw = rawPurpose == null || String(rawPurpose).trim() === '' ? null : String(rawPurpose) // untrimmed
     if (!money_code && !purpose_raw) return
+    const tx_date = toYmd(get(r, 'date'))
     rows.push({
       row_index: i,
       money_code,
-      event_date: cols.date ? toYmd(r[cols.date]) : null,
-      driver: cleanStr(cols.driver && r[cols.driver]),
+      tx_date,
+      tx_at: toTs(get(r, 'date'), tx_date),
+      driver_name: cleanStr(get(r, 'driver')),
+      issued_to: cleanStr(get(r, 'issued_to')),
+      check_location: cleanStr(get(r, 'location')),
       purpose_raw,
       purpose_category: categorizePurpose(purpose_raw),
-      check_amount: cols.amount ? toNum(r[cols.amount]) : null,
-      fee: cols.fee ? toNum(r[cols.fee]) : null,
-      total: cols.total ? toNum(r[cols.total]) : null,
+      check_amount: toNum(get(r, 'amount')),
+      fee: toNum(get(r, 'fee')),
+      total_amount: toNum(get(r, 'total')),
+      transaction_id: cleanStr(get(r, 'transaction_id')),
       raw: r,
     })
   })
-  const span = rows.map(r => r.event_date).filter(Boolean).sort()
-  return { rows, errors: [], span: span.length ? { min: span[0], max: span[span.length - 1] } : null }
+  const span = rows.map(r => r.tx_date).filter(Boolean).sort()
+  return { rows, errors: [], headers, missing: [], cols, span: span.length ? { min: span[0], max: span[span.length - 1] } : null }
 }
 
 // Guard 1 — year overlap with lumper_events. No overlap → refuse (the wrong-year
@@ -217,20 +245,20 @@ export function detectSwaps(rows, driverNames) {
   const roster = new Set((driverNames || []).map(norm))
   return rows.filter(r =>
     r.purpose_raw && roster.has(norm(r.purpose_raw)) &&
-    r.driver && categorizePurpose(r.driver) !== 'unclassified'
+    r.driver_name && categorizePurpose(r.driver_name) !== 'unclassified'
   ).map(r => r.row_index)
 }
 export function applySwaps(rows, indices) {
   const set = new Set(indices)
   return rows.map(r => set.has(r.row_index)
-    ? { ...r, driver: r.purpose_raw, purpose_raw: r.driver, purpose_category: categorizePurpose(r.driver), fields_swapped: true }
+    ? { ...r, driver_name: r.purpose_raw, purpose_raw: r.driver_name, purpose_category: categorizePurpose(r.driver_name), fields_swapped: true }
     : r)
 }
 
 // Guard 3 — fee sanity: every fee should be $2 and total = amount + fee.
 export function feeSanity(rows) {
-  return rows.filter(r => r.check_amount != null && r.total != null && r.fee != null &&
-    Math.abs((r.check_amount + r.fee) - r.total) > 0.005).map(r => r.row_index)
+  return rows.filter(r => r.check_amount != null && r.total_amount != null && r.fee != null &&
+    Math.abs((r.check_amount + r.fee) - r.total_amount) > 0.005).map(r => r.row_index)
 }
 
 export async function fetchRosterDriverNames() {
@@ -239,32 +267,52 @@ export async function fetchRosterDriverNames() {
 }
 
 // Apply the import: record the batch, upsert checks (idempotent on money_code),
-// then recompute matches. Nothing sets is_load_related.
-export async function applyEfsImport({ rows, filename, userId }) {
-  const { data: batch, error: bErr } = await supabase.from('recon_batches')
-    .insert({ source: 'efs_import', filename: filename ?? null, uploaded_by: userId ?? null, row_count: rows.length })
-    .select('id').single()
-  if (bErr) return { error: bErr }
-  const batchId = batch.id
+// backfill the batch's imported/skipped counts, then recompute matches. Column
+// names are the authoritative recon_batches / efs_checks schema; is_load_related
+// is generated and never sent. imported_by defaults to auth.uid() server-side.
+export async function applyEfsImport({ rows, filename, span }) {
   const payload = rows.filter(r => r.money_code).map(r => ({
-    batch_id: batchId,
     money_code: r.money_code,
-    event_date: r.event_date,
-    driver: r.driver,
+    tx_at: r.tx_at,
+    tx_date: r.tx_date,
+    driver_name: r.driver_name,
+    issued_to: r.issued_to,
+    check_location: r.check_location,
     purpose_raw: r.purpose_raw,
     purpose_category: r.purpose_category,
     check_amount: r.check_amount,
     fee: r.fee,
-    total: r.total,
+    total_amount: r.total_amount,
+    transaction_id: r.transaction_id ?? null,
     fields_swapped: !!r.fields_swapped,
     raw: r.raw,
   }))
+
+  const { data: batch, error: bErr } = await supabase.from('recon_batches')
+    .insert({
+      source_key: 'efs_checks',
+      filename: filename ?? null,
+      period_start: span?.min ?? null,
+      period_end: span?.max ?? null,
+      row_count: rows.length,
+    }).select('id').single()
+  if (bErr) return { error: bErr }
+  const batchId = batch.id
+
+  // Upsert with batch_id; ignoreDuplicates → .select() returns only rows actually
+  // inserted, so skipped = total − inserted.
+  let inserted = 0
   for (let i = 0; i < payload.length; i += 200) {
-    const { error } = await supabase.from('efs_checks')
-      .upsert(payload.slice(i, i + 200), { onConflict: 'money_code', ignoreDuplicates: true })
+    const chunk = payload.slice(i, i + 200).map(p => ({ ...p, batch_id: batchId }))
+    const { data, error } = await supabase.from('efs_checks')
+      .upsert(chunk, { onConflict: 'money_code', ignoreDuplicates: true }).select('money_code')
     if (error) return { error, batchId }
+    inserted += (data || []).length
   }
-  const { error: runErr } = await runEfsLoadRelated(batchId)
+  const skipped = payload.length - inserted
+  await supabase.from('recon_batches').update({ imported_count: inserted, skipped_count: skipped }).eq('id', batchId)
+
+  const { data: runData, error: runErr } = await runEfsLoadRelated(batchId)
   if (runErr) return { error: runErr, batchId }
-  return { batchId, imported: payload.length }
+  return { batchId, imported: inserted, skipped, run: runData }
 }
