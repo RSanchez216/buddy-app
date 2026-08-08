@@ -265,12 +265,53 @@ export async function fetchRosterDriverNames() {
   const { data } = await supabase.from('drivers').select('full_name')
   return (data || []).map(d => d.full_name).filter(Boolean)
 }
+// Roster (id + name) for the assignment dropdowns.
+export async function fetchRoster() {
+  const { data } = await supabase.from('drivers').select('id, full_name').order('full_name')
+  return (data || []).filter(d => d.full_name)
+}
+
+// ── assignment step (fuzzy driver/purpose resolution) ─────────────────────────
+// Per distinct name: { raw?, name?, state, mapped_value, mapped_id, similarity }.
+export async function resolveDriverNames(names) {
+  const uniq = [...new Set((names || []).filter(Boolean))]
+  if (!uniq.length) return []
+  const { data, error } = await supabase.rpc('recon_resolve_driver_names', { names: uniq })
+  if (error) throw error
+  return data || []
+}
+export async function driverCandidates(name, limit = 8) {
+  const { data, error } = await supabase.rpc('recon_driver_candidates', { name, limit })
+  if (error) return []
+  return data || []
+}
+// Persists an assignment AND re-resolves any checks already imported under that
+// raw value (so a name fixed after import needs no re-import).
+export async function saveValueMap({ field, raw_value, mapped_value, mapped_id, confidence }) {
+  const { error } = await supabase.rpc('recon_save_value_map', {
+    field, raw_value, mapped_value: mapped_value ?? null, mapped_id: mapped_id ?? null, confidence: confidence ?? null,
+  })
+  if (error) throw error
+}
+
+// The valid purpose categories, Unclassified included as a deliberate choice —
+// a unit number in the purpose cell has no real category, and guessing one would
+// inflate a spend total on no evidence.
+export const PURPOSE_CATEGORIES = [
+  'lumper', 'escort_fee', 'late_fee', 'detention', 'layover', 'tires', 'fuel',
+  'parking', 'towing', 'repair', 'wash', 'cash_advance', 'scale', 'other', 'unclassified',
+]
 
 // Apply the import: record the batch, upsert checks (idempotent on money_code),
 // backfill the batch's imported/skipped counts, then recompute matches. Column
 // names are the authoritative recon_batches / efs_checks schema; is_load_related
 // is generated and never sent. imported_by defaults to auth.uid() server-side.
-export async function applyEfsImport({ rows, filename, span }) {
+export async function applyEfsImport({ rows, filename, span, assignments }) {
+  // Save the remembered assignments FIRST, so the BEFORE-INSERT trigger resolves
+  // driver_resolved (and the purpose map) as the checks land.
+  for (const a of (assignments || [])) {
+    try { await saveValueMap(a) } catch (e) { console.error('save value map failed', a, e) }
+  }
   const payload = rows.filter(r => r.money_code).map(r => ({
     money_code: r.money_code,
     tx_at: r.tx_at,

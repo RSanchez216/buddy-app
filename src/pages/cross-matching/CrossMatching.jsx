@@ -6,7 +6,8 @@ import { S } from '../../lib/styles'
 import {
   fetchEfsWeeks, fetchWeekChecks, fetchMatchers, createTargetsFrom, fetchCandidates,
   reconConfirm, createLumperFromCheck, createAccessorialFromCheck,
-  parseEfsWorkbook, checkYearOverlap, detectSwaps, applySwaps, feeSanity, fetchRosterDriverNames, applyEfsImport, REQUIRED_FIELDS,
+  parseEfsWorkbook, checkYearOverlap, detectSwaps, applySwaps, feeSanity, applyEfsImport, REQUIRED_FIELDS,
+  resolveDriverNames, fetchRoster, PURPOSE_CATEGORIES,
   addDays, todayYmd, fmtRange, money,
 } from './crossMatchingData'
 
@@ -120,7 +121,7 @@ export default function CrossMatching() {
         </div>
       )}
 
-      {importOpen && <ImportModal onClose={() => setImportOpen(false)} onDone={() => { setImportOpen(false); load() }} toast={toast} />}
+      {importOpen && <ImportWizard onClose={() => setImportOpen(false)} onDone={() => { setImportOpen(false); load() }} toast={toast} />}
     </div>
   )
 }
@@ -294,34 +295,61 @@ function ReviewModal({ check, toast, onClose, onConfirmed }) {
   )
 }
 
-// ── Import modal (client-side parse + mapping fallback + three guards) ────────
-function ImportModal({ onClose, onDone, toast }) {
+// ── Import wizard: Columns · Drivers · Purposes · Import ──────────────────────
+// A review step between choosing a file and writing anything. Unrecognised driver
+// names and purposes get assigned first (and remembered), so a one-character-off
+// name doesn't report a recorded lumper as "missing". Nothing is written until
+// Import is pressed; unassigned rows still import (blocking is worse).
+const groupBy = (arr, key) => { const m = new Map(); for (const x of arr) { const k = key(x); if (!m.has(k)) m.set(k, []); m.get(k).push(x) } return m }
+
+function ImportWizard({ onClose, onDone, toast }) {
   const fileRef = useRef(null)
   const [busy, setBusy] = useState(false)
-  const [staged, setStaged] = useState(null) // { filename, rows, span, swaps, feeIssues }
+  const [mapStep, setMapStep] = useState(null)
   const [yearBlock, setYearBlock] = useState(null)
-  const [mapStep, setMapStep] = useState(null) // { buf, filename, headers, missing, cols }
+  const [review, setReview] = useState(null) // { filename, rows, span, roster, drivers, purposes, swaps, feeIssues }
   const [swapChoice, setSwapChoice] = useState(true)
 
-  // Continue past parse: year guard → swap/fee guards → stage.
-  const stageParsed = async ({ rows, span, filename }) => {
+  const beginReview = async ({ rows, span, filename }) => {
     if (!rows.length) { toast.error('No check rows found.'); return }
     const overlap = await checkYearOverlap(span)
     if (!overlap.ok) { setYearBlock({ span, board: overlap }); return }
-    const roster = await fetchRosterDriverNames()
-    setStaged({ filename, rows, span, swaps: detectSwaps(rows, roster), feeIssues: feeSanity(rows) })
+
+    const [roster, resolved] = await Promise.all([
+      fetchRoster(),
+      resolveDriverNames(rows.map(r => r.driver_name)),
+    ])
+    const norm = (x) => String(x ?? '').toLowerCase().trim()
+    const byName = new Map(resolved.map(x => [norm(x.raw ?? x.raw_value ?? x.name ?? x.driver_name ?? x.input), x]))
+
+    // Only names that still need a human decision (suggestion / none).
+    const drivers = []
+    for (const [raw, grp] of groupBy(rows.filter(r => r.driver_name), r => r.driver_name)) {
+      const res = byName.get(norm(raw)) || { state: 'none' }
+      if (res.state === 'exact' || res.state === 'mapped') continue
+      const mappedId = res.mapped_id ?? (roster.find(d => d.full_name === res.mapped_value)?.id ?? '')
+      drivers.push({
+        raw, state: res.state, similarity: res.similarity ?? null,
+        mappedId: mappedId || '', mappedValue: res.mapped_value ?? '',
+        count: grp.length, amount: grp.reduce((s, r) => s + (Number(r.total_amount) || 0), 0),
+        remember: true,
+      })
+    }
+    const purposes = [...groupBy(rows.filter(r => r.purpose_category === 'unclassified' && r.purpose_raw), r => r.purpose_raw)]
+      .map(([raw, grp]) => ({ raw, category: '', count: grp.length, amount: grp.reduce((s, r) => s + (Number(r.total_amount) || 0), 0), remember: true }))
+
+    setReview({ filename, rows, span, roster, drivers, purposes, swaps: detectSwaps(rows, roster.map(d => d.full_name)), feeIssues: feeSanity(rows) })
   }
 
   const onFile = async (file) => {
     if (!file) return
-    setBusy(true); setYearBlock(null); setStaged(null); setMapStep(null)
+    setBusy(true); setYearBlock(null); setReview(null); setMapStep(null)
     try {
       const buf = await file.arrayBuffer()
       const parsed = parseEfsWorkbook(buf)
       if (parsed.errors.length) { toast.error(parsed.errors[0]); return }
-      // A required header couldn't be resolved → let the user map it, never fail.
       if (parsed.missing.length) { setMapStep({ buf, filename: file.name, headers: parsed.headers, missing: parsed.missing, cols: parsed.cols }); return }
-      await stageParsed({ ...parsed, filename: file.name })
+      await beginReview({ ...parsed, filename: file.name })
     } catch (e) { toast.error("Couldn't read the file", e) }
     finally { setBusy(false); if (fileRef.current) fileRef.current.value = '' }
   }
@@ -331,26 +359,42 @@ function ImportModal({ onClose, onDone, toast }) {
     try {
       const parsed = parseEfsWorkbook(mapStep.buf, mapping)
       if (parsed.missing.length) { toast.error('Still missing a required column.'); return }
-      setMapStep(null)
-      await stageParsed({ ...parsed, filename: mapStep.filename })
+      const filename = mapStep.filename; setMapStep(null)
+      await beginReview({ ...parsed, filename })
     } finally { setBusy(false) }
   }
 
-  const apply = async () => {
-    if (!staged || busy) return
+  const setDriver = (i, patch) => setReview(rv => ({ ...rv, drivers: rv.drivers.map((d, j) => j === i ? { ...d, ...patch } : d) }))
+  const setPurpose = (i, patch) => setReview(rv => ({ ...rv, purposes: rv.purposes.map((p, j) => j === i ? { ...p, ...patch } : p) }))
+
+  const doImport = async (withAssignments) => {
+    if (!review || busy) return
     setBusy(true)
     try {
-      const rows = swapChoice && staged.swaps.length ? applySwaps(staged.rows, staged.swaps) : staged.rows
-      const res = await applyEfsImport({ rows, filename: staged.filename, span: staged.span })
-      if (res.error) { toast.error("Couldn't apply the import", res.error); return }
+      const rows = swapChoice && review.swaps.length ? applySwaps(review.rows, review.swaps) : review.rows
+      const assignments = []
+      if (withAssignments) {
+        for (const d of review.drivers) if (d.remember && d.mappedValue) assignments.push({ field: 'driver_name', raw_value: d.raw, mapped_value: d.mappedValue, mapped_id: d.mappedId || null, confidence: 1 })
+        for (const p of review.purposes) if (p.remember && p.category) assignments.push({ field: 'purpose_category', raw_value: p.raw, mapped_value: p.category, mapped_id: null, confidence: 1 })
+      }
+      const res = await applyEfsImport({ rows, filename: review.filename, span: review.span, assignments })
+      if (res.error) { toast.error("Couldn't import", res.error); return }
       toast.success(`Imported ${res.imported} checks${res.skipped ? `, ${res.skipped} already present` : ''}`)
       onDone()
     } finally { setBusy(false) }
   }
 
+  const unassigned = review ? review.drivers.filter(d => !d.mappedValue).length + review.purposes.filter(p => !p.category).length : 0
+  // Two or more file spellings pointing at one driver.
+  const dupes = useMemo(() => {
+    if (!review) return []
+    const by = groupBy(review.drivers.filter(d => d.mappedId), d => d.mappedId)
+    return [...by.values()].filter(g => g.length > 1)
+  }, [review])
+
   return (
     <Modal onClose={onClose} title="Import an EFS report" wide>
-      {!staged && !yearBlock && !mapStep && (
+      {!review && !yearBlock && !mapStep && (
         <label className={`${S.btnPrimary} cursor-pointer inline-block ${busy ? 'opacity-50 pointer-events-none' : ''}`}>
           {busy ? 'Reading…' : 'Choose file'}
           <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={e => onFile(e.target.files?.[0])} disabled={busy} />
@@ -369,28 +413,110 @@ function ImportModal({ onClose, onDone, toast }) {
         </div>
       )}
 
-      {staged && (
-        <div className="space-y-3">
-          <p className="text-sm text-gray-700 dark:text-slate-300">
-            <span className="font-semibold">{staged.rows.length}</span> checks from {fmtRange(staged.span?.min, staged.span?.max)}. Re-importing is safe — existing checks are skipped.
-          </p>
-          {staged.swaps.length > 0 && (
+      {review && (
+        <div className="space-y-4 max-h-[70vh] overflow-y-auto -mx-1 px-1">
+          {/* Stepper */}
+          <div className="flex items-center gap-1 text-[11px] font-semibold flex-wrap">
+            <StepChip label="Columns" done />
+            <StepChip label="Drivers" done={review.drivers.length === 0} count={review.drivers.length} />
+            <StepChip label="Purposes" done={review.purposes.length === 0} count={review.purposes.length} />
+            <StepChip label="Import" />
+          </div>
+
+          {review.swaps.length > 0 && (
             <label className="flex items-start gap-2 rounded-lg border border-amber-200 dark:border-amber-500/25 bg-amber-50/70 dark:bg-amber-500/10 p-2.5 text-xs text-amber-800 dark:text-amber-300">
               <input type="checkbox" checked={swapChoice} onChange={e => setSwapChoice(e.target.checked)} className="mt-0.5 accent-amber-600" />
-              <span>{staged.swaps.length} row{staged.swaps.length === 1 ? '' : 's'} look like Purpose/Driver were transposed (a driver name in the purpose cell). Swap them back on import.</span>
+              <span>{review.swaps.length} row{review.swaps.length === 1 ? '' : 's'} look like Purpose/Driver were transposed. Swap them back on import.</span>
             </label>
           )}
-          {staged.feeIssues.length > 0 && (
-            <p className="text-xs text-gray-500 dark:text-slate-400">{staged.feeIssues.length} row{staged.feeIssues.length === 1 ? '' : 's'} where amount + fee ≠ total — imported as-is, worth a look.</p>
+
+          {/* Drivers */}
+          {review.drivers.length === 0 ? (
+            <DoneLine>All driver names matched the roster.</DoneLine>
+          ) : (
+            <section className="space-y-2">
+              <h4 className={SECTION_H}>Drivers to assign ({review.drivers.length})</h4>
+              {dupes.length > 0 && (
+                <p className="text-[11px] text-amber-700 dark:text-amber-400">
+                  {dupes.map(g => `${g.map(d => d.raw).join(', ')} → one driver`).join(' · ')}. Same person under several spellings.
+                </p>
+              )}
+              <div className="space-y-1.5">
+                {review.drivers.map((d, i) => (
+                  <div key={d.raw} className="flex flex-wrap items-center gap-2 text-[12px]">
+                    <span className="font-mono text-red-600 dark:text-red-400 min-w-[150px]">{d.raw}</span>
+                    <span className="text-gray-300 dark:text-slate-600">→</span>
+                    <select value={d.mappedId || ''} onChange={e => { const dr = review.roster.find(x => String(x.id) === e.target.value); setDriver(i, { mappedId: e.target.value, mappedValue: dr?.full_name || '' }) }}
+                      className="text-[12px] rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800/80 px-2 py-1 text-gray-900 dark:text-slate-100 min-w-[180px]">
+                      <option value="">— unassigned —</option>
+                      {review.roster.map(dr => <option key={dr.id} value={dr.id}>{dr.full_name}</option>)}
+                    </select>
+                    {d.similarity != null && (
+                      <span className={`tabular-nums ${d.similarity >= 0.7 ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>{Number(d.similarity).toFixed(2)}</span>
+                    )}
+                    <span className="text-gray-400 dark:text-slate-500 tabular-nums">{d.count}× · {money(d.amount)}</span>
+                    <label className="ml-auto inline-flex items-center gap-1 text-[11px] text-gray-500 dark:text-slate-400">
+                      <input type="checkbox" checked={d.remember} onChange={e => setDriver(i, { remember: e.target.checked })} className="accent-orange-500" /> Remember
+                    </label>
+                  </div>
+                ))}
+              </div>
+            </section>
           )}
-          <div className="flex justify-end gap-2">
-            <button onClick={() => setStaged(null)} disabled={busy} className={S.btnCancel}>Cancel</button>
-            <button onClick={apply} disabled={busy} className={S.btnPrimary}>{busy ? 'Importing…' : `Import ${staged.rows.length} checks`}</button>
+
+          {/* Purposes */}
+          {review.purposes.length === 0 ? (
+            <DoneLine>No unclassified purposes.</DoneLine>
+          ) : (
+            <section className="space-y-2">
+              <h4 className={SECTION_H}>Purposes to classify ({review.purposes.length})</h4>
+              <p className="text-[11px] text-gray-400 dark:text-slate-500">Choose Unclassified when the purpose was never really recorded (e.g. a unit number typed in the field) — guessing would inflate a spend total on no evidence.</p>
+              <div className="space-y-1.5">
+                {review.purposes.map((p, i) => (
+                  <div key={p.raw} className="flex flex-wrap items-center gap-2 text-[12px]">
+                    <span className="font-mono text-red-600 dark:text-red-400 min-w-[150px] truncate" title={p.raw}>{p.raw}</span>
+                    <span className="text-gray-300 dark:text-slate-600">→</span>
+                    <select value={p.category} onChange={e => setPurpose(i, { category: e.target.value })}
+                      className="text-[12px] rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800/80 px-2 py-1 text-gray-900 dark:text-slate-100 min-w-[160px]">
+                      <option value="">— choose —</option>
+                      {PURPOSE_CATEGORIES.map(c => <option key={c} value={c}>{labelCat(c)}</option>)}
+                    </select>
+                    <span className="text-gray-400 dark:text-slate-500 tabular-nums">{p.count}× · {money(p.amount)}</span>
+                    <label className="ml-auto inline-flex items-center gap-1 text-[11px] text-gray-500 dark:text-slate-400">
+                      <input type="checkbox" checked={p.remember} onChange={e => setPurpose(i, { remember: e.target.checked })} className="accent-orange-500" /> Remember
+                    </label>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* Import footer */}
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 dark:border-white/5 pt-3">
+            <p className="text-[11px] text-gray-500 dark:text-slate-400">
+              {review.rows.length} checks from {fmtRange(review.span?.min, review.span?.max)}{unassigned > 0 ? ` · ${unassigned} still unassigned` : ' · all assigned'}. Re-importing is safe.
+            </p>
+            <div className="flex items-center gap-2">
+              <button onClick={onClose} disabled={busy} className={S.btnCancel}>Cancel</button>
+              <button onClick={() => doImport(false)} disabled={busy} className="px-3 py-2 text-sm font-medium rounded-xl border border-gray-300 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-white/5">Import without assigning</button>
+              <button onClick={() => doImport(true)} disabled={busy} className={S.btnPrimary}>{busy ? 'Importing…' : `Import ${review.rows.length} checks`}</button>
+            </div>
           </div>
         </div>
       )}
     </Modal>
   )
+}
+const SECTION_H = 'text-[11px] font-bold uppercase tracking-widest text-gray-400 dark:text-slate-500'
+function StepChip({ label, done, count }) {
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full ${done ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' : 'bg-gray-100 dark:bg-white/5 text-gray-600 dark:text-slate-300'}`}>
+      {done && <span aria-hidden>✓</span>}{label}{count != null && count > 0 ? ` · ${count}` : ''}
+    </span>
+  )
+}
+function DoneLine({ children }) {
+  return <p className="text-xs text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5"><span aria-hidden>✓</span>{children}</p>
 }
 
 const FIELD_LABELS = { money: 'Money Code', date: 'TX Date', purpose: 'Check Purpose', amount: 'Check Amount', driver: 'Driver' }
