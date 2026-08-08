@@ -146,7 +146,7 @@ function WeekDrillIn({ weekStart, targets, canEdit, toast, onBack, onChanged }) 
     const needsChoice = checks.filter(c => !recorded.includes(c) && (g(c, 'lumper_state') === 'maybe' || g(c, 'accessorial_state') === 'maybe'))
     const notRecorded = checks.filter(c => isLoadRelated(c) && g(c, 'lumper_state') === 'no' && g(c, 'accessorial_state') === 'no')
     const notLoad = checks.filter(c => !isLoadRelated(c))
-    const notRecordedTotal = notRecorded.reduce((s, c) => s + (Number(g(c, 'total', 'check_amount')) || 0), 0)
+    const notRecordedTotal = notRecorded.reduce((s, c) => s + (Number(g(c, 'total_amount', 'check_amount')) || 0), 0)
     return { recorded, needsChoice, notRecorded, notLoad, notRecordedTotal }
   }, [checks])
 
@@ -188,12 +188,12 @@ function WeekDrillIn({ weekStart, targets, canEdit, toast, onBack, onChanged }) 
             </thead>
             <tbody>
               {rows.map(c => (
-                <tr key={g(c, 'id', 'check_id', 'efs_check_id', 'money_code')} className="border-b border-gray-100 dark:border-white/[0.04]">
-                  <td className="px-3 py-2 whitespace-nowrap">{fmtDay(g(c, 'event_date'))}</td>
+                <tr key={g(c, 'check_id', 'money_code')} className="border-b border-gray-100 dark:border-white/[0.04]">
+                  <td className="px-3 py-2 whitespace-nowrap">{fmtDay(g(c, 'tx_date'))}</td>
                   <td className="px-3 py-2 font-mono text-[11px]">{g(c, 'money_code') || '—'}</td>
-                  <td className="px-3 py-2 whitespace-nowrap">{g(c, 'driver') || '—'}</td>
+                  <td className="px-3 py-2 whitespace-nowrap">{g(c, 'driver_name') || '—'}</td>
                   <td className="px-3 py-2 max-w-[220px] truncate" title={g(c, 'purpose_raw') || ''}>{g(c, 'purpose_raw') || '—'}</td>
-                  <td className="px-3 py-2 tabular-nums whitespace-nowrap">{money(g(c, 'total', 'check_amount'))}</td>
+                  <td className="px-3 py-2 tabular-nums whitespace-nowrap">{money(g(c, 'total_amount', 'check_amount'))}</td>
                   <td className="px-3 py-2 text-center"><StateCell s={g(c, 'lumper_state')} /></td>
                   <td className="px-3 py-2 text-center"><StateCell s={g(c, 'accessorial_state')} /></td>
                   <td className="px-3 py-2 whitespace-nowrap">
@@ -218,7 +218,7 @@ function RowAction({ c, targets, canEdit, toast, onReview, onChanged }) {
   const [busy, setBusy] = useState(false)
   const lumper = g(c, 'lumper_state'), acc = g(c, 'accessorial_state')
   const cat = g(c, 'purpose_category')
-  const checkId = g(c, 'id', 'check_id', 'efs_check_id')
+  const checkId = g(c, 'check_id', 'id')
 
   if (lumper === 'yes' || acc === 'yes') {
     const to = lumper === 'yes' ? '/after-hours/lumpers' : '/after-hours/requests'
@@ -262,7 +262,7 @@ function RowAction({ c, targets, canEdit, toast, onReview, onChanged }) {
 function ReviewModal({ check, toast, onClose, onConfirmed }) {
   const [cands, setCands] = useState(null)
   const [busy, setBusy] = useState(false)
-  const checkId = g(check, 'id', 'check_id', 'efs_check_id')
+  const checkId = g(check, 'check_id', 'id')
   useEffect(() => { fetchCandidates(checkId).then(setCands).catch(() => setCands([])) }, [checkId])
   const confirm = async (matchId) => {
     setBusy(true)
@@ -275,18 +275,23 @@ function ReviewModal({ check, toast, onClose, onConfirmed }) {
   }
   return (
     <Modal onClose={onClose} title="Link this check">
-      <p className="text-xs text-gray-500 dark:text-slate-400 mb-3">{g(check, 'driver') || '—'} · {money(g(check, 'total', 'check_amount'))} · {g(check, 'purpose_raw') || ''}</p>
+      <p className="text-xs text-gray-500 dark:text-slate-400 mb-3">{g(check, 'driver_name') || '—'} · {money(g(check, 'total_amount', 'check_amount'))} · {g(check, 'purpose_raw') || ''}</p>
       {cands == null ? (
         <div className="h-16 rounded-lg bg-gray-100 dark:bg-white/5 animate-pulse" />
       ) : cands.length === 0 ? (
         <p className="text-sm text-gray-400 dark:text-slate-500 italic">No candidates found.</p>
       ) : (
         <div className="space-y-1.5">
+          {/* recon_matches columns: match_kind, day_gap, amount_delta, reason. */}
           {cands.map(m => (
             <button key={m.id} disabled={busy} onClick={() => confirm(m.id)}
               className="w-full text-left px-3 py-2 rounded-lg border border-gray-200 dark:border-white/10 hover:bg-gray-50 dark:hover:bg-white/5 text-sm disabled:opacity-50">
-              <span className="font-medium text-gray-800 dark:text-slate-200">{g(m, 'candidate_label', 'target_label', 'driver') || 'Candidate'}</span>
-              <span className="text-gray-400 dark:text-slate-500 ml-2 text-xs">{money(g(m, 'candidate_amount', 'amount'))}{g(m, 'score') != null ? ` · ${Math.round(Number(g(m, 'score')) * 100)}%` : ''}</span>
+              <span className="font-medium text-gray-800 dark:text-slate-200 capitalize">{g(m, 'match_kind') || 'candidate'}</span>
+              <span className="text-gray-400 dark:text-slate-500 ml-2 text-xs">
+                {g(m, 'amount_delta') != null ? `Δ ${money(Math.abs(Number(g(m, 'amount_delta'))))}` : ''}
+                {g(m, 'day_gap') != null ? ` · ${g(m, 'day_gap')}d gap` : ''}
+                {g(m, 'reason') ? ` · ${g(m, 'reason')}` : ''}
+              </span>
             </button>
           ))}
         </div>

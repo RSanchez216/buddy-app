@@ -96,19 +96,20 @@ export function checkIsLoadRelated(c) {
 export async function fetchWeekUnmatchedSummary(weekStart) {
   const checks = await fetchWeekChecks(weekStart)
   const unmatched = checks.filter(c => checkIsLoadRelated(c) && c.lumper_state === 'no' && c.accessorial_state === 'no')
-  const total = unmatched.reduce((s, c) => s + (Number(c.total ?? c.check_amount) || 0), 0)
+  const total = unmatched.reduce((s, c) => s + (Number(c.total_amount ?? c.check_amount) || 0), 0)
   const byCat = {}
   for (const c of unmatched) { const k = c.purpose_category || 'other'; byCat[k] = (byCat[k] || 0) + 1 }
   return { weekStart, weekEnd: addDays(weekStart, 6), count: unmatched.length, total, byCat }
 }
 
-// The candidate records a `maybe` check could link to — from recon_matches for
-// this check that are still suggestions.
+// The candidate records a `maybe` check could link to — the still-suggested
+// recon_matches whose LEFT side is this check (left_source/left_id, not a column
+// named efs_check_id).
 export async function fetchCandidates(checkId) {
   const { data, error } = await supabase.from('recon_matches')
-    .select('*').eq('efs_check_id', checkId)
+    .select('*').eq('left_source', 'efs_checks').eq('left_id', checkId).eq('status', 'suggested')
   if (error) return []
-  return (data || []).filter(m => (m.status ?? 'suggested') === 'suggested' || m.status === 'candidate')
+  return data || []
 }
 
 // ── writes / RPCs ─────────────────────────────────────────────────────────────
